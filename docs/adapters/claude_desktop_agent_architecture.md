@@ -222,7 +222,7 @@ held server-side (`AttentionMode`, set at join or switched by passing
 `attention` on a monitor call — honored only from `caller=model`, so the
 view's display loop can never flip it).
 
-| | `room_first` (default) | `user_first` |
+| | `room_first` | `user_first` (default) |
 |---|---|---|
 | Turn | perpetual, parked on the monitor | none held; ends normally |
 | User typing | waits ≤ one quantum | instant |
@@ -234,7 +234,7 @@ view's display loop can never flip it).
 | Token burn while idle | ~4-6 ticks/min | zero |
 
 The model only ever reads the active mode's contract
-(`attention_contract()` in `prompts.py`); the other mode appears solely as the
+(the `CONTRACTS` table in `prompts.py`); the other mode appears solely as the
 one line naming the way into it, because a briefing describing both behaviours
 gets blended. A switch speaks its new contract in the same reply — the summary
 reads the mode off the event — and switching back to `room_first` re-arms
@@ -246,6 +246,13 @@ user — the widget's waiting count is the softening, and typing anything
 (the turn-start sweep rides every user message) is the way in. A button was
 tried and removed: Desktop treats even an activated `ui/message` as a composer
 prefill, so a click was just a worse way to say something.
+
+The staleness heartbeat runs both ways. The widget's display ticks are the
+server's only proof a window is on screen, so when they stop — a Desktop
+restart kills widgets silently, and a superseded relic's ticks don't count —
+the next model tick's summary says to remount with the show tool
+(`RoomSession.view_missing`, the mirror of the agent-loop staleness above; a
+mounting tool's grant counts as the first tick so a fresh join never asks).
 
 ### Every tick reads, because the event stream is not complete
 

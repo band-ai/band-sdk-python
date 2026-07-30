@@ -346,7 +346,12 @@ def show_summary(transcript: RoomTranscript) -> str:
     )
 
 
-def monitor_summary(event: RoomEvent, *, elsewhere: Sequence[str] = ()) -> str:
+def monitor_summary(
+    event: RoomEvent,
+    *,
+    elsewhere: Sequence[str] = (),
+    view_missing: bool = False,
+) -> str:
     """What the agent is told about one tick of its monitoring loop.
 
     Every tick ends by naming what the loop owes next — the next call in
@@ -356,6 +361,12 @@ def monitor_summary(event: RoomEvent, *, elsewhere: Sequence[str] = ()) -> str:
     same reply that performed it.
     """
     resume = CONTRACTS[event.attention].resume.format(since=event.resume_token)
+    if view_missing:
+        resume += (
+            f" No live room view is mounted in this conversation. Call "
+            f"{RoomTool.SHOW} with this chat_id once to put the user's window "
+            "back on screen, then continue under your attention contract."
+        )
     if elsewhere:
         resume += (
             f" You were also added to Band room(s) {', '.join(elsewhere)}. This "

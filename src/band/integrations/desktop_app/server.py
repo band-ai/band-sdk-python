@@ -137,10 +137,19 @@ async def _monitor(
     # relayed through the model, never the app's.
     if parsed.attention is not None and parsed.caller is MonitorCaller.MODEL:
         service.session.set_mode(parsed.chat_id, parsed.attention)
-    # The call itself is the proof the agent's loop is still running, and the
-    # quantum it chose is how long the next one may take to arrive.
-    if parsed.caller is MonitorCaller.MODEL:
-        service.session.note_model_tick(parsed.chat_id, quantum=quantum)
+    # The call itself is the proof the caller's loop is still running, and the
+    # quantum it chose is how long the next one may take to arrive. Only the
+    # display instance that owns the room counts as the live view: a
+    # superseded relic's tick must not stand in for the widget the user sees.
+    # Ownership is claimed *before* the wait — a fresh mount takes the room
+    # over the moment it calls, not a quantum later — and checked again after
+    # it, because a takeover can land while this call is parked on the wait.
+    current = service.session.view_is_current(parsed.chat_id, parsed.instance)
+    match parsed.caller:
+        case MonitorCaller.MODEL:
+            service.session.note_model_tick(parsed.chat_id, quantum=quantum)
+        case MonitorCaller.APP if current:
+            service.session.note_view_tick(parsed.chat_id, quantum=quantum)
     event = await service.wait_for_room_event(
         parsed.chat_id,
         since=parsed.since,
@@ -167,6 +176,7 @@ async def _monitor(
     summary = monitor_summary(
         event,
         elsewhere=service.unannounced_rooms(parsed.chat_id),
+        view_missing=service.session.view_missing(parsed.chat_id),
     )
     # A quiet tick repeats every few seconds, so it sheds what the caller holds.
     return WorkflowResult(
@@ -334,6 +344,14 @@ def create_server(service: RoomTranscriptService) -> Server[Any, Any]:
             logger.warning("rejected %s call: %s", tool_name, error)
             raise ValueError(invalid_arguments(tool_name, error)) from error
         assert result.transcript is not None
+        # The grant is the mount: the widget this result carries starts
+        # ticking on its own within seconds, and until it does the room must
+        # not read as viewless.
+        if spec.mounts_view:
+            service.session.note_view_tick(
+                result.room_id,
+                quantum=service.tuning.band_room_event_timeout_s,
+            )
         return (
             [TextContent(type="text", text=result.summary)],
             result.transcript.model_dump(mode="json"),

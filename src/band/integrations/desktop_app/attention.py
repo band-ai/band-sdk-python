@@ -26,16 +26,19 @@ STALE_GRACE_S = 30
 
 
 @dataclass
-class ModelTick:
-    """When the agent last monitored, and the quantum it chose to wait.
+class Tick:
+    """When a monitor loop last called, and the quantum it waited.
 
-    The quantum is the model's to pick per call, so a limit read off the
-    install default would call a healthy long-quantum loop stopped after a
-    single wait.
+    The quantum travels with the tick because it is the caller's to pick per
+    call, so a limit read off the install default would call a healthy
+    long-quantum loop stopped after a single wait.
     """
 
     at: datetime
     quantum: float
+
+    def stale(self, now: datetime) -> bool:
+        return (now - self.at).total_seconds() > self.quantum + STALE_GRACE_S
 
 
 class RoomSession:
@@ -44,7 +47,8 @@ class RoomSession:
     def __init__(self, now: Callable[[], datetime]) -> None:
         self._now = now
         self._modes: dict[str, AttentionMode] = {}
-        self._model_ticks: dict[str, ModelTick] = {}
+        self._model_ticks: dict[str, Tick] = {}
+        self._view_ticks: dict[str, Tick] = {}
         self._reported_stale: set[str] = set()
         self._view_owner: dict[str, str] = {}
         self._view_instances: dict[str, set[str]] = {}
@@ -60,7 +64,29 @@ class RoomSession:
 
     def note_model_tick(self, chat_id: str, *, quantum: float) -> None:
         """Record that the agent's own monitor loop is still running."""
-        self._model_ticks[chat_id] = ModelTick(self._now(), quantum)
+        self._model_ticks[chat_id] = Tick(self._now(), quantum)
+
+    def note_view_tick(self, chat_id: str, *, quantum: float) -> None:
+        """Record that a live widget is showing this room.
+
+        Called for the display loop's ticks, and once when a mounting tool
+        grants the view — the widget's first own tick trails the grant by a
+        few seconds, and that gap must not read as a missing view.
+        """
+        self._view_ticks[chat_id] = Tick(self._now(), quantum)
+
+    def view_missing(self, chat_id: str) -> bool:
+        """Whether no live widget shows this room any more.
+
+        The mirror of :meth:`monitoring`: there the widget's steady ticks
+        expose the agent's stopped loop, here the agent's tick exposes a dead
+        widget — one that never mounted in this conversation, or that a
+        Desktop restart killed without a word. The agent can repair this
+        (remount via the show tool) only when told, so the monitor summary
+        carries it.
+        """
+        tick = self._view_ticks.get(chat_id)
+        return tick is None or tick.stale(self._now())
 
     def monitoring(self, chat_id: str) -> MonitoringStatus:
         """How long since the agent last monitored, and whether that gap means
@@ -76,10 +102,9 @@ class RoomSession:
         tick = self._model_ticks.get(chat_id)
         if tick is None:
             return MonitoringStatus()
-        idle = (self._now() - tick.at).total_seconds()
         return MonitoringStatus(
-            idle_seconds=idle,
-            stale=idle > tick.quantum + STALE_GRACE_S,
+            idle_seconds=(self._now() - tick.at).total_seconds(),
+            stale=tick.stale(self._now()),
         )
 
     def claim_stale_report(self, chat_id: str, monitoring: MonitoringStatus) -> bool:

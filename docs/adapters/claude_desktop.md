@@ -99,7 +99,10 @@ or suggest creating the room.
 Claude calls one room-opening tool per Desktop conversation. After a long
 conversation the widget scrolls away with its message — say "show the room"
 and Claude remounts it right where you are; the old copy collapses to a
-one-line bar. The widget is a window into the room, not a control: drag its lower edge to resize it, or
+one-line bar. A Desktop restart kills widgets silently: the server notices
+the missing view from the widget's absent heartbeat and tells Claude to
+remount on its next room check, so resuming work brings the window back
+without you asking. The widget is a window into the room, not a control: drag its lower edge to resize it, or
 collapse it to a one-line status bar with the header chevron — it keeps
 syncing, badges unread messages, and restores on expand. Everything you want
 the agent to *do* is said in chat.
