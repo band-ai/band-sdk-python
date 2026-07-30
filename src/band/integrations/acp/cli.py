@@ -9,6 +9,7 @@ import os
 import sys
 
 from band.config.logs import LogSettings
+from band.logging_config import LogStream
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,11 @@ async def main(args: argparse.Namespace | None = None) -> None:
         args = parse_args()
 
     # Only an explicit CLI flag overrides BAND_LOG_*; omitted lets env win.
-    if args.log_level is not None:
-        LogSettings(log_level=args.log_level).configure()
-    else:
-        LogSettings().configure()
+    # The stream is not negotiable: stdout is the JSON-RPC transport, so a log
+    # line written there corrupts the editor's ACP session.
+    LogSettings.create(
+        log_level=args.log_level, log_stream=LogStream.STDERR
+    ).configure()
 
     if not args.agent_id:
         raise ValueError("Agent ID is required. Use --agent-id or set BAND_AGENT_ID.")

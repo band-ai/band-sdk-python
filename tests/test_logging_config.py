@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import logging
 import re
@@ -17,6 +18,17 @@ from band import (
 )
 from band.logging_config import JSON_LOGGER_REQUIREMENT, OTEL_CORRELATION_FIELDS
 from tests.logsupport import restored_logging
+
+
+def test_configure_logging_signature_matches_builder() -> None:
+    """configure_logging forwards fifteen kwargs by hand, one call at a time.
+
+    A parameter added to the builder alone would be silently unreachable
+    through the function most callers use.
+    """
+    assert inspect.signature(configure_logging) == inspect.signature(
+        build_logging_config
+    )
 
 
 def test_build_logging_config_returns_fresh_normalized_dict(monkeypatch) -> None:
@@ -222,6 +234,48 @@ def test_rotation_settings_select_rotating_handler(tmp_path: Path) -> None:
         "maxBytes": 1_000_000,
         "backupCount": 3,
     }
+
+
+def test_size_cap_without_a_backup_is_rejected(tmp_path: Path) -> None:
+    """A RotatingFileHandler with backupCount=0 reopens the file and grows forever.
+
+    Silently accepting it hands back unbounded growth to the caller who asked
+    for a size cap, so it is refused rather than half-honored.
+    """
+    with pytest.raises(ValueError, match="backup_count must be at least 1"):
+        build_logging_config(
+            log_file=tmp_path / "a.log", max_bytes=1_000, backup_count=0
+        )
+
+
+def test_rotation_actually_rolls_the_file_over(tmp_path: Path) -> None:
+    """The default backup count rotates, rather than appending past the cap."""
+    log_file = tmp_path / "agent.log"
+
+    with restored_logging():
+        configure_logging(log_file=log_file, max_bytes=200)
+        for _ in range(40):
+            logging.getLogger("band.runtime").info("x" * 60)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["agent.log", "agent.log.1"]
+    assert log_file.stat().st_size <= 200
+
+
+def test_per_logger_level_reaches_the_file_too(tmp_path: Path) -> None:
+    """An extra_loggers override must land in the durable sink, not just the console.
+
+    Both handlers stay unpinned when console and file share a level, so the
+    logger's own level is the only gate.
+    """
+    log_file = tmp_path / "agent.log"
+
+    with restored_logging("httpx"):
+        configure_logging(
+            level="INFO", log_file=log_file, extra_loggers={"httpx": "DEBUG"}
+        )
+        logging.getLogger("httpx").debug("httpx detail")
+
+    assert "httpx detail" in log_file.read_text()
 
 
 def test_file_level_can_capture_debug_without_console_noise(

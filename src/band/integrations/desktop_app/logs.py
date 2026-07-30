@@ -13,6 +13,8 @@ logged.
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from band.config.logs import LogSettings
 from band.integrations.desktop_app.event_relay import STATE_DIR
 from band.logging_config import CHATTY_LOGGERS, LogStream
@@ -26,8 +28,10 @@ _DESKTOP_CHATTY_LOGGERS = (*CHATTY_LOGGERS, "mcp.server.lowlevel.server")
 class DesktopLogSettings(LogSettings):
     """Desktop defaults: rotating file, uniform root level, stderr only."""
 
-    log_max_bytes: int = 1_000_000
-    log_backups: int = 1
+    # Redeclared only to move the defaults; the bounds come with them, since a
+    # bare `int = 1_000_000` would drop the base field's ge=0.
+    log_max_bytes: int = Field(1_000_000, ge=0)
+    log_backups: int = Field(1, ge=1)
 
 
 def configure() -> None:

@@ -244,7 +244,7 @@ LogSettings.create(log_level=None).for_application().configure()
 | `BAND_LOG_FILE` | unset | Optional log file path |
 | `BAND_LOG_FILE_LEVEL` | follows `BAND_LOG_LEVEL` | File handler level (use `DEBUG` for quiet console / verbose file) |
 | `BAND_LOG_MAX_BYTES` | `0` | Rotate when positive; `0` uses a plain file handler |
-| `BAND_LOG_BACKUPS` | `0` | Rotated backups to keep |
+| `BAND_LOG_BACKUPS` | `1` | Rotated backups to keep; `0` alongside a size cap is rejected, since a handler with no backups never rotates |
 | `BAND_LOG_CONSOLE_STYLE` | `standard` | `standard`, `rich`, or `json` |
 | `BAND_LOG_FILE_STYLE` | `standard` | `standard` or `json` |
 | `BAND_LOG_STREAM` | `stderr` | `stderr` or `stdout` |

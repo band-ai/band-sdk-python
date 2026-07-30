@@ -109,6 +109,26 @@ def test_configure_logging_from_env(
     assert "from env helper" in err
 
 
+def test_subclass_defaults_keep_the_base_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Consumers subclass to move a default; that must not cost them validation.
+
+    Redeclaring a field replaces its annotation, so any coercion attached there
+    would be silently dropped — and ``BAND_LOG_STREAM=STDOUT`` would start
+    raising for the subclass while working for the base.
+    """
+
+    class StdoutLogSettings(LogSettings):
+        log_stream: LogStream = LogStream.STDOUT
+
+    with band_log_env(monkeypatch, STREAM="STDERR"):
+        assert StdoutLogSettings().log_stream == LogStream.STDERR
+
+    with band_log_env(monkeypatch, STREAM=None):
+        assert StdoutLogSettings().log_stream == LogStream.STDOUT
+
+
 def test_host_telemetry_handler_must_be_attached_after_band_configures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

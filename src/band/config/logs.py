@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Any, Self
 
-from pydantic import BeforeValidator, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.logging_config import (
@@ -20,10 +20,6 @@ from band.logging_config import (
     coerce_log_level_name,
     configure_logging,
 )
-
-
-def _lowercase_style(value: object) -> object:
-    return value.lower() if isinstance(value, str) else value
 
 
 class LogSettings(BaseSettings):
@@ -71,21 +67,22 @@ class LogSettings(BaseSettings):
         description="Max bytes before rotation. 0 uses a plain FileHandler.",
     )
     log_backups: int = Field(
-        0,
+        1,
         ge=0,
-        description="Rotated backup files to keep when log_max_bytes > 0.",
+        description=(
+            "Rotated backup files to keep when log_max_bytes > 0. Must stay at "
+            "least 1 there, since a rotating handler with no backups never rotates."
+        ),
     )
-    log_console_style: Annotated[LoggingStyle, BeforeValidator(_lowercase_style)] = (
-        Field(
-            LoggingStyle.STANDARD,
-            description="Console formatter style: standard, rich, or json.",
-        )
+    log_console_style: LoggingStyle = Field(
+        LoggingStyle.STANDARD,
+        description="Console formatter style: standard, rich, or json.",
     )
-    log_file_style: Annotated[FileStyle, BeforeValidator(_lowercase_style)] = Field(
+    log_file_style: FileStyle = Field(
         LoggingStyle.STANDARD,
         description="File formatter style: standard or json.",
     )
-    log_stream: Annotated[LogStream, BeforeValidator(_lowercase_style)] = Field(
+    log_stream: LogStream = Field(
         LogStream.STDERR,
         description="Console stream: stderr or stdout.",
     )
@@ -95,6 +92,15 @@ class LogSettings(BaseSettings):
             'Per-logger levels from BAND_LOG_OVERRIDES JSON, e.g. {"httpx": "WARNING"}.'
         ),
     )
+
+    # A class-level validator, not Annotated metadata on each field: a subclass
+    # that redeclares one of these to change its default (see the examples'
+    # LogSettings subclasses) would drop field-attached metadata, and with it
+    # case-insensitivity — but validators are inherited by field name.
+    @field_validator("log_console_style", "log_file_style", "log_stream", mode="before")
+    @classmethod
+    def _lowercase_style(cls, value: object) -> object:
+        return value.lower() if isinstance(value, str) else value
 
     @field_validator("log_level", "log_root_level", mode="before")
     @classmethod

@@ -231,12 +231,24 @@ class LoggingRequest(BaseModel):
         default=0, ge=0
     )
     backup_count: Annotated[int, BeforeValidator(_reject_bool_int)] = Field(
-        default=0, ge=0
+        default=1, ge=0
     )
     file_style: Annotated[FileStyle | None, BeforeValidator(_lowercase_literal)] = None
     file_level: Annotated[LogLevel | None, BeforeValidator(_coerce_optional_level)] = (
         None
     )
+
+    @model_validator(mode="after")
+    def _rotation_needs_a_backup(self) -> LoggingRequest:
+        # RotatingFileHandler with backupCount=0 reopens the same file in append
+        # mode instead of rotating, so a size cap with no backups grows forever —
+        # exactly what the caller was trying to prevent.
+        if self.max_bytes > 0 and self.backup_count == 0:
+            raise ValueError(
+                "backup_count must be at least 1 when max_bytes is set; "
+                "a rotating handler with no backups never rotates"
+            )
+        return self
 
     @model_validator(mode="after")
     def _fmt_only_with_standard(self) -> LoggingRequest:
@@ -286,7 +298,7 @@ def build_logging_config(
     static_fields: Mapping[str, Any] | None = None,
     log_file: Path | str | None = None,
     max_bytes: int = 0,
-    backup_count: int = 0,
+    backup_count: int = 1,
     file_style: FileStyle | None = None,
     file_level: LogLevel | None = None,
 ) -> LoggingConfig:
@@ -295,6 +307,10 @@ def build_logging_config(
     The default keeps noisy dependencies at WARNING while enabling Band SDK
     logs at INFO. Applications can inspect, modify, then apply the returned
     dict themselves, or call :func:`configure_logging`.
+
+    This function touches nothing: applying the result yourself with
+    ``log_file`` set means creating the file's parent directory first, which
+    :func:`configure_logging` does for you.
 
     Args:
         level: Logging level for the ``band`` logger (and the console handler
@@ -321,6 +337,8 @@ def build_logging_config(
             :class:`~logging.FileHandler`; a positive value uses
             :class:`~logging.handlers.RotatingFileHandler`.
         backup_count: Rotated backup files to keep when ``max_bytes > 0``.
+            Must be at least 1 there: a rotating handler with no backups never
+            rotates. Ignored when ``max_bytes`` is ``0``.
         file_style: File formatter style: ``"standard"`` or ``"json"``.
             Defaults to ``"standard"`` when ``log_file`` is set.
         file_level: Level for the file handler. Defaults to ``level``. When
@@ -385,7 +403,7 @@ def configure_logging(
     static_fields: Mapping[str, Any] | None = None,
     log_file: Path | str | None = None,
     max_bytes: int = 0,
-    backup_count: int = 0,
+    backup_count: int = 1,
     file_style: FileStyle | None = None,
     file_level: LogLevel | None = None,
 ) -> LoggingConfig:
@@ -465,11 +483,11 @@ def _build_from_request(request: LoggingRequest) -> LoggingConfig:
 
         # Logger gates before handlers: when the file is more verbose than the
         # console, lower the band logger and pin each handler's own level so
-        # console stays quiet while the file captures detail.
+        # console stays quiet while the file captures detail. When the two agree
+        # neither handler is pinned — a per-logger level from extra_loggers must
+        # reach both sinks, not just the console.
         if level_value(file_level) != level_value(request.level):
             handlers["console"]["level"] = request.level
-            handlers["file"]["level"] = file_level
-        else:
             handlers["file"]["level"] = file_level
 
     # Keep existing application loggers alive; SDK helpers should not silently

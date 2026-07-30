@@ -2,12 +2,40 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import sys
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from band.integrations.acp.cli import main, parse_args
+from tests.logsupport import restored_logging
+
+
+@contextmanager
+def stubbed_acp_server() -> Iterator[MagicMock]:
+    """Run ``main()`` without a platform connection; yields the stub adapter."""
+    adapter = MagicMock()
+    adapter.close = AsyncMock()
+    agent = AsyncMock()
+    agent.__aenter__ = AsyncMock(return_value=agent)
+    agent.__aexit__ = AsyncMock(return_value=None)
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("band.Agent.create", return_value=agent))
+        stack.enter_context(
+            patch(
+                "band.integrations.acp.server_adapter.BandACPServerAdapter",
+                return_value=adapter,
+            )
+        )
+        stack.enter_context(patch("band.integrations.acp.push_handler.ACPPushHandler"))
+        stack.enter_context(patch("band.integrations.acp.server.ACPServer"))
+        stack.enter_context(patch("acp.run_agent", new=AsyncMock(return_value=None)))
+        yield adapter
 
 
 class TestParseArgs:
@@ -130,20 +158,30 @@ class TestMain:
     async def test_main_closes_adapter_after_run(self) -> None:
         """Should close the adapter REST client when the ACP server exits."""
         args = parse_args(["--agent-id", "agent-123", "--api-key", "key-abc"])
-        mock_adapter = MagicMock()
-        mock_adapter.close = AsyncMock()
-        mock_agent = AsyncMock()
-        mock_agent.__aenter__ = AsyncMock(return_value=mock_agent)
-        mock_agent.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("band.Agent.create", return_value=mock_agent):
-            with patch(
-                "band.integrations.acp.server_adapter.BandACPServerAdapter",
-                return_value=mock_adapter,
-            ):
-                with patch("band.integrations.acp.push_handler.ACPPushHandler"):
-                    with patch("band.integrations.acp.server.ACPServer"):
-                        with patch("acp.run_agent", new=AsyncMock(return_value=None)):
-                            await main(args)
+        with stubbed_acp_server() as adapter:
+            await main(args)
 
-        mock_adapter.close.assert_awaited_once()
+        adapter.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_main_keeps_logs_off_the_stdio_transport(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """BAND_LOG_STREAM must not be able to redirect logs onto stdout.
+
+        stdout carries the JSON-RPC frames, so a log line written there corrupts
+        the editor's ACP session — the stream is pinned rather than configurable.
+        """
+        monkeypatch.setenv("BAND_LOG_STREAM", "stdout")
+        args = parse_args(["--agent-id", "agent-123", "--api-key", "key-abc"])
+
+        with restored_logging(), stubbed_acp_server():
+            await main(args)
+            streams = [
+                handler.stream
+                for handler in logging.getLogger().handlers
+                if isinstance(handler, logging.StreamHandler)
+            ]
+
+        assert streams and all(stream is sys.stderr for stream in streams)
