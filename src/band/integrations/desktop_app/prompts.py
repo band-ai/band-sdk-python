@@ -46,7 +46,8 @@ SERVER_INSTRUCTIONS = (
     f"monitor, or keep an eye on the room — then loop on {RoomTool.MONITOR} "
     "without ending your turn, answering the user between calls. "
     "This conversation watches exactly one room, so do not call either "
-    "room-opening tool again in it. When work turns up another room — one you "
+    f"room-opening tool again in it — when the widget has scrolled far away "
+    f"or the user asks to see the room, call {RoomTool.SHOW} instead. When work turns up another room — one you "
     "create, or one you are added to — tell the user it needs its own Desktop "
     "conversation instead of joining it here."
 )
@@ -72,6 +73,14 @@ CREATE_TOOL_DESCRIPTION = (
     "creation tool when the user asks to create or start a room in this "
     "Desktop conversation. Call it only when this conversation is not already "
     "watching a room."
+)
+
+SHOW_TOOL_DESCRIPTION = (
+    "Remount the joined Band room's live view at this point in the "
+    "conversation, when the widget has scrolled far away or the user asks to "
+    "see the room (again). The old widget collapses itself; your attention "
+    "contract is unchanged. This is the only sanctioned way to bring the view "
+    f"back — never call {RoomTool.JOIN} a second time for it."
 )
 
 MONITOR_TOOL_DESCRIPTION = (
@@ -325,6 +334,15 @@ def join_summary(transcript: RoomTranscript, *, requested: str) -> str:
         f"Joined live Band room {transcript.chat_id}{resolved} with "
         f"{len(transcript.messages)} messages.\n\n"
         f"{transcript.role_briefing}\n\n{backlog}\n\n{declared}"
+    )
+
+
+def show_summary(transcript: RoomTranscript) -> str:
+    """What the agent is told when it remounts the view mid-conversation."""
+    return (
+        f"Room view remounted for {transcript.chat_id}; the older widget "
+        "collapses itself. Nothing else changed: continue under your existing "
+        "attention contract."
     )
 
 

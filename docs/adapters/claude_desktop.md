@@ -96,8 +96,10 @@ or suggest creating the room.
 - Claude uses `band-mcp` tools for room actions. An ordinary action covered by
   your delegation, such as "say X", runs without asking you to reconfirm.
 
-Claude calls one room-opening tool per Desktop conversation. The widget is a
-window into the room, not a control: drag its lower edge to resize it, or
+Claude calls one room-opening tool per Desktop conversation. After a long
+conversation the widget scrolls away with its message — say "show the room"
+and Claude remounts it right where you are; the old copy collapses to a
+one-line bar. The widget is a window into the room, not a control: drag its lower edge to resize it, or
 collapse it to a one-line status bar with the header chevron — it keeps
 syncing, badges unread messages, and restores on expand. Everything you want
 the agent to *do* is said in chat.

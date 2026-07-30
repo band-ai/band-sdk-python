@@ -250,6 +250,9 @@ class RoomEvent(RoomTranscript):
     """A transcript delivered because the room's WebSocket reported a change."""
 
     event_received: bool
+    # True when a newer view instance has taken over this room's display: the
+    # receiving instance collapses itself instead of living on as a duplicate.
+    superseded: bool = False
 
     def tick(self) -> RoomEvent:
         """This event stripped of everything the caller already holds.

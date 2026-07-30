@@ -19,6 +19,7 @@ class RoomTool(StrEnum):
 
     JOIN = "band_join_room"
     CREATE = "band_create_and_open_room"
+    SHOW = "band_show_room"
     MONITOR = "band_wait_for_room_event"
 
 
@@ -86,6 +87,12 @@ class JoinRoomInput(BaseModel):
     )
 
 
+class ShowRoomInput(BaseModel):
+    """Remount the joined room's live view at this point in the conversation."""
+
+    chat_id: str = Field(description="Band chat room ID already joined here.")
+
+
 class WaitForRoomEventInput(BaseModel):
     """Wait for the next SDK WebSocket event in an open room."""
 
@@ -120,4 +127,8 @@ class WaitForRoomEventInput(BaseModel):
             "Pass only when the user asks to change how this room gets your "
             f"attention. {ATTENTION_CHOICE}"
         ),
+    )
+    instance: str | None = Field(
+        None,
+        description="Leave unset. The room view names its instance here.",
     )

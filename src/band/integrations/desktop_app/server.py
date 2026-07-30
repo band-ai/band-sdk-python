@@ -23,10 +23,12 @@ from band.integrations.desktop_app.prompts import (
     JOIN_TOOL_DESCRIPTION,
     MONITOR_TOOL_DESCRIPTION,
     SERVER_INSTRUCTIONS,
+    SHOW_TOOL_DESCRIPTION,
     VIEW_RESOURCE_DESCRIPTION,
     invalid_arguments,
     join_summary,
     monitor_summary,
+    show_summary,
 )
 from band.integrations.desktop_app.room import AgentIdentity, RoomTranscript
 from band.integrations.desktop_app.service import (
@@ -39,6 +41,7 @@ from band.integrations.desktop_app.tools import (
     JoinRoomInput,
     MonitorCaller,
     RoomTool,
+    ShowRoomInput,
     WaitForRoomEventInput,
 )
 from band.integrations.desktop_app.view import room_view_fingerprint, room_view_html
@@ -109,6 +112,19 @@ async def _open_room(
     return result
 
 
+async def _show(
+    service: RoomTranscriptService,
+    arguments: dict[str, Any],
+) -> WorkflowResult:
+    parsed = ShowRoomInput.model_validate(arguments)
+    transcript = await service.read(parsed.chat_id)
+    return WorkflowResult(
+        room_id=parsed.chat_id,
+        summary=show_summary(transcript),
+        transcript=transcript,
+    )
+
+
 async def _monitor(
     service: RoomTranscriptService,
     arguments: dict[str, Any],
@@ -129,6 +145,7 @@ async def _monitor(
         since=parsed.since,
         timeout_seconds=quantum,
     )
+    event.superseded = not service.instance_is_current(parsed.chat_id, parsed.instance)
     if service.claim_stale_report(parsed.chat_id, event.monitoring):
         logger.warning(
             "monitor loop stopped chat=%s idle=%.0fs; this room is unwatched "
@@ -188,6 +205,7 @@ class DesktopToolSpec:
     handler: ToolHandler
     on_success: tuple[WorkflowOperation, ...] = ()
     visibility: tuple[str, ...] | None = None
+    mounts_view: bool = False
 
 
 TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
@@ -197,6 +215,7 @@ TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
         input_model=JoinRoomInput,
         handler=_join,
         on_success=(WorkflowOperation.OPEN_ROOM,),
+        mounts_view=True,
     ),
     DesktopToolSpec(
         name=RoomTool.CREATE,
@@ -204,6 +223,14 @@ TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
         input_model=CreateAndOpenRoomInput,
         handler=_create,
         on_success=(WorkflowOperation.OPEN_ROOM,),
+        mounts_view=True,
+    ),
+    DesktopToolSpec(
+        name=RoomTool.SHOW,
+        description=SHOW_TOOL_DESCRIPTION,
+        input_model=ShowRoomInput,
+        handler=_show,
+        mounts_view=True,
     ),
     DesktopToolSpec(
         name=RoomTool.MONITOR,
@@ -274,13 +301,12 @@ def room_view_tools() -> list[Tool]:
     tools = []
     for spec in TOOL_SPECS:
         ui: dict[str, Any] = {}
-        opens_view = WorkflowOperation.OPEN_ROOM in spec.on_success
-        if opens_view:
+        if spec.mounts_view:
             ui["resourceUri"] = ROOM_VIEW_URI
         if spec.visibility:
             ui["visibility"] = list(spec.visibility)
         meta: dict[str, Any] = {"ui": ui}
-        if opens_view:
+        if spec.mounts_view:
             meta["ui/resourceUri"] = ROOM_VIEW_URI
         tools.append(
             Tool(

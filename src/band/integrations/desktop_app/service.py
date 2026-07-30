@@ -188,6 +188,8 @@ class RoomTranscriptService:
         self._participants: dict[str, list[RoomParticipant]] = {}
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
+        self._view_owner: dict[str, str] = {}
+        self._view_instances: dict[str, set[str]] = {}
         self._modes: dict[str, AttentionMode] = {}
         self._model_ticks: dict[str, ModelTick] = {}
         self._reported_stale: set[str] = set()
@@ -262,6 +264,24 @@ class RoomTranscriptService:
         if mode is not self.attention(chat_id):
             logger.info("attention chat=%s mode=%s", chat_id, mode)
         self._modes[chat_id] = mode
+
+    def instance_is_current(self, chat_id: str, instance: str | None) -> bool:
+        """Whether this view instance still owns the room's display.
+
+        Ownership goes to the most recently *first-seen* instance: a fresh
+        mount announces an id the room has never ticked with, takes over, and
+        every previously seen id — told it is superseded — collapses instead
+        of living on as a duplicate widget. An old instance ticking again is
+        already known, so it can never steal ownership back.
+        """
+        if not instance:
+            return True
+        seen = self._view_instances.setdefault(chat_id, set())
+        if instance not in seen:
+            seen.add(instance)
+            self._view_owner[chat_id] = instance
+            logger.info("view instance chat=%s owner=%s", chat_id, instance)
+        return self._view_owner[chat_id] == instance
 
     def note_model_tick(self, chat_id: str, *, quantum: float) -> None:
         """Record that the agent's own monitor loop is still running."""

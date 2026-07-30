@@ -245,6 +245,7 @@ class Room:
         caller: MonitorCaller = MonitorCaller.MODEL,
         timeout_seconds: int = 1,
         attention: AttentionMode | None = None,
+        instance: str | None = None,
     ) -> dict[str, Any]:
         return await self.invoke(
             RoomTool.MONITOR,
@@ -253,6 +254,7 @@ class Room:
             timeout_seconds=timeout_seconds,
             caller=caller,
             attention=attention,
+            instance=instance,
         )
 
 

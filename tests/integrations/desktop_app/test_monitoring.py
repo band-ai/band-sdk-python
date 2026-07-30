@@ -111,6 +111,35 @@ class TestMonitoringHealth:
         assert (await live.monitor(caller=MonitorCaller.APP))["monitoring_notice"] == ""
 
 
+class TestViewInstances:
+    """A remounted widget takes the room over; the old one retires itself."""
+
+    async def test_a_newer_mount_supersedes_every_older_one(self, room: Any) -> None:
+        live = room([message("m-1", "2026-01-01T00:00:01Z")])
+        await live.join()
+
+        first = await live.monitor(caller=MonitorCaller.APP, instance="widget-a")
+        newer = await live.monitor(caller=MonitorCaller.APP, instance="widget-b")
+        older = await live.monitor(caller=MonitorCaller.APP, instance="widget-a")
+
+        assert first["superseded"] is False
+        assert newer["superseded"] is False
+        assert older["superseded"] is True, (
+            "an already-known instance must never steal ownership back"
+        )
+
+    async def test_the_models_calls_never_retire_anything(self, room: Any) -> None:
+        live = room([message("m-1", "2026-01-01T00:00:01Z")])
+        await live.join()
+        await live.monitor(caller=MonitorCaller.APP, instance="widget-a")
+
+        model_tick = await live.monitor()
+        still_owner = await live.monitor(caller=MonitorCaller.APP, instance="widget-a")
+
+        assert model_tick["superseded"] is False
+        assert still_owner["superseded"] is False
+
+
 class TestWaking:
     async def test_the_broker_releases_everyone_waiting_on_a_room(self) -> None:
         broker = RoomEventBroker()

@@ -67,6 +67,7 @@
  * @property {RoomMessage[]} [pending_requests]
  * @property {string} [refreshed_at]
  * @property {boolean} [event_received]
+ * @property {boolean} [superseded]
  */
 
 /**
@@ -199,6 +200,9 @@
    */
   let cursor = null;
   let eventCount = 0;
+  /** This mount's name on its watch calls, so the server can retire it the
+   * moment a newer widget takes the room over. */
+  const instanceId = Math.random().toString(36).slice(2, 10);
 
   /** @returns {RoomMessage[]} */
   function orderedMessages() {
@@ -580,10 +584,23 @@
         name: "band_wait_for_room_event",
         // Named as the display loop: the server tells the agent its own loop
         // stopped, and these ticks must not stand in for the agent's.
-        arguments: { chat_id: chatId, since: cursor, caller: "app" }
+        arguments: {
+          chat_id: chatId,
+          since: cursor,
+          caller: "app",
+          instance: instanceId
+        }
       }, TUNING.maxWatchS * 1000 + TUNING.requestTimeoutMs);
       if (result?.isError) throw new Error("Room event wait failed");
       const payload = toolPayload(result);
+      // A newer widget owns this room now: retire quietly to a one-line bar
+      // instead of living on as a duplicate.
+      if (payload?.superseded) {
+        stopped = true;
+        setCollapsed(true);
+        setStatus("Room view moved below");
+        return;
+      }
       if (payload?.event_received) eventCount += 1;
       renderDiagnostics();
       if (!stopped) await ingest(payload);
