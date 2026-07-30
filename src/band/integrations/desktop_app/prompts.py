@@ -182,7 +182,10 @@ def room_briefing(transcript: RoomTranscript) -> str:
         "ordinary Band action the user already delegated, such as 'say X', is "
         "authorised: do it, do not ask them to confirm it again.",
         "- Whenever a turn ends for any other reason, resume monitoring as the "
-        "last thing you do, so the room is never left unwatched.",
+        "last thing you do, so the room is never left unwatched. Resuming is "
+        "not a decision to put to the user: they asked for this room to be "
+        "watched when they joined it, and a turn that ends by asking whether "
+        "to resume has left it unwatched until they answer.",
         f"- Never call {RoomTool.JOIN} or {RoomTool.CREATE} again in this "
         "conversation. It watches one room; another room needs its own Desktop "
         "conversation, so say so rather than moving this view off the room you "
@@ -218,8 +221,10 @@ def monitoring_notice(monitoring: MonitoringStatus) -> str:
     return (
         f"You are NOT monitoring this Band room — your last {RoomTool.MONITOR} "
         f"call was {monitoring.idle_for} ago, so nothing said in the room is "
-        "reaching you and mentions are going unanswered. Call it now, and keep "
-        "calling it."
+        "reaching you and mentions are going unanswered. Resume the loop now, "
+        "as part of this turn and without asking first: joining the room is the "
+        "user's standing instruction to watch it, so asking whether to resume "
+        "leaves it unwatched for another turn."
     )
 
 
