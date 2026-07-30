@@ -154,15 +154,17 @@ class ModelTick:
 
 @dataclass
 class ReadPulse:
-    """Proof of how current a room's last REST read still is.
+    """What the last REST read of a room saw.
 
-    ``version`` is the broker's event counter sampled before the read, and
-    ``newest_message_at`` the newest message any read of this room has ever
-    returned. Together they let a later caller prove no unseen message can
-    exist for it, and skip the read entirely.
+    ``newest_message_at`` is the newest message any read of this room has ever
+    returned — the watermark a caller may be behind — and ``snapshot`` the
+    transcript, kept for re-offering wakes. Deliberately not a proof that a
+    later tick may skip reading: the platform does not echo an agent's own
+    messages back to its own WebSocket, so a message the agent posts through
+    band-mcp produces no event, and any "the room is provably unchanged"
+    argument built on the event stream silently loses exactly those messages.
     """
 
-    version: int
     newest_message_at: datetime
     snapshot: RoomTranscript
 
@@ -447,28 +449,26 @@ class RoomTranscriptService:
     ) -> RoomEvent:
         """Wait on the SDK WebSocket, then hydrate the new agent context.
 
-        A quiet tick on a live WebSocket costs no REST. The broker versions
-        every room event, so an unchanged version proves the last read is still
-        complete, and a caller whose cursor has passed every message that read
-        ever saw provably has nothing new to fetch. When the WebSocket is down
-        every tick reads — REST polling as the explicit degraded mode, not the
-        permanent default.
+        Every tick ends in a REST read. An event ends the wait early; a quiet
+        wait reads anyway, because the event stream is not complete: the
+        platform does not echo the agent's own messages back to its own
+        socket, so posts made through band-mcp arrive only by reading. A
+        caller already behind the newest message ever read is answered before
+        waiting at all.
         """
         if self._events is None:
             raise RuntimeError("Room WebSocket events are not configured.")
 
         version = self._events.version(chat_id)
-        started = self._now()
         after = parse_timestamp(since)
 
-        current = self._read_is_current(chat_id, version, after)
-        logger.debug(
-            "wait chat=%s version=%d read_skipped=%s", chat_id, version, current
-        )
-        if not current:
-            transcript = await self._verified_read(
-                chat_id, since=since, version=version
-            )
+        # A caller is answered before waiting unless it is provably caught up
+        # with the newest message ever read: a first call, or one resuming an
+        # old cursor, is owed its backlog now, not after a quantum of silence.
+        pulse = self._pulses.get(chat_id)
+        behind = pulse is None or after is None or after < pulse.newest_message_at
+        if behind:
+            transcript = await self._verified_read(chat_id, since=since)
             if transcript.messages:
                 return RoomEvent(**dict(transcript), event_received=True)
 
@@ -477,59 +477,21 @@ class RoomTranscriptService:
             after_version=version,
             timeout_seconds=timeout_seconds,
         )
-        if event_received or not self._transport.live:
-            transcript = await self._verified_read(
-                chat_id,
-                since=since,
-                version=self._events.version(chat_id),
-                refresh_participants=event_received,
-            )
-            return RoomEvent(**dict(transcript), event_received=event_received)
-
-        # Everything here is as of the snapshot's read, which on a live socket
-        # may be many quiet ticks old. What has moved on since — the transport,
-        # the host, and how long the agent has gone without monitoring — is
-        # taken fresh, or a quiet room would report all three frozen.
-        monitoring = self.monitoring(chat_id)
-        quiet = self._pulses[chat_id].snapshot.model_copy(
-            update={
-                "messages": [],
-                "pending_requests": [],
-                "next_since": max(after or EPOCH, started),
-                "refreshed_at": self._now(),
-                "transport": self._transport,
-                "host": self.host,
-                "monitoring": monitoring,
-                "monitoring_notice": monitoring_notice(monitoring),
-            }
+        transcript = await self._verified_read(
+            chat_id,
+            since=since,
+            refresh_participants=event_received,
         )
-        return RoomEvent(**dict(quiet), event_received=False)
-
-    def _read_is_current(
-        self,
-        chat_id: str,
-        version: int,
-        after: datetime | None,
-    ) -> bool:
-        """Whether the last read provably still answers this caller."""
-        pulse = self._pulses.get(chat_id)
-        return (
-            pulse is not None
-            and self._transport.live
-            and version == pulse.version
-            and after is not None
-            and after >= pulse.newest_message_at
-        )
+        return RoomEvent(**dict(transcript), event_received=event_received)
 
     async def _verified_read(
         self,
         chat_id: str,
         *,
         since: str | None,
-        version: int,
         refresh_participants: bool = False,
     ) -> RoomTranscript:
-        """Read, and record the proof a later tick needs to skip reading."""
+        """Read, and record the watermark and snapshot of what was seen."""
         transcript = await self.read(
             chat_id,
             since=since,
@@ -540,5 +502,5 @@ class RoomTranscriptService:
             [message.at for message in transcript.messages]
             + [previous.newest_message_at if previous else EPOCH]
         )
-        self._pulses[chat_id] = ReadPulse(version, newest, transcript)
+        self._pulses[chat_id] = ReadPulse(newest, transcript)
         return transcript

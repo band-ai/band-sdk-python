@@ -217,25 +217,31 @@ it works for, the exact handles for the send tool's `mentions` argument, and
 the monitoring loop it owes. The join summary and `ui/update-model-context`
 relay that one string, so they cannot drift.
 
-### Quiet ticks cost no REST
+### Every tick reads, because the event stream is not complete
 
 ```mermaid
 flowchart TD
-    T["monitor tick"] --> Q{"broker version unchanged,<br/>cursor past newest message seen,<br/>WebSocket live?"}
-    Q -->|"no"| R["read REST, record ReadPulse"]
-    Q -->|"yes"| W["block on the WebSocket"]
-    R --> W
+    T["monitor tick"] --> Q{"caller behind the newest<br/>message ever read?"}
+    Q -->|"yes"| R["read REST, answer the backlog now"]
+    Q -->|"no"| W["block on the WebSocket"]
     W --> E{"event before the quantum expires?"}
     E -->|"event"| R2["read REST, return new messages"]
-    E -->|"timeout, WebSocket live"| Z["return a quiet tick,<br/>no REST at all"]
-    E -->|"timeout, WebSocket down"| R3["read REST: degraded polling mode"]
+    E -->|"timeout"| R3["read REST anyway"]
 ```
 
-`ReadPulse` records, per room, the broker version sampled before a read and the
-newest message any read returned. Reconnects publish a per-room event, bumping
-the version and forcing the next tick to read, so an outage gap cannot be
-skipped. A quiet tick is also cheap in tokens: `RoomEvent.tick()` drops the
-roster and briefing the caller already holds.
+Measured live: the platform does not echo an agent's **own** messages back to
+its own WebSocket. A message the agent posts through band-mcp (a separate
+process on the same identity) therefore produces no event here — and an
+earlier design that skipped the read whenever the broker's event counter was
+unchanged turned that gap into a frozen widget: the agent's own posts never
+rendered, and the quiet-tick cursor advanced past them so they never appeared
+at all. Any "the room is provably unchanged" argument built on the event
+stream silently loses exactly those messages, so a tick ends in a page-1 REST
+read regardless — the event's only job is ending the wait early. A quiet tick
+stays cheap in tokens: `RoomEvent.tick()` drops the roster and briefing the
+caller already holds. If the platform ever echoes own messages, the skip
+optimization becomes sound again; `ReadPulse`'s docstring records why it was
+removed.
 
 ### Transport health
 

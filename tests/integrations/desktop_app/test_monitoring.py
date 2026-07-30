@@ -13,6 +13,7 @@ from tests.integrations.desktop_app.conftest import (
     DEAD,
     LIVE,
     ROOM_ID,
+    TOM,
     Clock,
     ids,
     mentioned_message,
@@ -93,27 +94,6 @@ class TestMonitoringHealth:
             "the loop is running again, so there is nothing to report"
         )
 
-    async def test_a_quiet_tick_reports_it_even_though_it_reads_nothing(
-        self, room: Any
-    ) -> None:
-        """On a live socket a quiet tick answers from the last read's snapshot,
-        which knows nothing of a loop that stopped after it — and quiet is
-        exactly when a stopped loop goes unnoticed."""
-        clock = Clock()
-        live = room(
-            [message("m-1", "2026-01-01T00:00:01Z")], transport=LIVE, clock=clock
-        )
-        await live.join()
-        first = await live.monitor()
-        reads_after_first = live.rest_calls
-
-        clock.advance(live.tuning.band_room_event_timeout_s + STALE_GRACE_S + 1)
-        quiet = await live.monitor(since=first["next_since"], caller=MonitorCaller.APP)
-
-        assert live.rest_calls == reads_after_first, "this tick must skip the read"
-        assert quiet["monitoring"]["stale"] is True
-        assert RoomTool.MONITOR in quiet["monitoring_notice"]
-
     async def test_the_notice_clears_once_the_agent_monitors_again(
         self, room: Any
     ) -> None:
@@ -186,19 +166,29 @@ class TestQuietTicks:
         assert quiet["role_briefing"] == ""
         assert "Room quiet." in quiet["summary_text"]
 
-    async def test_a_quiet_tick_on_a_live_socket_reads_no_rest(self, room: Any) -> None:
-        """The broker's version already proves nothing changed; reading is waste."""
-        live = room([message("m-1", "2026-01-01T00:00:01Z")], [], transport=LIVE)
+    async def test_a_quiet_tick_still_reads_because_own_posts_carry_no_event(
+        self, room: Any
+    ) -> None:
+        """The platform does not echo the agent's own messages to its own
+        socket, so a post made through band-mcp arrives only by reading.
+        Observed live: with reads skipped on the event-stream's word, the
+        agent's own posts stayed invisible until a manual refresh, and the
+        cursor advanced past them so they never appeared at all."""
+        own = {**message("own-1", "2026-01-01T00:00:12Z"), "sender_id": TOM["id"]}
+        live = room(
+            [message("m-1", "2026-01-01T00:00:01Z")],
+            [message("m-1", "2026-01-01T00:00:01Z")],
+            [message("m-1", "2026-01-01T00:00:01Z"), own],
+            transport=LIVE,
+        )
         await live.join()
         first = await live.monitor()
-        reads_after_first = live.rest_calls
 
-        second = await live.monitor(since=first["next_since"])
+        quiet = await live.monitor(since=first["next_since"])
 
-        assert live.rest_calls == reads_after_first, (
-            "a proven-current read was repeated"
-        )
-        assert second["messages"] == []
+        assert quiet["event_received"] is False, "no event announced the post"
+        assert ids(quiet["messages"]) == ["own-1"]
+        assert quiet["pending_requests"] == [], "an own post is never pending"
 
     async def test_a_dead_socket_reads_every_tick(self, room: Any) -> None:
         """With no live socket, polling is the only delivery and must not skip."""
