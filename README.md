@@ -283,6 +283,77 @@ config = build_logging_config(style=LoggingStyle.JSON, static_fields={"service":
 logging.config.dictConfig(config)
 ```
 
+### OpenTelemetry
+
+**The host owns the telemetry pipeline.** Band creates no `TracerProvider`, no
+`LoggerProvider`, no processor, and no exporter, and depends on no OpenTelemetry
+package. What it does is stay out of the way and meet an instrumented host
+halfway:
+
+- **JSON logs are correlation-ready.** Every JSON record carries the four
+  attributes `LoggingInstrumentor(inject_trace_context=True)` injects. Without
+  instrumentation they are `null`, so the schema does not change shape when you
+  turn tracing on later.
+- **Pydantic AI runs can be traced through Band.** `PydanticAIAdapter` passes
+  `instrument` straight to the pydantic-ai agent.
+
+```python
+from band.logging_config import OTEL_CORRELATION_FIELDS
+
+assert OTEL_CORRELATION_FIELDS == (
+    "otelTraceID",
+    "otelSpanID",
+    "otelTraceSampled",
+    "otelServiceName",
+)
+```
+
+```python
+from band.adapters import PydanticAIAdapter
+
+# None (default) inherits Agent.instrument_all(); False opts out of it;
+# True uses the global TracerProvider; InstrumentationSettings(...) customizes.
+adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini", instrument=True)
+
+assert adapter.instrument is True
+```
+
+Set it up in this order:
+
+```python notest
+with telemetry("my-service") as otel:      # 1. your providers + trace-context injection
+    LogSettings().for_application().configure()   # 2. Band's logging
+    otel.attach_log_handler()                     # 3. your OTEL log handler
+```
+
+Step 3 comes last because Band applies its configuration with
+`logging.config.dictConfig`, which is non-incremental and *replaces* the root
+logger's handlers — a handler attached before step 2 is silently dropped. There
+is deliberately no "keep my handlers" option: by the time Band could restore
+one, `dictConfig` has already closed it. Step 1 can go either side of step 2,
+since trace-context injection is a log-record factory rather than a handler.
+
+A runnable host pipeline (shared `Resource`, both providers, console exporters,
+clean shutdown) lives in [examples/opentelemetry/](examples/opentelemetry/).
+
+**Where model-call spans come from, per adapter.** Support is not equivalent
+across these rows — Band only bridges the first one:
+
+| Adapter | How its model calls get traced |
+|---|---|
+| Pydantic AI | Natively, through Band: `PydanticAIAdapter(instrument=...)` — see [Pydantic AI instrumentation](https://ai.pydantic.dev/logfire/) |
+| Parlant | Parlant's own [built-in OpenTelemetry](https://www.parlant.io/docs/production/observability), configured with its `OTEL_EXPORTER_OTLP_*` variables |
+| Google ADK | ADK traces against the global `TracerProvider`, so setting one is enough — see [ADK observability](https://google.github.io/adk-docs/observability/) |
+| LangGraph, Agno, CrewAI Flow | You construct the graph / agent / flow and hand it to the adapter, so instrument it before you do — for LangChain, [tracing with OpenTelemetry](https://docs.smith.langchain.com/observability/how_to_guides/trace_with_opentelemetry) |
+| Anthropic, Gemini, CrewAI | Band builds the client from a model string, so instrument the provider SDK or framework process-wide with a third-party instrumentor ([OpenTelemetry registry](https://opentelemetry.io/ecosystem/registry/?language=python), [CrewAI observability](https://docs.crewai.com/en/observability/overview)) |
+| Claude SDK, Copilot SDK, Codex, OpenCode, ACP clients, A2A, Letta | The model call runs in another process or on a remote host, so this process has no model spans to emit. Band's own logs still correlate; the backend has to export its own traces. |
+
+**Containers and sandboxes.** The Docker and `sbx` examples deliberately stop at
+`BAND_LOG_*` plus host-side log tails. Running a collector inside the sandbox —
+or handing it OTLP credentials — needs an egress path, a decision about MITM
+trust, and somewhere to keep the secret; none of that is designed yet, so it is
+not offered as if it were.
+
 ### Slack (`examples/slack/`)
 
 | File | Description |
