@@ -71,7 +71,29 @@ CHATTY_LOGGERS: tuple[str, ...] = (
 # Default standard-style format. Override via fmt= only when necessary
 # (for example message-only provisioning scripts).
 STANDARD_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-_JSON_DEFAULT_FIELDS = ("asctime", "levelname", "name", "message")
+
+# The JSON formatter lives in pythonjsonlogger.json, which 3.1.0 split out of
+# pythonjsonlogger.jsonlogger. Named once so the install hint and the dependency
+# floor in pyproject.toml cannot drift apart.
+JSON_LOGGER_REQUIREMENT = "python-json-logger>=3.1.0"
+
+# Record attributes OpenTelemetry's LoggingInstrumentor writes when started with
+# inject_trace_context=True. Always part of the JSON schema: absent they
+# serialize as null, present they carry the live trace, so a log pipeline reads
+# one shape whether or not the host instrumented the process.
+OTEL_CORRELATION_FIELDS: tuple[str, ...] = (
+    "otelTraceID",
+    "otelSpanID",
+    "otelTraceSampled",
+    "otelServiceName",
+)
+_JSON_DEFAULT_FIELDS = (
+    "asctime",
+    "levelname",
+    "name",
+    "message",
+    *OTEL_CORRELATION_FIELDS,
+)
 _JSON_RENAME_FIELDS = {
     "asctime": "timestamp",
     "levelname": "level",
@@ -289,7 +311,9 @@ def build_logging_config(
             ``"$"``). Matches :class:`logging.Formatter`.
         extra_loggers: Optional logger-name to level mapping, for example
             ``{"httpx": "WARNING"}``.
-        json_fields: LogRecord field names to include in JSON output.
+        json_fields: LogRecord field names to include in JSON output. The
+            default set adds :data:`OTEL_CORRELATION_FIELDS`, which stay
+            ``null`` until the host instruments the process.
         static_fields: Fixed fields added to every JSON record.
         log_file: Optional path for a second file handler. ``None`` disables
             file logging.
@@ -684,7 +708,7 @@ def _build_json_formatter(
         "pythonjsonlogger.json",
         style=LoggingStyle.JSON,
         extra="logging",
-        package_name="python-json-logger>=3.0.0",
+        package_name=JSON_LOGGER_REQUIREMENT,
     )
     fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
     json_formatter: LoggingConfig = {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from band import (
     build_logging_config,
     configure_logging,
 )
+from band.logging_config import JSON_LOGGER_REQUIREMENT, OTEL_CORRELATION_FIELDS
 from tests.logsupport import restored_logging
 
 
@@ -76,7 +78,7 @@ def test_json_style_raises_config_error_when_package_absent(monkeypatch) -> None
 
     monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
 
-    with pytest.raises(BandConfigError, match=r"python-json-logger>=3\.0\.0"):
+    with pytest.raises(BandConfigError, match=re.escape(JSON_LOGGER_REQUIREMENT)):
         build_logging_config(style=LoggingStyle.JSON)
 
 
@@ -106,8 +108,6 @@ def test_configure_logging_shows_band_logs_and_suppresses_noisy_info(
 def test_configure_logging_json_outputs_machine_readable_records(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pytest.importorskip("pythonjsonlogger")
-
     with restored_logging():
         configure_logging(
             style=LoggingStyle.JSON,
@@ -121,6 +121,51 @@ def test_configure_logging_json_outputs_machine_readable_records(
     assert record["logger"] == "band.runtime"
     assert record["message"] == "json visible"
     assert record["service"] == "agent"
+
+
+def _json_line(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    return json.loads(capsys.readouterr().out)
+
+
+def test_json_records_carry_null_trace_context_without_instrumentation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An uninstrumented process still emits the correlation keys, as null.
+
+    The schema must not change shape when a host later turns tracing on.
+    """
+    with restored_logging():
+        configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+        logging.getLogger("band.runtime").info("uncorrelated")
+        record = _json_line(capsys)
+
+    assert {field: record[field] for field in OTEL_CORRELATION_FIELDS} == (
+        dict.fromkeys(OTEL_CORRELATION_FIELDS)
+    )
+
+
+def test_json_records_keep_injected_trace_context(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Values OpenTelemetry puts on the record reach the JSON line unchanged.
+
+    The instrumentor sets these as record attributes, which is what ``extra``
+    simulates here — see ``tests/example_agents/test_otel_setup.py`` for the
+    same assertion driven by a real span.
+    """
+    injected: dict[str, object] = {
+        "otelTraceID": "0af7651916cd43dd8448eb211c80319c",
+        "otelSpanID": "b7ad6b7169203331",
+        "otelTraceSampled": True,
+        "otelServiceName": "band-agent",
+    }
+
+    with restored_logging():
+        configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+        logging.getLogger("band.runtime").info("correlated", extra=injected)
+        record = _json_line(capsys)
+
+    assert {field: record[field] for field in OTEL_CORRELATION_FIELDS} == injected
 
 
 def test_configure_logging_rich_honors_stdout(

@@ -15,6 +15,21 @@ from typing import Any
 import pytest
 
 
+class RecordingHandler(logging.Handler):
+    """Stand-in for a host-owned handler (an OTEL ``LoggingHandler``, a shipper).
+
+    Records what actually reached it, so composition tests assert on delivery
+    rather than on handler bookkeeping.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
 @contextmanager
 def restored_logging(*extra_loggers: str) -> Iterator[None]:
     """Snapshot and restore root, ``band``, and any extra named loggers."""

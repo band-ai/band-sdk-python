@@ -34,7 +34,9 @@ dependencies = [
 
 [project.optional-dependencies]
 logging = [
-    "python-json-logger>=3.0.0",
+    # 3.1.0 moved pythonjsonlogger.jsonlogger to pythonjsonlogger.json, which is
+    # the module the JSON formatter is configured against.
+    "python-json-logger>=3.1.0",
     "rich>=14.0.0",
 ]
 desktop = [
@@ -213,6 +215,13 @@ dev = [
     "python-dotenv>=1.2.2",
     # Include bridge_agentcore deps for testing
     "boto3>=1.35.0",
+    # The logging extra's JSON formatter, so its tests run instead of skipping.
+    "python-json-logger>=3.1.0",
+    # Host-side OpenTelemetry, for the correlation tests and examples/opentelemetry.
+    # Band core never depends on these; only the tests and the example do.
+    "opentelemetry-sdk>=1.44.0",
+    # LoggingInstrumentor's inject_trace_context option, added in 0.64b0.
+    "opentelemetry-instrumentation-logging>=0.65b0",
     # Pretty E2E test output
     "rich>=13.0.0",
     # Development tools

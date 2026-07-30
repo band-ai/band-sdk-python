@@ -15,6 +15,7 @@ from band import (
     configure_logging_from_env,
 )
 from tests.logsupport import (
+    RecordingHandler,
     band_log_env,
     restored_logging,
 )
@@ -106,6 +107,29 @@ def test_configure_logging_from_env(
         err = capsys.readouterr().err
 
     assert "from env helper" in err
+
+
+def test_host_telemetry_handler_must_be_attached_after_band_configures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Band applies a non-incremental ``dictConfig``, which replaces root's handlers.
+
+    So a host-owned telemetry handler (OpenTelemetry's ``LoggingHandler``, a log
+    shipper) only sees ``band.*`` records when it is attached *after*
+    ``LogSettings.configure()`` — the order ``examples/opentelemetry`` documents.
+    Attaching first is silently useless, which is why both orders are pinned here.
+    """
+    attached_before = RecordingHandler()
+    attached_after = RecordingHandler()
+
+    with restored_logging(), band_log_env(monkeypatch, LEVEL="INFO", FILE=None):
+        logging.getLogger().addHandler(attached_before)
+        LogSettings().configure()
+        logging.getLogger().addHandler(attached_after)
+        logging.getLogger("band.runtime").info("telemetry record")
+
+    assert attached_after.messages == ["telemetry record"]
+    assert attached_before.messages == []
 
 
 def test_application_configuration_honors_explicit_root_level(
