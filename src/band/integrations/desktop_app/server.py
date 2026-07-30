@@ -13,7 +13,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
 from mcp.types import Resource, TextContent, Tool
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from band.client.rest import AsyncRestClient
 from band.integrations.desktop_app.event_relay import DesktopRoomEventRelay
@@ -25,6 +25,7 @@ from band.integrations.desktop_app.prompts import (
     REFRESH_TOOL_DESCRIPTION,
     SERVER_INSTRUCTIONS,
     VIEW_RESOURCE_DESCRIPTION,
+    invalid_arguments,
     join_summary,
     monitor_summary,
     refresh_summary,
@@ -328,7 +329,12 @@ def create_server(service: RoomTranscriptService) -> Server[Any, Any]:
     async def list_tools() -> list[Tool]:
         return list(tools.values())
 
-    @server.call_tool(validate_input=True)
+    # The input models are the only gate. The framework's extra JSON Schema
+    # pass reads the host's spelling literally, and Claude Desktop sends
+    # numbers as JSON strings — which cost every monitor call that named a
+    # timeout, and with it the agent's loop. Pydantic reads "30" as 30, so one
+    # lenient layer accepts what a real host sends and still refuses nonsense.
+    @server.call_tool(validate_input=False)
     async def call_tool(
         tool_name: str,
         arguments: dict[str, Any],
@@ -337,7 +343,11 @@ def create_server(service: RoomTranscriptService) -> Server[Any, Any]:
         spec = specs.get(tool_name)
         if spec is None:
             raise ValueError(f"Unknown tool: {tool_name}")
-        result = await _execute_workflow(service, spec, arguments)
+        try:
+            result = await _execute_workflow(service, spec, arguments)
+        except ValidationError as error:
+            logger.warning("rejected %s call: %s", tool_name, error)
+            raise ValueError(invalid_arguments(tool_name, error)) from error
         assert result.transcript is not None
         return (
             [TextContent(type="text", text=result.summary)],

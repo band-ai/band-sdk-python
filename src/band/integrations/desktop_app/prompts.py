@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from pydantic import ValidationError
+
 from band.integrations.desktop_app.room import (
     MonitoringStatus,
     RoomEvent,
@@ -192,6 +194,15 @@ def room_briefing(transcript: RoomTranscript) -> str:
         "as 'say X', without asking them to confirm again.",
     ]
     return "\n".join(lines)
+
+
+def invalid_arguments(tool: str, error: ValidationError) -> str:
+    """Why a call could not be understood, in the terms the caller used."""
+    faults = "; ".join(
+        f"{'.'.join(str(part) for part in fault['loc'])}: {fault['msg']}"
+        for fault in error.errors()
+    )
+    return f"Invalid arguments for {tool}: {faults}"
 
 
 def monitoring_notice(monitoring: MonitoringStatus) -> str:

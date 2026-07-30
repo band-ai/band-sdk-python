@@ -76,6 +76,37 @@ class TestToolSurface:
         assert set(caller["enum"]) == {MonitorCaller.MODEL, MonitorCaller.APP}
         assert caller["default"] == MonitorCaller.MODEL
 
+    async def test_arguments_are_read_the_way_a_host_spells_them(
+        self, room: Any
+    ) -> None:
+        """Claude Desktop sends numbers as JSON strings. A second, stricter
+        validation pass rejected those before the input models saw them, so
+        every monitor call naming a timeout failed and the loop stopped."""
+        live = room([message("m-1", "2026-01-01T00:00:01Z")])
+
+        result = await live.call(
+            RoomTool.MONITOR,
+            chat_id=ROOM_ID,
+            since=None,
+            timeout_seconds="1",
+            caller="app",
+        )
+
+        assert not result.isError, result.content
+
+    async def test_arguments_that_mean_nothing_are_still_refused(
+        self, room: Any
+    ) -> None:
+        """Leniency about spelling is not leniency about sense."""
+        live = room([message("m-1", "2026-01-01T00:00:01Z")])
+
+        result = await live.call(RoomTool.MONITOR, since=None)
+
+        assert result.isError
+        refusal = result.content[0]
+        assert isinstance(refusal, types.TextContent)
+        assert "chat_id" in refusal.text
+
     async def test_a_join_returns_the_transcript_and_the_view(self, room: Any) -> None:
         live = room([message("m-1", "2026-01-01T00:00:01Z")])
 
