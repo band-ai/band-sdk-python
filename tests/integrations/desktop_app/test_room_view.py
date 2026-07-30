@@ -99,6 +99,22 @@ class TestWatchTiming:
         assert behaviour["watchTiming"]["caller"] == "app"
 
 
+class TestAttentionSwitch:
+    def test_a_mode_switch_drops_the_old_modes_briefing(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """Quiet ticks shed the briefing, so after a switch the cache holds the
+        old mode's contract: left in place it re-orders the model into the loop
+        the user just stopped — and user_first disarms the staleness notice
+        that could have corrected it."""
+        result = behaviour["attentionSwitch"]
+
+        assert "Monitoring contract" not in result["context"], (
+            "the old mode's briefing reached the model's context after the switch"
+        )
+        assert result["diagnostics"].startswith("On demand")
+
+
 class TestMonitoringNotice:
     def test_it_reaches_the_model_and_clears_with_the_fault(
         self, behaviour: dict[str, Any]

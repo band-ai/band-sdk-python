@@ -525,6 +525,11 @@
     participants = payload.participants || participants;
     transport = payload.transport || transport;
     mcpHost = payload.host || mcpHost;
+    // The cached briefing speaks one attention mode's contract, and quiet
+    // ticks shed the briefing while still carrying the mode — so a payload
+    // that switches the mode invalidates the cache rather than letting the
+    // old mode's orders keep re-syncing into the model's context.
+    if (payload.attention && payload.attention !== attention) roleBriefing = "";
     roleBriefing = payload.role_briefing || roleBriefing;
     // Assigned, never or-ed: an empty notice is the server saying the agent is
     // monitoring again, and keeping the old one would nag forever.

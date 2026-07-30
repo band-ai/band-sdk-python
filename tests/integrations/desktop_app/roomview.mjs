@@ -309,6 +309,30 @@ const SCENARIOS = {
       recovered: recovered.includes(notice),
       keptBriefing: recovered.includes("briefing")
     };
+  },
+
+  /** A tick that switches the attention mode must not leave the old mode's
+   * cached briefing speaking its contract into the model's context. */
+  async attentionSwitch(source) {
+    const view = await open(source, "room-a", {
+      ...transcript("room-a", [], "2026-01-01T00:00:01Z"),
+      role_briefing: "Monitoring contract — resume before anything else",
+      attention: "room_first"
+    });
+
+    view.answer(view.toolCall("band_wait_for_room_event"), {
+      structuredContent: {
+        ...transcript("room-a", [], "2026-01-01T00:00:02Z"),
+        role_briefing: "",
+        attention: "user_first"
+      }
+    });
+    await view.settle();
+
+    return {
+      context: view.contextUpdates().at(-1).params.content[0].text,
+      diagnostics: view.diagnostics()
+    };
   }
 };
 
