@@ -156,8 +156,9 @@ call (at most `BAND_ROOM_EVENT_TIMEOUT_S` seconds).
 > asked twice about staging — handled both.
 
 "Stop monitoring" switches to on-demand, it does not abandon the room: Claude
-still sweeps it at the start of every turn, so mentions wait at most until you
-next say anything.
+is instructed to sweep it at the start of every turn, so a waiting mention is
+normally picked up the next time you say anything. The widget's "On demand ·
+N waiting" counter shows anything still queued.
 
 - A delegated wait uses the watching loop either way: ask Claude to get an
   answer from a participant and it keeps monitoring until they reply, then
