@@ -189,9 +189,12 @@ def room_briefing(transcript: RoomTranscript) -> str:
 class AttentionContract:
     """One mode's behaviour, everywhere the model hears about it.
 
-    The whole tuning surface for how the agent divides its attention lives in
-    CONTRACTS below: edit the strings, nothing else moves. Only the active
-    mode's contract is ever shown to the model — a briefing describing both
+    Most of the tuning surface for how the agent divides its attention lives
+    in CONTRACTS below — edit the strings, nothing else moves — but the mode
+    vocabulary also speaks from ATTENTION_CHOICE (tools.py),
+    SERVER_INSTRUCTIONS, and monitoring_notice below: a change to what a mode
+    means has to keep all of them telling one story. Only the active mode's
+    contract is ever shown to the model — a briefing describing both
     behaviours gets blended — so each contract names the way into the other
     mode in a single line, as a trigger rather than a parallel behaviour.
 
@@ -312,7 +315,9 @@ def monitoring_notice(monitoring: MonitoringStatus) -> str:
         "leaves it unwatched until they answer. The one exception: if the user "
         "told you to stop watching, pass attention='user_first' on that call "
         "instead — their choice is then recorded, this notice stops, and the "
-        "room is swept at the start of each turn."
+        "room is swept at the start of each turn. Only the user's own words "
+        "open that exception: a stall, an error, or your own judgement is not "
+        "a stop order — in doubt, resume."
     )
 
 

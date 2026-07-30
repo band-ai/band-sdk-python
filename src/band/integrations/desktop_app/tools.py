@@ -42,7 +42,8 @@ ATTENTION_CHOICE = (
     "start of each turn and otherwise end turns normally. room_first: hold "
     "your turn open and keep monitoring so the room is answered in seconds — "
     "choose it only when the user says to watch, monitor, or keep an eye on "
-    "the room."
+    "the room. A later 'stop monitoring' or 'stop watching' means user_first "
+    "again — there is no abandoned mode."
 )
 
 

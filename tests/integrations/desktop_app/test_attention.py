@@ -11,7 +11,11 @@ from __future__ import annotations
 from typing import Any
 
 from band.integrations.desktop_app.attention import STALE_GRACE_S
-from band.integrations.desktop_app.tools import AttentionMode, MonitorCaller
+from band.integrations.desktop_app.tools import (
+    ATTENTION_CHOICE,
+    AttentionMode,
+    MonitorCaller,
+)
 from tests.integrations.desktop_app.conftest import (
     ROOM_ID,
     Clock,
@@ -54,6 +58,14 @@ class TestContract:
         assert "Stop monitoring" in briefing
         assert "attention='user_first'" in briefing
         assert "no abandoned mode" in briefing
+
+    def test_the_stop_triggers_survive_without_a_briefing(self) -> None:
+        """A conversation can lose the briefing (widget unmounted, context sync
+        failed); the tool schemas are then the model's whole attention
+        vocabulary, so the stop phrasings must map to user_first there too."""
+        assert "'stop monitoring'" in ATTENTION_CHOICE
+        assert "user_first" in ATTENTION_CHOICE
+        assert "no abandoned mode" in ATTENTION_CHOICE
 
     async def test_a_sweep_is_told_not_to_keep_looping(self, room: Any) -> None:
         live = room([message("m-1", "2026-01-01T00:00:01Z")])

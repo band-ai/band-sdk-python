@@ -44,6 +44,11 @@ class TestMonitoringHealth:
             "a user-requested stop must be recorded as the mode switch, "
             "not fought by the resume order"
         )
+        assert "not a stop order" in seen_by_the_view["monitoring_notice"], (
+            "the switch is the user's to order: without this guard a stalled "
+            "agent can take the exception on its own and silently unwatch the "
+            "room"
+        )
 
     async def test_the_views_own_ticks_do_not_stand_in_for_the_agents(
         self, room: Any
