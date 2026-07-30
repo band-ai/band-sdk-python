@@ -59,6 +59,7 @@
  * @property {RoomMessage[]} messages
  * @property {string} [role_briefing]
  * @property {string} [monitoring_notice]
+ * @property {{idle_seconds?: number, stale?: boolean}} [monitoring]
  * @property {string} [next_since]
  * @property {RelayStatus} [transport]
  * @property {object} [host]
@@ -192,6 +193,8 @@
   let roleBriefing = "";
   /** The server's word on whether the agent's own monitor loop stopped. */
   let monitoringNotice = "";
+  /** @type {{idle_seconds?: number, stale?: boolean}} */
+  let monitoring = {};
   /** @type {RelayStatus} */
   let transport = {};
   /** What the server saw Desktop declare at connect. @type {object} */
@@ -299,12 +302,29 @@
 
   function renderDiagnostics() {
     const diagnostics = element("events");
+    // An instance the host mounted but never fed (it renders one widget while
+    // the call runs and hands the result to another) has no transport to
+    // report: staying calm here is what marks it inert rather than broken.
+    if (!chatId) {
+      diagnostics.textContent = "waiting for a room";
+      diagnostics.classList.toggle("warn", false);
+      element("wake").hidden = true;
+      return;
+    }
     const live = transport.role === "follower" || transport.websocket_connected;
+    const stale = Boolean(monitoring.stale);
+    // The room has two liveness axes — event delivery (transport) and agent
+    // attention (the model's monitor loop) — and the user is the only actor
+    // who can repair the second, so the display reports the weaker of the two.
+    element("wake").hidden = !(stale && monitoringNotice);
     const wakes = `${wakeCount} wakes${lastWake ? ` · ${lastWake}` : ""}`;
-    diagnostics.textContent = live
+    const base = live
       ? `WebSocket · ${transport.role || "starting"} · ${eventCount} events · ${wakes}`
       : `WebSocket down · polling · ${wakes}`;
-    diagnostics.classList.toggle("warn", !live);
+    diagnostics.textContent = stale
+      ? `${base} · agent stopped ${Math.floor(monitoring.idle_seconds || 0)}s ago`
+      : base;
+    diagnostics.classList.toggle("warn", !live || stale);
     diagnostics.title = JSON.stringify({
       transport,
       mcpHost,
@@ -399,6 +419,7 @@
     participants = [];
     roleBriefing = "";
     monitoringNotice = "";
+    monitoring = {};
     cursor = null;
     retryWakes = [];
     unseen = 0;
@@ -566,6 +587,7 @@
     // Assigned, never or-ed: an empty notice is the server saying the agent is
     // monitoring again, and keeping the old one would nag forever.
     monitoringNotice = payload.monitoring_notice || "";
+    monitoring = payload.monitoring || {};
     // The cursor only moves forward. A refresh started before an event can
     // answer after the watch that saw it, and rewinding to its older cursor
     // would have the server re-read and redeliver what is already displayed.
@@ -601,7 +623,8 @@
     renderAll(absorbState(payload), payload.refreshed_at);
     try {
       await syncModelContext(payload);
-      setStatus("Live · synced");
+      if (monitoring.stale) setStatus("Agent stopped watching", true);
+      else setStatus("Live · synced");
     } catch (error) {
       setStatus("Context sync failed", true);
       log("error", { stage: "update-model-context", detail: String(error) });
@@ -697,6 +720,20 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) watchRoom();
   });
+  /**
+   * The one-click repair for a stopped monitor loop. A context update cannot
+   * start a turn — the host defers it until the next user message — but a
+   * `ui/message` sent with this click's user activation is such a message: it
+   * starts the turn, and the deferred context (the notice) rides in with it.
+   * The text relayed is the server-authored notice; the view writes none.
+   * @returns {Promise<void>}
+   */
+  async function wakeAgent() {
+    if (!monitoringNotice) return;
+    await wake([], monitoringNotice);
+  }
+
+  element("wake").addEventListener("click", wakeAgent);
   element("refresh").addEventListener("click", refresh);
   element("toggle").addEventListener("click", () => setCollapsed(!collapsed));
   element("topbar").addEventListener("click", event => {

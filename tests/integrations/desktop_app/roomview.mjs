@@ -118,6 +118,7 @@ function mountView(source) {
     settle,
     pending: method => waiting(method),
     room: () => byId("room").textContent,
+    hidden: id => byId(id).hidden,
     toolCall: name => waiting("tools/call", item => item.params.name === name),
     contextUpdates: () =>
       sent.filter(item => item.method === "ui/update-model-context"),
@@ -323,6 +324,54 @@ const SCENARIOS = {
     return {
       shapesTried: refusals.length,
       retryWakes: view.toolCall("band_wait_for_room_event").params.arguments.retry_wakes
+    };
+  },
+
+  /** A stopped agent loop is the user's to repair: the view shows it, and one
+   * click relays the server-authored notice as the ui/message that starts the
+   * turn — the click being the user activation the host requires. */
+  async staleWakeButton(source) {
+    const notice = "You are NOT monitoring this Band room — resume the loop now.";
+    const view = await open(
+      source,
+      "room-a",
+      transcript("room-a", [], "2026-01-01T00:00:01Z")
+    );
+    const hiddenWhileHealthy = view.hidden("wake");
+
+    view.answer(view.toolCall("band_wait_for_room_event"), {
+      structuredContent: {
+        ...transcript("room-a", [], "2026-01-01T00:00:02Z"),
+        monitoring: { idle_seconds: 65, stale: true },
+        monitoring_notice: notice
+      }
+    });
+    await view.settle();
+    const shownWhileStale = !view.hidden("wake");
+
+    view.click("wake");
+    await flush();
+    const ask = view.pending("ui/message");
+    const wakeText = ask ? ask.params.content.text : "";
+    if (ask) view.answer(ask, {});
+    await view.settle();
+
+    view.tick();
+    await view.settle();
+    view.answer(view.toolCall("band_wait_for_room_event"), {
+      structuredContent: {
+        ...transcript("room-a", [], "2026-01-01T00:00:03Z"),
+        monitoring: { idle_seconds: 3, stale: false },
+        monitoring_notice: ""
+      }
+    });
+    await view.settle();
+
+    return {
+      hiddenWhileHealthy,
+      shownWhileStale,
+      wakeText,
+      hiddenAfterRecovery: view.hidden("wake")
     };
   },
 

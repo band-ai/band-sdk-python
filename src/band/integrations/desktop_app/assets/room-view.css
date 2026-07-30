@@ -53,7 +53,7 @@ h1 { margin: 0; font-size: 13px; }
   padding: 2px 4px; font-size: 12px; cursor: pointer;
 }
 #toggle:hover { color: var(--text); }
-#toggle:focus-visible, button#refresh:focus-visible {
+#toggle:focus-visible, button#refresh:focus-visible, button#wake:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 #messages {
@@ -76,8 +76,10 @@ article { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
   background: var(--soft); font-size: 13px; line-height: 1.4;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-button#refresh {
+button#refresh, button#wake {
   border: 1px solid var(--border); border-radius: 7px;
   background: var(--soft); color: var(--text); padding: 3px 8px;
   font: inherit; font-size: 10px; cursor: pointer;
 }
+/* Shown only while the agent's monitor loop is stopped: the one-click repair. */
+button#wake { border-color: #e03131; color: #e03131; font-weight: 700; }

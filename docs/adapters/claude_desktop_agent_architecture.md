@@ -193,6 +193,13 @@ Consequences:
   `STALE_GRACE_S` — one wait, plus time to act on what it returned — carries
   a `monitoring_notice` naming the gap. The view relays it into model context
   beside the briefing, and it empties itself once the loop is running again.
+- Staleness cannot initiate recovery. `ui/update-model-context` explicitly does
+  not trigger a follow-up: the host defers the latest update until the next
+  user message — *including* `ui/message` — so until the user acts, the notice
+  and the server log are diagnostics, not repair. What the user's action can
+  be, the view provides: typing anything, or clicking **Wake agent** — shown
+  only while the loop is stopped — whose click carries the user activation
+  `ui/message` needs, starting the turn that reads the notice and resumes.
 - One conversation cannot both block-listen and accept typed input instantly.
   Short quanta shrink the window; only a second context — an always-on agent
   process with Desktop as its console — removes it.

@@ -99,6 +99,24 @@ class TestWake:
         assert result["retryWakes"] == []
 
 
+class TestWakeButton:
+    def test_a_stopped_loop_becomes_the_users_one_click_repair(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """A context update cannot start a turn — the host defers it until the
+        next user message — so the user is the only actor who can restart a
+        stopped loop. The button turns their click into the `ui/message` that
+        does, relaying the server-authored notice: the view writes no text."""
+        result = behaviour["staleWakeButton"]
+
+        assert result["hiddenWhileHealthy"] is True
+        assert result["shownWhileStale"] is True
+        assert "NOT monitoring" in result["wakeText"]
+        assert result["hiddenAfterRecovery"] is True, (
+            "a resumed loop must take its repair button with it"
+        )
+
+
 class TestWatchTiming:
     def test_how_long_to_block_is_left_to_the_server(
         self, behaviour: dict[str, Any]
