@@ -19,6 +19,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstrumentationSettings,
     RunContext,
     UnexpectedModelBehavior,
     capture_run_messages,
@@ -201,6 +202,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         history_converter: PydanticAIHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
         features: AdapterFeatures | None = None,
+        instrument: bool | InstrumentationSettings | None = None,
     ):
         """
         Initialize the Pydantic AI adapter.
@@ -223,6 +225,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 context-free callable (no leading ``RunContext``) goes to
                 agent.tool_plain() instead — pydantic-ai rejects it on the other path.
             features: Shared adapter feature settings (capabilities, emit, tool filters).
+            instrument: OpenTelemetry instrumentation for the pydantic-ai agent.
+                ``None`` (default) inherits whatever ``Agent.instrument_all()`` the
+                host set, ``False`` opts this agent out of it, ``True`` enables
+                pydantic-ai's defaults, and an ``InstrumentationSettings`` customizes
+                them (for example a specific ``tracer_provider``). Band never creates
+                a provider or exporter — the host owns the telemetry pipeline; see
+                ``examples/opentelemetry/``.
         """
         # --- Deprecation shim: boolean → features migration ---
         _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
@@ -258,6 +267,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self.model = model
         self.system_prompt = system_prompt
         self.custom_section = custom_section
+        self.instrument = instrument
         self._system_prompt: str | None = None
 
         self._agent: Agent[AgentToolsProtocol, str] | None = None
@@ -333,6 +343,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # ones the storage filter can't reach (see the function docstring).
             capabilities=[ProcessHistory(_drop_non_replayable_messages)],
         )
+
+        # Instrumentation is a property, not a constructor argument, so it is
+        # assigned rather than passed. Always assigned: the tri-state is meaningful
+        # end to end — None is pydantic-ai's own "inherit Agent.instrument_all()",
+        # which is exactly what a caller who passed nothing wants.
+        agent.instrument = self.instrument
 
         # Register platform tools dynamically from centralized definitions
         # All tools catch exceptions and return error strings so LLM can see failures
