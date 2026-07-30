@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
-import logging
+from band import LogLevel, LogSettings
+from band.logging_config import LoggingStyle
 
-from band import configure_logging
+
+class ParlantLogSettings(LogSettings):
+    """Rich console output for Parlant examples."""
+
+    log_console_style: LoggingStyle = LoggingStyle.RICH
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging to show only band logs, hiding noisy dependencies.
 
     Args:
-        level: Log level for band namespace (default INFO)
+        level: Log level for band namespace (default INFO via BAND_LOG_LEVEL)
     """
-    configure_logging(
-        level,
-        style="rich",
-        extra_loggers={"band_parlant_agent": level},
-    )
+    kwargs: dict[str, LogLevel] = {}
+    if level is not None:
+        kwargs["log_level"] = level
+    settings = ParlantLogSettings(**kwargs)
+    settings.configure(extra_loggers={"band_parlant_agent": settings.log_level})

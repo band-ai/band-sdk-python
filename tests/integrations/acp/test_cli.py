@@ -43,7 +43,7 @@ class TestParseArgs:
 
         assert args.rest_url == "https://app.band.ai"
         assert args.ws_url == "wss://app.band.ai/api/v1/socket/websocket"
-        assert args.log_level == "INFO"
+        assert args.log_level is None  # omitted so BAND_LOG_LEVEL can apply
 
     def test_parse_args_custom_urls(self) -> None:
         """Should accept custom REST and WS URLs."""

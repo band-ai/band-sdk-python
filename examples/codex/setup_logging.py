@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
-import logging
+from band import LogLevel, LogSettings, chatty_logger_levels
+from band.logging_config import LoggingStyle, LogStream
 
-from band import configure_logging
+
+class CodexLogSettings(LogSettings):
+    """JSON on stdout; root follows the application level."""
+
+    log_console_style: LoggingStyle = LoggingStyle.JSON
+    log_stream: LogStream = LogStream.STDOUT
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging for examples."""
-    configure_logging(
-        level=level,
-        style="json",
-        root_level=level,
-        stream="stdout",
+    kwargs: dict[str, LogLevel] = {}
+    if level is not None:
+        kwargs["log_level"] = level
+    settings = CodexLogSettings(**kwargs)
+    settings.for_application().configure(
         extra_loggers={
-            "websockets": logging.WARNING,
-            "httpx": logging.WARNING,
+            **chatty_logger_levels("WARNING"),
+            "websockets": "WARNING",
         },
     )

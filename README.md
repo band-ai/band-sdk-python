@@ -211,13 +211,34 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 ### Logging
 
-The SDK uses standard Python loggers and does not configure process-wide handlers unless your application opts in. For readable Band logs while keeping noisy dependencies quiet:
+The SDK uses standard Python loggers and does not configure process-wide handlers unless your application opts in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables and applies them through `configure_logging()`:
 
 ```python
-from band import configure_logging
+from band import LogSettings
 
-configure_logging()
+assert LogSettings is not None
+LogSettings().configure()
 ```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BAND_LOG_LEVEL` | `INFO` | Level for the `band` logger (and console when a file sink differs) |
+| `BAND_LOG_ROOT_LEVEL` | `WARNING` | Root logger level for non-Band loggers |
+| `BAND_LOG_FILE` | unset | Optional log file path |
+| `BAND_LOG_FILE_LEVEL` | follows `BAND_LOG_LEVEL` | File handler level (use `DEBUG` for quiet console / verbose file) |
+| `BAND_LOG_MAX_BYTES` | `0` | Rotate when positive; `0` uses a plain file handler |
+| `BAND_LOG_BACKUPS` | `0` | Rotated backups to keep |
+| `BAND_LOG_CONSOLE_STYLE` | `standard` | `standard`, `rich`, or `json` |
+| `BAND_LOG_FILE_STYLE` | `standard` | `standard` or `json` |
+| `BAND_LOG_STREAM` | `stderr` | `stderr` or `stdout` |
+| `BAND_LOG_OVERRIDES` | `{}` | JSON map of logger name → level |
+
+`configure_logging()` does not demote dependency loggers by itself. When a
+process needs that, pass `extra_loggers=chatty_logger_levels()` (covers
+`httpx`, `httpcore`, and `phoenix_channels_python_client`) and add any
+framework-specific names on top.
+
+Precedence: an explicit constructor argument (for example a CLI `--log-level`) beats the environment; the environment beats class defaults. Empty env values fall back to the field default.
 
 For production JSON logs or Rich console output, install the logging extra:
 
@@ -226,8 +247,10 @@ uv add "band-sdk[logging]"
 ```
 
 ```python notest
-configure_logging(style="json", stream="stdout")
-configure_logging(style="rich")
+from band import LoggingStyle, LogStream, configure_logging
+
+configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+configure_logging(style=LoggingStyle.RICH)
 ```
 
 The examples intentionally show different styles: `examples/langgraph` uses the standard formatter, `examples/parlant` uses Rich, and `examples/codex` emits JSON to stdout.
@@ -237,9 +260,9 @@ If you need to modify the logging setup before applying it, build a fresh `dictC
 ```python notest
 import logging.config
 
-from band import build_logging_config
+from band import LoggingStyle, build_logging_config
 
-config = build_logging_config(style="json", static_fields={"service": "agent"})
+config = build_logging_config(style=LoggingStyle.JSON, static_fields={"service": "agent"})
 logging.config.dictConfig(config)
 ```
 

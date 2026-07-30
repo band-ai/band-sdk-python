@@ -13,76 +13,31 @@ logged.
 
 from __future__ import annotations
 
-import logging
-import sys
-from logging.handlers import RotatingFileHandler
-
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from band.config.logs import LogSettings
 from band.integrations.desktop_app.event_relay import STATE_DIR
+from band.logging_config import CHATTY_LOGGERS, LogStream
 
 LOG_FILE = STATE_DIR / "band-room-view.log"
-LOG_FORMAT = "%(asctime)s %(levelname).1s %(name)s: %(message)s"
 
-# Loggers that narrate every request or frame. Their INFO drowns ours; their
-# warnings still get through.
-CHATTY_LOGGERS = (
-    "httpx",
-    "httpcore",
-    "mcp.server.lowlevel.server",
-    "phoenix_channels_python_client",
-)
+# Transport stack plus the MCP server's own per-frame chatter.
+_DESKTOP_CHATTY_LOGGERS = (*CHATTY_LOGGERS, "mcp.server.lowlevel.server")
 
 
-class LogTuning(BaseSettings):
-    """Per-install logging knobs, read once at process start."""
+class DesktopLogSettings(LogSettings):
+    """Desktop defaults: rotating file, uniform root level, stderr only."""
 
-    model_config = SettingsConfigDict(
-        extra="ignore",
-        case_sensitive=False,
-        env_ignore_empty=True,
-    )
-
-    band_log_level: str = Field(
-        "INFO",
-        description="Level for the room view's own loggers (DEBUG shows quiet ticks).",
-    )
-    band_log_max_bytes: int = Field(
-        1_000_000,
-        ge=10_000,
-        description="Size at which the room view's own log file rotates.",
-    )
-    band_log_backups: int = Field(
-        1,
-        ge=0,
-        description="Rotated log files to keep.",
-    )
-
-    @field_validator("band_log_level")
-    @classmethod
-    def _known_level(cls, value: str) -> str:
-        level = value.upper()
-        if level not in logging.getLevelNamesMapping():
-            raise ValueError(f"Unknown log level: {value}")
-        return level
+    log_max_bytes: int = 1_000_000
+    log_backups: int = 1
 
 
 def configure() -> None:
     """Route the process's diagnostics to stderr and the rotating file."""
-    tuning = LogTuning()
     STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=tuning.band_log_level,
-        format=LOG_FORMAT,
-        handlers=[
-            logging.StreamHandler(sys.stderr),
-            RotatingFileHandler(
-                LOG_FILE,
-                maxBytes=tuning.band_log_max_bytes,
-                backupCount=tuning.band_log_backups,
-            ),
-        ],
+    settings = DesktopLogSettings(log_file=LOG_FILE, log_stream=LogStream.STDERR)
+    # The room view process is diagnostics-first: raise root to the configured
+    # application level so our own loggers are not gated by WARNING, then demote
+    # chatty dependencies. Environment overrides still win on conflict.
+    settings = settings.for_application()
+    settings.configure(
+        extra_loggers=dict.fromkeys(_DESKTOP_CHATTY_LOGGERS, "WARNING"),
     )
-    for name in CHATTY_LOGGERS:
-        logging.getLogger(name).setLevel(logging.WARNING)

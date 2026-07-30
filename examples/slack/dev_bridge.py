@@ -32,17 +32,13 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters import AnthropicAdapter
 from band.integrations.slack import SlackAdapter, SlackApp
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+LogSettings().configure()
 
 
 async def main() -> None:

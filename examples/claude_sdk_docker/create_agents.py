@@ -16,7 +16,9 @@ import os
 
 import yaml
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+from band import LogSettings
+
+LogSettings().for_application().configure(fmt="%(message)s")
 logger = logging.getLogger(__name__)
 
 AGENTS = [

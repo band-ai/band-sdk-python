@@ -45,6 +45,8 @@ from band_rest.types import ChatMessage
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band import LogSettings
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from docker_demo.breaker import (  # noqa: E402  (path set up above)
@@ -405,9 +407,7 @@ def build_roster(settings: ConductorSettings) -> Roster:
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s [conductor] %(message)s"
-    )
+    LogSettings().for_application().configure()
     settings = ConductorSettings()
     if not settings.band_api_key_user:
         raise ValueError(

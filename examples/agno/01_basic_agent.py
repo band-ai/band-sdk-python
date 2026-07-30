@@ -35,17 +35,17 @@ from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
 
-from band import Agent
+from band import LogSettings, Agent
 from band.adapters import AgnoAdapter
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def load_environment() -> tuple[str, str]:
     """Load env vars, validate credentials, and return (ws_url, rest_url)."""
     load_dotenv()
+    LogSettings().for_application().configure()
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise ValueError("ANTHROPIC_API_KEY environment variable is required")

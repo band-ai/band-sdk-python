@@ -38,7 +38,6 @@ import os
 import sys
 from typing import Final
 
-from band.runtime.types import normalize_handle
 from band_rest import (
     AsyncRestClient,
     ChatMessageRequest,
@@ -51,6 +50,9 @@ from band_rest.core.request_options import RequestOptions
 from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
+
+from band import LogSettings, LogStream
+from band.runtime.types import normalize_handle
 
 logger = logging.getLogger(__name__)
 
@@ -292,12 +294,12 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
+    settings = (
+        LogSettings(log_level="DEBUG", log_stream=LogStream.STDERR)
+        if args.verbose
+        else LogSettings(log_stream=LogStream.STDERR)
     )
+    settings.configure()
 
     try:
         room_id = asyncio.run(run_with_timeout(args))

@@ -8,6 +8,8 @@ import logging
 import os
 import sys
 
+from band.config.logs import LogSettings
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,9 +51,9 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)",
+        help="Logging level (env: BAND_LOG_LEVEL, default: INFO)",
     )
 
     return parser.parse_args(args)
@@ -66,7 +68,11 @@ async def main(args: argparse.Namespace | None = None) -> None:
     if args is None:
         args = parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level))
+    # Only an explicit CLI flag overrides BAND_LOG_*; omitted lets env win.
+    if args.log_level is not None:
+        LogSettings(log_level=args.log_level).configure()
+    else:
+        LogSettings().configure()
 
     if not args.agent_id:
         raise ValueError("Agent ID is required. Use --agent-id or set BAND_AGENT_ID.")

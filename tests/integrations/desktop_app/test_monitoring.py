@@ -61,7 +61,7 @@ class TestMonitoringHealth:
         await live.monitor()
 
         quantum = live.tuning.band_room_event_timeout_s
-        for _ in range((STALE_GRACE_S + quantum) // quantum + 2):
+        for _ in range(int((STALE_GRACE_S + quantum) // quantum) + 2):
             clock.advance(quantum)
             watched = await live.monitor(caller=MonitorCaller.APP)
 

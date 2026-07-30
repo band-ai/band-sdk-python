@@ -18,7 +18,9 @@ from pathlib import Path
 
 import yaml
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+from band import LogSettings
+
+LogSettings().for_application().configure(fmt="%(message)s")
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
