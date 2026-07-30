@@ -109,10 +109,11 @@ class FakeTranscriptTools:
         self.participant_calls = 0
         self.created_task_ids: list[str | None] = []
         self.profile_calls = 0
+        self.profile = TOM
 
     async def get_agent_profile(self) -> dict[str, Any]:
         self.profile_calls += 1
-        return TOM
+        return self.profile
 
     async def create_room(self, task_id: str | None = None) -> str:
         self.created_task_ids.append(task_id)

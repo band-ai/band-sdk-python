@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from band.integrations.desktop_app.tools import RoomTool
-from tests.integrations.desktop_app.conftest import message
+from tests.integrations.desktop_app.conftest import ROOM_ID, TOM, message
 
 
 class TestFindingTheRoom:
@@ -97,6 +97,22 @@ class TestBriefing:
         await live.join()
 
         assert live.tools.profile_calls == 2
+
+    async def test_a_remount_speaks_the_agents_current_identity(
+        self, room: Any
+    ) -> None:
+        """Every mounting tool re-briefs the agent, so each re-reads the
+        profile: a remount that reused the cached identity would misname the
+        agent and mis-match its mentions once the profile changed under a
+        long-running process."""
+        live = room([message("m-1", "2026-01-01T00:00:01Z")])
+        await live.join()
+
+        live.tools.profile = {**TOM, "name": "thomas"}
+        remounted = await live.invoke(RoomTool.SHOW, chat_id=ROOM_ID)
+
+        assert remounted["viewer"]["name"] == "thomas"
+        assert "You are thomas" in remounted["role_briefing"]
 
     async def test_it_states_who_the_agent_is_and_who_it_works_for(
         self, room: Any

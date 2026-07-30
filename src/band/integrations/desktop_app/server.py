@@ -95,7 +95,6 @@ async def _open_room(
     service: RoomTranscriptService,
     result: WorkflowResult,
 ) -> WorkflowResult:
-    await service.refresh_viewer()
     transcript = await service.read(result.room_id)
     logger.info(
         "join chat=%s messages=%d pending=%d transport=%s",
@@ -246,6 +245,11 @@ async def _execute_workflow(
     spec: DesktopToolSpec,
     arguments: dict[str, Any],
 ) -> WorkflowResult:
+    # Every mounting tool re-briefs the agent's identity, so it re-reads the
+    # profile first: over a long-running process the cached name or handle
+    # goes stale, misnaming the agent and mis-matching its mentions.
+    if spec.mounts_view:
+        await service.refresh_viewer()
     result = await spec.handler(service, arguments)
     if result.transcript is None:
         raise RuntimeError(f"{spec.name} produced no room transcript.")
