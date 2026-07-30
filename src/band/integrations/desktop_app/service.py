@@ -14,7 +14,6 @@ from band.integrations.desktop_app.room import (
     EPOCH,
     AgentIdentity,
     HostProfile,
-    MonitoringStatus,
     RoomEvent,
     RoomMessage,
     RoomParticipant,
@@ -27,8 +26,8 @@ from band.integrations.desktop_app.prompts import (
     room_briefing,
     unknown_room_guidance,
 )
+from band.integrations.desktop_app.attention import RoomSession
 from band.integrations.desktop_app.settings import RoomViewTuning
-from band.integrations.desktop_app.tools import AttentionMode
 from band.runtime.tools import AgentTools, iter_chat_pages, serialize_tool_result
 
 logger = logging.getLogger(__name__)
@@ -37,15 +36,6 @@ UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
-
-# How long after its wait should have returned the agent may take to call
-# again before its loop is reported stopped rather than busy. An iteration
-# costs one whole quantum plus whatever the agent does with what it got, and
-# that work does not scale with the quantum — so this is added to the agent's
-# own wait, not multiplied by it. A multiple was both too slow on a long
-# quantum (90s unwatched) and too tight on a short one (15s, less than a
-# single answer in the room takes).
-STALE_GRACE_S = 30
 
 # How far back one read may page. A cursor buried deeper than this is a return
 # from an absence long enough that the room has moved on; the read says so in
@@ -139,20 +129,6 @@ class AgentTranscriptTools:
 
 
 @dataclass
-class ModelTick:
-    """When the agent last monitored, and the quantum it chose to wait.
-
-    The quantum is the model's to pick per call — the briefing has it use 5
-    seconds while its user is talking and the install default once quiet — so
-    a limit read off the install default would call a healthy long-quantum loop
-    stopped after a single wait.
-    """
-
-    at: datetime
-    quantum: float
-
-
-@dataclass
 class ReadPulse:
     """The newest message any read of this room has ever returned.
 
@@ -188,11 +164,7 @@ class RoomTranscriptService:
         self._participants: dict[str, list[RoomParticipant]] = {}
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
-        self._view_owner: dict[str, str] = {}
-        self._view_instances: dict[str, set[str]] = {}
-        self._modes: dict[str, AttentionMode] = {}
-        self._model_ticks: dict[str, ModelTick] = {}
-        self._reported_stale: set[str] = set()
+        self.session = RoomSession(self._now)
         self.host = HostProfile()
 
     async def viewer(self) -> AgentIdentity:
@@ -255,72 +227,6 @@ class RoomTranscriptService:
                 logger.warning("Could not read Band room participants", exc_info=True)
                 self._participants.setdefault(chat_id, [])
         return self._participants[chat_id]
-
-    def attention(self, chat_id: str) -> AttentionMode:
-        """Whose attention this room gets first."""
-        return self._modes.get(chat_id, AttentionMode.ROOM_FIRST)
-
-    def set_attention(self, chat_id: str, mode: AttentionMode) -> None:
-        if mode is not self.attention(chat_id):
-            logger.info("attention chat=%s mode=%s", chat_id, mode)
-        self._modes[chat_id] = mode
-
-    def instance_is_current(self, chat_id: str, instance: str | None) -> bool:
-        """Whether this view instance still owns the room's display.
-
-        Ownership goes to the most recently *first-seen* instance: a fresh
-        mount announces an id the room has never ticked with, takes over, and
-        every previously seen id — told it is superseded — collapses instead
-        of living on as a duplicate widget. An old instance ticking again is
-        already known, so it can never steal ownership back.
-        """
-        if not instance:
-            return True
-        seen = self._view_instances.setdefault(chat_id, set())
-        if instance not in seen:
-            seen.add(instance)
-            self._view_owner[chat_id] = instance
-            logger.info("view instance chat=%s owner=%s", chat_id, instance)
-        return self._view_owner[chat_id] == instance
-
-    def note_model_tick(self, chat_id: str, *, quantum: float) -> None:
-        """Record that the agent's own monitor loop is still running."""
-        self._model_ticks[chat_id] = ModelTick(self._now(), quantum)
-
-    def monitoring(self, chat_id: str) -> MonitoringStatus:
-        """How long since the agent last monitored this room, and whether that
-        gap means its loop stopped.
-
-        Unknown until the agent has monitored once: before that the join
-        summary is already telling it to start, and repeating it would say
-        nothing new. In user-first attention, not monitoring is the intended
-        state, so the whole concept is disarmed rather than nagging.
-        """
-        if self.attention(chat_id) is not AttentionMode.ROOM_FIRST:
-            return MonitoringStatus()
-        tick = self._model_ticks.get(chat_id)
-        if tick is None:
-            return MonitoringStatus()
-        idle = (self._now() - tick.at).total_seconds()
-        return MonitoringStatus(
-            idle_seconds=idle,
-            stale=idle > tick.quantum + STALE_GRACE_S,
-        )
-
-    def claim_stale_report(self, chat_id: str, monitoring: MonitoringStatus) -> bool:
-        """Whether this is the first stale reading since the loop last ran.
-
-        The view keeps ticking whatever the agent does, so a stopped loop is
-        seen again every few seconds; reporting each one would bury the log it
-        is meant to be found in.
-        """
-        if not monitoring.stale:
-            self._reported_stale.discard(chat_id)
-            return False
-        if chat_id in self._reported_stale:
-            return False
-        self._reported_stale.add(chat_id)
-        return True
 
     def capture_host(self, params: Any) -> None:
         """Record the host's declared capabilities, once, from any tool call."""
@@ -454,9 +360,9 @@ class RoomTranscriptService:
             ],
         )
         transcript.transport = self._transport
-        transcript.monitoring = self.monitoring(chat_id)
+        transcript.monitoring = self.session.monitoring(chat_id)
         transcript.monitoring_notice = monitoring_notice(transcript.monitoring)
-        transcript.attention = self.attention(chat_id)
+        transcript.attention = self.session.mode(chat_id)
         transcript.host = self.host
         transcript.role_briefing = room_briefing(transcript)
         return transcript

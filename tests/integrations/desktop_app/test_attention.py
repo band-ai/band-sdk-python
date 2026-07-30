@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from band.integrations.desktop_app.service import STALE_GRACE_S
+from band.integrations.desktop_app.attention import STALE_GRACE_S
 from band.integrations.desktop_app.tools import AttentionMode, MonitorCaller
 from tests.integrations.desktop_app.conftest import (
     ROOM_ID,
@@ -132,4 +132,4 @@ class TestSwitching:
         )
 
         assert hijack["attention"] == AttentionMode.ROOM_FIRST
-        assert live.service.attention(ROOM_ID) is AttentionMode.ROOM_FIRST
+        assert live.service.session.mode(ROOM_ID) is AttentionMode.ROOM_FIRST

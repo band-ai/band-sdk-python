@@ -6,7 +6,6 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from mcp.server.lowlevel import Server
@@ -73,8 +72,10 @@ async def _join(
 ) -> WorkflowResult:
     parsed = JoinRoomInput.model_validate(arguments)
     chat_id = await service.resolve_room(parsed.chat_id)
-    service.set_attention(chat_id, parsed.attention)
-    return WorkflowResult(room_id=chat_id, requested_room=parsed.chat_id)
+    service.session.set_mode(chat_id, parsed.attention)
+    return await _open_room(
+        service, WorkflowResult(room_id=chat_id, requested_room=parsed.chat_id)
+    )
 
 
 async def _create(
@@ -83,10 +84,10 @@ async def _create(
 ) -> WorkflowResult:
     parsed = CreateAndOpenRoomInput.model_validate(arguments)
     chat_id = await service.create_room(parsed.task_id)
-    service.set_attention(chat_id, parsed.attention)
-    return WorkflowResult(
-        room_id=chat_id,
-        summary=f"Created Band room {chat_id}.",
+    service.session.set_mode(chat_id, parsed.attention)
+    return await _open_room(
+        service,
+        WorkflowResult(room_id=chat_id, summary=f"Created Band room {chat_id}."),
     )
 
 
@@ -135,18 +136,20 @@ async def _monitor(
     # display loop calls this same tool, and a mode is the user's choice
     # relayed through the model, never the app's.
     if parsed.attention is not None and parsed.caller is MonitorCaller.MODEL:
-        service.set_attention(parsed.chat_id, parsed.attention)
+        service.session.set_mode(parsed.chat_id, parsed.attention)
     # The call itself is the proof the agent's loop is still running, and the
     # quantum it chose is how long the next one may take to arrive.
     if parsed.caller is MonitorCaller.MODEL:
-        service.note_model_tick(parsed.chat_id, quantum=quantum)
+        service.session.note_model_tick(parsed.chat_id, quantum=quantum)
     event = await service.wait_for_room_event(
         parsed.chat_id,
         since=parsed.since,
         timeout_seconds=quantum,
     )
-    event.superseded = not service.instance_is_current(parsed.chat_id, parsed.instance)
-    if service.claim_stale_report(parsed.chat_id, event.monitoring):
+    event.superseded = not service.session.view_is_current(
+        parsed.chat_id, parsed.instance
+    )
+    if service.session.claim_stale_report(parsed.chat_id, event.monitoring):
         logger.warning(
             "monitor loop stopped chat=%s idle=%.0fs; this room is unwatched "
             "until the agent calls again",
@@ -179,22 +182,6 @@ ToolHandler = Callable[
 ]
 
 
-class WorkflowOperation(StrEnum):
-    """Reusable operations a successful desktop workflow may chain."""
-
-    OPEN_ROOM = "open_room"
-
-
-SuccessOperation = Callable[
-    [RoomTranscriptService, WorkflowResult],
-    Awaitable[WorkflowResult],
-]
-
-SUCCESS_OPERATIONS: dict[WorkflowOperation, SuccessOperation] = {
-    WorkflowOperation.OPEN_ROOM: _open_room,
-}
-
-
 @dataclass(frozen=True)
 class DesktopToolSpec:
     """One source for a desktop tool's contract, dispatch, and UI behavior."""
@@ -203,7 +190,6 @@ class DesktopToolSpec:
     description: str
     input_model: type[BaseModel]
     handler: ToolHandler
-    on_success: tuple[WorkflowOperation, ...] = ()
     visibility: tuple[str, ...] | None = None
     mounts_view: bool = False
 
@@ -214,7 +200,6 @@ TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
         description=JOIN_TOOL_DESCRIPTION,
         input_model=JoinRoomInput,
         handler=_join,
-        on_success=(WorkflowOperation.OPEN_ROOM,),
         mounts_view=True,
     ),
     DesktopToolSpec(
@@ -222,7 +207,6 @@ TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
         description=CREATE_TOOL_DESCRIPTION,
         input_model=CreateAndOpenRoomInput,
         handler=_create,
-        on_success=(WorkflowOperation.OPEN_ROOM,),
         mounts_view=True,
     ),
     DesktopToolSpec(
@@ -248,8 +232,6 @@ async def _execute_workflow(
     arguments: dict[str, Any],
 ) -> WorkflowResult:
     result = await spec.handler(service, arguments)
-    for operation in spec.on_success:
-        result = await SUCCESS_OPERATIONS[operation](service, result)
     if result.transcript is None:
         raise RuntimeError(f"{spec.name} produced no room transcript.")
     return result

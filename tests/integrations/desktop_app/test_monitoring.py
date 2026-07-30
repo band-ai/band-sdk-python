@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
-from band.integrations.desktop_app.service import STALE_GRACE_S
+from band.integrations.desktop_app.attention import STALE_GRACE_S
 from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
 from tests.integrations.desktop_app.conftest import (
@@ -83,11 +83,13 @@ class TestMonitoringHealth:
         await live.monitor()
         clock.advance(live.tuning.band_room_event_timeout_s + STALE_GRACE_S + 1)
 
-        stale = live.service.monitoring(ROOM_ID)
-        reports = [live.service.claim_stale_report(ROOM_ID, stale) for _ in range(3)]
+        stale = live.service.session.monitoring(ROOM_ID)
+        reports = [
+            live.service.session.claim_stale_report(ROOM_ID, stale) for _ in range(3)
+        ]
         await live.monitor()
-        again = live.service.claim_stale_report(
-            ROOM_ID, live.service.monitoring(ROOM_ID)
+        again = live.service.session.claim_stale_report(
+            ROOM_ID, live.service.session.monitoring(ROOM_ID)
         )
 
         assert reports == [True, False, False]
