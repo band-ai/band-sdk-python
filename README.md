@@ -211,13 +211,30 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 ### Logging
 
-The SDK uses standard Python loggers and does not configure process-wide handlers unless your application opts in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables and applies them through `configure_logging()`:
+The SDK uses standard Python loggers and does not configure process-wide handlers unless you opt in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables.
+
+**Pick one setup:**
+
+| You are… | Call |
+|---|---|
+| Embedding Band inside a larger app (only want Band's own logs) | `LogSettings().configure()` |
+| Running a Band agent / runner / CLI as the main process | `LogSettings().for_application().configure()` |
+
+Why the split? Default settings raise the `band` logger to `BAND_LOG_LEVEL` (usually `INFO`) but leave the root logger at `WARNING`. That keeps embeds quiet. Your script's own logger (`logging.getLogger(__name__)`, often `__main__`) is *not* under `band`, so its `INFO` lines stay hidden unless you call `for_application()` — which raises root to match the Band level. Set `BAND_LOG_ROOT_LEVEL` yourself if you want a different root level; `for_application()` will not override it.
 
 ```python
 from band import LogSettings
 
 assert LogSettings is not None
+
+# Library / embed: Band INFO, other loggers quiet
 LogSettings().configure()
+
+# Application entrypoint: Band + your process loggers at the same level
+LogSettings().for_application().configure()
+
+# Optional CLI flag: None keeps BAND_LOG_LEVEL
+LogSettings.create(log_level=None).for_application().configure()
 ```
 
 | Variable | Default | Meaning |
@@ -238,7 +255,7 @@ process needs that, pass `extra_loggers=chatty_logger_levels()` (covers
 `httpx`, `httpcore`, and `phoenix_channels_python_client`) and add any
 framework-specific names on top.
 
-Precedence: an explicit constructor argument (for example a CLI `--log-level`) beats the environment; the environment beats class defaults. Empty env values fall back to the field default.
+Precedence: an explicit constructor argument (for example a CLI `--log-level`) beats the environment; the environment beats class defaults. Empty env values fall back to the field default. Prefer `LogSettings.create(log_level=...)` for optional CLI flags so a missing flag does not override the environment.
 
 For production JSON logs or Rich console output, install the logging extra:
 

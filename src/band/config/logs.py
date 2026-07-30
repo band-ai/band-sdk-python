@@ -32,6 +32,14 @@ class LogSettings(BaseSettings):
     Maps environment variables into :func:`band.logging_config.configure_logging`.
     Consumer-specific logger defaults are passed to :meth:`configure` /
     :meth:`build_config` and are overridden by ``BAND_LOG_OVERRIDES``.
+
+    Two common setups:
+
+    - **Library / embed** (default): ``LogSettings().configure()`` — Band logs at
+      ``BAND_LOG_LEVEL``, other loggers stay quiet (root ``WARNING``).
+    - **Application entrypoint**: ``LogSettings().for_application().configure()`` —
+      your process's own loggers (``__main__``, runners, etc.) use the same level
+      as Band. Call this when *this process* owns the logs.
     """
 
     model_config = SettingsConfigDict(
@@ -172,18 +180,27 @@ class LogSettings(BaseSettings):
 
     @classmethod
     def create(cls, **fields: Any) -> Self:
-        """Construct settings, omitting ``None`` so env/defaults still apply.
+        """Build settings from optional fields.
 
-        Use for optional CLI/API overrides: ``LogSettings.create(log_level=level)``.
+        ``None`` values are omitted so environment variables and defaults still
+        apply. Useful for CLI flags: ``LogSettings.create(log_level=args.log_level)``
+        leaves ``BAND_LOG_LEVEL`` alone when the flag was not passed.
         """
         return cls(
             **{name: value for name, value in fields.items() if value is not None}
         )
 
     def for_application(self) -> Self:
-        """Let application loggers follow the configured Band level by default.
+        """Show this process's own logs at the same level as Band.
 
-        ``BAND_LOG_ROOT_LEVEL`` or an explicit ``log_root_level`` still wins.
+        By default only the ``band`` logger is raised to ``BAND_LOG_LEVEL``;
+        everything else stays at root ``WARNING``. Call this in scripts, runners,
+        and CLIs that log under ``__main__`` or other non-``band`` names — otherwise
+        their ``INFO`` lines are silent.
+
+        Leave it out when Band is embedded in a larger app and you only want Band
+        diagnostics. An explicit ``BAND_LOG_ROOT_LEVEL`` / ``log_root_level`` is
+        never overwritten.
         """
         if "log_root_level" in self.model_fields_set:
             return self
