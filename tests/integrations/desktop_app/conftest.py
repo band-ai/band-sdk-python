@@ -232,6 +232,7 @@ class Room:
         chat_id: str = ROOM_ID,
         attention: AttentionMode = AttentionMode.ROOM_FIRST,
     ) -> dict[str, Any]:
+        """Room-first by default: most tests exercise the watching loop."""
         return await self.invoke(RoomTool.JOIN, chat_id=chat_id, attention=attention)
 
     async def create(self, task_id: str | None = None) -> dict[str, Any]:
@@ -241,7 +242,6 @@ class Room:
         self,
         *,
         since: str | None = None,
-        retry_wakes: list[str] | None = None,
         caller: MonitorCaller = MonitorCaller.MODEL,
         timeout_seconds: int = 1,
         attention: AttentionMode | None = None,
@@ -251,7 +251,6 @@ class Room:
             chat_id=ROOM_ID,
             since=since,
             timeout_seconds=timeout_seconds,
-            retry_wakes=retry_wakes or [],
             caller=caller,
             attention=attention,
         )

@@ -46,8 +46,9 @@ class TestMonitoringHealth:
         await live.join()
         await live.monitor()
 
-        for _ in range(5):
-            clock.advance(live.tuning.band_room_event_timeout_s)
+        quantum = live.tuning.band_room_event_timeout_s
+        for _ in range((STALE_GRACE_S + quantum) // quantum + 2):
+            clock.advance(quantum)
             watched = await live.monitor(caller=MonitorCaller.APP)
 
         assert watched["monitoring"]["stale"] is True
@@ -55,9 +56,9 @@ class TestMonitoringHealth:
     async def test_a_long_quantum_loop_is_not_mistaken_for_a_stopped_one(
         self, room: Any
     ) -> None:
-        """The agent picks its own quantum per call — the briefing has it wait
-        up to 30s once the room is quiet — so a limit read off the install
-        default would call a healthy loop stopped after a single wait."""
+        """The agent picks its own quantum per call, so a limit read off the
+        install default would call a healthy long-quantum loop stopped after
+        a single wait."""
         clock = Clock()
         live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
         await live.join()
@@ -172,8 +173,8 @@ class TestQuietTicks:
         """The platform does not echo the agent's own messages to its own
         socket, so a post made through band-mcp arrives only by reading.
         Observed live: with reads skipped on the event-stream's word, the
-        agent's own posts stayed invisible until a manual refresh, and the
-        cursor advanced past them so they never appeared at all."""
+        agent's own posts never rendered, and the cursor advanced past them
+        so they never appeared at all."""
         own = {**message("own-1", "2026-01-01T00:00:12Z"), "sender_id": TOM["id"]}
         live = room(
             [message("m-1", "2026-01-01T00:00:01Z")],

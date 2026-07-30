@@ -2,16 +2,16 @@
 /**
  * The Band room view: a live display of one room inside Claude Desktop.
  *
- * It renders the transcript, mirrors it into the model's context, and — when
- * user activation allows it — accelerates Claude with a `ui/message` for the
- * mentions the server's wake ledger hands it. Claude's monitor loop is the
- * guarantee; the host only accepts `ui/message` with user activation.
+ * A window into the room, not a control: it renders the transcript, keeps it
+ * fresh on its own loop, mirrors it into the model's context, and reports its
+ * own size — the user resizes it like a window and speaks to the agent in
+ * chat. Claude's monitor loop (or per-turn sweep) is the only delivery.
  *
  * The payload shapes below mirror the Pydantic models in
  * `band/integrations/desktop_app/room.py`; keep them in step.
  *
  * Sections: host RPC · room state · rendering · model context sync ·
- * wake accelerator · live watch loop · host wiring.
+ * live watch loop · host wiring.
  */
 
 /**
@@ -65,8 +65,6 @@
  * @property {RelayStatus} [transport]
  * @property {object} [host]
  * @property {RoomMessage[]} [pending_requests]
- * @property {RoomMessage[]} [wake_requests]
- * @property {string} [wake_prompt]
  * @property {string} [refreshed_at]
  * @property {boolean} [event_received]
  */
@@ -94,7 +92,6 @@
     maxWatchS: 15,
     requestTimeoutMs: 15000,
     watchRestartDelayMs: 250,
-    expandedMaxHeightPx: 520,
     contextMessages: 30,
     contextMessageChars: 2000
   };
@@ -109,17 +106,6 @@
 
   /** @param {object} message */
   const send = message => window.parent.postMessage(message, "*");
-
-  /**
-   * An error the host answered with, marked as such.
-   *
-   * A refusal and a call that never arrived are both a thrown Error once they
-   * reach the caller, and they deserve opposite treatment: one is a decision,
-   * the other is worth retrying. Only the answered one carries the mark.
-   * @param {string} detail
-   * @returns {Error}
-   */
-  const answeredError = detail => Object.assign(new Error(detail), { answered: true });
 
   /**
    * Send a JSON-RPC request to the host. Every request is bounded: a host that
@@ -264,13 +250,15 @@
     status.classList.toggle("error", error);
   }
 
-  /** Tell the host how tall the view wants to be for its current shape. */
+  /** Tell the host how tall the view is. CSS owns the geometry — the
+   * transcript pane carries a native resize handle — so this only reports
+   * what the document actually measures. */
   function reportSize() {
     notify("ui/notifications/size-changed", {
       width: document.documentElement.scrollWidth,
       height: collapsed
         ? element("topbar").offsetHeight
-        : Math.min(document.documentElement.scrollHeight, TUNING.expandedMaxHeightPx)
+        : document.documentElement.scrollHeight
     });
   }
 
@@ -312,23 +300,17 @@
     if (!chatId) {
       diagnostics.textContent = "waiting for a room";
       diagnostics.classList.toggle("warn", false);
-      element("wake").hidden = true;
       return;
     }
     const live = transport.role === "follower" || transport.websocket_connected;
     const stale = Boolean(monitoring.stale);
     const onDemand = attention === "user_first";
-    // The room has two liveness axes — event delivery (transport) and agent
-    // attention (the model's monitor loop) — and the user is the only actor
-    // who can repair the second, so the display reports the weaker of the two.
-    // In user-first attention not-watching is the point: the widget is only
-    // the inbox, and the chat is the way in — typing anything sweeps the
-    // room, so a button would just be a worse way to say something.
-    element("wake").hidden = onDemand || !(stale && monitoringNotice);
-    const wakes = `${wakeCount} wakes${lastWake ? ` · ${lastWake}` : ""}`;
+    // The widget is a window, not a control: it reports both liveness axes —
+    // event delivery (transport) and agent attention (the monitor loop) —
+    // and repair is the user's to speak, not to click.
     const base = live
-      ? `WebSocket · ${transport.role || "starting"} · ${eventCount} events · ${wakes}`
-      : `WebSocket down · polling · ${wakes}`;
+      ? `WebSocket · ${transport.role || "starting"} · ${eventCount} events`
+      : `WebSocket down · polling`;
     if (onDemand) {
       diagnostics.textContent = `On demand · ${pendingCount} waiting · ${base}`;
     } else {
@@ -435,7 +417,6 @@
     attention = "room_first";
     pendingCount = 0;
     cursor = null;
-    retryWakes = [];
     unseen = 0;
     element("room").textContent = chatId;
     renderBadge();
@@ -503,77 +484,15 @@
     });
   }
 
-  // ── Wake accelerator ──────────────────────────────────────────────────
-
-  let wakeCount = 0;
-  let lastWake = "";
-  /** Wakes the host refused, returned to the server for re-offer. @type {string[]} */
-  let retryWakes = [];
-
-  /**
-   * Ask the host to start a Claude turn for the server-claimed mentions.
-   * Measured on this host: `ui/message` succeeds only with user activation (a
-   * click), so an autonomous wake is expected to be rejected — Claude's own
-   * monitor loop is the guarantee, and this is an accelerator that fires when
-   * activation happens to exist. A refusal is deterministic and is dropped —
-   * whether the host spells it as an `isError` result or as a JSON-RPC error,
-   * since re-asking a question the host already answered repeats on every tick
-   * forever. Only a call that never reached the host is re-offered for retry.
-   *
-   * The message itself is authored server-side and arrives as `wake_prompt`:
-   * the view relays model-facing text, it never writes any.
-   * @param {RoomMessage[]} wakeRequests
-   * @param {string} text
-   * @returns {Promise<void>}
-   */
-  async function wake(wakeRequests, text) {
-    const shapes = /** @type {[string, object][]} */ ([
-      ["object", { role: "user", content: { type: "text", text } }],
-      ["array", { role: "user", content: [{ type: "text", text }] }]
-    ]);
-    let transportFailure = false;
-    for (const [shape, params] of shapes) {
-      try {
-        const result = await request("ui/message", params);
-        if (!result?.isError) {
-          wakeCount += 1;
-          lastWake = "accepted";
-          setStatus("Claude woken");
-          renderDiagnostics();
-          return;
-        }
-        lastWake = `rejected (${shape})`;
-        log("info", { stage: "wake", shape, result });
-      } catch (error) {
-        const answered = Boolean(/** @type {any} */ (error)?.answered);
-        transportFailure = transportFailure || !answered;
-        lastWake = `${answered ? "rejected" : "failed"} (${shape})`;
-        log(answered ? "info" : "error", {
-          stage: "wake",
-          shape,
-          answered,
-          detail: String(error)
-        });
-      }
-    }
-    if (transportFailure) {
-      retryWakes = retryWakes.concat(
-        wakeRequests.map(item => String(item.id || "")).filter(Boolean)
-      );
-    }
-    renderDiagnostics();
-  }
-
   // ── Live watch loop ───────────────────────────────────────────────────
 
-  let refreshing = false;
   let watching = false;
   let stopped = false;
   /** @type {Promise<void>} */
   let ingesting = Promise.resolve();
 
   /**
-   * Every payload — join notification, manual refresh, live event — lands here,
+   * Every payload — the join notification or a watch tick — lands here,
    * serialized, so a redelivered payload is merely idempotent.
    * @param {RoomTranscript|null|undefined} payload
    * @returns {Promise<void>}
@@ -604,9 +523,8 @@
     monitoring = payload.monitoring || {};
     attention = payload.attention || attention;
     pendingCount = (payload.pending_requests || []).length;
-    // The cursor only moves forward. A refresh started before an event can
-    // answer after the watch that saw it, and rewinding to its older cursor
-    // would have the server re-read and redeliver what is already displayed.
+    // The cursor only moves forward: a payload delivered out of order must
+    // not rewind it, or the server re-reads and redelivers what is shown.
     if (payload.next_since && payload.next_since > (cursor || "")) {
       cursor = payload.next_since;
     }
@@ -630,7 +548,7 @@
   }
 
   /**
-   * One payload, in order: state, display, model context, wake.
+   * One payload, in order: state, display, model context.
    * @param {RoomTranscript} payload
    * @returns {Promise<void>}
    */
@@ -645,50 +563,19 @@
       setStatus("Context sync failed", true);
       log("error", { stage: "update-model-context", detail: String(error) });
     }
-    // The wake decision is the server's (its ledger hands each mention out
-    // exactly once); a failed context sync must not swallow it.
-    const wakes = Array.isArray(payload.wake_requests) ? payload.wake_requests : [];
-    if (wakes.length && payload.wake_prompt) await wake(wakes, payload.wake_prompt);
-  }
-
-  /** @returns {Promise<void>} */
-  async function refresh() {
-    if (!chatId || refreshing) return;
-    refreshing = true;
-    setStatus("Refreshing");
-    try {
-      /** @type {ToolResult} */
-      const result = await request("tools/call", {
-        name: "band_refresh_room_view",
-        arguments: { chat_id: chatId, since: cursor }
-      });
-      if (result?.isError) throw new Error("Refresh failed");
-      await ingest(toolPayload(result));
-    } catch (error) {
-      setStatus("Refresh failed", true);
-      log("error", { stage: "refresh", detail: String(error) });
-    } finally {
-      refreshing = false;
-    }
   }
 
   /** @returns {Promise<void>} */
   async function watchRoom() {
     if (!chatId || watching || stopped) return;
     watching = true;
-    const offered = retryWakes.splice(0);
     try {
       /** @type {ToolResult} */
       const result = await request("tools/call", {
         name: "band_wait_for_room_event",
         // Named as the display loop: the server tells the agent its own loop
         // stopped, and these ticks must not stand in for the agent's.
-        arguments: {
-          chat_id: chatId,
-          since: cursor,
-          retry_wakes: offered,
-          caller: "app"
-        }
+        arguments: { chat_id: chatId, since: cursor, caller: "app" }
       }, TUNING.maxWatchS * 1000 + TUNING.requestTimeoutMs);
       if (result?.isError) throw new Error("Room event wait failed");
       const payload = toolPayload(result);
@@ -696,7 +583,6 @@
       renderDiagnostics();
       if (!stopped) await ingest(payload);
     } catch (error) {
-      retryWakes = offered.concat(retryWakes);
       if (!stopped) {
         setStatus("Live event wait failed", true);
         log("error", { stage: "wait-for-room-event", detail: String(error) });
@@ -717,7 +603,7 @@
       const waiter = pending.get(message.id);
       if (!waiter) return;
       pending.delete(message.id);
-      if (message.error) waiter.reject(answeredError(message.error.message));
+      if (message.error) waiter.reject(new Error(message.error.message));
       else waiter.resolve(message.result);
       return;
     }
@@ -731,30 +617,21 @@
     }
   });
 
-  // The wait tool reads REST before it blocks, so restarting the watch loop
-  // already covers everything a refresh would have fetched.
+  // The wait tool reads REST on every tick, so restarting the watch loop
+  // catches up on everything missed while hidden.
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) watchRoom();
   });
-  /**
-   * The one-click repair for a stopped monitor loop. A context update cannot
-   * start a turn — the host defers it until the next user message — but a
-   * `ui/message` sent with this click's user activation is such a message: it
-   * starts the turn, and the deferred context (the notice) rides in with it.
-   * The text relayed is the server-authored notice; the view writes none.
-   * @returns {Promise<void>}
-   */
-  async function wakeAgent() {
-    if (!monitoringNotice) return;
-    await wake([], monitoringNotice);
-  }
-
-  element("wake").addEventListener("click", wakeAgent);
-  element("refresh").addEventListener("click", refresh);
   element("toggle").addEventListener("click", () => setCollapsed(!collapsed));
   element("topbar").addEventListener("click", event => {
     if (collapsed && event.target === event.currentTarget) setCollapsed(false);
   });
+
+  // The transcript pane carries a native resize handle; report what the user
+  // drags so the host resizes the iframe with it (absent in the test DOM).
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => reportSize()).observe(element("messages"));
+  }
 
   request("ui/initialize", {
     appInfo: { name: "Band room", version: "1.0.0" },

@@ -169,13 +169,12 @@ read as "it works". The click was the confound.
 
 Consequences:
 
-- The monitor loop is the guarantee. The wake path is an accelerator only: the
-  wake ledger hands each pending mention out exactly once (`wake_requests`),
-  the view attempts one `ui/message`, and any refusal the host answered with is
-  dropped as deterministic — whether it comes back as an `isError` result or,
-  as this host sends it, a JSON-RPC error. Only a call that never reached the
-  host is re-offered via `retry_wakes`, and the ledger gives up on a mention
-  after `MAX_REOFFERS` attempts rather than re-asking on every tick forever.
+- The monitor loop (or the per-turn sweep) is the only delivery. A
+  `ui/message` wake path was built, measured, and removed: without user
+  activation the host refuses it deterministically, and with activation
+  Desktop only prefills the composer — and a buttonless window has no
+  activation source at all. Anything that wants Claude's attention waits for
+  a tool result or for the user.
 - The turn is the loop, and it must not end. The host delivers a message typed
   mid-turn at the next tool-call boundary, so the agent answers its user
   *between* monitoring calls and carries on — measured live, mid-flood. Ending
@@ -193,13 +192,12 @@ Consequences:
   `STALE_GRACE_S` — one wait, plus time to act on what it returned — carries
   a `monitoring_notice` naming the gap. The view relays it into model context
   beside the briefing, and it empties itself once the loop is running again.
-- Staleness cannot initiate recovery. `ui/update-model-context` explicitly does
-  not trigger a follow-up: the host defers the latest update until the next
-  user message — *including* `ui/message` — so until the user acts, the notice
-  and the server log are diagnostics, not repair. What the user's action can
-  be, the view provides: typing anything, or clicking **Wake agent** — shown
-  only while the loop is stopped — whose click carries the user activation
-  `ui/message` needs, starting the turn that reads the notice and resumes.
+- Staleness cannot initiate recovery. `ui/update-model-context` explicitly
+  does not trigger a follow-up: the host defers the latest update until the
+  next user message, so until the user says anything the notice and the
+  server log are diagnostics, not repair. The widget shows the stopped state
+  ("Agent stopped watching"); the user's next message — any message — is the
+  repair, because the notice rides in with it.
 - One conversation cannot both block-listen and accept typed input instantly.
   Short quanta shrink the window; only a second context — an always-on agent
   process with Desktop as its console — removes it.
@@ -230,9 +228,9 @@ view's display loop can never flip it).
 | User typing | waits ≤ one quantum | instant |
 | Mention latency | seconds | until the user next speaks |
 | Room sweep | continuous | once, at the start of each turn |
-| Stale/wake machinery | armed | disarmed — not-watching is the point |
+| Staleness machinery | armed | disarmed — not-watching is the point |
 | Widget | live transcript | live inbox: `On demand · N waiting` |
-| Button | red **Wake agent**, only when stopped | none — the chat is the way in |
+| Buttons | none — the widget is a window, repair is spoken | none — the chat is the way in |
 | Token burn while idle | ~4-6 ticks/min | zero |
 
 The model only ever reads the active mode's contract
@@ -387,8 +385,7 @@ conversation after config changes.
 | MCP wiring: tool surface, handlers, server lifecycle | `src/band/integrations/desktop_app/server.py` |
 | Tuning knobs and credentials (pydantic-settings) | `src/band/integrations/desktop_app/settings.py` |
 | Tool names and input contracts | `src/band/integrations/desktop_app/tools.py` |
-| Every word addressed to a model: instructions, tool descriptions, briefing, summaries, wake text | `src/band/integrations/desktop_app/prompts.py` |
-| Wake ledger: each mention wakes Claude exactly once | `src/band/integrations/desktop_app/wakes.py` |
+| Every word addressed to a model: instructions, tool descriptions, contracts, briefing, summaries | `src/band/integrations/desktop_app/prompts.py` |
 | Room resolution, transcript reads, `ReadPulse` | `src/band/integrations/desktop_app/service.py` |
 | Log routing: stderr plus rotating file | `src/band/integrations/desktop_app/logs.py` |
 | Typed room state: `RoomTranscript`, `RoomMessage`, … | `src/band/integrations/desktop_app/room.py` |

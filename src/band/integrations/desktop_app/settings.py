@@ -44,12 +44,12 @@ class RoomViewTuning(BaseSettings):
     )
 
     band_room_event_timeout_s: int = Field(
-        10,
+        5,
         ge=1,
         le=MAX_ROOM_EVENT_TIMEOUT_S,
         description=(
-            "How long the monitor blocks. Also the worst-case delay before the "
-            "agent notices the user typed, since the host queues that message "
+            "How long the monitor blocks: the beat at which a watching agent "
+            "checks whether its user typed, since the host queues that message "
             "behind the in-flight call."
         ),
     )

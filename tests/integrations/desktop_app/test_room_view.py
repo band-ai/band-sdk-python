@@ -1,9 +1,9 @@
 """What the mounted view does when its host answers out of order.
 
 These are the view's concurrency contracts — a room that changes under an
-in-flight watch, a refresh overtaken by an event — and no static inspection of
-the asset can reach them. ``roomview.mjs`` runs the shipped script against a
-fake host and reports what it did.
+in-flight watch, a payload delivered late — and no static inspection of the
+asset can reach them. ``roomview.mjs`` runs the shipped script against a fake
+host and reports what it did.
 """
 
 from __future__ import annotations
@@ -52,15 +52,6 @@ class TestRoomSwitch:
 
 
 class TestCursor:
-    def test_an_overtaken_refresh_does_not_rewind_the_resume_cursor(
-        self, behaviour: dict[str, Any]
-    ) -> None:
-        """A rewound cursor has the server re-read and redeliver what is shown."""
-        result = behaviour["cursorRewind"]
-
-        assert result["refreshAskedFrom"] < result["resumedFrom"]
-        assert result["resumedFrom"] == "2026-01-01T00:00:09Z"
-
     def test_a_quiet_tick_still_advances_it(self, behaviour: dict[str, Any]) -> None:
         """The server advances the cursor on a quiet tick precisely so the next
         call differs; a view that ignored that would stall the loop."""
@@ -86,46 +77,13 @@ class TestModelContext:
         )
 
 
-class TestWake:
-    def test_a_wake_the_host_refused_is_not_offered_back(
-        self, behaviour: dict[str, Any]
-    ) -> None:
-        """Desktop refuses an unactivated `ui/message` as a JSON-RPC error, not
-        an `isError` result. Retrying that re-asks an answered question on every
-        tick for the rest of the conversation."""
-        result = behaviour["wakeRefusedByTheHost"]
-
-        assert result["shapesTried"] == 2, "both content shapes are still probed"
-        assert result["retryWakes"] == []
-
-
-class TestWakeButton:
-    def test_a_stopped_loop_becomes_the_users_one_click_repair(
-        self, behaviour: dict[str, Any]
-    ) -> None:
-        """A context update cannot start a turn — the host defers it until the
-        next user message — so the user is the only actor who can restart a
-        stopped loop. The button turns their click into the `ui/message` that
-        does, relaying the server-authored notice: the view writes no text."""
-        result = behaviour["staleWakeButton"]
-
-        assert result["hiddenWhileHealthy"] is True
-        assert result["shownWhileStale"] is True
-        assert "NOT monitoring" in result["wakeText"]
-        assert result["hiddenAfterRecovery"] is True, (
-            "a resumed loop must take its repair button with it"
-        )
-
-
 class TestOnDemand:
-    def test_the_widget_is_only_the_inbox(self, behaviour: dict[str, Any]) -> None:
-        """Waiting mentions are counted for the user to see; the chat is the
-        way in, so no button is offered — typing anything sweeps the room, and
-        a button would be a worse way to say something."""
-        result = behaviour["onDemandInbox"]
-
-        assert result["buttonOffered"] is False
-        assert result["diagnostics"].startswith("On demand · 1 waiting")
+    def test_the_widget_shows_what_is_waiting(self, behaviour: dict[str, Any]) -> None:
+        """The widget is a window, not a control: waiting mentions are counted
+        for the user to see, and speaking to the agent is the way in."""
+        assert behaviour["onDemandInbox"]["diagnostics"].startswith(
+            "On demand · 1 waiting"
+        )
 
 
 class TestWatchTiming:

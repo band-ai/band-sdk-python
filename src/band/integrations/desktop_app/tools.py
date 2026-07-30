@@ -19,7 +19,6 @@ class RoomTool(StrEnum):
 
     JOIN = "band_join_room"
     CREATE = "band_create_and_open_room"
-    REFRESH = "band_refresh_room_view"
     MONITOR = "band_wait_for_room_event"
 
 
@@ -33,16 +32,16 @@ class AttentionMode(StrEnum):
     the view's inbox, until the user next speaks.
     """
 
-    ROOM_FIRST = "room_first"
     USER_FIRST = "user_first"
+    ROOM_FIRST = "room_first"
 
 
 ATTENTION_CHOICE = (
-    "room_first (default): hold your turn open and keep monitoring; the room "
-    "is answered in seconds. user_first: the user leads; you sweep the room "
-    "once at the start of each turn and otherwise end turns normally. Choose "
-    "user_first only when the user asks to be answered first, for on-demand "
-    "or quiet room checking."
+    "user_first (default): the user leads; you sweep the room once at the "
+    "start of each turn and otherwise end turns normally. room_first: hold "
+    "your turn open and keep monitoring so the room is answered in seconds — "
+    "choose it only when the user says to watch, monitor, or keep an eye on "
+    "the room."
 )
 
 
@@ -66,7 +65,7 @@ class CreateAndOpenRoomInput(BaseModel):
         description="Optional Band task ID to associate with the new room.",
     )
     attention: AttentionMode = Field(
-        AttentionMode.ROOM_FIRST,
+        AttentionMode.USER_FIRST,
         description=ATTENTION_CHOICE,
     )
 
@@ -82,18 +81,8 @@ class JoinRoomInput(BaseModel):
         )
     )
     attention: AttentionMode = Field(
-        AttentionMode.ROOM_FIRST,
+        AttentionMode.USER_FIRST,
         description=ATTENTION_CHOICE,
-    )
-
-
-class RefreshRoomInput(BaseModel):
-    """Fetch messages added to an open Band room transcript."""
-
-    chat_id: str = Field(description="Band chat room ID.")
-    since: str | None = Field(
-        None,
-        description="Newest ISO 8601 message timestamp already displayed.",
     )
 
 
@@ -115,14 +104,11 @@ class WaitForRoomEventInput(BaseModel):
         ge=1,
         le=MAX_ROOM_EVENT_TIMEOUT_S,
         description=(
-            "Maximum seconds to block before a reconnect-safety refresh. Omit "
-            "to use this install's configured default. Keep it short while the "
-            "user is talking to you: it is also how long they wait to be heard."
+            "Maximum seconds to block waiting for a room event. Omit to use "
+            "this install's configured default — it is also how long the user "
+            "waits to be heard if they type mid-wait, so never pass a longer "
+            "one to save calls."
         ),
-    )
-    retry_wakes: list[str] = Field(
-        default_factory=list,
-        description="Message IDs whose earlier wake the host refused or lost.",
     )
     caller: MonitorCaller = Field(
         MonitorCaller.MODEL,

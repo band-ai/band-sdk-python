@@ -29,7 +29,6 @@ from band.integrations.desktop_app.prompts import (
 )
 from band.integrations.desktop_app.settings import RoomViewTuning
 from band.integrations.desktop_app.tools import AttentionMode
-from band.integrations.desktop_app.wakes import WakeLedger
 from band.runtime.tools import AgentTools, iter_chat_pages, serialize_tool_result
 
 logger = logging.getLogger(__name__)
@@ -155,11 +154,9 @@ class ModelTick:
 
 @dataclass
 class ReadPulse:
-    """What the last REST read of a room saw.
+    """The newest message any read of this room has ever returned.
 
-    ``newest_message_at`` is the newest message any read of this room has ever
-    returned — the watermark a caller may be behind — and ``snapshot`` the
-    transcript, kept for re-offering wakes. Deliberately not a proof that a
+    The watermark a caller may be behind — and deliberately not a proof that a
     later tick may skip reading: the platform does not echo an agent's own
     messages back to its own WebSocket, so a message the agent posts through
     band-mcp produces no event, and any "the room is provably unchanged"
@@ -167,7 +164,6 @@ class ReadPulse:
     """
 
     newest_message_at: datetime
-    snapshot: RoomTranscript
 
 
 class RoomTranscriptService:
@@ -195,7 +191,6 @@ class RoomTranscriptService:
         self._modes: dict[str, AttentionMode] = {}
         self._model_ticks: dict[str, ModelTick] = {}
         self._reported_stale: set[str] = set()
-        self.wakes = WakeLedger()
         self.host = HostProfile()
 
     async def viewer(self) -> AgentIdentity:
@@ -306,15 +301,6 @@ class RoomTranscriptService:
             return False
         self._reported_stale.add(chat_id)
         return True
-
-    def release_wakes(self, chat_id: str, message_ids: list[str]) -> None:
-        """Re-offer wakes the host refused, from messages the last read saw."""
-        pulse = self._pulses.get(chat_id)
-        known = {
-            message.id: message
-            for message in (pulse.snapshot.messages if pulse else [])
-        }
-        self.wakes.release(chat_id, message_ids, known)
 
     def capture_host(self, params: Any) -> None:
         """Record the host's declared capabilities, once, from any tool call."""
@@ -506,7 +492,7 @@ class RoomTranscriptService:
         since: str | None,
         refresh_participants: bool = False,
     ) -> RoomTranscript:
-        """Read, and record the watermark and snapshot of what was seen."""
+        """Read, and record the watermark of what was seen."""
         transcript = await self.read(
             chat_id,
             since=since,
@@ -517,5 +503,5 @@ class RoomTranscriptService:
             [message.at for message in transcript.messages]
             + [previous.newest_message_at if previous else EPOCH]
         )
-        self._pulses[chat_id] = ReadPulse(newest, transcript)
+        self._pulses[chat_id] = ReadPulse(newest)
         return transcript

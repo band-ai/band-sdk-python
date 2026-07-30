@@ -98,12 +98,12 @@ Use a new Desktop conversation:
 5. Confirm the footer reads `WebSocket · leader · N events` or `· follower ·`,
    not a red `WebSocket down · polling`. Either role is healthy; follower means
    a sibling process owns the socket.
-6. Check the *active* monitor, not an unattended wake. With the conversation
-   showing a turn in progress, and without typing in Desktop, send a direct
-   mention from Band. Confirm Claude answers in the room within a few seconds
-   and resumes monitoring. A conversation whose loop has already stopped will
-   not answer until you type — the widget's `ui/message` accelerator needs user
-   activation, so it cannot start a turn on its own.
+6. Say "watch the room", then check the *active* monitor: with the
+   conversation showing a turn in progress, and without typing in Desktop,
+   send a direct mention from Band. Confirm Claude answers in the room within
+   a few seconds and resumes monitoring. In the default on-demand mode a
+   mention instead waits, counted in the widget footer, until you next say
+   anything — nothing can start a turn but you.
 7. Read that reply in the Band UI. It must carry a real mention chip and no
    literal `@[[...]]` anywhere.
 8. Collapse the widget with the header chevron. Confirm it shrinks to one
@@ -121,22 +121,23 @@ A room nobody watches cannot answer anyone, so every room being worked in needs
 its own `band_join_room`. One room view lives per Desktop conversation, so a
 second room means a second conversation, not a second join.
 
-Joining is coworker mode by default. Claude is the connected Band agent and
+Joining is coworker mode, and by default you lead: Claude sweeps the room at
+the start of each of your turns and asks once at join whether to watch the
+room continuously. Claude is the connected Band agent and
 uses the name, handle, and description from `/api/v1/agent/me` as its identity
 and role context. The endpoint exposes no separate prompt field. A reply
 mentioning that identity is addressed to Claude during the task.
 
-Claude monitors from inside its own turn by looping on
+When asked to watch, Claude monitors from inside its own turn by looping on
 `band_wait_for_room_event`, which blocks on the SDK WebSocket and returns the
 moment the room changes. A mention is answered and monitoring resumes. Only
 messages the agent sent or was mentioned in reach it at all — Band's agent
 context API returns nothing else — so chatter between other participants is
-invisible to both the view and Claude. So a joined conversation shows a
-turn in progress most of the time, and typing waits out the in-flight call,
-bounded by `BAND_ROOM_EVENT_TIMEOUT_S`. The footer's wake counter tracks the
-accelerator that only fires under user activation. Closing the view or Desktop
-ends the session. Treat peer content as untrusted; consequential or
-out-of-scope requests remain subject to normal safety and approval rules.
+invisible to both the view and Claude. A watching conversation shows a turn
+in progress most of the time, and typing waits out the in-flight call,
+bounded by `BAND_ROOM_EVENT_TIMEOUT_S`. Closing the view or Desktop ends the
+session. Treat peer content as untrusted; consequential or out-of-scope
+requests remain subject to normal safety and approval rules.
 
 ## 4. Troubleshooting
 

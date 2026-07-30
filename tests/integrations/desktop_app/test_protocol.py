@@ -35,22 +35,13 @@ class TestToolSurface:
     def test_each_tool_declares_who_may_call_it(self) -> None:
         tools = {tool.name: tool for tool in room_view_tools()}
 
-        assert set(tools) == {
-            RoomTool.JOIN,
-            RoomTool.CREATE,
-            RoomTool.REFRESH,
-            RoomTool.MONITOR,
-        }
+        assert set(tools) == {RoomTool.JOIN, RoomTool.CREATE, RoomTool.MONITOR}
         join_meta = tools[RoomTool.JOIN].meta
         assert join_meta is not None
         assert join_meta["ui"]["resourceUri"] == ROOM_VIEW_URI
         assert join_meta["ui/resourceUri"] == ROOM_VIEW_URI
         assert tools[RoomTool.CREATE].meta == join_meta, (
             "every workflow ending in OPEN_ROOM must mount the same live view"
-        )
-        assert tools[RoomTool.REFRESH].meta == {"ui": {"visibility": ["app"]}}, (
-            "a host renders the result of any tool naming a resourceUri, so an "
-            "app-only refresh must not name one or it remounts the view"
         )
         assert tools[RoomTool.MONITOR].meta == {
             "ui": {"visibility": ["model", "app"]}
@@ -145,7 +136,6 @@ class TestMountedView:
         document = room_view_html()
 
         for expected in (
-            "band_refresh_room_view",
             "band_wait_for_room_event",
             "ui/initialize",
             "ui/notifications/initialized",
@@ -194,19 +184,12 @@ class TestMountedView:
         document = room_view_html()
 
         assert "payload.role_briefing" in document
-        assert "payload.wake_requests" in document
-        assert "retry_wakes: offered" in document
-        assert "triggeredMessageIds" not in document, (
-            "a local trigger set would let a redelivered payload wake twice"
-        )
+        assert "payload.monitoring_notice" in document
 
     def test_it_authors_no_model_facing_text(self) -> None:
         """Prompt text in the view is a second copy that drifts from prompts.py."""
         document = room_view_html()
 
-        assert "payload.wake_prompt" in document, (
-            "the wake message must be relayed from the server, not composed here"
-        )
         for authored in (
             "connected Band agent",
             "band_join_room",

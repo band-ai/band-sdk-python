@@ -250,9 +250,6 @@ class RoomEvent(RoomTranscript):
     """A transcript delivered because the room's WebSocket reported a change."""
 
     event_received: bool
-    wake_requests: list[RoomMessage] = Field(default_factory=list)
-    # Authored server-side so the view never composes model-facing text.
-    wake_prompt: str = ""
 
     def tick(self) -> RoomEvent:
         """This event stripped of everything the caller already holds.

@@ -22,14 +22,11 @@ from band.integrations.desktop_app.prompts import (
     CREATE_TOOL_DESCRIPTION,
     JOIN_TOOL_DESCRIPTION,
     MONITOR_TOOL_DESCRIPTION,
-    REFRESH_TOOL_DESCRIPTION,
     SERVER_INSTRUCTIONS,
     VIEW_RESOURCE_DESCRIPTION,
     invalid_arguments,
     join_summary,
     monitor_summary,
-    refresh_summary,
-    wake_prompt,
 )
 from band.integrations.desktop_app.room import AgentIdentity, RoomTranscript
 from band.integrations.desktop_app.service import (
@@ -38,11 +35,9 @@ from band.integrations.desktop_app.service import (
 )
 from band.integrations.desktop_app.settings import DesktopRoomViewSettings
 from band.integrations.desktop_app.tools import (
-    AttentionMode,
     CreateAndOpenRoomInput,
     JoinRoomInput,
     MonitorCaller,
-    RefreshRoomInput,
     RoomTool,
     WaitForRoomEventInput,
 )
@@ -98,7 +93,6 @@ async def _open_room(
 ) -> WorkflowResult:
     await service.refresh_viewer()
     transcript = await service.read(result.room_id)
-    service.wakes.suppress(result.room_id, transcript.pending_requests)
     logger.info(
         "join chat=%s messages=%d pending=%d transport=%s",
         result.room_id,
@@ -113,19 +107,6 @@ async def _open_room(
     result.summary = "\n\n".join(filter(None, (result.summary, opened)))
     result.transcript = transcript
     return result
-
-
-async def _refresh(
-    service: RoomTranscriptService,
-    arguments: dict[str, Any],
-) -> WorkflowResult:
-    parsed = RefreshRoomInput.model_validate(arguments)
-    transcript = await service.read(parsed.chat_id, since=parsed.since)
-    return WorkflowResult(
-        room_id=parsed.chat_id,
-        summary=refresh_summary(transcript),
-        transcript=transcript,
-    )
 
 
 async def _monitor(
@@ -143,21 +124,11 @@ async def _monitor(
     # quantum it chose is how long the next one may take to arrive.
     if parsed.caller is MonitorCaller.MODEL:
         service.note_model_tick(parsed.chat_id, quantum=quantum)
-    service.release_wakes(parsed.chat_id, parsed.retry_wakes)
     event = await service.wait_for_room_event(
         parsed.chat_id,
         since=parsed.since,
         timeout_seconds=quantum,
     )
-    # Wakes are a room-first accelerator. In user-first attention the widget
-    # is the inbox: an autonomous ui/message would only be refused, and the
-    # mentions stay in pending_requests for the next turn's sweep.
-    if service.attention(parsed.chat_id) is AttentionMode.ROOM_FIRST:
-        event.wake_requests = service.wakes.claim(
-            parsed.chat_id, event.pending_requests
-        )
-    if event.wake_requests:
-        event.wake_prompt = wake_prompt(parsed.chat_id, event.wake_requests)
     if service.claim_stale_report(parsed.chat_id, event.monitoring):
         logger.warning(
             "monitor loop stopped chat=%s idle=%.0fs; this room is unwatched "
@@ -165,14 +136,13 @@ async def _monitor(
             parsed.chat_id,
             event.monitoring.idle_seconds or 0,
         )
-    tick = logger.info if event.messages or event.wake_requests else logger.debug
+    tick = logger.info if event.messages else logger.debug
     tick(
-        "tick chat=%s event=%s messages=%d pending=%d wakes=%s",
+        "tick chat=%s event=%s messages=%d pending=%d",
         parsed.chat_id,
         event.event_received,
         len(event.messages),
         len(event.pending_requests),
-        [message.id for message in event.wake_requests],
     )
     summary = monitor_summary(
         event,
@@ -234,13 +204,6 @@ TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
         input_model=CreateAndOpenRoomInput,
         handler=_create,
         on_success=(WorkflowOperation.OPEN_ROOM,),
-    ),
-    DesktopToolSpec(
-        name=RoomTool.REFRESH,
-        description=REFRESH_TOOL_DESCRIPTION,
-        input_model=RefreshRoomInput,
-        handler=_refresh,
-        visibility=("app",),
     ),
     DesktopToolSpec(
         name=RoomTool.MONITOR,

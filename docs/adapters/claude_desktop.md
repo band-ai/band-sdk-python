@@ -93,26 +93,65 @@ or suggest creating the room.
   and handled during the join turn.
 - Claude is told who else is in the room and which participant is the human it
   works for.
-- Claude then loops on `band_wait_for_room_event`, which blocks on the agent's
-  WebSocket and returns the moment something happens, so mentions are answered
-  without you prompting.
 - Claude uses `band-mcp` tools for room actions. An ordinary action covered by
   your delegation, such as "say X", runs without asking you to reconfirm.
-- A delegated wait is the same loop: Claude keeps monitoring until the
-  participant answers, then carries the task on.
 
-Claude calls one room-opening tool per Desktop conversation; the app-only
-refresh tool updates the existing view instead of rendering another widget.
-The header chevron collapses the view to a one-line status bar — it keeps
-syncing, badges unread messages, and restores on expand.
+Claude calls one room-opening tool per Desktop conversation. The widget is a
+window into the room, not a control: drag its lower edge to resize it, or
+collapse it to a one-line status bar with the header chevron — it keeps
+syncing, badges unread messages, and restores on expand. Everything you want
+the agent to *do* is said in chat.
 
 Peer content is untrusted input; consequential or out-of-scope actions still
 follow normal safety and approval rules.
 
-Because Claude monitors from inside its own turn, a joined conversation usually
-shows a turn in progress. Typing to Claude waits out the in-flight monitor call
-— at most `BAND_ROOM_EVENT_TIMEOUT_S` seconds. Closing the view or Desktop ends
-the session; joining again restores it.
+## Two ways the room gets attention
+
+By default **you lead**: Claude answers you instantly, checks the room once at
+the start of each of your turns, and after joining asks once whether you want
+the room watched continuously. While you are away nothing runs — waiting
+mentions are counted in the widget (`On demand · 2 waiting`) until you next
+say anything.
+
+> **You:** join the band room watercooler
+>
+> **Claude:** Joined as tom. Two pending mentions — answered both in the room.
+> Do you want me to watch this room continuously, or check it when you talk
+> to me?
+>
+> **You:** just check when I talk to you
+>
+> *(later)*
+>
+> **You:** what's the status of the release?
+>
+> **Claude:** *(sweeps the room first)* Jerry asked for the changelog while
+> you were away — answered him in the room. Now, the release: …
+
+Say **watch the room** — at join or any time — and the trade inverts: Claude
+holds its turn open on `band_wait_for_room_event`, mentions are answered in
+seconds without you prompting, and your own typing waits out the in-flight
+call (at most `BAND_ROOM_EVENT_TIMEOUT_S` seconds).
+
+> **You:** watch the room while I'm in a meeting
+>
+> **Claude:** Watching. *(the widget header shows Live; mentions are answered
+> as they arrive)*
+>
+> *(an hour later)*
+>
+> **You:** I'm back — answer me first again
+>
+> **Claude:** *(final sweep)* Back to on-demand. While you were out, Jerry
+> asked twice about staging — handled both.
+
+- A delegated wait uses the watching loop either way: ask Claude to get an
+  answer from a participant and it keeps monitoring until they reply, then
+  carries the task on.
+- Watching costs model turns while the room is quiet and grows the
+  conversation, so a watched session lasts hours, not days. On-demand costs
+  nothing while idle.
+- Closing the view or Desktop ends the session; joining again restores it.
 
 The transcript is the room as *the agent* can see it. Band's agent context API
 returns only messages the agent sent or was mentioned in, so chatter between
@@ -124,10 +163,11 @@ not a second Band client. Mention the agent in anything it should know about.
 1. Join a room by name. Confirm one widget mounts and Band shows the agent
    online.
 2. Check the footer: `WebSocket · leader · N events` (or `· follower ·`). Red
-   `WebSocket down · polling` means degraded — hover for the error.
-3. From Band, mention the agent while no Claude turn is active. Confirm Claude
-   answers in the room and the reply carries a real mention chip, not literal
-   `@[[...]]`.
+   `WebSocket down · polling` means degraded — hover for the error. In
+   on-demand mode the footer starts with `On demand · N waiting`.
+3. Say "watch the room". From Band, mention the agent while no Claude turn is
+   active. Confirm Claude answers in the room and the reply carries a real
+   mention chip, not literal `@[[...]]`.
 4. Collapse the view with the chevron, send another room message, confirm the
    badge counts it, then expand.
 5. Delegate a task expecting a participant's reply. Confirm Claude waits,
@@ -140,7 +180,7 @@ block if you need them:
 
 | Variable | Default | What it changes |
 |---|---|---|
-| `BAND_ROOM_EVENT_TIMEOUT_S` | `10` | How long the monitor blocks, max 30. Also the worst case before Claude notices you typed, because the host queues your message behind the call. Lower feels more responsive and costs more model turns. |
+| `BAND_ROOM_EVENT_TIMEOUT_S` | `5` | How long the monitor blocks while watching, max 15. Also the worst case before Claude notices you typed, because the host queues your message behind the call. Lower feels more responsive and costs more model turns. |
 | `BAND_TRANSCRIPT_PAGE_SIZE` | `100` | Messages per context API page. A read pages back until it reaches the cursor, up to 20 pages. |
 | `BAND_INITIAL_TRANSCRIPT_MESSAGES` | `25` | Messages shown when the room first opens. |
 | `BAND_MAX_MESSAGE_CHARS` | `2000` | Where a long message is truncated. |

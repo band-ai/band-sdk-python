@@ -2,8 +2,8 @@
 
 User-first inverts the room-first loop: no turn is held, the user is answered
 instantly, and the room is swept at turn starts. Everything the loop's health
-machinery assumes — staleness, the wake accelerator, the notice — is intended
-to be off in that mode, or it nags about a state the user chose.
+machinery assumes — staleness and its notice — is intended to be off in that
+mode, or it nags about a state the user chose.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ class TestContract:
             [mentioned_message("req-1", "2026-01-01T00:00:01Z")]
         ).join(attention=AttentionMode.USER_FIRST)
 
-        assert "end your turn and await the user" in on_demand["summary_text"]
-        assert "start monitoring" not in on_demand["summary_text"]
+        assert "Ask the user once whether" in on_demand["summary_text"]
+        assert "Start monitoring" not in on_demand["summary_text"]
 
     async def test_a_sweep_is_told_not_to_keep_looping(self, room: Any) -> None:
         live = room([message("m-1", "2026-01-01T00:00:01Z")])
@@ -70,20 +70,22 @@ class TestDisarmedMachinery:
         assert quiet["monitoring"]["stale"] is False
         assert quiet["monitoring_notice"] == ""
 
-    async def test_mentions_are_not_claimed_for_wakes(self, room: Any) -> None:
-        """An autonomous ui/message would only be refused; the widget is the
-        inbox, and the mention must stay pending for the next turn's sweep."""
+    async def test_a_mention_stays_pending_for_the_next_sweep(self, room: Any) -> None:
+        """Nothing can start a turn while the user is away, so the mention's
+        only path is to wait — counted in the view — for the next sweep."""
         live = room(
             [message("m-1", "2026-01-01T00:00:01Z")],
             [mentioned_message("req-1", "2026-01-01T00:00:03Z")],
         )
         await live.join(attention=AttentionMode.USER_FIRST)
 
-        tick = await live.monitor(caller=MonitorCaller.APP)
+        seen_by_view = await live.monitor(caller=MonitorCaller.APP)
+        swept = await live.monitor(since=None)
 
-        assert ids(tick["pending_requests"]) == ["req-1"]
-        assert tick["wake_requests"] == []
-        assert tick["wake_prompt"] == ""
+        assert ids(seen_by_view["pending_requests"]) == ["req-1"]
+        assert ids(swept["pending_requests"]) == ["req-1"], (
+            "the view's ticks must not consume what the sweep is owed"
+        )
 
 
 class TestSwitching:

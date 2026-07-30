@@ -1,9 +1,8 @@
 /**
  * Drives the real room view against a fake MCP App host.
  *
- * The view is a browser script, so what it does with an in-flight watch, an
- * overtaking refresh, or a room that changes underneath it cannot be reached
- * from Python at all. This runs the shipped asset in a Node VM with a stub DOM
+ * The view is a browser script, so what it does with an in-flight watch or a
+ * room that changes underneath it cannot be reached from Python at all. This runs the shipped asset in a Node VM with a stub DOM
  * and a scripted host, and prints one JSON object per scenario; the pytest that
  * invokes it owns the assertions.
  *
@@ -216,39 +215,6 @@ const SCENARIOS = {
     };
   },
 
-  /** A refresh overtaken by a watch must not rewind the resume cursor. */
-  async cursorRewind(source) {
-    const view = await open(
-      source,
-      "room-a",
-      transcript("room-a", [said("m-1", "2026-01-01T00:00:05Z")], "2026-01-01T00:00:05Z")
-    );
-    const watch = view.toolCall("band_wait_for_room_event");
-    view.click("refresh");
-    await flush();
-    const refresh = view.toolCall("band_refresh_room_view");
-
-    view.answer(watch, {
-      structuredContent: transcript(
-        "room-a",
-        [said("m-2", "2026-01-01T00:00:09Z")],
-        "2026-01-01T00:00:09Z"
-      )
-    });
-    await view.settle();
-    view.answer(refresh, {
-      structuredContent: transcript("room-a", [], "2026-01-01T00:00:05Z")
-    });
-    await view.settle();
-    view.tick();
-    await view.settle();
-
-    return {
-      refreshAskedFrom: refresh.params.arguments.since,
-      resumedFrom: view.toolCall("band_wait_for_room_event").params.arguments.since
-    };
-  },
-
   /** A tick carrying nothing still moves the cursor, or monitoring stalls. */
   async quietTick(source) {
     const view = await open(
@@ -292,93 +258,8 @@ const SCENARIOS = {
     };
   },
 
-  /** A wake the host refused must not come back: it repeats on every tick. */
-  async wakeRefusedByTheHost(source) {
-    const view = await open(
-      source,
-      "room-a",
-      transcript("room-a", [], "2026-01-01T00:00:01Z")
-    );
-    const mention = said("ask", "2026-01-01T00:00:02Z", { addressed_to_viewer: true });
-
-    view.answer(view.toolCall("band_wait_for_room_event"), {
-      structuredContent: {
-        ...transcript("room-a", [mention], "2026-01-01T00:00:02Z", [mention]),
-        wake_requests: [mention],
-        wake_prompt: "answer this in the room"
-      }
-    });
-    await flush();
-    view.answer(view.pending("ui/update-model-context"));
-    await flush();
-    const refusals = [];
-    for (let shape = 0; shape < 2; shape += 1) {
-      const ask = view.pending("ui/message");
-      if (!ask) break;
-      refusals.push(shape);
-      view.refuse(ask, { code: -32000, message: "ui/message requires user activation" });
-      await flush();
-    }
-    view.tick();
-    await view.settle();
-
-    return {
-      shapesTried: refusals.length,
-      retryWakes: view.toolCall("band_wait_for_room_event").params.arguments.retry_wakes
-    };
-  },
-
-  /** A stopped agent loop is the user's to repair: the view shows it, and one
-   * click relays the server-authored notice as the ui/message that starts the
-   * turn — the click being the user activation the host requires. */
-  async staleWakeButton(source) {
-    const notice = "You are NOT monitoring this Band room — resume the loop now.";
-    const view = await open(
-      source,
-      "room-a",
-      transcript("room-a", [], "2026-01-01T00:00:01Z")
-    );
-    const hiddenWhileHealthy = view.hidden("wake");
-
-    view.answer(view.toolCall("band_wait_for_room_event"), {
-      structuredContent: {
-        ...transcript("room-a", [], "2026-01-01T00:00:02Z"),
-        monitoring: { idle_seconds: 65, stale: true },
-        monitoring_notice: notice
-      }
-    });
-    await view.settle();
-    const shownWhileStale = !view.hidden("wake");
-
-    view.click("wake");
-    await flush();
-    const ask = view.pending("ui/message");
-    const wakeText = ask ? ask.params.content.text : "";
-    if (ask) view.answer(ask, {});
-    await view.settle();
-
-    view.tick();
-    await view.settle();
-    view.answer(view.toolCall("band_wait_for_room_event"), {
-      structuredContent: {
-        ...transcript("room-a", [], "2026-01-01T00:00:03Z"),
-        monitoring: { idle_seconds: 3, stale: false },
-        monitoring_notice: ""
-      }
-    });
-    await view.settle();
-
-    return {
-      hiddenWhileHealthy,
-      shownWhileStale,
-      wakeText,
-      hiddenAfterRecovery: view.hidden("wake")
-    };
-  },
-
-  /** In on-demand attention the widget is only the inbox: waiting mentions
-   * are counted, the chat is the way in, and no button is offered — typing
-   * anything is what sweeps the room. */
+  /** In on-demand attention the widget is a window with an inbox count:
+   * waiting mentions are shown for the user, and the chat is the way in. */
   async onDemandInbox(source) {
     const view = await open(source, "room-a", {
       ...transcript("room-a", [], "2026-01-01T00:00:01Z"),
@@ -386,10 +267,7 @@ const SCENARIOS = {
       pending_requests: [said("ask-1", "2026-01-01T00:00:01Z")]
     });
 
-    return {
-      buttonOffered: !view.hidden("wake"),
-      diagnostics: view.diagnostics()
-    };
+    return { diagnostics: view.diagnostics() };
   },
 
   /** How long to block is configured on the server, so the view never says. */
