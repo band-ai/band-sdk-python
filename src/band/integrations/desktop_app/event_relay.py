@@ -49,6 +49,11 @@ class RelayTuning(BaseSettings):
         ge=1,
         description="Backoff ceiling while another consumer holds the agent key.",
     )
+    band_relay_fanout_timeout_s: float = Field(
+        5,
+        gt=0,
+        description="How long one follower may take to accept a fanned-out line.",
+    )
 
 
 RELAY_TUNING = RelayTuning()
@@ -63,6 +68,23 @@ class Fanout(StrEnum):
 
     EVENT = "event"
     JOINED = "joined"
+
+
+async def deliver(writer: asyncio.StreamWriter, payload: bytes) -> bool:
+    """Hand one fanout line to a follower, or report it unusable.
+
+    Bounded on purpose. This runs on the leader's WebSocket event path, so a
+    follower that stopped reading — a frozen Desktop, a stopped process still
+    holding its end — would otherwise stall the send queue it shares with every
+    other follower, and starve them all of events rather than only itself.
+    """
+    try:
+        async with asyncio.timeout(RELAY_TUNING.band_relay_fanout_timeout_s):
+            writer.write(payload)
+            await writer.drain()
+        return True
+    except (ConnectionError, RuntimeError, TimeoutError):
+        return False
 
 
 class RelayStatus(BaseModel):
@@ -266,14 +288,10 @@ class DesktopRoomEventRelay:
         presence = self._presence_factory(link)
 
         async def fanout(payload: bytes) -> None:
-            stale: list[asyncio.StreamWriter] = []
-            for writer in clients:
-                try:
-                    writer.write(payload)
-                    await writer.drain()
-                except (ConnectionError, RuntimeError):
-                    stale.append(writer)
-            for writer in stale:
+            for writer in list(clients):
+                if await deliver(writer, payload):
+                    continue
+                logger.warning("Dropping a follower that stopped reading events")
                 clients.discard(writer)
                 writer.close()
 

@@ -37,6 +37,23 @@ class FakePresence:
         self.stop = AsyncMock()
 
 
+class StalledFollower:
+    """A follower that takes bytes but never lets the write complete.
+
+    What a frozen Desktop looks like from the leader's end: the socket is open,
+    so nothing raises, but its buffer never drains.
+    """
+
+    def __init__(self) -> None:
+        self.received: list[bytes] = []
+
+    def write(self, payload: bytes) -> None:
+        self.received.append(payload)
+
+    async def drain(self) -> None:
+        await asyncio.Event().wait()
+
+
 @dataclass
 class RelayHarness:
     """Builds relays that share one agent key, recording their transports."""
@@ -155,6 +172,21 @@ async def test_a_superseded_websocket_is_replaced_rather_than_held(
         assert relays.links[0].disconnect.await_count == 1
     finally:
         await relay.stop()
+
+
+async def test_a_follower_that_stops_reading_is_dropped_not_waited_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fanout runs on the leader's WebSocket event path: one wedged follower
+    must cost that follower its place, not cost every other one its events."""
+    monkeypatch.setattr(event_relay.RELAY_TUNING, "band_relay_fanout_timeout_s", 0.05)
+    follower = StalledFollower()
+
+    async with asyncio.timeout(1):
+        delivered = await event_relay.deliver(follower, b"event room-1\n")
+
+    assert delivered is False, "a follower that never drains is reported unusable"
+    assert follower.received == [b"event room-1\n"]
 
 
 async def test_a_failed_leadership_claim_retries_instead_of_dying(
