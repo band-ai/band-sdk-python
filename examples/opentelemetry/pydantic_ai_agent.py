@@ -31,8 +31,10 @@ import os
 
 from dotenv import load_dotenv
 
+from pydantic_ai import InstrumentationSettings
+
 from otel_setup import telemetry
-from band import Agent, LoggingStyle, LogSettings
+from band import Agent, LoggingStyle, LogSettings, chatty_logger_levels
 from band.adapters import PydanticAIAdapter
 
 SERVICE = "band-pydantic-ai-agent"
@@ -53,8 +55,12 @@ async def main() -> None:
 
     with telemetry(SERVICE) as otel:
         # Order matters: Band's dictConfig replaces the root logger's handlers,
-        # so the OTEL log handler goes on afterwards.
-        LogSettings(log_console_style=LoggingStyle.JSON).for_application().configure()
+        # so the OTEL log handler goes on afterwards. for_application() raises the
+        # root level, which would otherwise let the transport stack narrate every
+        # request and frame at INFO — hence the chatty demotions.
+        LogSettings(log_console_style=LoggingStyle.JSON).for_application().configure(
+            extra_loggers=chatty_logger_levels(),
+        )
         otel.attach_log_handler()
 
         # A log line inside a span: its otelTraceID matches the span the console
@@ -62,13 +68,13 @@ async def main() -> None:
         with otel.tracer.start_as_current_span("agent.startup"):
             logger.info("Starting Band agent with OpenTelemetry")
 
-        # instrument=True hands the run to the global TracerProvider set above.
-        # Pass an InstrumentationSettings instead when the host keeps its
-        # providers out of the globals.
+        # The adapter is handed this pipeline's provider rather than left to find
+        # a global one — `instrument=True` would resolve whatever the process
+        # published globally, which is nothing here.
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4-mini",
             custom_section="You are a helpful assistant. Be concise and friendly.",
-            instrument=True,
+            instrument=InstrumentationSettings(tracer_provider=otel.tracer_provider),
         )
 
         agent = Agent.from_config(

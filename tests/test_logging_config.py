@@ -180,6 +180,27 @@ def test_json_records_keep_injected_trace_context(
     assert {field: record[field] for field in OTEL_CORRELATION_FIELDS} == injected
 
 
+def test_custom_json_fields_replace_the_default_schema(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``json_fields`` is the whole schema, correlation keys included.
+
+    Documented as a replacement rather than an addition: a caller who asks for
+    two fields gets two, and splices ``OTEL_CORRELATION_FIELDS`` back in when
+    they want correlation.
+    """
+    with restored_logging():
+        configure_logging(
+            style=LoggingStyle.JSON,
+            stream=LogStream.STDOUT,
+            json_fields=("levelname", "message"),
+        )
+        logging.getLogger("band.runtime").info("terse")
+        record = _json_line(capsys)
+
+    assert record == {"level": "INFO", "message": "terse"}
+
+
 def test_configure_logging_rich_honors_stdout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

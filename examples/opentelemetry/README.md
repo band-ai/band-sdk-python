@@ -68,8 +68,10 @@ Step 1 can go either side of step 2. Injection is a log-record factory rather
 than a handler, so `dictConfig` never touches it.
 
 The four correlation keys (`otelTraceID`, `otelSpanID`, `otelTraceSampled`,
-`otelServiceName`) are always in Band's JSON output. Without instrumentation
+`otelServiceName`) are in Band's default JSON output. Without instrumentation
 they are `null`; the log schema does not change shape when you turn tracing on.
+Choosing your own `json_fields` replaces that default wholesale — splice
+`*OTEL_CORRELATION_FIELDS` into your list to keep correlation.
 
 ## Choices worth knowing about
 
@@ -79,11 +81,14 @@ they are `null`; the log schema does not change shape when you turn tracing on.
   attaches its own instead, so the handler and its level stay the host's, and
   the ordering rule above is the same one that applies to any other handler you
   own (a shipper, a Sentry handler).
-- **The providers are published globally.** That is what lets
-  `PydanticAIAdapter(instrument=True)` find the tracer. A host that keeps its
-  providers out of the globals should pass
-  `PydanticAIAdapter(instrument=InstrumentationSettings(tracer_provider=...))`
-  instead.
+- **No provider is published globally.** Each consumer is handed one — the
+  instrumentor, the log handler, and the adapter's
+  `InstrumentationSettings(tracer_provider=...)`. `set_tracer_provider` takes
+  only the first call of a process, so a helper that both publishes and shuts
+  down its providers leaves a second run writing into a dead one. A host that
+  *does* own the globals (the usual thing for a long-lived service, and what
+  other instrumentors look for) can publish them once at startup and then use
+  the shorter `PydanticAIAdapter(instrument=True)`.
 - **Console exporters batch.** The context manager force-flushes both providers
   before shutting them down; without that, the tail of a short run is lost.
 

@@ -290,10 +290,11 @@ logging.config.dictConfig(config)
 package. What it does is stay out of the way and meet an instrumented host
 halfway:
 
-- **JSON logs are correlation-ready.** Every JSON record carries the four
+- **JSON logs are correlation-ready.** The default JSON schema carries the four
   attributes `LoggingInstrumentor(inject_trace_context=True)` injects. Without
   instrumentation they are `null`, so the schema does not change shape when you
-  turn tracing on later.
+  turn tracing on later. Passing your own `json_fields` replaces that default —
+  splice `*OTEL_CORRELATION_FIELDS` in to keep them.
 - **Pydantic AI runs can be traced through Band.** `PydanticAIAdapter` passes
   `instrument` straight to the pydantic-ai agent.
 

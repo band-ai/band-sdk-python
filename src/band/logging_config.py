@@ -78,9 +78,11 @@ STANDARD_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 JSON_LOGGER_REQUIREMENT = "python-json-logger>=3.1.0"
 
 # Record attributes OpenTelemetry's LoggingInstrumentor writes when started with
-# inject_trace_context=True. Always part of the JSON schema: absent they
+# inject_trace_context=True. Part of the *default* JSON schema: absent they
 # serialize as null, present they carry the live trace, so a log pipeline reads
-# one shape whether or not the host instrumented the process.
+# one shape whether or not the host instrumented the process. A caller who
+# chooses json_fields replaces that default and splices these back in to keep
+# correlation.
 OTEL_CORRELATION_FIELDS: tuple[str, ...] = (
     "otelTraceID",
     "otelSpanID",
@@ -327,9 +329,9 @@ def build_logging_config(
             ``"$"``). Matches :class:`logging.Formatter`.
         extra_loggers: Optional logger-name to level mapping, for example
             ``{"httpx": "WARNING"}``.
-        json_fields: LogRecord field names to include in JSON output. The
-            default set adds :data:`OTEL_CORRELATION_FIELDS`, which stay
-            ``null`` until the host instruments the process.
+        json_fields: LogRecord field names to include in JSON output. Replaces
+            the default set, which ends in :data:`OTEL_CORRELATION_FIELDS` —
+            splice those back in to keep trace correlation.
         static_fields: Fixed fields added to every JSON record.
         log_file: Optional path for a second file handler. ``None`` disables
             file logging.

@@ -418,6 +418,7 @@ class TestInitialization:
 class TraceCapture(NamedTuple):
     """A tracer wired to memory, plus the settings that route an agent into it."""
 
+    provider: TracerProvider
     settings: InstrumentationSettings
     exporter: InMemorySpanExporter
 
@@ -437,7 +438,11 @@ def trace_capture() -> Iterator[TraceCapture]:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     try:
-        yield TraceCapture(InstrumentationSettings(tracer_provider=provider), exporter)
+        yield TraceCapture(
+            provider=provider,
+            settings=InstrumentationSettings(tracer_provider=provider),
+            exporter=exporter,
+        )
     finally:
         provider.shutdown()
 
@@ -475,6 +480,32 @@ class TestInstrumentation:
         adapter = PydanticAIAdapter(
             model=_reply("ok"),  # type: ignore[arg-type]  # real Agent, no network
             instrument=trace_capture.settings,
+        )
+        adapter.agent_name = "TestBot"
+
+        adapter._create_agent().run_sync("hello", deps=mock_tools)
+
+        assert trace_capture.operations() == ["chat", "invoke_agent"]
+
+    def test_true_traces_through_the_ambient_provider(
+        self,
+        trace_capture: TraceCapture,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_tools,
+    ):
+        """``True`` is the shorthand for a host that published its providers.
+
+        pydantic-ai resolves the ambient ``TracerProvider`` when it builds the
+        default settings, so this only traces in a process that set one — which
+        is why examples/opentelemetry hands over settings instead.
+        """
+        monkeypatch.setattr(
+            "pydantic_ai.models.instrumented.get_tracer_provider",
+            lambda: trace_capture.provider,
+        )
+        adapter = PydanticAIAdapter(
+            model=_reply("ok"),  # type: ignore[arg-type]  # real Agent, no network
+            instrument=True,
         )
         adapter.agent_name = "TestBot"
 

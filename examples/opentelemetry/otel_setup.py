@@ -18,6 +18,12 @@ calls:
 Injection itself is order-independent — it is a log-record factory, not a
 handler — so ``band.*`` records carry the live trace whichever way round the
 two are configured.
+
+Nothing here is published as an OpenTelemetry global. The providers are handed
+to each consumer explicitly, so the pipeline can be started, shut down, and
+started again — ``set_tracer_provider`` takes only the first call of a process
+and would leave the second run writing into a provider that has already been
+shut down.
 """
 
 from __future__ import annotations
@@ -28,7 +34,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from opentelemetry import trace
-from opentelemetry._logs import set_logger_provider
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
 # The SDK's own LoggingHandler is deprecated in favour of this one.
@@ -45,11 +50,16 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 
 @dataclass
 class Telemetry:
-    """A live pipeline: a tracer to start spans with, and the log sink."""
+    """A live pipeline: the providers to hand out, and the log sink."""
 
-    tracer: trace.Tracer
+    tracer_provider: TracerProvider
     logger_provider: LoggerProvider
     handler: LoggingHandler | None = field(default=None, repr=False)
+
+    @property
+    def tracer(self) -> trace.Tracer:
+        """Tracer for the host's own spans."""
+        return self.tracer_provider.get_tracer(__name__)
 
     def attach_log_handler(self, level: int = logging.INFO) -> LoggingHandler:
         """Export Python log records as OTEL logs, exactly once.
@@ -85,23 +95,18 @@ def telemetry(service_name: str) -> Iterator[Telemetry]:
         BatchLogRecordProcessor(ConsoleLogRecordExporter())
     )
 
-    # Published globally because that is where the rest of the ecosystem looks:
-    # it is what lets PydanticAIAdapter(instrument=True) find this tracer.
-    trace.set_tracer_provider(tracer_provider)
-    set_logger_provider(logger_provider)
-
     # Adds otelTraceID / otelSpanID / otelTraceSampled / otelServiceName to every
     # log record; Band's JSON formatter already carries those keys. The provider
-    # is passed explicitly so the service name comes from this Resource rather
-    # than from whatever is global. No handler is installed here — the host owns
-    # that, after Band's logging setup.
+    # is passed explicitly, so the service name comes from this Resource and no
+    # global is consulted. No handler is installed here — the host owns that,
+    # after Band's logging setup.
     LoggingInstrumentor().instrument(
         tracer_provider=tracer_provider,
         inject_trace_context=True,
         enable_log_auto_instrumentation=False,
     )
 
-    pipeline = Telemetry(tracer_provider.get_tracer(__name__), logger_provider)
+    pipeline = Telemetry(tracer_provider, logger_provider)
     try:
         yield pipeline
     finally:
