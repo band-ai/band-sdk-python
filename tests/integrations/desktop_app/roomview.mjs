@@ -376,29 +376,18 @@ const SCENARIOS = {
     };
   },
 
-  /** In on-demand attention the widget is the inbox and the button the
-   * standing way in: always offered, calm, relaying the server's check
-   * prompt — while the stopped-loop machinery stays silent. */
-  async onDemandCheckButton(source) {
-    const check = "The user clicked Check room. Call band_wait_for_room_event once.";
+  /** In on-demand attention the widget is only the inbox: waiting mentions
+   * are counted, the chat is the way in, and no button is offered — typing
+   * anything is what sweeps the room. */
+  async onDemandInbox(source) {
     const view = await open(source, "room-a", {
       ...transcript("room-a", [], "2026-01-01T00:00:01Z"),
       attention: "user_first",
-      check_prompt: check,
       pending_requests: [said("ask-1", "2026-01-01T00:00:01Z")]
     });
-    const button = !view.hidden("wake");
-
-    view.click("wake");
-    await flush();
-    const ask = view.pending("ui/message");
-    const text = ask ? ask.params.content.text : "";
-    if (ask) view.answer(ask, {});
-    await view.settle();
 
     return {
-      buttonOffered: button,
-      relayedText: text,
+      buttonOffered: !view.hidden("wake"),
       diagnostics: view.diagnostics()
     };
   },

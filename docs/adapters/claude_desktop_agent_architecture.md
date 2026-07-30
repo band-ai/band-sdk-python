@@ -228,11 +228,11 @@ view's display loop can never flip it).
 |---|---|---|
 | Turn | perpetual, parked on the monitor | none held; ends normally |
 | User typing | waits ≤ one quantum | instant |
-| Mention latency | seconds | until the user next speaks or clicks |
+| Mention latency | seconds | until the user next speaks |
 | Room sweep | continuous | once, at the start of each turn |
 | Stale/wake machinery | armed | disarmed — not-watching is the point |
 | Widget | live transcript | live inbox: `On demand · N waiting` |
-| Button | red **Wake agent**, only when stopped | calm **Check room**, always |
+| Button | red **Wake agent**, only when stopped | none — the chat is the way in |
 | Token burn while idle | ~4-6 ticks/min | zero |
 
 The model only ever reads the active mode's contract
@@ -244,8 +244,10 @@ staleness freshly, the switching call being its own first tick. Known trades,
 stated rather than hidden: in `user_first` the agent stays *online* in Band
 while possibly silent for hours, "once in a while" can only ever mean "when a
 turn runs" (nothing here can start one), and mentions wait unbounded on the
-user — the widget's waiting count and the Check room click (whose activation
-starts the sweep turn) are the softenings.
+user — the widget's waiting count is the softening, and typing anything
+(the turn-start sweep rides every user message) is the way in. A button was
+tried and removed: Desktop treats even an activated `ui/message` as a composer
+prefill, so a click was just a worse way to say something.
 
 ### Every tick reads, because the event stream is not complete
 

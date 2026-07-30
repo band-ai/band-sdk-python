@@ -118,19 +118,13 @@ class TestWakeButton:
 
 
 class TestOnDemand:
-    def test_the_check_button_is_the_standing_way_in(
-        self, behaviour: dict[str, Any]
-    ) -> None:
-        """No turn runs between the user's visits, so the widget is the inbox
-        and one click — carrying the activation ui/message needs — is how the
-        backlog gets a turn without composing a message."""
-        result = behaviour["onDemandCheckButton"]
+    def test_the_widget_is_only_the_inbox(self, behaviour: dict[str, Any]) -> None:
+        """Waiting mentions are counted for the user to see; the chat is the
+        way in, so no button is offered — typing anything sweeps the room, and
+        a button would be a worse way to say something."""
+        result = behaviour["onDemandInbox"]
 
-        assert result["buttonOffered"] is True
-        assert (
-            "Check room" in result["relayedText"]
-            or "band_wait" in result["relayedText"]
-        )
+        assert result["buttonOffered"] is False
         assert result["diagnostics"].startswith("On demand · 1 waiting")
 
 

@@ -81,6 +81,5 @@ button#refresh, button#wake {
   background: var(--soft); color: var(--text); padding: 3px 8px;
   font: inherit; font-size: 10px; cursor: pointer;
 }
-/* Red repair while the loop is stopped; calm standing entry in on-demand mode. */
+/* Shown only while the agent's monitor loop is stopped: the one-click repair. */
 button#wake { border-color: #e03131; color: #e03131; font-weight: 700; }
-button#wake.calm { border-color: var(--border); color: var(--text); font-weight: 400; }

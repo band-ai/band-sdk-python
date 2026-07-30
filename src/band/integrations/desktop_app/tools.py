@@ -29,8 +29,8 @@ class AttentionMode(StrEnum):
     ROOM_FIRST holds the turn open on the monitor loop, so the room is
     answered in seconds and the user's typing waits one quantum. USER_FIRST
     inverts it: no turn is held, the user is answered instantly, and the room
-    is swept once at the start of each turn — so a mention waits until the
-    user next speaks or clicks the view's Check room button.
+    is swept once at the start of each turn — so a mention waits, counted in
+    the view's inbox, until the user next speaks.
     """
 
     ROOM_FIRST = "room_first"

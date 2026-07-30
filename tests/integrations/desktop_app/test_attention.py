@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from band.integrations.desktop_app.service import STALE_GRACE_S
-from band.integrations.desktop_app.tools import AttentionMode, MonitorCaller, RoomTool
+from band.integrations.desktop_app.tools import AttentionMode, MonitorCaller
 from tests.integrations.desktop_app.conftest import (
     ROOM_ID,
     Clock,
@@ -84,17 +84,6 @@ class TestDisarmedMachinery:
         assert ids(tick["pending_requests"]) == ["req-1"]
         assert tick["wake_requests"] == []
         assert tick["wake_prompt"] == ""
-
-    async def test_the_check_prompt_rides_user_first_payloads_only(
-        self, room: Any
-    ) -> None:
-        on_demand = await room([message("m-1", "2026-01-01T00:00:01Z")]).join(
-            attention=AttentionMode.USER_FIRST
-        )
-        watched = await room([message("m-1", "2026-01-01T00:00:01Z")]).join()
-
-        assert RoomTool.MONITOR in on_demand["check_prompt"]
-        assert watched["check_prompt"] == ""
 
 
 class TestSwitching:

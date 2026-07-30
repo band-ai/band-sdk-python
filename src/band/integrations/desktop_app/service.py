@@ -23,7 +23,6 @@ from band.integrations.desktop_app.room import (
 )
 from band.integrations.desktop_app.prompts import (
     ambiguous_room_guidance,
-    check_room_prompt,
     monitoring_notice,
     room_briefing,
     unknown_room_guidance,
@@ -452,8 +451,6 @@ class RoomTranscriptService:
         transcript.monitoring = self.monitoring(chat_id)
         transcript.monitoring_notice = monitoring_notice(transcript.monitoring)
         transcript.attention = self.attention(chat_id)
-        if transcript.attention is AttentionMode.USER_FIRST:
-            transcript.check_prompt = check_room_prompt(chat_id)
         transcript.host = self.host
         transcript.role_briefing = room_briefing(transcript)
         return transcript

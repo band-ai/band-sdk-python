@@ -223,8 +223,6 @@ class RoomTranscript(BaseModel):
     role_briefing: str = ""
     monitoring_notice: str = ""
     attention: AttentionMode = AttentionMode.ROOM_FIRST
-    # Authored server-side for the view's Check room button (user-first only).
-    check_prompt: str = ""
     next_since: datetime = EPOCH
     transport: RelayStatus = Field(default_factory=RelayStatus)
     monitoring: MonitoringStatus = Field(default_factory=MonitoringStatus)
