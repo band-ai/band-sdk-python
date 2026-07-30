@@ -18,9 +18,13 @@ from pathlib import Path
 
 import yaml
 
-from band import LogSettings
+from band import LoggingStyle, LogSettings
 
-LogSettings().for_application().configure(fmt="%(message)s")
+# The bare message format only exists for the standard style, so the style is
+# pinned rather than read from BAND_LOG_CONSOLE_STYLE.
+LogSettings(log_console_style=LoggingStyle.STANDARD).for_application().configure(
+    fmt="%(message)s"
+)
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))

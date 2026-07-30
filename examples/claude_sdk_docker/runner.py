@@ -143,8 +143,8 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 
 async def main() -> None:
-    LogSettings().for_application().configure()
     """Run the agent from YAML configuration."""
+    LogSettings().for_application().configure()
     global _shutdown_event
     _shutdown_event = asyncio.Event()
 
