@@ -176,9 +176,17 @@ Consequences:
   as this host sends it, a JSON-RPC error. Only a call that never reached the
   host is re-offered via `retry_wakes`, and the ledger gives up on a mention
   after `MAX_REOFFERS` attempts rather than re-asking on every tick forever.
+- The turn is the loop, and it must not end. The host delivers a message typed
+  mid-turn at the next tool-call boundary, so the agent answers its user
+  *between* monitoring calls and carries on — measured live, mid-flood. Ending
+  the turn buys nothing and costs everything, because nothing here can start
+  the next one.
 - The loop is the agent's to keep running, and it can stop — observed live: it
   answered a question typed mid-wait and never resumed monitoring, leaving the
-  room unwatched while the view kept ticking and looking healthy. Nothing the
+  room unwatched while the view kept ticking and looking healthy. Asked why, it
+  recited the contract correctly ("each turn should end with resume monitor")
+  and resumed, so what it lacked was not the instruction but the fact that the
+  turn need not have ended at all. Nothing the
   agent sees distinguishes the two, so the server says it: monitor calls carry
   a `caller` (`model` by default, `app` from the view's display loop), and a
   read whose last `model` tick is older than that call's own quantum plus

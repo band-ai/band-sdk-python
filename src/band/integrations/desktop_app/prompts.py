@@ -41,7 +41,9 @@ SERVER_INSTRUCTIONS = (
     "context, and you use band-mcp for actions. Joining also makes you that "
     f"room's monitor: handle the pending requests, then loop on "
     f"{RoomTool.MONITOR} so a mention arriving while the user is idle still "
-    "gets answered, and resume that loop at the end of every later turn. That "
+    "gets answered, and keep that loop running rather than ending your turn — "
+    "the user's typing reaches you between calls, so you can answer them and "
+    "carry on monitoring in the same turn. That "
     "same loop is how you wait on a participant you asked something: keep "
     "monitoring until they answer, then carry on without requiring the user "
     "to say 'wait'. This conversation watches exactly one room, so do not call "
@@ -181,11 +183,16 @@ def room_briefing(transcript: RoomTranscript) -> str:
         "monitoring until they answer, then carry the task on yourself. An "
         "ordinary Band action the user already delegated, such as 'say X', is "
         "authorised: do it, do not ask them to confirm it again.",
-        "- Whenever a turn ends for any other reason, resume monitoring as the "
-        "last thing you do, so the room is never left unwatched. Resuming is "
-        "not a decision to put to the user: they asked for this room to be "
-        "watched when they joined it, and a turn that ends by asking whether "
-        "to resume has left it unwatched until they answer.",
+        "- Do not end your turn. This turn is the loop: the user's typing "
+        "reaches you between monitoring calls, so answering them costs you "
+        "nothing and needs no pause — reply, then call the monitor again in "
+        "the same turn. Stopping is the one thing that unwatches the room, "
+        "because nothing here can start a turn for you: until the user "
+        "happens to type again, every mention goes unanswered.",
+        "- If you ever find yourself not monitoring, resume before anything "
+        "else, and without asking. Watching this room is what the user asked "
+        "for by joining it; a turn that ends on the question leaves it "
+        "unwatched until they answer.",
         f"- Never call {RoomTool.JOIN} or {RoomTool.CREATE} again in this "
         "conversation. It watches one room; another room needs its own Desktop "
         "conversation, so say so rather than moving this view off the room you "
