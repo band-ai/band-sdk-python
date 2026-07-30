@@ -307,9 +307,6 @@ class RoomTranscriptService:
         refresh_participants: bool = False,
     ) -> RoomTranscript:
         """The agent-visible room state, newest last, annotated for the agent."""
-        # Captured before the read: a message inserted while it runs carries a
-        # later timestamp, so resuming from here cannot skip it.
-        started_at = self._now()
         viewer = await self.viewer()
         roster = await self.participants(chat_id, refresh=refresh_participants)
         after = parse_timestamp(since)
@@ -348,7 +345,13 @@ class RoomTranscriptService:
             chat_id=chat_id,
             viewer=viewer,
             participants=roster,
-            next_since=messages[-1].at if messages else max(started_at, after or EPOCH),
+            # Only timestamps observed from Band may become the cursor. A
+            # quiet read repeats the caller's own rather than minting one from
+            # this machine's clock: a local clock ahead of the platform would
+            # advance the cursor past messages still committing, and the
+            # `<= after` filter above would then drop them on every later
+            # read — an addressed message silently never displayed.
+            next_since=messages[-1].at if messages else (after or EPOCH),
             messages=messages,
             pending_requests=[
                 message
