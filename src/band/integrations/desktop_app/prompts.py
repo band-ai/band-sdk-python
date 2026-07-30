@@ -217,10 +217,12 @@ CONTRACTS: dict[AttentionMode, AttentionContract] = {
             "call and keep that loop running from then on.",
         ),
         after_join=(
-            "Ask the user once whether they want this room watched "
-            "continuously; until they say yes, end your turn and sweep at the "
-            "start of each later turn.",
-        )[0],
+            "If the user has not already said how this room should get your "
+            "attention, ask once whether they want it watched continuously — "
+            "but never re-ask a choice they made when joining. Until they ask "
+            "for watching, end your turn and sweep at the start of each later "
+            "turn."
+        ),
         resume=(
             "Sweep done. On your next turn, sweep with since={since} first. "
             "For now, serve the user and end your turn normally; do not call "

@@ -40,7 +40,8 @@ class TestContract:
             [mentioned_message("req-1", "2026-01-01T00:00:01Z")]
         ).join(attention=AttentionMode.USER_FIRST)
 
-        assert "Ask the user once whether" in on_demand["summary_text"]
+        assert "ask once whether they want it watched" in on_demand["summary_text"]
+        assert "never re-ask a choice they made" in on_demand["summary_text"]
         assert "Start monitoring" not in on_demand["summary_text"]
 
     async def test_a_sweep_is_told_not_to_keep_looping(self, room: Any) -> None:
