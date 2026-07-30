@@ -11,9 +11,13 @@ from typing import Any
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The ceiling the monitor schema advertises, so a caller cannot ask us to block
-# for an unreasonable time. Also the worst case before a typed message is seen.
-MAX_ROOM_EVENT_TIMEOUT_S = 30
+# The ceiling the monitor schema advertises. A room event preempts the wait
+# instantly and a quiet tick on a live socket costs no REST, so a longer wait
+# buys only fewer tool round-trips — and its whole price is the human: a
+# message they type lands at the next tool boundary, making this ceiling their
+# worst-case wait to be heard. Desktop is a surface with a human present by
+# definition, so the ceiling is what a human tolerates.
+MAX_ROOM_EVENT_TIMEOUT_S = 15
 
 # The executable that makes a Claude Desktop MCP entry a Band agent, whether it
 # is named directly or handed to a runner such as uvx.

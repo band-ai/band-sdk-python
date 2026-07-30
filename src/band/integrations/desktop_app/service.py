@@ -143,7 +143,7 @@ class ModelTick:
     """When the agent last monitored, and the quantum it chose to wait.
 
     The quantum is the model's to pick per call — the briefing has it use 5
-    seconds while its user is talking and up to 30 once the room is quiet — so
+    seconds while its user is talking and the install default once quiet — so
     a limit read off the install default would call a healthy long-quantum loop
     stopped after a single wait.
     """

@@ -135,7 +135,7 @@ This is cooperative concurrency, not parallelism: one brain time-slicing two
 inputs, the way greenlets share one thread. The blocked call is the I/O wait,
 `timeout_seconds` is the scheduler quantum, and every return is a yield point.
 The quantum is adaptive by instruction — 5 seconds while the user is
-conversing, up to 30 once quiet (`BAND_ROOM_EVENT_TIMEOUT_S` sets the schema
+conversing, the default once quiet (`BAND_ROOM_EVENT_TIMEOUT_S` sets the schema
 default, 10). The view sends no quantum of its own, so its display loop runs at
 that same configured default.
 

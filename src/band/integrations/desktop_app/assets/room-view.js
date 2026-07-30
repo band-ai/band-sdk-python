@@ -90,7 +90,7 @@
     // The ceiling the monitor's schema advertises (MAX_ROOM_EVENT_TIMEOUT_S).
     // The server picks the actual wait from its own configuration, so the view
     // never sends one — it only has to outlast the longest it could choose.
-    maxWatchS: 30,
+    maxWatchS: 15,
     requestTimeoutMs: 15000,
     watchRestartDelayMs: 250,
     expandedMaxHeightPx: 520,

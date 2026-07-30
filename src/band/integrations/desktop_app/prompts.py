@@ -175,7 +175,9 @@ def room_briefing(transcript: RoomTranscript) -> str:
         "identical.",
         "- Its timeout is also how long the user waits if they type to you "
         "mid-wait. Pass timeout_seconds=5 while you are in conversation with "
-        "the user, and up to 30 once both they and the room have gone quiet.",
+        "the user, and leave it unset once they go quiet; even the schema "
+        "ceiling is a long pause for a human, so never reach past the default "
+        "to save calls.",
         "- When it returns messages that address you, answer them in the room "
         "with the agent-scope Band tools before anything else, then resume "
         "monitoring.",
