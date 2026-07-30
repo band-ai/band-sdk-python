@@ -143,6 +143,13 @@ async def _monitor(
     event.wake_requests = service.wakes.claim(parsed.chat_id, event.pending_requests)
     if event.wake_requests:
         event.wake_prompt = wake_prompt(parsed.chat_id, event.wake_requests)
+    if event.monitoring.stale:
+        logger.warning(
+            "monitor loop stopped chat=%s idle=%.0fs; this room is unwatched "
+            "until the agent calls again",
+            parsed.chat_id,
+            event.monitoring.idle_seconds or 0,
+        )
     tick = logger.info if event.messages or event.wake_requests else logger.debug
     tick(
         "tick chat=%s event=%s messages=%d pending=%d wakes=%s",
