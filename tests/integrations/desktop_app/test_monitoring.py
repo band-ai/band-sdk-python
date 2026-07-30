@@ -7,6 +7,7 @@ from typing import Any
 
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
 from band.integrations.desktop_app.service import STALE_AFTER_TICKS
+from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
 from tests.integrations.desktop_app.conftest import (
     DEAD,
@@ -49,6 +50,48 @@ class TestMonitoringHealth:
             watched = await live.monitor(caller=MonitorCaller.APP)
 
         assert watched["monitoring"]["stale"] is True
+
+    async def test_a_long_quantum_loop_is_not_mistaken_for_a_stopped_one(
+        self, room: Any
+    ) -> None:
+        """The agent picks its own quantum per call — the briefing has it wait
+        up to 30s once the room is quiet — so a limit read off the install
+        default would call a healthy loop stopped after a single wait."""
+        clock = Clock()
+        live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
+        await live.join()
+        await live.monitor(timeout_seconds=MAX_ROOM_EVENT_TIMEOUT_S)
+
+        clock.advance(MAX_ROOM_EVENT_TIMEOUT_S + 5)
+        mid_wait = await live.monitor(caller=MonitorCaller.APP)
+        clock.advance(MAX_ROOM_EVENT_TIMEOUT_S * STALE_AFTER_TICKS)
+        stopped = await live.monitor(caller=MonitorCaller.APP)
+
+        assert mid_wait["monitoring"]["stale"] is False, (
+            "one wait of the quantum it chose, plus its own latency"
+        )
+        assert stopped["monitoring"]["stale"] is True
+
+    async def test_a_stopped_loop_is_reported_once_per_outage(self, room: Any) -> None:
+        """The view goes on ticking, so a warning per tick would bury the log
+        it exists to be found in."""
+        clock = Clock()
+        live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
+        await live.join()
+        await live.monitor()
+        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+
+        stale = live.service.monitoring(ROOM_ID)
+        reports = [live.service.claim_stale_report(ROOM_ID, stale) for _ in range(3)]
+        await live.monitor()
+        again = live.service.claim_stale_report(
+            ROOM_ID, live.service.monitoring(ROOM_ID)
+        )
+
+        assert reports == [True, False, False]
+        assert again is False, (
+            "the loop is running again, so there is nothing to report"
+        )
 
     async def test_a_quiet_tick_reports_it_even_though_it_reads_nothing(
         self, room: Any

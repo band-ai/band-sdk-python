@@ -129,21 +129,21 @@ async def _monitor(
     arguments: dict[str, Any],
 ) -> WorkflowResult:
     parsed = WaitForRoomEventInput.model_validate(arguments)
-    # The call itself is the proof the agent's loop is still running.
+    quantum = parsed.timeout_seconds or service.tuning.band_room_event_timeout_s
+    # The call itself is the proof the agent's loop is still running, and the
+    # quantum it chose is how long the next one may take to arrive.
     if parsed.caller is MonitorCaller.MODEL:
-        service.note_model_tick(parsed.chat_id)
+        service.note_model_tick(parsed.chat_id, quantum=quantum)
     service.release_wakes(parsed.chat_id, parsed.retry_wakes)
     event = await service.wait_for_room_event(
         parsed.chat_id,
         since=parsed.since,
-        timeout_seconds=(
-            parsed.timeout_seconds or service.tuning.band_room_event_timeout_s
-        ),
+        timeout_seconds=quantum,
     )
     event.wake_requests = service.wakes.claim(parsed.chat_id, event.pending_requests)
     if event.wake_requests:
         event.wake_prompt = wake_prompt(parsed.chat_id, event.wake_requests)
-    if event.monitoring.stale:
+    if service.claim_stale_report(parsed.chat_id, event.monitoring):
         logger.warning(
             "monitor loop stopped chat=%s idle=%.0fs; this room is unwatched "
             "until the agent calls again",

@@ -235,12 +235,13 @@ class Room:
         since: str | None = None,
         retry_wakes: list[str] | None = None,
         caller: MonitorCaller = MonitorCaller.MODEL,
+        timeout_seconds: int = 1,
     ) -> dict[str, Any]:
         return await self.invoke(
             RoomTool.MONITOR,
             chat_id=ROOM_ID,
             since=since,
-            timeout_seconds=1,
+            timeout_seconds=timeout_seconds,
             retry_wakes=retry_wakes or [],
             caller=caller,
         )

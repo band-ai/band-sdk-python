@@ -135,6 +135,20 @@ class AgentTranscriptTools:
 
 
 @dataclass
+class ModelTick:
+    """When the agent last monitored, and the quantum it chose to wait.
+
+    The quantum is the model's to pick per call — the briefing has it use 5
+    seconds while its user is talking and up to 30 once the room is quiet — so
+    a limit read off the install default would call a healthy long-quantum loop
+    stopped after a single wait.
+    """
+
+    at: datetime
+    quantum: float
+
+
+@dataclass
 class ReadPulse:
     """Proof of how current a room's last REST read still is.
 
@@ -171,7 +185,8 @@ class RoomTranscriptService:
         self._participants: dict[str, list[RoomParticipant]] = {}
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
-        self._model_ticks: dict[str, datetime] = {}
+        self._model_ticks: dict[str, ModelTick] = {}
+        self._reported_stale: set[str] = set()
         self.wakes = WakeLedger()
         self.host = HostProfile()
 
@@ -236,9 +251,9 @@ class RoomTranscriptService:
                 self._participants.setdefault(chat_id, [])
         return self._participants[chat_id]
 
-    def note_model_tick(self, chat_id: str) -> None:
+    def note_model_tick(self, chat_id: str, *, quantum: float) -> None:
         """Record that the agent's own monitor loop is still running."""
-        self._model_ticks[chat_id] = self._now()
+        self._model_ticks[chat_id] = ModelTick(self._now(), quantum)
 
     def monitoring(self, chat_id: str) -> MonitoringStatus:
         """How long since the agent last monitored this room, and whether that
@@ -248,12 +263,29 @@ class RoomTranscriptService:
         summary is already telling it to start, and repeating it would say
         nothing new.
         """
-        last = self._model_ticks.get(chat_id)
-        if last is None:
+        tick = self._model_ticks.get(chat_id)
+        if tick is None:
             return MonitoringStatus()
-        idle = (self._now() - last).total_seconds()
-        limit = self.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS
-        return MonitoringStatus(idle_seconds=idle, stale=idle > limit)
+        idle = (self._now() - tick.at).total_seconds()
+        return MonitoringStatus(
+            idle_seconds=idle,
+            stale=idle > tick.quantum * STALE_AFTER_TICKS,
+        )
+
+    def claim_stale_report(self, chat_id: str, monitoring: MonitoringStatus) -> bool:
+        """Whether this is the first stale reading since the loop last ran.
+
+        The view keeps ticking whatever the agent does, so a stopped loop is
+        seen again every few seconds; reporting each one would bury the log it
+        is meant to be found in.
+        """
+        if not monitoring.stale:
+            self._reported_stale.discard(chat_id)
+            return False
+        if chat_id in self._reported_stale:
+            return False
+        self._reported_stale.add(chat_id)
+        return True
 
     def release_wakes(self, chat_id: str, message_ids: list[str]) -> None:
         """Re-offer wakes the host refused, from messages the last read saw."""
