@@ -12,6 +12,11 @@ Architecture](claude_desktop_agent_architecture.md).
 
 ## Install
 
+**macOS only.** `band-room-view` coordinates Desktop's MCP processes through
+`fcntl` file locks and Unix sockets, which Windows does not provide; on
+Windows it exits immediately with an error saying so. Set it up on the Mac
+that runs Claude Desktop.
+
 ```bash
 uv tool install band-mcp
 uv tool install --force --editable ".[desktop]"

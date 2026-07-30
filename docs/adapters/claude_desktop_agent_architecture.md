@@ -55,9 +55,11 @@ superseding one another on the platform, which allows one consumer per key.
 The Desktop config uses `BAND_AGENT_KEY`, never a human user key. The agent
 resolves through `GET /api/v1/agent/me` at startup and refreshes that profile
 whenever a room-opening workflow runs. Transcript reads go through the SDK's
-room-bound `AgentTools.fetch_room_context()`; all room mutations go through
-`band-mcp`'s agent-scope tools. Reads, writes, subscriptions, presence, and the
-visible sender identity therefore stay aligned.
+room-bound `AgentTools.fetch_room_context()`; room mutations go through
+`band-mcp`'s agent-scope tools, with one exception — `band_create_and_open_room`
+creates the room itself (`agent_api_chats.create_agent_chat` under the same
+agent key), because creating and mounting must be one operation. Reads, writes,
+subscriptions, presence, and the visible sender identity therefore stay aligned.
 
 ## Boundaries
 
@@ -134,13 +136,13 @@ sequenceDiagram
 This is cooperative concurrency, not parallelism: one brain time-slicing two
 inputs, the way greenlets share one thread. The blocked call is the I/O wait,
 `timeout_seconds` is the scheduler quantum, and every return is a yield point.
-The quantum is adaptive by instruction — 5 seconds while the user is
-conversing, the default once quiet (`BAND_ROOM_EVENT_TIMEOUT_S` sets the schema
-default, 10). The view sends no quantum of its own, so its display loop runs at
-that same configured default.
+The watching loop leaves the quantum unset and gets the configured default
+(`BAND_ROOM_EVENT_TIMEOUT_S`, 5 seconds, ceiling 15); a user-first sweep passes
+1 second so a turn start costs almost nothing. The view sends no quantum of its
+own, so its display loop runs at that same configured default.
 
-So the room side is instant and the user side pays a 5-10 second beat. That is
-structural, not a bug — see the next section.
+So the room side is instant and the user side pays up to a one-quantum beat.
+That is structural, not a bug — see the next section.
 
 ### Who can start a turn
 
@@ -310,10 +312,10 @@ It also reports the boundaries the server cannot observe: `hostInfo` and
 Every host request is bounded by a timeout, so a frozen iframe cannot wedge the
 watch loop.
 
-Every desktop workflow ending in `OPEN_ROOM` declares `_meta.ui.resourceUri`;
-currently those are join and create-and-open. A host renders the results of any
-tool naming a UI resource, so app-only refresh and monitoring tools do not
-declare one.
+Every tool spec marked `mounts_view` declares `_meta.ui.resourceUri`; those are
+join, create-and-open, and show. A host renders the results of any tool naming
+a UI resource, so the monitor tool does not declare one — every tick would
+mount another widget.
 
 Tool contracts, handlers, visibility, and ordered success operations live in
 one workflow registry. A workflow may chain reusable operations; execution
@@ -321,12 +323,12 @@ stops at the first failure.
 
 ## MCP tool surface
 
-| Tool | Visibility | Purpose |
+| Tool | Mounts the view | Purpose |
 |---|---|---|
-| `band_join_room` | Model and app | Resolve the room, establish coworker mode, render the one room view |
-| `band_create_and_open_room` | Model and app | Create a room, establish coworker mode, render the one room view |
-| `band_refresh_room_view` | App only | Manual REST refresh from the view's Refresh button |
-| `band_wait_for_room_event` | Model and app | Block until the room changes: Claude's monitoring loop and the view's display loop |
+| `band_join_room` | Yes | Resolve the room, establish coworker mode, render the one room view |
+| `band_create_and_open_room` | Yes | Create a room, establish coworker mode, render the one room view |
+| `band_show_room` | Yes | Remount the view at the bottom of the conversation; older widgets collapse themselves |
+| `band_wait_for_room_event` | No (visibility: model and app) | Block until the room changes: Claude's monitoring loop and the view's display loop |
 
 A delegated wait needs no separate tool: it *is* the monitoring loop. Claude
 keeps calling the monitor until the participant answers, then carries on. The
@@ -343,8 +345,11 @@ does not need reconfirming.
 - Ordering: timestamp, then message ID. Deduplication by message ID, with a
   timestamp/sender/content fallback in the app.
 - Both callers resume on the `next_since` the previous result carried, not on
-  the newest message they hold: it advances on quiet ticks, which is what
-  makes a no-REST tick provable and successive calls distinguishable.
+  the newest message they hold. Only timestamps observed from Band become the
+  cursor — a quiet tick repeats it rather than minting one from the local
+  clock, which can run ahead of the platform and filter out messages still
+  committing there. There is no no-REST tick to prove: every tick ends in a
+  read, because the event stream omits the agent's own posts.
 - `pending_requests` clear when answered, because the agent's own reply moves
   the last-outbound watermark.
 
@@ -466,8 +471,9 @@ restart:
 
 The monitor loop is implemented and live-verified: it self-resumes, unprompted
 mentions are answered, and mid-watch user input is handled. Its two costs are
-structural — a 5-10 second beat before Claude notices typed input, and a
-session bounded by the listening turn's growing context.
+structural — up to a one-quantum beat (5 seconds by default) before Claude
+notices typed input, and a session bounded by the listening turn's growing
+context.
 
 Removing both needs a second body outside Desktop: an always-on agent process
 holding relay leadership and answering the room, with Desktop room views as
