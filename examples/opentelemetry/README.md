@@ -43,9 +43,10 @@ A Band log line, in JSON, carrying the span it was emitted inside:
 }
 ```
 
-Then, once someone messages the agent, Pydantic AI's own spans — `invoke_agent`
-and a `chat` span per model call — arrive the same way, because the adapter was
-constructed with `instrument=True`.
+Then, once someone messages the agent, Pydantic AI's own spans arrive the same
+way, one trace per turn: `invoke_agent agent` over a `chat <model>` span per
+model call — carrying the `gen_ai.*` attributes, token counts included — and an
+`execute_tool band_send_message` span for the reply the agent posts to the room.
 
 Band's logs go to stderr and the exporters write to stdout, so `2>/dev/null`
 leaves you with pure telemetry and `1>/dev/null` with pure logs.
