@@ -130,10 +130,7 @@ def build_contact_config(
 
 def setup_logging(level: str | None = None) -> logging.Logger:
     """Configure logging from an explicit level or BAND_LOG_*."""
-    kwargs: dict[str, str] = {}
-    if level is not None:
-        kwargs["log_level"] = level
-    LogSettings(**kwargs).for_application().configure()
+    LogSettings.create(log_level=level).for_application().configure()
     return logging.getLogger(__name__)
 
 

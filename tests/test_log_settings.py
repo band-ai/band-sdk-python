@@ -73,6 +73,17 @@ def test_explicit_init_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.log_level == "WARNING"
 
 
+def test_create_omits_none_so_env_still_applies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with band_log_env(monkeypatch, LEVEL="DEBUG"):
+        from_env = LogSettings.create(log_level=None)
+        overridden = LogSettings.create(log_level="WARNING")
+
+    assert from_env.log_level == "DEBUG"
+    assert overridden.log_level == "WARNING"
+
+
 def test_env_overrides_win_over_consumer_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -170,6 +170,16 @@ class LogSettings(BaseSettings):
             file_level=self.log_file_level,
         )
 
+    @classmethod
+    def create(cls, **fields: Any) -> Self:
+        """Construct settings, omitting ``None`` so env/defaults still apply.
+
+        Use for optional CLI/API overrides: ``LogSettings.create(log_level=level)``.
+        """
+        return cls(
+            **{name: value for name, value in fields.items() if value is not None}
+        )
+
     def for_application(self) -> Self:
         """Let application loggers follow the configured Band level by default.
 

@@ -18,8 +18,5 @@ def setup_logging(level: LogLevel | None = None) -> None:
     Args:
         level: Log level for band namespace (default INFO via BAND_LOG_LEVEL)
     """
-    kwargs: dict[str, LogLevel] = {}
-    if level is not None:
-        kwargs["log_level"] = level
-    settings = ParlantLogSettings(**kwargs)
+    settings = ParlantLogSettings.create(log_level=level)
     settings.configure(extra_loggers={"band_parlant_agent": settings.log_level})

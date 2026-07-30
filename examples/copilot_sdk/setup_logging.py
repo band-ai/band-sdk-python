@@ -10,7 +10,4 @@ def setup_logging(level: LogLevel | None = None) -> None:
 
     Level comes from an explicit argument or ``BAND_LOG_LEVEL`` (default INFO).
     """
-    kwargs: dict[str, LogLevel] = {}
-    if level is not None:
-        kwargs["log_level"] = level
-    LogSettings(**kwargs).configure()
+    LogSettings.create(log_level=level).configure()

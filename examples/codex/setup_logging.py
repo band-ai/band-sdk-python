@@ -15,10 +15,7 @@ class CodexLogSettings(LogSettings):
 
 def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging for examples."""
-    kwargs: dict[str, LogLevel] = {}
-    if level is not None:
-        kwargs["log_level"] = level
-    settings = CodexLogSettings(**kwargs)
+    settings = CodexLogSettings.create(log_level=level)
     settings.for_application().configure(
         extra_loggers={
             **chatty_logger_levels("WARNING"),

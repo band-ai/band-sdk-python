@@ -27,15 +27,13 @@ def setup_logging(
     at the configured application level while the file captures DEBUG detail.
     """
     filename = f"{agent_tag}.log" if agent_tag else "20-questions-arena.log"
-    kwargs: dict[str, object] = {
-        "log_file": _LOG_DIR / filename,
-        "log_file_level": "DEBUG",
-        "log_max_bytes": 5 * 1024 * 1024,
-        "log_backups": 3,
-    }
-    if level is not None:
-        kwargs["log_level"] = level
-    settings = LogSettings(**kwargs)  # type: ignore[arg-type]
+    settings = LogSettings.create(
+        log_level=level,
+        log_file=_LOG_DIR / filename,
+        log_file_level="DEBUG",
+        log_max_bytes=5 * 1024 * 1024,
+        log_backups=3,
+    )
     settings.configure(
         extra_loggers={
             **chatty_logger_levels("DEBUG"),

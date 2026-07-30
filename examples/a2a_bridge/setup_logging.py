@@ -13,9 +13,6 @@ def setup_logging(level: LogLevel | None = None, a2a_debug: bool = False) -> Non
         a2a_debug: If True, enable DEBUG logging for A2A adapter to trace
             context_id and session rehydration
     """
-    kwargs: dict[str, LogLevel] = {}
-    if level is not None:
-        kwargs["log_level"] = level
-    settings = LogSettings(**kwargs)
+    settings = LogSettings.create(log_level=level)
     extra = {"band.integrations.a2a": "DEBUG"} if a2a_debug else None
     settings.configure(extra_loggers=extra)
