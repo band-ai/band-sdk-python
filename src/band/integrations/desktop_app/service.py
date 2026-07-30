@@ -365,8 +365,11 @@ class RoomTranscriptService:
                 or (message.at == after and message.id in seen_at_cursor)
             ):
                 continue
-            message.truncate(self.tuning.band_max_message_chars)
+            # Addressing is read before the content is cut: a mention past the
+            # limit is still a mention, and the fallback that reads the
+            # `@[[id]]` marker out of the content only works while it is there.
             message.addressed_to_viewer = message.addresses(viewer)
+            message.truncate(self.tuning.band_max_message_chars)
             message.render_mentions(roster)
             messages.append(message)
         messages.sort(key=lambda message: (message.at, message.id))

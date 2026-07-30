@@ -211,11 +211,26 @@ class DesktopRoomEventRelay:
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        """Take a role if one is available, but never make it a launch condition.
+
+        Every read path works over REST, and the same failure arriving a minute
+        later only degrades this process to polling — so refusing to start on it
+        would turn a degraded room view into no room view at all, which is the
+        one outcome the user cannot repair without restarting Desktop. The
+        supervisor keeps trying for a role in the background.
+        """
         self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._supervise())
         try:
             async with asyncio.timeout(RELAY_TUNING.band_relay_start_timeout_s):
                 await self._ready.wait()
+        except TimeoutError:
+            logger.warning(
+                "relay has no role after %.0fs (%s); serving room reads by REST "
+                "while it keeps retrying",
+                RELAY_TUNING.band_relay_start_timeout_s,
+                self.status.last_error or "reason unknown",
+            )
         except BaseException:
             await self.stop()
             raise

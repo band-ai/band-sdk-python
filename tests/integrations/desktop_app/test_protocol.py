@@ -22,7 +22,11 @@ from band.integrations.desktop_app.server import (
     connected_agent_service,
     room_view_tools,
 )
-from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
+from band.integrations.desktop_app.tools import (
+    DEFAULT_ATTENTION,
+    MonitorCaller,
+    RoomTool,
+)
 from band.integrations.desktop_app.view import room_view_fingerprint, room_view_html
 from tests.integrations.desktop_app.conftest import ROOM_ID, message
 
@@ -158,6 +162,16 @@ class TestMountedView:
         """The view's own RPC deadline must not fire while the server is still
         legitimately blocked on the room."""
         assert f"maxWatchS: {MAX_ROOM_EVENT_TIMEOUT_S}" in room_view_html()
+
+    def test_it_opens_on_the_same_attention_mode_as_the_server(self) -> None:
+        """Until the first payload lands the view renders its own default.
+
+        A view defaulting to the other mode announces a contract the server is
+        not running — 'monitoring' on a room the agent only sweeps.
+        """
+        assigned = set(re.findall(r'attention = "(\w+)"', room_view_html()))
+
+        assert assigned == {DEFAULT_ATTENTION.value}
 
     def test_it_resumes_on_the_server_cursor(self) -> None:
         """The newest message's timestamp stalls: it does not move when the

@@ -37,6 +37,13 @@ class AttentionMode(StrEnum):
     ROOM_FIRST = "room_first"
 
 
+# The mode a room gets until someone chooses otherwise. Stated once: the tool
+# schemas, the session, the transcript, and the view's pre-payload state must
+# all open on the same mode, or the widget renders a contract the server is not
+# running. The view carries its own copy (a test pins the two together).
+DEFAULT_ATTENTION = AttentionMode.USER_FIRST
+
+
 ATTENTION_CHOICE = (
     "user_first (default): the user leads; you sweep the room once at the "
     "start of each turn and otherwise end turns normally. room_first: hold "
@@ -67,7 +74,7 @@ class CreateAndOpenRoomInput(BaseModel):
         description="Optional Band task ID to associate with the new room.",
     )
     attention: AttentionMode = Field(
-        AttentionMode.USER_FIRST,
+        DEFAULT_ATTENTION,
         description=ATTENTION_CHOICE,
     )
 
@@ -83,7 +90,7 @@ class JoinRoomInput(BaseModel):
         )
     )
     attention: AttentionMode = Field(
-        AttentionMode.USER_FIRST,
+        DEFAULT_ATTENTION,
         description=ATTENTION_CHOICE,
     )
 

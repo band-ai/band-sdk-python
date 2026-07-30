@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Callable
 
 from band.integrations.desktop_app.room import MonitoringStatus
-from band.integrations.desktop_app.tools import AttentionMode
+from band.integrations.desktop_app.tools import DEFAULT_ATTENTION, AttentionMode
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class RoomSession:
 
     def mode(self, chat_id: str) -> AttentionMode:
         """Whose attention this room gets first."""
-        return self._modes.get(chat_id, AttentionMode.USER_FIRST)
+        return self._modes.get(chat_id, DEFAULT_ATTENTION)
 
     def set_mode(self, chat_id: str, mode: AttentionMode) -> None:
         if mode is not self.mode(chat_id):
