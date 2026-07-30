@@ -17,13 +17,6 @@ from band.integrations.desktop_app.tools import AttentionMode
 
 logger = logging.getLogger(__name__)
 
-# How long after its wait should have returned the agent may take to call
-# again before its loop is reported stopped rather than busy. An iteration
-# costs one whole quantum plus whatever the agent does with what it got, and
-# that work does not scale with the quantum — so this is added to the agent's
-# own wait, not multiplied by it.
-STALE_GRACE_S = 30
-
 
 @dataclass
 class Tick:
@@ -37,15 +30,16 @@ class Tick:
     at: datetime
     quantum: float
 
-    def stale(self, now: datetime) -> bool:
-        return (now - self.at).total_seconds() > self.quantum + STALE_GRACE_S
+    def stale(self, now: datetime, *, grace_s: float) -> bool:
+        return (now - self.at).total_seconds() > self.quantum + grace_s
 
 
 class RoomSession:
     """The mutable per-room facts the monitor workflow decides by."""
 
-    def __init__(self, now: Callable[[], datetime]) -> None:
+    def __init__(self, now: Callable[[], datetime], *, stale_grace_s: float) -> None:
         self._now = now
+        self._stale_grace_s = stale_grace_s
         self._modes: dict[str, AttentionMode] = {}
         self._model_ticks: dict[str, Tick] = {}
         self._view_ticks: dict[str, Tick] = {}
@@ -86,7 +80,7 @@ class RoomSession:
         carries it.
         """
         tick = self._view_ticks.get(chat_id)
-        return tick is None or tick.stale(self._now())
+        return tick is None or tick.stale(self._now(), grace_s=self._stale_grace_s)
 
     def monitoring(self, chat_id: str) -> MonitoringStatus:
         """How long since the agent last monitored, and whether that gap means
@@ -104,7 +98,7 @@ class RoomSession:
             return MonitoringStatus()
         return MonitoringStatus(
             idle_seconds=(self._now() - tick.at).total_seconds(),
-            stale=tick.stale(self._now()),
+            stale=tick.stale(self._now(), grace_s=self._stale_grace_s),
         )
 
     def claim_stale_report(self, chat_id: str, monitoring: MonitoringStatus) -> bool:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from band.integrations.desktop_app.attention import STALE_GRACE_S
+from band.integrations.desktop_app.settings import RoomViewTuning
 from band.integrations.desktop_app.tools import (
     ATTENTION_CHOICE,
     AttentionMode,
@@ -23,6 +23,8 @@ from tests.integrations.desktop_app.conftest import (
     mentioned_message,
     message,
 )
+
+STALE_GRACE_S = RoomViewTuning().band_room_stale_grace_s
 
 
 class TestContract:

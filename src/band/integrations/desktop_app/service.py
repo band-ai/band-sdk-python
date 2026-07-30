@@ -37,11 +37,6 @@ UUID_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# How far back one read may page. A cursor buried deeper than this is a return
-# from an absence long enough that the room has moved on; the read says so in
-# the log rather than paging a whole history into a single monitor tick.
-MAX_TRANSCRIPT_PAGES = 20
-
 
 def covers(tail: list[RoomMessage], *, after: datetime | None, limit: int) -> bool:
     """Whether the tail collected so far already holds all a read owes."""
@@ -175,7 +170,10 @@ class RoomTranscriptService:
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
         self._resume_cursors: dict[tuple[str, str | None], ResumeCursor] = {}
-        self.session = RoomSession(self._now)
+        self.session = RoomSession(
+            self._now,
+            stale_grace_s=self.tuning.band_room_stale_grace_s,
+        )
         self.host = HostProfile()
 
     async def viewer(self) -> AgentIdentity:
@@ -218,8 +216,20 @@ class RoomTranscriptService:
         if len(matches) == 1:
             return str(matches[0]["id"])
         if matches:
-            raise ValueError(ambiguous_room_guidance(room, matches))
-        raise ValueError(unknown_room_guidance(room, rooms))
+            raise ValueError(
+                ambiguous_room_guidance(
+                    room,
+                    matches,
+                    limit=self.tuning.band_named_rooms_limit,
+                )
+            )
+        raise ValueError(
+            unknown_room_guidance(
+                room,
+                rooms,
+                limit=self.tuning.band_named_rooms_limit,
+            )
+        )
 
     async def participants(
         self,
@@ -293,7 +303,10 @@ class RoomTranscriptService:
             page_size=self.tuning.band_transcript_page_size,
         )
         total_pages = max(int(metadata.get("total_pages") or 1), 1)
-        budget_stops_at = max(1, total_pages - MAX_TRANSCRIPT_PAGES + 1)
+        budget_stops_at = max(
+            1,
+            total_pages - self.tuning.band_max_transcript_pages + 1,
+        )
 
         tail: list[RoomMessage] = []
         for number in range(total_pages, budget_stops_at - 1, -1):
@@ -307,7 +320,7 @@ class RoomTranscriptService:
                     "Read of room %s stopped at its %d page budget; anything "
                     "older than page %d was not read",
                     chat_id,
-                    MAX_TRANSCRIPT_PAGES,
+                    self.tuning.band_max_transcript_pages,
                     budget_stops_at,
                 )
         return tail if after is not None else tail[-limit:]

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any
 
+from dateutil.parser import isoparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from band.core.types import MessageType
 from band.integrations.desktop_app.event_relay import RelayStatus
 from band.integrations.desktop_app.tools import AttentionMode
 from band.runtime.formatters import replace_uuid_mentions
@@ -14,15 +17,27 @@ from band.runtime.formatters import replace_uuid_mentions
 EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
 
 
+def bare_handle(value: str | None) -> str:
+    """Normalize a Band handle for one ``@`` prefix."""
+    return (value or "").lstrip("@")
+
+
 def parse_timestamp(value: str | None) -> datetime | None:
-    """Parse an ISO 8601 instant supplied by the room view, if it is usable."""
+    """Validate the room-view timestamp, treating naive values as UTC."""
     if not value:
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = isoparse(value)
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+class RoomParticipantType(StrEnum):
+    """Known participant types returned by the room API."""
+
+    USER = "user"
+    AGENT = "agent"
 
 
 class AgentIdentity(BaseModel):
@@ -41,7 +56,7 @@ class AgentIdentity(BaseModel):
 
     @property
     def bare_handle(self) -> str:
-        return (self.handle or "").lstrip("@")
+        return bare_handle(self.handle)
 
 
 class RoomParticipant(BaseModel):
@@ -57,21 +72,25 @@ class RoomParticipant(BaseModel):
 
     @property
     def is_human(self) -> bool:
-        return (self.type or "").casefold() == "user"
+        return (self.type or "").casefold() == RoomParticipantType.USER
+
+    @property
+    def bare_handle(self) -> str:
+        """The handle suitable for one normalized ``@`` prefix."""
+        return bare_handle(self.handle)
 
     def describe(self) -> str:
         """A one-line introduction for the briefing Claude reads."""
-        handle = (self.handle or "").lstrip("@")
         traits = [
             trait
             for trait in (
-                f"@{handle}" if handle else "",
+                f"@{self.bare_handle}" if self.bare_handle else "",
                 (self.type or "").casefold(),
                 (self.role or "").casefold(),
             )
             if trait
         ]
-        label = self.name or handle or self.id or "unknown"
+        label = self.name or self.bare_handle or self.id or "unknown"
         return f"{label} ({', '.join(traits)})" if traits else label
 
 
@@ -85,7 +104,7 @@ class RoomMessage(BaseModel):
     sender_id: str = ""
     sender_type: str = ""
     sender_name: str | None = None
-    message_type: str = "text"
+    message_type: str = MessageType.TEXT
     metadata: dict[str, Any] = Field(default_factory=dict)
     inserted_at: datetime | None = None
     addressed_to_viewer: bool = False
@@ -98,7 +117,7 @@ class RoomMessage(BaseModel):
     @field_validator("message_type", mode="before")
     @classmethod
     def _text_when_absent(cls, value: Any) -> Any:
-        return value or "text"
+        return value or MessageType.TEXT
 
     @field_validator("metadata", mode="before")
     @classmethod
@@ -119,7 +138,7 @@ class RoomMessage(BaseModel):
 
     @property
     def is_text(self) -> bool:
-        return self.message_type.casefold() == "text"
+        return self.message_type.casefold() == MessageType.TEXT
 
     def addresses(self, viewer: AgentIdentity) -> bool:
         """Whether this message explicitly mentions the connected agent."""
@@ -129,11 +148,9 @@ class RoomMessage(BaseModel):
                 continue
             if viewer.id and str(mention.get("id") or "") == viewer.id:
                 return True
-            mentioned = (
+            mentioned = bare_handle(
                 str(mention.get("handle") or mention.get("username") or "")
-                .casefold()
-                .lstrip("@")
-            )
+            ).casefold()
             if handle and mentioned == handle:
                 return True
         return bool(viewer.id and f"@[[{viewer.id}]]" in self.content)

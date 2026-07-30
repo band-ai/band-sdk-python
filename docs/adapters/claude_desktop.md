@@ -196,9 +196,12 @@ block if you need them:
 | Variable | Default | What it changes |
 |---|---|---|
 | `BAND_ROOM_EVENT_TIMEOUT_S` | `5` | How long the monitor blocks while watching, max 15. Also the worst case before Claude notices you typed, because the host queues your message behind the call. Lower feels more responsive and costs more model turns. |
-| `BAND_TRANSCRIPT_PAGE_SIZE` | `100` | Messages per context API page. A read pages back until it reaches the cursor, up to 20 pages. |
+| `BAND_TRANSCRIPT_PAGE_SIZE` | `100` | Messages per context API page. |
+| `BAND_MAX_TRANSCRIPT_PAGES` | `20` | Maximum context pages one resumed read may scan. |
 | `BAND_INITIAL_TRANSCRIPT_MESSAGES` | `25` | Messages shown when the room first opens. |
 | `BAND_MAX_MESSAGE_CHARS` | `2000` | Where a long message is truncated. |
+| `BAND_NAMED_ROOMS_LIMIT` | `20` | Maximum rooms listed when a join name is unknown or ambiguous. |
+| `BAND_ROOM_STALE_GRACE_S` | `30` | Extra time allowed after a monitor wait before reporting the loop stopped. |
 | `BAND_RELAY_START_TIMEOUT_S` | `30` | How long startup waits to become the WebSocket leader or a follower. |
 | `BAND_RELAY_RETRY_DELAY_S` | `1` | First backoff after the shared WebSocket fails; doubles up to the max. |
 | `BAND_RELAY_MAX_RETRY_DELAY_S` | `60` | Backoff ceiling, reached when another process holds the same agent key. |

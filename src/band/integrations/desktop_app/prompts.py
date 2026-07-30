@@ -95,38 +95,44 @@ MONITOR_TOOL_DESCRIPTION = (
 
 VIEW_RESOURCE_DESCRIPTION = "Interactive live transcript for one Band room."
 
-# Enough rooms for the model to recognise the one the user meant; a longer
-# list would bury the choice it is being asked to make.
-NAMED_ROOMS_LIMIT = 20
 
-
-def _name_rooms(rooms: Sequence[dict[str, Any]]) -> str:
+def _name_rooms(rooms: Sequence[dict[str, Any]], *, limit: int) -> str:
     """Name rooms for the model, without pasting a whole directory at it."""
     if not rooms:
         return "none"
     named = "; ".join(
         f"'{room.get('title') or 'untitled'}' (id {room.get('id')})"
-        for room in rooms[:NAMED_ROOMS_LIMIT]
+        for room in rooms[:limit]
     )
-    hidden = len(rooms) - NAMED_ROOMS_LIMIT
+    hidden = len(rooms) - limit
     return f"{named}; and {hidden} more" if hidden > 0 else named
 
 
-def unknown_room_guidance(asked: str, rooms: Sequence[dict[str, Any]]) -> str:
+def unknown_room_guidance(
+    asked: str,
+    rooms: Sequence[dict[str, Any]],
+    *,
+    limit: int,
+) -> str:
     """Why the join failed, and the two things the model can do about it."""
     return (
         f"No Band room of this agent matches '{asked}'. Its rooms: "
-        f"{_name_rooms(rooms)}. Ask the user whether to join one of these, or "
+        f"{_name_rooms(rooms, limit=limit)}. Ask the user whether to join one of these, or "
         "offer to create a room with the Band create-chatroom tool and then "
         "join it."
     )
 
 
-def ambiguous_room_guidance(asked: str, matches: Sequence[dict[str, Any]]) -> str:
+def ambiguous_room_guidance(
+    asked: str,
+    matches: Sequence[dict[str, Any]],
+    *,
+    limit: int,
+) -> str:
     """Which rooms the name could have meant, so the user can pick one."""
     return (
         f"{len(matches)} of this agent's Band rooms match '{asked}': "
-        f"{_name_rooms(matches)}. Ask the user which one to join, then join it "
+        f"{_name_rooms(matches, limit=limit)}. Ask the user which one to join, then join it "
         "by ID."
     )
 
@@ -145,9 +151,9 @@ def room_briefing(transcript: RoomTranscript) -> str:
         + (f" (@{viewer.bare_handle})" if viewer.bare_handle else "")
         + (f", the Band agent with id {viewer.id}" if viewer.id else "")
         + f", working in Band room {transcript.chat_id}.",
-        f"Your trusted description from /api/v1/agent/me: {description}"
+        f"Your trusted Band description: {description}"
         if description
-        else "/api/v1/agent/me returned no description for you.",
+        else "You have no Band description.",
         "Room participants: "
         + ("; ".join(item.describe() for item in transcript.peers) or "none yet")
         + ".",
@@ -158,9 +164,7 @@ def room_briefing(transcript: RoomTranscript) -> str:
             + "; ".join(item.describe() for item in transcript.humans)
             + "."
         )
-    handles = [
-        f"@{item.handle.lstrip('@')}" for item in transcript.peers if item.handle
-    ]
+    handles = [f"@{item.bare_handle}" for item in transcript.peers if item.bare_handle]
     lines += [
         "",
         "Mentions — pass these exact handles in the `mentions` argument of the "

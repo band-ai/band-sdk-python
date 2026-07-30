@@ -56,6 +56,9 @@ class RoomViewTuning(BaseSettings):
     band_transcript_page_size: int = Field(100, ge=1)
     band_initial_transcript_messages: int = Field(25, ge=1)
     band_max_message_chars: int = Field(2_000, ge=1)
+    band_max_transcript_pages: int = Field(20, ge=1)
+    band_named_rooms_limit: int = Field(20, ge=1)
+    band_room_stale_grace_s: float = Field(30, ge=0)
 
 
 def websocket_url(rest_url: str) -> str:

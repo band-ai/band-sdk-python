@@ -191,7 +191,7 @@ Consequences:
   agent sees distinguishes the two, so the server says it: monitor calls carry
   a `caller` (`model` by default, `app` from the view's display loop), and a
   read whose last `model` tick is older than that call's own quantum plus
-  `STALE_GRACE_S` — one wait, plus time to act on what it returned — carries
+  `BAND_ROOM_STALE_GRACE_S` — one wait, plus time to act on what it returned — carries
   a `monitoring_notice` naming the gap. The view relays it into model context
   beside the briefing, and it empties itself once the loop is running again.
 - Staleness cannot initiate recovery. `ui/update-model-context` explicitly

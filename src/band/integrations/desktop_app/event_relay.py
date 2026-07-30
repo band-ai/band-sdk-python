@@ -11,7 +11,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable, Iterator, Literal
+from typing import Callable, Iterator
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -70,6 +70,14 @@ class Fanout(StrEnum):
     JOINED = "joined"
 
 
+class RelayRole(StrEnum):
+    """The shared relay's connection role."""
+
+    STARTING = "starting"
+    LEADER = "leader"
+    FOLLOWER = "follower"
+
+
 async def deliver(writer: asyncio.StreamWriter, payload: bytes) -> bool:
     """Hand one fanout line to a follower, or report it unusable.
 
@@ -110,7 +118,7 @@ async def fanout(clients: set[asyncio.StreamWriter], payload: bytes) -> None:
 class RelayStatus(BaseModel):
     """How this process is currently receiving Band room events."""
 
-    role: Literal["starting", "leader", "follower"] = "starting"
+    role: RelayRole = RelayRole.STARTING
     websocket_connected: bool = False
     events_received: int = 0
     rooms_added: list[str] = Field(default_factory=list)
@@ -119,7 +127,7 @@ class RelayStatus(BaseModel):
     @property
     def live(self) -> bool:
         """Whether room events can still reach this process without polling."""
-        return self.role == "follower" or self.websocket_connected
+        return self.role is RelayRole.FOLLOWER or self.websocket_connected
 
     @property
     def warning(self) -> str:
@@ -335,7 +343,7 @@ class DesktopRoomEventRelay:
         presence.on_room_event = publish
         try:
             await presence.start()
-            self.status.role = "leader"
+            self.status.role = RelayRole.LEADER
             self.status.websocket_connected = True
             self.status.last_error = None
             logger.info("relay leading agent=%s", self._agent_id)
@@ -384,7 +392,7 @@ class DesktopRoomEventRelay:
 
         try:
             await reader.readline()
-            self.status.role = "follower"
+            self.status.role = RelayRole.FOLLOWER
             logger.info("relay following agent=%s", self._agent_id)
             self._ready.set()
             while line := await reader.readline():
@@ -398,6 +406,6 @@ class DesktopRoomEventRelay:
                         self.status.events_received += 1
                         await self.events.publish(room_id)
         finally:
-            self.status.role = "starting"
+            self.status.role = RelayRole.STARTING
             writer.close()
             await writer.wait_closed()
