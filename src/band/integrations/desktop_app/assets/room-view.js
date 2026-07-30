@@ -408,6 +408,11 @@
    */
   function enterRoom(id) {
     if (!id || id === chatId) return;
+    // The first room to arrive expands the window. Until then the view is a
+    // one-line bar, so an instance the host mounted but never feeds (it
+    // renders one while the call runs and hands the result to another) stays
+    // a quiet status line instead of an empty transcript-sized box.
+    if (!chatId && collapsed) setCollapsed(false);
     chatId = id;
     messages.clear();
     participants = [];
@@ -632,6 +637,9 @@
   if (typeof ResizeObserver !== "undefined") {
     new ResizeObserver(() => reportSize()).observe(element("messages"));
   }
+
+  // Boot as the slim status bar; the first payload expands it (enterRoom).
+  setCollapsed(true);
 
   request("ui/initialize", {
     appInfo: { name: "Band room", version: "1.0.0" },
