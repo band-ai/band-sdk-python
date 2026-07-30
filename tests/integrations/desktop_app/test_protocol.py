@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -21,7 +22,7 @@ from band.integrations.desktop_app.server import (
     connected_agent_service,
     room_view_tools,
 )
-from band.integrations.desktop_app.tools import RoomTool
+from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
 from band.integrations.desktop_app.view import room_view_fingerprint, room_view_html
 from tests.integrations.desktop_app.conftest import ROOM_ID, message
 
@@ -55,6 +56,25 @@ class TestToolSurface:
             "ui": {"visibility": ["model", "app"]}
         }, "the view drives the display loop; the model drives the watch"
         assert "keep calling it" in (tools[RoomTool.MONITOR].description or "")
+
+    def test_every_input_contract_is_self_contained(self) -> None:
+        """Claude Desktop validates arguments against these itself and
+        mis-parses `$ref`/`$defs`: one enum field cost the monitor tool every
+        argument it had, `chat_id` arriving undefined and numbers as strings."""
+        schemas = json.dumps([tool.inputSchema for tool in room_view_tools()])
+
+        assert "$ref" not in schemas
+        assert "$defs" not in schemas
+
+    def test_the_monitor_still_offers_both_callers(self) -> None:
+        """Flattening must inline the choice, not drop it."""
+        monitor = next(
+            tool for tool in room_view_tools() if tool.name == RoomTool.MONITOR
+        )
+        caller = monitor.inputSchema["properties"]["caller"]
+
+        assert set(caller["enum"]) == {MonitorCaller.MODEL, MonitorCaller.APP}
+        assert caller["default"] == MonitorCaller.MODEL
 
     async def test_a_join_returns_the_transcript_and_the_view(self, room: Any) -> None:
         live = room([message("m-1", "2026-01-01T00:00:01Z")])

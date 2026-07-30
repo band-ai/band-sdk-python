@@ -262,10 +262,33 @@ def _connected_host(server: Server[Any, Any]) -> Any:
         return None
 
 
+def inline(node: Any, definitions: dict[str, Any]) -> Any:
+    """A schema node with every internal ``$ref`` replaced by its target."""
+    if isinstance(node, list):
+        return [inline(item, definitions) for item in node]
+    if not isinstance(node, dict):
+        return node
+    reference = node.get("$ref")
+    if reference is None:
+        return {key: inline(value, definitions) for key, value in node.items()}
+    target = inline(definitions[reference.rsplit("/", 1)[-1]], definitions)
+    # What the field said about itself wins over what the type says.
+    return target | {key: value for key, value in node.items() if key != "$ref"}
+
+
 def _schema(model: type[BaseModel]) -> dict[str, Any]:
+    """The tool's input contract, flattened into one self-contained document.
+
+    Claude Desktop validates arguments against this itself, and mis-parses a
+    schema that carries ``$defs``/``$ref``: adding one enum field cost the
+    monitor tool every argument it had, arriving as `chat_id` undefined and
+    numbers as strings. Pydantic emits a ``$ref`` for any enum or nested model,
+    so the flattening lives here rather than in the shape of the models.
+    """
     schema = model.model_json_schema()
-    schema.pop("title", None)
-    return schema
+    flattened = inline(schema, schema.pop("$defs", {}))
+    flattened.pop("title", None)
+    return flattened
 
 
 def room_view_tools() -> list[Tool]:
