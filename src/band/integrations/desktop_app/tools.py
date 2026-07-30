@@ -23,6 +23,18 @@ class RoomTool(StrEnum):
     MONITOR = "band_wait_for_room_event"
 
 
+class MonitorCaller(StrEnum):
+    """Who is driving a monitor call.
+
+    Both loops call the same tool, so without this the server cannot tell the
+    agent's own loop from the view's display loop — and the agent's is the one
+    whose silence leaves the room unwatched.
+    """
+
+    MODEL = "model"
+    APP = "app"
+
+
 class CreateAndOpenRoomInput(BaseModel):
     """Create a Band room and open its live collaboration view."""
 
@@ -80,4 +92,8 @@ class WaitForRoomEventInput(BaseModel):
     retry_wakes: list[str] = Field(
         default_factory=list,
         description="Message IDs whose earlier wake the host refused or lost.",
+    )
+    caller: MonitorCaller = Field(
+        MonitorCaller.MODEL,
+        description="Leave unset. The room view sets this on its display loop.",
     )

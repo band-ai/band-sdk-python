@@ -15,7 +15,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from band.integrations.desktop_app.room import RoomEvent, RoomMessage, RoomTranscript
+from band.integrations.desktop_app.room import (
+    MonitoringStatus,
+    RoomEvent,
+    RoomMessage,
+    RoomTranscript,
+)
 from band.integrations.desktop_app.tools import RoomTool
 
 # What the host is told the server is for, at connect time. This is the only
@@ -187,6 +192,24 @@ def room_briefing(transcript: RoomTranscript) -> str:
         "as 'say X', without asking them to confirm again.",
     ]
     return "\n".join(lines)
+
+
+def monitoring_notice(monitoring: MonitoringStatus) -> str:
+    """What the agent is told when its own monitor loop has stopped.
+
+    Carried on every tick rather than folded into the briefing, because the
+    view caches the last briefing it was given: a notice written into that text
+    would keep being repeated long after the agent resumed. This one empties
+    itself the moment the loop is running again.
+    """
+    if not monitoring.stale:
+        return ""
+    return (
+        f"You are NOT monitoring this Band room — your last {RoomTool.MONITOR} "
+        f"call was {monitoring.idle_for} ago, so nothing said in the room is "
+        "reaching you and mentions are going unanswered. Call it now, and keep "
+        "calling it."
+    )
 
 
 def join_summary(transcript: RoomTranscript, *, requested: str) -> str:

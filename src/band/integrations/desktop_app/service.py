@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient, ChatRoomRequest
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
@@ -14,6 +14,7 @@ from band.integrations.desktop_app.room import (
     EPOCH,
     AgentIdentity,
     HostProfile,
+    MonitoringStatus,
     RoomEvent,
     RoomMessage,
     RoomParticipant,
@@ -22,6 +23,7 @@ from band.integrations.desktop_app.room import (
 )
 from band.integrations.desktop_app.prompts import (
     ambiguous_room_guidance,
+    monitoring_notice,
     room_briefing,
     unknown_room_guidance,
 )
@@ -35,6 +37,11 @@ UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+# How many of the agent's own monitor ticks may be missed before its loop is
+# reported stopped rather than slow. One iteration costs a whole quantum plus
+# the model's own latency, so a smaller multiple would cry wolf on a busy room.
+STALE_AFTER_TICKS = 3
 
 # How far back one read may page. A cursor buried deeper than this is a return
 # from an absence long enough that the room has moved on; the read says so in
@@ -153,15 +160,18 @@ class RoomTranscriptService:
         events: RoomEventBroker | None = None,
         transport: RelayStatus | None = None,
         tuning: RoomViewTuning | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._tools = tools
         self._viewer = viewer
         self._events = events
         self._transport = transport or RelayStatus()
         self.tuning = tuning or RoomViewTuning()
+        self._now = now
         self._participants: dict[str, list[RoomParticipant]] = {}
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
+        self._model_ticks: dict[str, datetime] = {}
         self.wakes = WakeLedger()
         self.host = HostProfile()
 
@@ -225,6 +235,25 @@ class RoomTranscriptService:
                 logger.warning("Could not read Band room participants", exc_info=True)
                 self._participants.setdefault(chat_id, [])
         return self._participants[chat_id]
+
+    def note_model_tick(self, chat_id: str) -> None:
+        """Record that the agent's own monitor loop is still running."""
+        self._model_ticks[chat_id] = self._now()
+
+    def monitoring(self, chat_id: str) -> MonitoringStatus:
+        """How long since the agent last monitored this room, and whether that
+        gap means its loop stopped.
+
+        Unknown until the agent has monitored once: before that the join
+        summary is already telling it to start, and repeating it would say
+        nothing new.
+        """
+        last = self._model_ticks.get(chat_id)
+        if last is None:
+            return MonitoringStatus()
+        idle = (self._now() - last).total_seconds()
+        limit = self.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS
+        return MonitoringStatus(idle_seconds=idle, stale=idle > limit)
 
     def release_wakes(self, chat_id: str, message_ids: list[str]) -> None:
         """Re-offer wakes the host refused, from messages the last read saw."""
@@ -316,7 +345,7 @@ class RoomTranscriptService:
         """The agent-visible room state, newest last, annotated for the agent."""
         # Captured before the read: a message inserted while it runs carries a
         # later timestamp, so resuming from here cannot skip it.
-        started_at = datetime.now(timezone.utc)
+        started_at = self._now()
         viewer = await self.viewer()
         roster = await self.participants(chat_id, refresh=refresh_participants)
         after = parse_timestamp(since)
@@ -367,6 +396,8 @@ class RoomTranscriptService:
             ],
         )
         transcript.transport = self._transport
+        transcript.monitoring = self.monitoring(chat_id)
+        transcript.monitoring_notice = monitoring_notice(transcript.monitoring)
         transcript.host = self.host
         transcript.role_briefing = room_briefing(transcript)
         return transcript
@@ -391,7 +422,7 @@ class RoomTranscriptService:
             raise RuntimeError("Room WebSocket events are not configured.")
 
         version = self._events.version(chat_id)
-        started = datetime.now(timezone.utc)
+        started = self._now()
         after = parse_timestamp(since)
 
         current = self._read_is_current(chat_id, version, after)
@@ -424,7 +455,7 @@ class RoomTranscriptService:
                 "messages": [],
                 "pending_requests": [],
                 "next_since": max(after or EPOCH, started),
-                "refreshed_at": datetime.now(timezone.utc),
+                "refreshed_at": self._now(),
                 "transport": self._transport,
                 "host": self.host,
             }

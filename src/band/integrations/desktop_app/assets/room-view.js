@@ -58,6 +58,7 @@
  * @property {RoomParticipant[]} [participants]
  * @property {RoomMessage[]} messages
  * @property {string} [role_briefing]
+ * @property {string} [monitoring_notice]
  * @property {string} [next_since]
  * @property {RelayStatus} [transport]
  * @property {object} [host]
@@ -189,6 +190,8 @@
   /** @type {RoomParticipant[]} */
   let participants = [];
   let roleBriefing = "";
+  /** The server's word on whether the agent's own monitor loop stopped. */
+  let monitoringNotice = "";
   /** @type {RelayStatus} */
   let transport = {};
   /** What the server saw Desktop declare at connect. @type {object} */
@@ -395,6 +398,7 @@
     messages.clear();
     participants = [];
     roleBriefing = "";
+    monitoringNotice = "";
     cursor = null;
     retryWakes = [];
     unseen = 0;
@@ -439,7 +443,14 @@
     // The briefing is authored server-side so the join summary, this context
     // update, and the monitoring tool all describe the room identically.
     return request("ui/update-model-context", {
-      content: [{ type: "text", text: `${roleBriefing}\n\n${transcript}` }],
+      content: [
+        {
+          type: "text",
+          text: [roleBriefing, monitoringNotice, transcript]
+            .filter(Boolean)
+            .join("\n\n")
+        }
+      ],
       structuredContent: {
         band_room: {
           chat_id: chatId,
@@ -552,6 +563,9 @@
     transport = payload.transport || transport;
     mcpHost = payload.host || mcpHost;
     roleBriefing = payload.role_briefing || roleBriefing;
+    // Assigned, never or-ed: an empty notice is the server saying the agent is
+    // monitoring again, and keeping the old one would nag forever.
+    monitoringNotice = payload.monitoring_notice || "";
     // The cursor only moves forward. A refresh started before an event can
     // answer after the watch that saw it, and rewinding to its older cursor
     // would have the server re-read and redeliver what is already displayed.
@@ -628,7 +642,14 @@
       /** @type {ToolResult} */
       const result = await request("tools/call", {
         name: "band_wait_for_room_event",
-        arguments: { chat_id: chatId, since: cursor, retry_wakes: offered }
+        // Named as the display loop: the server tells the agent its own loop
+        // stopped, and these ticks must not stand in for the agent's.
+        arguments: {
+          chat_id: chatId,
+          since: cursor,
+          retry_wakes: offered,
+          caller: "app"
+        }
       }, TUNING.maxWatchS * 1000 + TUNING.requestTimeoutMs);
       if (result?.isError) throw new Error("Room event wait failed");
       const payload = toolPayload(result);

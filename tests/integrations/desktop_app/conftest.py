@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import Any
 
@@ -13,7 +14,7 @@ from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBrok
 from band.integrations.desktop_app.server import create_server
 from band.integrations.desktop_app.service import RoomTranscriptService
 from band.integrations.desktop_app.settings import RoomViewTuning
-from band.integrations.desktop_app.tools import RoomTool
+from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
 
 ROOM_ID = "room-1"
 TOM = {
@@ -143,6 +144,24 @@ def transcript(*reads: Any) -> FakeTranscriptTools:
     return FakeTranscriptTools([list(read) for read in reads])
 
 
+def real_clock() -> datetime:
+    """Wall time, which is what a room runs on unless a test winds its own."""
+    return datetime.now(timezone.utc)
+
+
+@dataclass
+class Clock:
+    """A hand-wound clock, for behaviour that only shows up over minutes."""
+
+    at: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        return self.at
+
+    def advance(self, seconds: float) -> None:
+        self.at += timedelta(seconds=seconds)
+
+
 @dataclass
 class Room:
     """A scripted room, offered at both surfaces the code is used through.
@@ -215,6 +234,7 @@ class Room:
         *,
         since: str | None = None,
         retry_wakes: list[str] | None = None,
+        caller: MonitorCaller = MonitorCaller.MODEL,
     ) -> dict[str, Any]:
         return await self.invoke(
             RoomTool.MONITOR,
@@ -222,6 +242,7 @@ class Room:
             since=since,
             timeout_seconds=1,
             retry_wakes=retry_wakes or [],
+            caller=caller,
         )
 
 
@@ -233,6 +254,7 @@ def room() -> Any:
         *reads: Any,
         transport: RelayStatus | None = None,
         tuning: RoomViewTuning | None = None,
+        clock: Clock | None = None,
     ) -> Room:
         tools = transcript(*reads)
         events = RoomEventBroker()
@@ -241,6 +263,7 @@ def room() -> Any:
             events=events,
             transport=transport,
             tuning=tuning,
+            now=clock or real_clock,
         )
         return Room(service, tools, events)
 

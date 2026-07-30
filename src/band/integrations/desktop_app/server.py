@@ -39,6 +39,7 @@ from band.integrations.desktop_app.settings import DesktopRoomViewSettings
 from band.integrations.desktop_app.tools import (
     CreateAndOpenRoomInput,
     JoinRoomInput,
+    MonitorCaller,
     RefreshRoomInput,
     RoomTool,
     WaitForRoomEventInput,
@@ -128,6 +129,9 @@ async def _monitor(
     arguments: dict[str, Any],
 ) -> WorkflowResult:
     parsed = WaitForRoomEventInput.model_validate(arguments)
+    # The call itself is the proof the agent's loop is still running.
+    if parsed.caller is MonitorCaller.MODEL:
+        service.note_model_tick(parsed.chat_id)
     service.release_wakes(parsed.chat_id, parsed.retry_wakes)
     event = await service.wait_for_room_event(
         parsed.chat_id,

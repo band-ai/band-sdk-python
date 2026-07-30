@@ -105,3 +105,22 @@ class TestWatchTiming:
     ) -> None:
         """Otherwise BAND_ROOM_EVENT_TIMEOUT_S never reaches the app's loop."""
         assert "timeout_seconds" not in behaviour["watchTiming"]["arguments"]
+
+    def test_the_display_loop_names_itself(self, behaviour: dict[str, Any]) -> None:
+        """Unnamed, these ticks pass for the agent's own and hide that its loop
+        stopped — the view keeps watching either way."""
+        assert behaviour["watchTiming"]["caller"] == "app"
+
+
+class TestMonitoringNotice:
+    def test_it_reaches_the_model_and_clears_with_the_fault(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """A notice that outlived its truth would nag for the whole session."""
+        result = behaviour["monitoringNotice"]
+
+        assert result["warned"] is True
+        assert result["recovered"] is False
+        assert result["keptBriefing"] is True, (
+            "clearing the notice must not drop the cached briefing with it"
+        )

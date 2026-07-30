@@ -176,6 +176,14 @@ Consequences:
   as this host sends it, a JSON-RPC error. Only a call that never reached the
   host is re-offered via `retry_wakes`, and the ledger gives up on a mention
   after `MAX_REOFFERS` attempts rather than re-asking on every tick forever.
+- The loop is the agent's to keep running, and it can stop — observed live: it
+  answered a question typed mid-wait and never resumed monitoring, leaving the
+  room unwatched while the view kept ticking and looking healthy. Nothing the
+  agent sees distinguishes the two, so the server says it: monitor calls carry
+  a `caller` (`model` by default, `app` from the view's display loop), and a
+  read whose last `model` tick is older than `STALE_AFTER_TICKS` quanta carries
+  a `monitoring_notice` naming the gap. The view relays it into model context
+  beside the briefing, and it empties itself once the loop is running again.
 - One conversation cannot both block-listen and accept typed input instantly.
   Short quanta shrink the window; only a second context — an always-on agent
   process with Desktop as its console — removes it.

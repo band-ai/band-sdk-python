@@ -193,6 +193,24 @@ class HostProfile(BaseModel):
         return self.sampling
 
 
+class MonitoringStatus(BaseModel):
+    """Whether the agent's own monitor loop is still running.
+
+    The view's display loop keeps ticking whatever the agent does, so nothing
+    the agent can see distinguishes a watched room from one it stopped watching
+    after answering its user. This is that fact, stated.
+    """
+
+    idle_seconds: float | None = None
+    stale: bool = False
+
+    @property
+    def idle_for(self) -> str:
+        """How long since the agent's last monitor call, in words."""
+        seconds = int(self.idle_seconds or 0)
+        return f"{seconds // 60}m {seconds % 60}s" if seconds >= 60 else f"{seconds}s"
+
+
 class RoomTranscript(BaseModel):
     """One agent-visible view of a Band room at a point in time."""
 
@@ -202,8 +220,10 @@ class RoomTranscript(BaseModel):
     messages: list[RoomMessage] = Field(default_factory=list)
     pending_requests: list[RoomMessage] = Field(default_factory=list)
     role_briefing: str = ""
+    monitoring_notice: str = ""
     next_since: datetime = EPOCH
     transport: RelayStatus = Field(default_factory=RelayStatus)
+    monitoring: MonitoringStatus = Field(default_factory=MonitoringStatus)
     host: HostProfile = Field(default_factory=HostProfile)
     refreshed_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -237,6 +257,7 @@ class RoomEvent(RoomTranscript):
 
         A quiet tick repeats every few seconds for as long as the agent is
         monitoring, so re-sending the roster and briefing on each one is pure
-        cost to read.
+        cost to read. The monitoring notice stays: it is the one thing a caller
+        holding an older tick cannot already know.
         """
         return self.model_copy(update={"participants": [], "role_briefing": ""})

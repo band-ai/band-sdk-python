@@ -6,15 +6,64 @@ import asyncio
 from typing import Any
 
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
-from band.integrations.desktop_app.tools import RoomTool
+from band.integrations.desktop_app.service import STALE_AFTER_TICKS
+from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
 from tests.integrations.desktop_app.conftest import (
     DEAD,
     LIVE,
     ROOM_ID,
+    Clock,
     ids,
     mentioned_message,
     message,
 )
+
+
+class TestMonitoringHealth:
+    """The agent cannot see whether it is still monitoring: the view's display
+    loop ticks on regardless, so a room it stopped watching looks watched."""
+
+    async def test_the_agent_is_told_when_its_own_loop_stopped(self, room: Any) -> None:
+        clock = Clock()
+        live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
+        await live.join()
+        await live.monitor()
+
+        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        seen_by_the_view = await live.monitor(caller=MonitorCaller.APP)
+
+        assert seen_by_the_view["monitoring"]["stale"] is True
+        assert RoomTool.MONITOR in seen_by_the_view["monitoring_notice"]
+
+    async def test_the_views_own_ticks_do_not_stand_in_for_the_agents(
+        self, room: Any
+    ) -> None:
+        """Otherwise the display loop alone would report a healthy room."""
+        clock = Clock()
+        live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
+        await live.join()
+        await live.monitor()
+
+        for _ in range(4):
+            clock.advance(live.tuning.band_room_event_timeout_s)
+            watched = await live.monitor(caller=MonitorCaller.APP)
+
+        assert watched["monitoring"]["stale"] is True
+
+    async def test_the_notice_clears_once_the_agent_monitors_again(
+        self, room: Any
+    ) -> None:
+        """It rides every tick, so one that outlived its truth would nag on."""
+        clock = Clock()
+        live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
+        await live.join()
+        await live.monitor()
+        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        assert (await live.monitor(caller=MonitorCaller.APP))["monitoring_notice"]
+
+        await live.monitor()
+
+        assert (await live.monitor(caller=MonitorCaller.APP))["monitoring_notice"] == ""
 
 
 class TestWaking:

@@ -333,9 +333,37 @@ const SCENARIOS = {
       "room-a",
       transcript("room-a", [], "2026-01-01T00:00:01Z")
     );
+    const watch = view.toolCall("band_wait_for_room_event");
 
     return {
-      arguments: Object.keys(view.toolCall("band_wait_for_room_event").params.arguments)
+      arguments: Object.keys(watch.params.arguments),
+      caller: watch.params.arguments.caller
+    };
+  },
+
+  /** The server's monitoring notice reaches the model, and clears with it. */
+  async monitoringNotice(source) {
+    const notice = "You are NOT monitoring this Band room";
+    const view = await open(source, "room-a", {
+      ...transcript("room-a", [], "2026-01-01T00:00:01Z"),
+      monitoring_notice: notice
+    });
+    const warned = view.contextUpdates().at(-1).params.content[0].text;
+
+    view.answer(view.toolCall("band_wait_for_room_event"), {
+      structuredContent: {
+        ...transcript("room-a", [], "2026-01-01T00:00:02Z"),
+        role_briefing: "",
+        monitoring_notice: ""
+      }
+    });
+    await view.settle();
+    const recovered = view.contextUpdates().at(-1).params.content[0].text;
+
+    return {
+      warned: warned.includes(notice),
+      recovered: recovered.includes(notice),
+      keptBriefing: recovered.includes("briefing")
     };
   }
 };
