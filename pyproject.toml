@@ -253,7 +253,7 @@ dev-crewai = [
 
 [project.scripts]
 band-acp = "band.integrations.acp.cli:entry_point"
-band-room-view = "band.integrations.desktop_app.server:entry_point"
+band-room-view = "band.integrations.desktop_app.cli:entry_point"
 band-trigger = "band.cli.trigger:main"
 
 [tool.setuptools.packages.find]
