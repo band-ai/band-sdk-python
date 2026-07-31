@@ -42,7 +42,7 @@ Run with:
     uv run examples/a2a_gateway/01_basic_gateway.py
 
 Then remote agents can connect:
-    - Discovery: GET http://localhost:10000/agents/weather/.well-known/agent.json
+    - Discovery: GET http://localhost:10000/agents/weather/.well-known/agent-card.json
     - JSON-RPC:  POST http://localhost:10000/agents/weather
     - Stream:    POST http://localhost:10000/agents/weather/v1/message:stream
 """
@@ -108,7 +108,7 @@ async def main() -> None:
     logger.info("Starting A2A Gateway on %s...", gateway_url)
     logger.info("Peers will be exposed at:")
     logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent.json (discovery)", gateway_url
+        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
     )
     logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
     logger.info("Waiting for peers to be discovered...")

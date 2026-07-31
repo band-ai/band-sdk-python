@@ -805,7 +805,7 @@ async def run_a2a_gateway_agent(
     logger.info("Starting A2A Gateway on %s...", gateway_url)
     logger.info("Peers will be exposed at:")
     logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent.json (discovery)", gateway_url
+        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
     )
     logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
     await agent.run()
