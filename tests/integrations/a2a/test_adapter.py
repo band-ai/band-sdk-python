@@ -1,35 +1,34 @@
-"""Tests for A2AAdapter."""
+"""Behavior tests for the outbound A2A adapter."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
+from a2a.helpers import new_text_message
 from a2a.types import (
     Artifact,
-    Message as A2AMessage,
     Part,
     Role,
+    SendMessageRequest,
+    StreamResponse,
     Task,
     TaskState,
     TaskStatus,
-    TextPart,
 )
 
-from band.converters.a2a import A2AHistoryConverter
 from band.core.types import PlatformMessage
 from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
 from band.testing import FakeAgentTools
 
 
-def make_platform_message(content: str, room_id: str = "room-123") -> PlatformMessage:
-    """Create a test PlatformMessage."""
+def make_platform_message(content: str = "Hello") -> PlatformMessage:
     return PlatformMessage(
         id=str(uuid4()),
-        room_id=room_id,
+        room_id="room-123",
         content=content,
         sender_id="user-456",
         sender_type="User",
@@ -41,850 +40,549 @@ def make_platform_message(content: str, room_id: str = "room-123") -> PlatformMe
 
 
 def make_task(
-    state: TaskState,
-    task_id: str = "task-123",
-    context_id: str = "ctx-123",
+    state: int = TaskState.TASK_STATE_COMPLETED,
+    *,
     status_message: str | None = None,
     artifact_text: str | None = None,
 ) -> Task:
-    """Create a mock A2A Task."""
-    status_msg = None
+    task = Task(
+        id="task-123",
+        context_id="ctx-123",
+        status=TaskStatus(state=state),
+    )
     if status_message:
-        status_msg = A2AMessage(
-            role=Role.agent,
-            message_id=str(uuid4()),
-            parts=[Part(root=TextPart(text=status_message))],
-        )
-
-    artifacts = None
+        task.status.message.CopyFrom(new_text_message(status_message))
     if artifact_text:
-        artifacts = [
-            Artifact(
-                artifact_id=str(uuid4()),
-                parts=[Part(root=TextPart(text=artifact_text))],
-            )
-        ]
+        task.artifacts.append(
+            Artifact(artifact_id="artifact-1", parts=[Part(text=artifact_text)])
+        )
+    return task
 
-    return Task(
-        id=task_id,
-        context_id=context_id,
-        status=TaskStatus(state=state, message=status_msg),
-        artifacts=artifacts,
-        history=None,
+
+def task_event(task: Task) -> StreamResponse:
+    return StreamResponse(task=task)
+
+
+def status_event(task: Task) -> StreamResponse:
+    return StreamResponse(
+        status_update={
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "status": task.status,
+        }
     )
 
 
+def artifact_event(
+    task: Task,
+    text: str,
+    *,
+    append: bool,
+    last_chunk: bool,
+) -> StreamResponse:
+    return StreamResponse(
+        artifact_update={
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "artifact": Artifact(
+                artifact_id="artifact-123",
+                parts=[Part(text=text)],
+            ),
+            "append": append,
+            "last_chunk": last_chunk,
+        }
+    )
+
+
+async def stream(*events: StreamResponse):
+    for event in events:
+        yield event
+
+
 class TestA2AAuth:
-    """Tests for A2AAuth."""
-
-    def test_to_headers_with_api_key(self):
-        """Should add X-API-Key header."""
-        auth = A2AAuth(api_key="my-secret-key")
-        headers = auth.to_headers()
-
-        assert headers == {"X-API-Key": "my-secret-key"}
-
-    def test_to_headers_with_bearer_token(self):
-        """Should add Authorization Bearer header."""
-        auth = A2AAuth(bearer_token="eyJ...")
-        headers = auth.to_headers()
-
-        assert headers == {"Authorization": "Bearer eyJ..."}
-
-    def test_to_headers_with_custom_headers(self):
-        """Should include custom headers."""
-        auth = A2AAuth(headers={"X-Custom": "value"})
-        headers = auth.to_headers()
-
-        assert headers == {"X-Custom": "value"}
-
-    def test_to_headers_combined(self):
-        """Should combine all auth methods."""
+    def test_to_headers_combines_authentication_methods(self) -> None:
         auth = A2AAuth(
             api_key="key",
             bearer_token="token",
             headers={"X-Custom": "value"},
         )
-        headers = auth.to_headers()
 
-        assert headers == {
+        assert auth.to_headers() == {
             "X-API-Key": "key",
             "Authorization": "Bearer token",
             "X-Custom": "value",
         }
 
 
-class TestA2AAdapterInit:
-    """Tests for A2AAdapter initialization."""
-
-    def test_init_default_values(self):
-        """Should initialize with default values."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-
-        assert adapter.remote_url == "http://localhost:10000"
-        assert adapter.auth is None
-        assert adapter.streaming is True
-        assert adapter._client is None
-        assert adapter._contexts == {}
-        assert adapter._tasks == {}
-        assert adapter._task_senders == {}
-
-    def test_init_with_auth(self):
-        """Should accept auth configuration."""
-        auth = A2AAuth(api_key="test-key")
-        adapter = A2AAdapter(remote_url="http://localhost:10000", auth=auth)
-
-        assert adapter.auth is auth
-
-    def test_init_with_streaming_disabled(self):
-        """Should accept streaming=False."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000", streaming=False)
-
-        assert adapter.streaming is False
-
-
-class TestA2AAdapterOnStarted:
-    """Tests for A2AAdapter.on_started()."""
-
+class TestA2AAdapterStartup:
     @pytest.mark.asyncio
-    async def test_on_started_connects_to_agent(self):
-        """Should connect to remote A2A agent."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-
-        with patch("band.integrations.a2a.adapter.ClientFactory") as mock_factory:
-            mock_client = MagicMock()
-            mock_factory.connect = AsyncMock(return_value=mock_client)
-
-            await adapter.on_started("Test Agent", "A test agent")
-
-            mock_factory.connect.assert_called_once()
-            assert adapter._client is mock_client
-
-    @pytest.mark.asyncio
-    async def test_on_started_passes_auth_to_discovery_and_requests(self):
-        """Should apply auth headers to discovery and RPC requests."""
-        auth = A2AAuth(
-            api_key="test-key",
-            bearer_token="test-token",
-            headers={"X-Custom-Auth": "custom"},
+    async def test_creates_client_with_auth_headers(self) -> None:
+        adapter = A2AAdapter(
+            remote_url="http://localhost:10000",
+            auth=A2AAuth(api_key="key"),
         )
-        adapter = A2AAdapter(remote_url="http://localhost:10000", auth=auth)
+        client = MagicMock()
 
-        with patch("band.integrations.a2a.adapter.ClientFactory") as mock_factory:
-            mock_factory.connect = AsyncMock(return_value=MagicMock())
+        with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
+            factory = factory_type.return_value
+            factory.create_from_url = AsyncMock(return_value=client)
 
-            await adapter.on_started("Test Agent", "A test agent")
+            await adapter.on_started("Agent", "Description")
 
-            _, kwargs = mock_factory.connect.call_args
-            assert kwargs["resolver_http_kwargs"] == {
-                "headers": {
-                    "X-API-Key": "test-key",
-                    "Authorization": "Bearer test-token",
-                    "X-Custom-Auth": "custom",
-                }
-            }
+        assert adapter._client is client
+        config = factory_type.call_args.args[0]
+        assert config.streaming is True
+        assert adapter._http_client is not None
+        assert adapter._http_client.headers["X-API-Key"] == "key"
+        assert config.httpx_client is adapter._http_client, (
+            "the factory must receive the adapter's own client — this identity "
+            "is what carries auth to card resolution and every A2A request"
+        )
 
-            interceptors = kwargs["interceptors"]
-            assert interceptors is not None
-            assert len(interceptors) == 1
+        client.close = AsyncMock()
+        await adapter.cleanup_all()
 
-            request_payload, http_kwargs = await interceptors[0].intercept(
-                "message/send",
-                {"jsonrpc": "2.0"},
-                {},
-                None,
-                None,
+
+class TestA2AAdapterMessageFlow:
+    @pytest.fixture
+    def adapter(self) -> A2AAdapter:
+        return A2AAdapter(remote_url="http://localhost:10000")
+
+    @pytest.mark.asyncio
+    async def test_forwards_band_message_as_a2a_request(
+        self, adapter: A2AAdapter
+    ) -> None:
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(
+                task_event(make_task(TaskState.TASK_STATE_WORKING)),
+                status_event(make_task()),
             )
-            assert request_payload == {"jsonrpc": "2.0"}
-            assert http_kwargs == {
-                "headers": {
-                    "X-API-Key": "test-key",
-                    "Authorization": "Bearer test-token",
-                    "X-Custom-Auth": "custom",
-                }
-            }
-
-    @pytest.mark.asyncio
-    async def test_on_started_sets_agent_name(self):
-        """Should store agent name and description."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-
-        with patch("band.integrations.a2a.adapter.ClientFactory") as mock_factory:
-            mock_factory.connect = AsyncMock(return_value=MagicMock())
-
-            await adapter.on_started("Test Agent", "A test agent")
-
-            assert adapter.agent_name == "Test Agent"
-            assert adapter.agent_description == "A test agent"
-
-
-class TestA2AAdapterOnMessage:
-    """Tests for A2AAdapter.on_message()."""
-
-    @pytest.fixture
-    def adapter_with_client(self):
-        """Create adapter with mocked client."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        adapter._client = MagicMock()
-        return adapter
-
-    @pytest.mark.asyncio
-    async def test_raises_if_client_not_initialized(self):
-        """Should raise if on_started not called."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        with pytest.raises(RuntimeError, match="client not initialized"):
-            await adapter.on_message(
-                msg,
-                tools,
-                A2ASessionState(),
-                None,
-                None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-    @pytest.mark.asyncio
-    async def test_completed_task_sends_message(self, adapter_with_client):
-        """Should send message when task completes with artifact."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("What is 10 USD in EUR?")
-
-        task = make_task(
-            state=TaskState.completed,
-            artifact_text="10 USD is approximately 9.20 EUR.",
         )
+        tools = FakeAgentTools()
 
-        async def mock_send_message(*args, **kwargs) -> AsyncIterator:
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
+        await adapter.on_message(
+            make_platform_message("What is the weather?"),
             tools,
             A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Should have sent a message with mention
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "10 USD is approximately 9.20 EUR."
-        assert tools.messages_sent[0]["mentions"] == [
-            {"id": "user-456", "name": "Test User"}
-        ]
-
-        # Context should be tracked for multi-turn
-        assert adapter_with_client._contexts["room-123"] == "ctx-123"
-
-        # Task ID should be cleared after completion (new message = new task)
-        assert "room-123" not in adapter_with_client._tasks
-
-        # Task sender should be cleaned up after completion
-        assert ("room-123", "task-123") not in adapter_with_client._task_senders
-
-    @pytest.mark.asyncio
-    async def test_working_task_sends_thought_event(self, adapter_with_client):
-        """Should send thought event when task is working."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Processing request")
-
-        task = make_task(
-            state=TaskState.working,
-            status_message="Fetching exchange rates...",
-        )
-
-        async def mock_send_message(*args, **kwargs) -> AsyncIterator:
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Should have sent a thought event
-        assert len(tools.events_sent) == 1
-        assert tools.events_sent[0]["content"] == "Fetching exchange rates..."
-        assert tools.events_sent[0]["message_type"] == "thought"
-
-    @pytest.mark.asyncio
-    async def test_input_required_sends_message(self, adapter_with_client):
-        """Should send message when agent needs more input."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Convert currency")
-
-        task = make_task(
-            state=TaskState.input_required,
-            status_message="What currency do you want to convert to?",
-        )
-
-        async def mock_send_message(*args, **kwargs) -> AsyncIterator:
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Should have sent a message asking for more info with mention
-        assert len(tools.messages_sent) == 1
-        assert (
-            tools.messages_sent[0]["content"]
-            == "What currency do you want to convert to?"
-        )
-        assert tools.messages_sent[0]["mentions"] == [
-            {"id": "user-456", "name": "Test User"}
-        ]
-
-    @pytest.mark.asyncio
-    async def test_failed_task_sends_error_event(self, adapter_with_client):
-        """Should send error event when task fails."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        task = make_task(
-            state=TaskState.failed,
-            status_message="Currency API unavailable",
-        )
-
-        async def mock_send_message(*args, **kwargs) -> AsyncIterator:
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Should have sent an error event + task event
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert error_events[0]["content"] == "Currency API unavailable"
-        assert error_events[0]["metadata"]["a2a_state"] == "failed"
-
-        # Task event should also be emitted for rehydration
-        task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
-        assert len(task_events) == 1
-
-    @pytest.mark.asyncio
-    async def test_exception_sends_error_event(self, adapter_with_client):
-        """Should send error event on exception."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        async def mock_send_message(*args, **kwargs) -> AsyncIterator:
-            raise ConnectionError("Connection failed")
-            yield  # Make it an async generator
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Should have sent an error event
-        assert len(tools.events_sent) == 1
-        assert "Connection failed" in tools.events_sent[0]["content"]
-        assert tools.events_sent[0]["message_type"] == "error"
-
-    @pytest.mark.asyncio
-    async def test_direct_message_reply(self, adapter_with_client):
-        """Should handle direct A2A Message reply."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        a2a_reply = A2AMessage(
-            role=Role.agent,
-            message_id=str(uuid4()),
-            parts=[Part(root=TextPart(text="Hello! How can I help?"))],
-        )
-
-        async def mock_send_message(*args, **kwargs) -> AsyncIterator:
-            yield a2a_reply
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Should have sent a message with mention
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "Hello! How can I help?"
-        assert tools.messages_sent[0]["mentions"] == [
-            {"id": "user-456", "name": "Test User"}
-        ]
-
-
-class TestA2AAdapterContextManagement:
-    """Tests for context and task tracking."""
-
-    def test_tracks_context_per_room(self):
-        """Should track different contexts for different rooms."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-
-        adapter._contexts["room-1"] = "ctx-1"
-        adapter._contexts["room-2"] = "ctx-2"
-
-        assert adapter._contexts["room-1"] == "ctx-1"
-        assert adapter._contexts["room-2"] == "ctx-2"
-
-    def test_tracks_task_per_room(self):
-        """Should track different tasks for different rooms."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-
-        adapter._tasks["room-1"] = "task-1"
-        adapter._tasks["room-2"] = "task-2"
-
-        assert adapter._tasks["room-1"] == "task-1"
-        assert adapter._tasks["room-2"] == "task-2"
-
-    @pytest.mark.asyncio
-    async def test_on_cleanup_removes_context(self):
-        """Should clean up context, task, and sender tracking for room."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        adapter._contexts["room-1"] = "ctx-1"
-        adapter._tasks["room-1"] = "task-1"
-        adapter._task_senders[("room-1", "task-1")] = {"id": "u1", "name": "User1"}
-        adapter._task_senders[("room-1", "task-2")] = {"id": "u2", "name": "User2"}
-        adapter._contexts["room-2"] = "ctx-2"
-        adapter._tasks["room-2"] = "task-2"
-        adapter._task_senders[("room-2", "task-3")] = {"id": "u3", "name": "User3"}
-
-        await adapter.on_cleanup("room-1")
-
-        assert "room-1" not in adapter._contexts
-        assert "room-1" not in adapter._tasks
-        assert ("room-1", "task-1") not in adapter._task_senders
-        assert ("room-1", "task-2") not in adapter._task_senders
-        # Other room unaffected
-        assert adapter._contexts["room-2"] == "ctx-2"
-        assert adapter._tasks["room-2"] == "task-2"
-        assert adapter._task_senders[("room-2", "task-3")] == {
-            "id": "u3",
-            "name": "User3",
-        }
-
-
-class TestA2AAdapterMessageConversion:
-    """Tests for message conversion."""
-
-    def test_to_a2a_message_basic(self):
-        """Should convert Band message to A2A format."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        msg = make_platform_message("Hello world")
-
-        a2a_msg = adapter._to_a2a_message(msg, "room-123")
-
-        assert a2a_msg.role == Role.user
-        assert len(a2a_msg.parts) == 1
-        assert isinstance(a2a_msg.parts[0].root, TextPart)
-        assert a2a_msg.parts[0].root.text == "Hello world"
-        assert a2a_msg.context_id is None
-        assert a2a_msg.task_id is None
-
-    def test_to_a2a_message_with_existing_context(self):
-        """Should include existing context_id and task_id."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        adapter._contexts["room-123"] = "existing-ctx"
-        adapter._tasks["room-123"] = "existing-task"
-
-        msg = make_platform_message("Follow up")
-
-        a2a_msg = adapter._to_a2a_message(msg, "room-123")
-
-        assert a2a_msg.context_id == "existing-ctx"
-        assert a2a_msg.task_id == "existing-task"
-
-
-class TestA2AAdapterResponseExtraction:
-    """Tests for response extraction from Task."""
-
-    def test_extract_response_from_artifact(self):
-        """Should extract response from artifact."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        task = make_task(
-            state=TaskState.completed,
-            artifact_text="Response from artifact",
-        )
-
-        response = adapter._extract_response(task)
-
-        assert response == "Response from artifact"
-
-    def test_extract_response_from_status_message(self):
-        """Should fallback to status message if no artifact."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        task = make_task(
-            state=TaskState.completed,
-            status_message="Response from status",
-        )
-
-        response = adapter._extract_response(task)
-
-        assert response == "Response from status"
-
-    def test_extract_response_empty_if_no_content(self):
-        """Should return empty string if no content found."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        task = make_task(state=TaskState.completed)
-
-        response = adapter._extract_response(task)
-
-        assert response == ""
-
-
-class TestA2AHistoryConverter:
-    """Tests for A2AHistoryConverter."""
-
-    def test_convert_empty_history(self):
-        """Should return empty session state for empty history."""
-        converter = A2AHistoryConverter()
-        result = converter.convert([])
-
-        assert result.context_id is None
-        assert result.task_id is None
-        assert result.task_state is None
-
-    def test_convert_finds_task_event(self):
-        """Should extract A2A metadata from task event."""
-        converter = A2AHistoryConverter()
-        raw_history = [
-            {"message_type": "text", "content": "Hello"},
-            {
-                "message_type": "task",
-                "content": "A2A task completed",
-                "metadata": {
-                    "a2a_context_id": "ctx-abc",
-                    "a2a_task_id": "task-xyz",
-                    "a2a_task_state": "completed",
-                },
-            },
-        ]
-
-        result = converter.convert(raw_history)
-
-        assert result.context_id == "ctx-abc"
-        assert result.task_id == "task-xyz"
-        assert result.task_state == "completed"
-
-    def test_convert_finds_latest_task_event(self):
-        """Should find most recent A2A task event."""
-        converter = A2AHistoryConverter()
-        raw_history = [
-            {
-                "message_type": "task",
-                "metadata": {
-                    "a2a_context_id": "ctx-old",
-                    "a2a_task_id": "task-old",
-                    "a2a_task_state": "completed",
-                },
-            },
-            {"message_type": "text", "content": "New message"},
-            {
-                "message_type": "task",
-                "metadata": {
-                    "a2a_context_id": "ctx-new",
-                    "a2a_task_id": "task-new",
-                    "a2a_task_state": "input_required",
-                },
-            },
-        ]
-
-        result = converter.convert(raw_history)
-
-        assert result.context_id == "ctx-new"
-        assert result.task_id == "task-new"
-        assert result.task_state == "input_required"
-
-    def test_convert_ignores_non_a2a_task_events(self):
-        """Should ignore task events without A2A metadata."""
-        converter = A2AHistoryConverter()
-        raw_history = [
-            {
-                "message_type": "task",
-                "metadata": {"other_key": "value"},  # No A2A metadata
-            },
-        ]
-
-        result = converter.convert(raw_history)
-
-        assert result.context_id is None
-        assert result.task_id is None
-        assert result.task_state is None
-
-
-class TestA2AAdapterTaskEventEmission:
-    """Tests for task event emission."""
-
-    @pytest.fixture
-    def adapter_with_client(self):
-        """Create adapter with mocked client."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        adapter._client = MagicMock()
-        return adapter
-
-    @pytest.mark.asyncio
-    async def test_emits_task_event_on_completed(self, adapter_with_client):
-        """Should emit task event when task completes."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        task = make_task(
-            state=TaskState.completed,
-            artifact_text="Response",
-        )
-
-        async def mock_send_message(*args, **kwargs):
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Find the task event
-        task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
-        assert len(task_events) == 1
-        assert task_events[0]["metadata"]["a2a_context_id"] == "ctx-123"
-        assert task_events[0]["metadata"]["a2a_task_id"] == "task-123"
-        assert task_events[0]["metadata"]["a2a_task_state"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_emits_task_event_on_input_required(self, adapter_with_client):
-        """Should emit task event when input is required."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        task = make_task(
-            state=TaskState.input_required,
-            status_message="What currency?",
-        )
-
-        async def mock_send_message(*args, **kwargs):
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Find the task event
-        task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
-        assert len(task_events) == 1
-        assert task_events[0]["metadata"]["a2a_task_state"] == "input-required"
-
-
-class TestA2AAdapterSessionRehydration:
-    """Tests for session rehydration."""
-
-    @pytest.fixture
-    def adapter_with_client(self):
-        """Create adapter with mocked client."""
-        adapter = A2AAdapter(remote_url="http://localhost:10000")
-        adapter._client = MagicMock()
-        return adapter
-
-    @pytest.mark.asyncio
-    async def test_rehydrates_context_on_bootstrap(self, adapter_with_client):
-        """Should restore context_id on session bootstrap."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        # Create history with A2A session state
-        history = A2ASessionState(
-            context_id="restored-ctx",
-            task_id="old-task",
-            task_state="completed",  # Terminal state, won't try to resubscribe
-        )
-
-        task = make_task(state=TaskState.completed, artifact_text="Response")
-
-        async def mock_send_message(*args, **kwargs):
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
-
-        # Context should be restored before the message was processed
-        # Note: The new task will update context_id, so we check the initial restoration happened
-        assert "room-123" in adapter_with_client._contexts
-
-    @pytest.mark.asyncio
-    async def test_no_rehydration_on_non_bootstrap(self, adapter_with_client):
-        """Should not rehydrate on non-bootstrap messages."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        # History would normally trigger rehydration
-        history = A2ASessionState(
-            context_id="restored-ctx",
-            task_id="old-task",
-            task_state="input_required",
-        )
-
-        task = make_task(state=TaskState.completed, artifact_text="Response")
-
-        async def mock_send_message(*args, **kwargs):
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-        adapter_with_client._client.resubscribe = MagicMock()
-
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            history,
             None,
             None,
             is_session_bootstrap=False,
             room_id="room-123",
         )
 
-        # Resubscribe should not be called on non-bootstrap
-        adapter_with_client._client.resubscribe.assert_not_called()
+        request = adapter._client.send_message.call_args.args[0]
+        assert isinstance(request, SendMessageRequest)
+        assert request.message.role == Role.ROLE_USER
+        assert request.message.parts[0].text == "What is the weather?"
 
     @pytest.mark.asyncio
-    async def test_resubscribes_to_resumable_task(self, adapter_with_client):
-        """Should try to resubscribe to non-terminal task."""
+    async def test_completed_task_posts_artifact_response(
+        self, adapter: A2AAdapter
+    ) -> None:
         tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
 
-        # History with resumable task
-        history = A2ASessionState(
-            context_id="ctx-123",
-            task_id="resumable-task",
-            task_state="input_required",  # Non-terminal
-        )
-
-        # Mock resubscribe to return current task state
-        resumed_task = make_task(
-            state=TaskState.input_required,
-            task_id="resumable-task",
-        )
-
-        async def mock_resubscribe(*args, **kwargs):
-            yield (resumed_task, None)
-
-        adapter_with_client._client.resubscribe = mock_resubscribe
-
-        # Mock send_message for the actual message processing
-        task = make_task(state=TaskState.completed, artifact_text="Response")
-
-        async def mock_send_message(*args, **kwargs):
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        await adapter_with_client.on_message(
-            msg,
+        await adapter._handle_event(
+            task_event(make_task(artifact_text="Final response")),
             tools,
-            history,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Final response"
+        assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
+            "TASK_STATE_COMPLETED"
+        )
+
+    @pytest.mark.asyncio
+    async def test_streamed_artifact_chunks_are_posted_as_one_response(
+        self, adapter: A2AAdapter
+    ) -> None:
+        working = make_task(TaskState.TASK_STATE_WORKING)
+        completed = make_task(TaskState.TASK_STATE_COMPLETED)
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(
+                task_event(working),
+                artifact_event(
+                    working,
+                    "Part one. ",
+                    append=False,
+                    last_chunk=False,
+                ),
+                artifact_event(
+                    working,
+                    "Part two.",
+                    append=True,
+                    last_chunk=True,
+                ),
+                status_event(completed),
+            )
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Part one. \nPart two."
+
+    @pytest.mark.asyncio
+    async def test_status_update_is_applied_to_task_and_completes_flow(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+        task = make_task(TaskState.TASK_STATE_WORKING)
+
+        await adapter._handle_event(
+            task_event(task), tools, "room-123", "user-456", "Test User"
+        )
+        task.status.CopyFrom(
+            TaskStatus(
+                state=TaskState.TASK_STATE_COMPLETED,
+                message=new_text_message("Sunny"),
+            )
+        )
+        await adapter._handle_event(
+            status_event(task), tools, "room-123", "user-456", "Test User"
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Sunny"
+        assert adapter._tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_terminal_task_is_finalized_even_when_band_delivery_fails(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """A failed delivery must not leave the room pointing at a done task.
+
+        Nothing retries the delivery, so retaining the task would only make
+        every later turn address a completed task_id and lose the terminal
+        task event that rehydration depends on.
+        """
+        tools = FakeAgentTools()
+        tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
+        task = make_task(artifact_text="Final response")
+
+        with pytest.raises(RuntimeError, match="Band unavailable"):
+            await adapter._handle_event(
+                task_event(task), tools, "room-123", "user-456", "Test User"
+            )
+
+        assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
+            "TASK_STATE_COMPLETED"
+        ), "terminal task event must still be persisted for rehydration"
+        assert adapter._tasks == {}, "next turn must start a fresh task"
+        assert adapter._task_cache == {}
+        assert adapter._task_senders == {}
+
+    @pytest.mark.asyncio
+    async def test_input_required_is_forwarded_and_persisted(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(
+                make_task(
+                    TaskState.TASK_STATE_INPUT_REQUIRED,
+                    status_message="Which city?",
+                )
+            ),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Which city?"
+        assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
+            "TASK_STATE_INPUT_REQUIRED"
+        )
+
+    @pytest.mark.asyncio
+    async def test_remote_error_is_posted_as_error_event(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """A remote A2A outage must surface in the room, not crash the turn."""
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            side_effect=RuntimeError("remote down")
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert tools.events_sent[-1]["message_type"] == "error"
+        assert "remote down" in tools.events_sent[-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_failed_task_is_posted_as_error_event(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(make_task(TaskState.TASK_STATE_FAILED, status_message="boom")),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        error_events = [
+            event for event in tools.events_sent if event["message_type"] == "error"
+        ]
+        assert error_events, "a failed task must produce an error event"
+        assert error_events[-1]["content"] == "boom"
+        assert error_events[-1]["metadata"]["a2a_state"] == "TASK_STATE_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_working_status_text_is_narrated_as_thought(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(
+                make_task(
+                    TaskState.TASK_STATE_WORKING,
+                    status_message="Checking sources",
+                )
+            ),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        assert tools.events_sent[-1]["message_type"] == "thought"
+        assert tools.events_sent[-1]["content"] == "Checking sources"
+
+    @pytest.mark.asyncio
+    async def test_second_turn_carries_the_stored_context(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """Conversation continuity is the point of the context mapping."""
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(task_event(make_task(artifact_text="done")))
+        )
+        tools = FakeAgentTools()
+        turn = dict(is_session_bootstrap=False, room_id="room-123")
+
+        await adapter.on_message(
+            make_platform_message("first"), tools, A2ASessionState(), None, None, **turn
+        )
+        adapter._client.send_message = MagicMock(return_value=stream())
+        await adapter.on_message(
+            make_platform_message("second"),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            **turn,
+        )
+
+        request = adapter._client.send_message.call_args.args[0]
+        assert request.message.context_id == "ctx-123", (
+            "the second turn must continue the room's A2A context"
+        )
+        assert request.message.task_id == "", (
+            "a completed task must not be continued on the next turn"
+        )
+
+    @pytest.mark.asyncio
+    async def test_direct_message_response_is_forwarded(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            StreamResponse(message=new_text_message("Hello")),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Hello"
+
+
+class TestA2AAdapterShutdown:
+    @pytest.mark.asyncio
+    async def test_cleanup_all_closes_owned_clients(self) -> None:
+        """Agent.stop() reaches the adapter only via cleanup_all, so the
+        owned httpx transport must be released there."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.close = AsyncMock()
+        adapter._http_client = httpx.AsyncClient()
+        http_client = adapter._http_client
+
+        await adapter.cleanup_all()
+
+        assert http_client.is_closed, "owned httpx client must be closed"
+        assert adapter._client is None
+        assert adapter._http_client is None
+
+
+class TestA2AAdapterSession:
+    @pytest.mark.asyncio
+    async def test_bootstrap_history_restores_context_for_the_turn(self) -> None:
+        """Rehydration is gated on the bootstrap flag and must feed the
+        restored context into the very message that triggered it."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(return_value=stream())
+        state = A2ASessionState(context_id="ctx-9")
+
+        await adapter.on_message(
+            make_platform_message(),
+            FakeAgentTools(),
+            state,
             None,
             None,
             is_session_bootstrap=True,
             room_id="room-123",
         )
 
-        # Task should have been restored
-        # Note: The new completed task clears it, so we verify resubscribe was called
-        assert adapter_with_client._contexts.get("room-123") == "ctx-123"
-
-    @pytest.mark.asyncio
-    async def test_handles_resubscribe_failure(self, adapter_with_client):
-        """Should handle resubscribe failure gracefully."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello")
-
-        history = A2ASessionState(
-            context_id="ctx-123",
-            task_id="old-task",
-            task_state="input_required",
+        request = adapter._client.send_message.call_args.args[0]
+        assert request.message.context_id == "ctx-9", (
+            "a rejoined room must continue its persisted A2A context"
         )
 
-        async def mock_resubscribe(*args, **kwargs):
-            raise Exception("Task not found")
-            yield  # Make it an async generator
+    @pytest.mark.asyncio
+    async def test_history_is_ignored_off_bootstrap(self) -> None:
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(return_value=stream())
+        state = A2ASessionState(context_id="ctx-9")
 
-        adapter_with_client._client.resubscribe = mock_resubscribe
-
-        task = make_task(state=TaskState.completed, artifact_text="Response")
-
-        async def mock_send_message(*args, **kwargs):
-            yield (task, None)
-
-        adapter_with_client._client.send_message = mock_send_message
-
-        # Should not raise
-        await adapter_with_client.on_message(
-            msg,
-            tools,
-            history,
+        await adapter.on_message(
+            make_platform_message(),
+            FakeAgentTools(),
+            state,
             None,
             None,
-            is_session_bootstrap=True,
+            is_session_bootstrap=False,
             room_id="room-123",
         )
 
-        # Context should still be restored
-        assert adapter_with_client._contexts.get("room-123") == "ctx-123"
+        request = adapter._client.send_message.call_args.args[0]
+        assert request.message.context_id == "", (
+            "history must only be applied on session bootstrap"
+        )
+
+    @pytest.mark.asyncio
+    async def test_legacy_terminal_state_value_is_not_resubscribed(self) -> None:
+        """Rooms with pre-migration history hold 0.x state strings."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.subscribe = MagicMock()
+
+        await adapter._rehydrate_from_history(
+            "room-123",
+            A2ASessionState(
+                context_id="ctx-123",
+                task_id="task-123",
+                task_state="completed",
+            ),
+        )
+
+        adapter._client.subscribe.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resubscribe_failure_does_not_break_bootstrap(self) -> None:
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.subscribe = MagicMock(side_effect=RuntimeError("gone"))
+
+        await adapter._rehydrate_from_history(
+            "room-123",
+            A2ASessionState(
+                context_id="ctx-123",
+                task_id="task-123",
+                task_state="TASK_STATE_WORKING",
+            ),
+        )
+
+        assert adapter._contexts["room-123"] == "ctx-123", (
+            "a dead task must not cost the room its restored context"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rehydrates_context_and_resubscribes_active_task(self) -> None:
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.subscribe = MagicMock(
+            return_value=stream(task_event(make_task(TaskState.TASK_STATE_WORKING)))
+        )
+
+        await adapter._rehydrate_from_history(
+            "room-123",
+            A2ASessionState(
+                context_id="ctx-123",
+                task_id="task-123",
+                task_state="TASK_STATE_WORKING",
+            ),
+        )
+
+        assert adapter._contexts["room-123"] == "ctx-123"
+        assert adapter._tasks["room-123"] == "task-123"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_reclaims_tasks_cached_by_resubscribe(self) -> None:
+        """A resubscribed task has no sender entry, but must not outlive its room."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.subscribe = MagicMock(
+            return_value=stream(task_event(make_task(TaskState.TASK_STATE_WORKING)))
+        )
+        await adapter._rehydrate_from_history(
+            "room-123",
+            A2ASessionState(
+                context_id="ctx-123",
+                task_id="task-123",
+                task_state="TASK_STATE_WORKING",
+            ),
+        )
+        assert adapter._task_cache, "resubscribe should have cached the task"
+
+        await adapter.on_cleanup("room-123")
+
+        assert adapter._task_cache == {}, (
+            "room cleanup must reclaim cache entries that never got a sender"
+        )
+
+    @pytest.mark.asyncio
+    async def test_does_not_resubscribe_terminal_task(self) -> None:
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.subscribe = MagicMock()
+
+        await adapter._rehydrate_from_history(
+            "room-123",
+            A2ASessionState(
+                context_id="ctx-123",
+                task_id="task-123",
+                task_state="TASK_STATE_COMPLETED",
+            ),
+        )
+
+        adapter._client.subscribe.assert_not_called()

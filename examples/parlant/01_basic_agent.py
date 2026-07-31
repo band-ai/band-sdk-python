@@ -29,6 +29,7 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
+from band.integrations.parlant.ports import reserve_server_ports
 from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
@@ -124,7 +125,12 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
     # Start Parlant server with OpenAI (requires OPENAI_API_KEY env var)
-    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+    ports = reserve_server_ports()
+    async with p.Server(
+        port=ports.port,
+        tool_service_port=ports.tool_service_port,
+        nlp_service=p.NLPServices.openai,
+    ) as server:
         # Create Parlant tools INSIDE server context
         parlant_tools = create_parlant_tools()
         logger.info(
