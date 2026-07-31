@@ -507,7 +507,7 @@ wheels = [
 
 [[package]]
 name = "band-client-rest"
-version = "0.0.10"
+version = "0.0.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -515,9 +515,9 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/e0/600527e9da77b0bda58ba6e48d16e6070ced930e699a656b609f360318b6/band_client_rest-0.0.10.tar.gz", hash = "sha256:d3a753d9cf479949264f7092b550b2616e93da68ab32f23acc2a06a6b69019c7", size = 106806, upload-time = "2026-06-12T15:26:44.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/40/d971d74d950a9ae0477b4c3c54e59b59715f3f7722a9545a0734c001dd87/band_client_rest-0.0.20.tar.gz", hash = "sha256:c6bed511df937ae042660d16549787e1643f96cdd3179ff645e3fc904d3611ac", size = 120623, upload-time = "2026-07-24T15:35:51.682Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/2c/6c6d4a76d0bbe5a63103add4b50ebdc4184c28afe64b1f7271725087d4f1/band_client_rest-0.0.10-py3-none-any.whl", hash = "sha256:7b900a6fefd25f25677e20fb77378294d5f34e29d583ef5b197fe96724834d7a", size = 246079, upload-time = "2026-06-12T15:26:43.302Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/cd/4c97d26ba4f6a54faf413a92a26b7034c70a3ecdbff8ed7f72dd85a6849a/band_client_rest-0.0.20-py3-none-any.whl", hash = "sha256:4c892fae0a5ca0b9d8a78df1c341b8af38c959b97b5f2046d56f70492e2be971", size = 276989, upload-time = "2026-07-24T15:35:50.07Z" },
 ]
 
 [[package]]
@@ -728,7 +728,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
-    { name = "band-client-rest", specifier = "==0.0.10" },
+    { name = "band-client-rest", specifier = "==0.0.20" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
