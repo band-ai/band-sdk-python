@@ -569,7 +569,7 @@ import asyncio
 import os
 
 from band import Agent, configure_logging
-from band.adapters.a2a_gateway import A2AGatewayAdapter
+from band.adapters.a2a_gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 
 configure_logging()
 
@@ -582,6 +582,8 @@ async def main() -> None:
         api_key=os.environ["GATEWAY_API_KEY"],
         gateway_url=gateway_url,
         port=gateway_port,
+        # The default is 300 seconds. Use None for no response deadline.
+        config=A2AGatewayAdapterConfig(response_timeout_s=300),
     )
 
     agent = Agent.create(
@@ -601,6 +603,9 @@ Discovery endpoints include:
 
 ```bash
 curl http://localhost:10000/peers
+curl http://localhost:10000/agents/weather-agent/.well-known/agent-card.json
+
+# Legacy card discovery remains available for older clients:
 curl http://localhost:10000/agents/weather-agent/.well-known/agent.json
 ```
 

@@ -192,6 +192,22 @@ jobs:
         print('Core imports successful')
         "
 
+    - name: Verify gateway extras install independently
+      run: |
+        uv venv /tmp/test-a2a-gateway
+        WHEEL=$(ls dist/*.whl)
+        uv pip install "${WHEEL}[a2a_gateway]" --python /tmp/test-a2a-gateway/bin/python
+        /tmp/test-a2a-gateway/bin/python -c "
+        from band.adapters.a2a_gateway import A2AGatewayAdapter
+        print('Gateway extra import successful')
+        "
+        uv venv /tmp/test-a2a-gateway-demo
+        uv pip install "${WHEEL}[a2a_gateway_demo]" --python /tmp/test-a2a-gateway-demo/bin/python
+        /tmp/test-a2a-gateway-demo/bin/python -c "
+        from a2a.server.routes.rest_routes import create_rest_routes
+        print('Gateway demo extra route import successful')
+        "
+
     - name: Install with all extras
       run: |
         WHEEL=$(ls dist/*.whl)
