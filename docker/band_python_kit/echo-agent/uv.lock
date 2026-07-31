@@ -50,13 +50,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "band-sdk", specifier = ">=1.4.2" },
+    { name = "band-sdk", specifier = ">=1.5.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
 ]
 
 [[package]]
 name = "band-sdk"
-version = "1.4.2"
+version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "band-client-rest" },
@@ -67,9 +67,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/45/0e2d4902222b79b198800395b5cc24f0705cf92864e6c4a2fb203251f303/band_sdk-1.4.2.tar.gz", hash = "sha256:576739353c5eca68f1a02ae0efc91cbd6995f534467ea2c49d64edc4dcebefde", size = 518085, upload-time = "2026-07-22T07:19:39.199Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/31/eda22a04e3536774dcb14f4aa5827fcc40a4e861ab9d389904c3b8f88777/band_sdk-1.5.0.tar.gz", hash = "sha256:cbc34efd7a97b8314d05050e4a16767153e82e5fe8c25b0b18c7109c8eb7b06e", size = 533340, upload-time = "2026-07-28T11:47:05.494Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/03/3655e5dc77e0a01ebba65ccad958fe9f53e0f9d7fc4952fcd27e4a83a88b/band_sdk-1.4.2-py3-none-any.whl", hash = "sha256:dd51a7b6054e02c7a23b66872d3c4bbb207210c2fd6e8b11e519d9c0e4e2f66c", size = 547318, upload-time = "2026-07-22T07:19:37.267Z" },
+    { url = "https://files.pythonhosted.org/packages/59/d8/59a9c9b808ab145550aaeae2ce5dd6b6e5329cb5a186ce577c038ab4c3ea/band_sdk-1.5.0-py3-none-any.whl", hash = "sha256:4a4244f76d5b3fe4b918c1179444563e4d22d465f2b89e991b5157c83c174649", size = 561411, upload-time = "2026-07-28T11:47:03.696Z" },
 ]
 
 [[package]]
