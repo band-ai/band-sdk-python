@@ -452,54 +452,66 @@ await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 
 ```
 src/band/
-├── adapters/       # Framework adapters (langgraph, anthropic, crewai, a2a, etc.)
-├── converters/     # History converters per framework
-├── core/           # The contracts every adapter and backend is written against
-│   ├── contracts/  # RunResult, ModelRequest/Response, TurnEvents
-│   ├── backends/   # AgentBackend implementations, history policies, ObservingTools
-│   ├── run/        # One turn's machinery: event sink, cancellation, AgentStream
-│   ├── gateways.py # GatewayBase: exclusive agent ownership + lifecycle
+├── adapters/       # Framework / Native / Bridge adapters (public surface)
+├── converters/     # HistoryConverters — private format helpers per adapter
+├── core/           # Contracts + turn machinery adapters are written against
+│   ├── contracts/  # RunResult, ModelRequest/Response, TurnEvents, delivery
+│   ├── backends/   # Private turn machinery (tool loop, ObservingTools, façades)
+│   ├── run/        # Event sink, cancellation, AgentStream
+│   ├── gateways.py # GatewayBase: hosts that own agent lifecycle + transport
 │   ├── serving.py  # EmbeddedServer: one uvicorn lifecycle for every transport
+│   ├── simple_adapter.py  # SimpleAdapter — the public Adapter ABC
 │   └── tools.py    # FunctionTool / @tool: portable custom tools
-├── providers/      # ModelProvider implementations (anthropic, gemini)
+├── providers/      # ModelProvider implementations (Native kind only)
 ├── runtime/        # Execution context, tools, formatters
 ├── platform/       # WebSocket/REST transport, events
 ├── preprocessing/  # Event filtering before adapter
 ├── client/         # Low-level API clients
-├── integrations/   # Deep framework integrations (a2a, acp, anthropic, claude_sdk, langgraph, parlant, pydantic_ai, slack, desktop_app)
+├── integrations/   # Deep bridges/hosts (a2a, acp, slack, desktop_app, …)
 ├── config/         # Configuration management, YAML loading, env parsing
 ├── cli/            # Console-script entry points
 ├── docker/         # Container kit + sandbox launcher
 ├── testing/        # Testing utilities (fake tools, test helpers)
 ├── logging_config.py  # LogSettings / configure_logging
-└── agent.py        # Main entry point
+└── agent.py        # Agent — orchestration entry point
 ```
 
 ### How a turn runs
 
-`Agent` owns transport and hands each inbound message to an `AgentBackend`.
-Two implementations matter:
+Mental model (the only story to hold):
 
-- `SimpleAdapterBackend` wraps a framework adapter — the adapter calls its own
-  framework, and Band only supplies tools and records what was delivered.
-- `NativeToolLoopBackend` runs the tool loop itself against a `ModelProvider`,
-  and is what `AnthropicAdapter` / `GeminiAdapter` are built on.
+```text
+Host / transport → Agent → Adapter → Tools (+ delivery)
+```
 
-`AgentBackend.run` takes the turn's `AgentInput` and a `RunContext` (tools,
-event sink, cancellation) and returns a `RunResult`. `NativeToolLoopBackend`
-is deliberately *not* an `AgentBackend`: it owns its own session, so it takes
-what it primes a turn with (`session_id`, `message`, the two context strings)
-rather than an input whose history it would ignore. The two provider adapters
-supply the `AgentBackend` shape around it. Turn events land on the sink, which
-is what `AgentStream.observe` reads.
+`Agent` owns the platform subscription and preprocessing. Each inbound
+message becomes an `AgentInput`; Agent attaches per-turn tools (including
+delivery observation) and calls the adapter once. The adapter thinks and
+acts; room posts go through tools. `HistoryConverter`, `ObservingTools`,
+and the native tool loop are **private machinery** behind that story — not
+a second public architecture tier.
 
-### Gateways
+Adapters come in three kinds (same `SimpleAdapter` contract, different
+where the model loop lives):
+
+| Kind | Who runs the model loop | Examples |
+|------|-------------------------|----------|
+| **Framework** | Their SDK inside `on_message` | LangGraph, CrewAI, Pydantic AI, … |
+| **Native** | Band's tool loop + a `ModelProvider` | Anthropic, Gemini |
+| **Bridge** | A remote agent / CLI | ACP client, A2A, OpenCode, Codex, Copilot* |
+
+Native adapters compose a private `NativeToolLoopBackend` and a
+`ModelProvider`; that loop is not a peer of Adapter. Turn events land on
+the sink that `AgentStream.observe` reads.
+
+### Gateways (hosts, not an adapter kind)
 
 A gateway owns an agent's lifecycle plus one inbound transport, so nothing
 else has to start or stop it: `SlackGateway`, `ACPGateway`, `A2AGateway`, each
 a `GatewayBase[TheirAdapter]`. Construct the `Agent` but do not start it —
 the gateway claims it, and a second gateway claiming the same agent raises
-`LifecycleError`.
+`LifecycleError`. Slack may wrap an inner framework/native/bridge adapter;
+that is composition, not a fourth kind.
 
 ```python fixture:slack_agent
 from band import SlackGateway

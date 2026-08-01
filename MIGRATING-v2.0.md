@@ -1,5 +1,27 @@
 # Migrating to Band SDK v2.0
 
+## Architecture mental model
+
+Hold this story; everything else is private machinery:
+
+```text
+Host / transport → Agent → Adapter → Tools (+ delivery)
+```
+
+Adapters share one contract (`SimpleAdapter`) and fall into three kinds by
+where the model loop lives:
+
+| Kind | Loop lives in | Examples |
+|------|---------------|----------|
+| Framework | Their SDK | LangGraph, CrewAI, Pydantic AI, … |
+| Native | Band + `ModelProvider` | Anthropic, Gemini |
+| Bridge | Remote agent / CLI | ACP client, A2A, OpenCode, Codex, Copilot* |
+
+Gateways (`SlackGateway`, `ACPGateway`, `A2AGateway`) are **hosts** — they
+own agent lifecycle and an inbound transport. They are not a fourth adapter
+kind. `HistoryConverter`, `ObservingTools`, and `NativeToolLoopBackend` stay
+behind the Adapter; do not treat them as peer architecture layers.
+
 This guide accumulates old → new mappings as each redesign phase lands.
 v2.0 is a breaking release: removed constructor aliases raise `TypeError`
 (or fail dataclass construction) instead of emitting `BandDeprecationWarning`.
