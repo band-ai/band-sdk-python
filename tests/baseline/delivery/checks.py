@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from band.core.backends.observing import ObservingTools, delivered
+from band.core.turn.observing import ObservingTools, delivered
 from band.core.contracts.delivery import DeliveryReceipt
 from band.runtime.tools import (
     BAND_LIST_CONTACTS,

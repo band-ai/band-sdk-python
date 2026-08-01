@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from band.core.backends.history import (
+from band.core.turn.history import (
     SessionHistoryPolicy,
     ToolRoundItem,
 )

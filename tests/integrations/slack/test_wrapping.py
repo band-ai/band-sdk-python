@@ -16,7 +16,7 @@ Architecture under test:
 
 from __future__ import annotations
 
-from band.core.backends.oneshot import run_adapter_turn
+from band.core.turn.oneshot import run_adapter_turn
 
 import asyncio
 import hashlib
@@ -33,8 +33,8 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
-from band.core.backends.facade import make_custom_tool_executor
-from band.core.backends.observing import ObservingTools
+from band.core.turn.facade import make_custom_tool_executor
+from band.core.turn.observing import ObservingTools
 from band.core.run.context import SimpleRunContext
 from band.core.simple_adapter import SimpleAdapter
 from tests.core.adapterhelpers import make_agent_input

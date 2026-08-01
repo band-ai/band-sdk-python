@@ -295,7 +295,7 @@ class OneShotInvoker:
                 room_id=room_id,
             )
 
-            from band.core.backends.oneshot import run_oneshot_turn
+            from band.core.turn.oneshot import run_oneshot_turn
 
             await run_oneshot_turn(self._adapter, inp)
 

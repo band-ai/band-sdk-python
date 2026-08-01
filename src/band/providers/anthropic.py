@@ -23,7 +23,7 @@ from band.core.contracts.model import (
     ModelSamplingOptions,
     ModelToolCall,
 )
-from band.core.backends.history import AnthropicHistoryPolicy
+from band.core.turn.history import AnthropicHistoryPolicy
 from band.core.options import (
     RAW_OPTIONS_RESERVED,
     UNSET,

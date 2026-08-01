@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.core.protocols import AgentToolsProtocol
 
 

@@ -21,7 +21,7 @@ from band.converters.copilot_sdk import (
     CopilotSDKHistoryConverter,
     CopilotSDKSessionState,
 )
-from band.core.backends.observing import delivered
+from band.core.turn.observing import delivered
 from band.core.exceptions import BandConfigError, MissingDependencyError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas

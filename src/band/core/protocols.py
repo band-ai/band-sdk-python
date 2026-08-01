@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, Self, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
-    from band.core.backends.history import SessionHistoryPolicy
+    from band.core.turn.history import SessionHistoryPolicy
     from anthropic.types import ToolParam
 
     from band.client.rest import (
@@ -368,7 +368,7 @@ class ModelProvider(Protocol):
     ) -> ModelResponse: ...
 
     def default_history_policy(self) -> SessionHistoryPolicy:
-        """Session history shape this provider expects for tool-loop backends."""
+        """Session history shape this provider expects for the native tool loop."""
         ...
 
 

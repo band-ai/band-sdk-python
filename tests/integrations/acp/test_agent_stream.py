@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.core.contracts import (
     RunFailedEvent,
     TurnEventKind,

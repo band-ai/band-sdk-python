@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from band.core.backends.history import (
+from band.core.turn.history import (
     AnthropicHistoryPolicy,
     BaseHistoryPolicy,
     DefaultHistoryPolicy,
@@ -19,7 +19,7 @@ from band.core.contracts import (
     ModelResponse,
     ModelToolCall,
 )
-from band.core.backends.history import ToolRoundItem
+from band.core.turn.history import ToolRoundItem
 from band.runtime.tools import ToolCallOutcome
 
 from tests.core.contractsupport import message

@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from band.core.backends.history import DefaultHistoryPolicy
-from band.core.backends.facade import make_custom_tool_executor
-from band.core.backends.native import NativeToolLoopBackend
+from band.core.turn.history import DefaultHistoryPolicy
+from band.core.turn.facade import make_custom_tool_executor
+from band.core.turn.native import NativeToolLoopBackend
 from band.core.contracts import (
     ModelResponse,
     ModelToolCall,

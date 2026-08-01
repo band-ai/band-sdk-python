@@ -76,7 +76,7 @@ from .core.contracts import (
     ModelSamplingOptions,
     RunResult,
 )
-from .core.backends.native import NativeToolLoopBackend
+from .core.turn.native import NativeToolLoopBackend
 from .core.run.stream import AgentStream
 from .core.options import UNSET, resolve_sampling
 from .core.tools import (

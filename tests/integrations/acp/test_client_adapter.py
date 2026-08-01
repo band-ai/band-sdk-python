@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.helpers import update_agent_message_text
 
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient

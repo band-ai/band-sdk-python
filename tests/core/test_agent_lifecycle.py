@@ -97,7 +97,7 @@ class TestStopCleansUpAdapter:
 @pytest.mark.asyncio
 async def test_agent_execution_passes_the_runtime_cancellation_token() -> None:
     """Agent wires the runtime interrupt into the turn's tools proxy."""
-    from band.core.backends.observing import turn_context
+    from band.core.turn.observing import turn_context
 
     captured: dict[str, object] = {}
 

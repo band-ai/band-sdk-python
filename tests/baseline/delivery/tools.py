@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.core.exceptions import BandToolError
 from band.runtime.tools import (
     LEGACY_CREATE_AGENT_CHAT_MESSAGE,

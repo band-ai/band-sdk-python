@@ -10,7 +10,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
-from band.core.backends.oneshot import run_oneshot_turn
+from band.core.turn.oneshot import run_oneshot_turn
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.run.cancellation import ExecutionCancellation
 from band.runtime.platform_runtime import PlatformRuntime

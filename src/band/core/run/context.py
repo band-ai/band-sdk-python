@@ -1,4 +1,4 @@
-"""Concrete ``RunContext`` for shim and native backends."""
+"""Concrete ``RunContext`` for oneshot turns and the native tool loop."""
 
 from __future__ import annotations
 

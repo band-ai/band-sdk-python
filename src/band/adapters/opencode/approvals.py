@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from band.core.backends.observing import send_non_reply_message
+from band.core.turn.observing import send_non_reply_message
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import (
     OpencodeClientProtocol,

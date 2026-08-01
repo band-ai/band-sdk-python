@@ -21,7 +21,7 @@ from band.adapters.copilot_sdk import (
     CopilotSDKAdapterConfig,
 )
 from band.converters.copilot_sdk import CopilotSDKSessionState
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
 

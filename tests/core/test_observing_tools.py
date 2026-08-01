@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.core.wrapping import ToolsWrapper
 from band.runtime.tools import (
     BAND_LIST_CONTACTS,

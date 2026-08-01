@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.backends.observing import delivered, send_non_reply_message
+from band.core.turn.observing import delivered, send_non_reply_message
 from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter

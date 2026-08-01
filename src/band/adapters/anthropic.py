@@ -12,13 +12,13 @@ from typing import Any, Callable, ClassVar, Unpack, cast
 from anthropic import AsyncAnthropic
 from anthropic.types import ToolParam
 
-from band.core.backends.facade import (
+from band.core.turn.facade import (
     NativeProviderAdapter,
     anthropic_dicts_from_model_messages,
     make_custom_tool_executor,
     model_messages_from_anthropic,
 )
-from band.core.backends.native import NativeToolLoopBackend
+from band.core.turn.native import NativeToolLoopBackend
 from band.core.contracts import ModelMessage
 from band.core.instructions import Instruction, InstructionPolicy
 from band.core.options import UNSET, reject_removed_kwargs

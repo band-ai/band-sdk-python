@@ -15,12 +15,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from band.core.backends.facade import (
+from band.core.turn.facade import (
     ExecutionBridgingSink,
     NativeProviderAdapter,
     make_custom_tool_executor,
 )
-from band.core.backends.native import NativeToolLoopBackend
+from band.core.turn.native import NativeToolLoopBackend
 from band.core.contracts import (
     ToolCallEvent,
     ToolResultEvent,

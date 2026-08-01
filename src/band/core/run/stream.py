@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from band.core.backends.oneshot import run_adapter_turn
+from band.core.turn.oneshot import run_adapter_turn
 from band.core.contracts import EnvelopedTurnEvent, RunFailedEvent
 from band.core.exceptions import BandConnectionError, RunFailed, StreamError
 from band.core.protocols import AgentToolsProtocol, CancellationToken, FrameworkAdapter

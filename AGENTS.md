@@ -371,7 +371,7 @@ loaded session gets no replay, so history is never doubled.
 
 Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close.
 
-Every adapter asks the same question of the same object — "did this turn already post to the room?" — and no adapter keeps its own flag. `run_adapter_turn` wraps each turn's tools in an `ObservingTools` (`src/band/core/backends/observing.py`), which mints a `DeliveryReceipt` on the first successful room post, whether it came from a room-posting tool call or from the adapter calling `send_message` itself (a Copilot `ask_user` question). `delivered(tools)` reads it — `copilot_sdk`, `codex`, `opencode` (whose band tools resolve, via its own MCP server, to these very tools) and ACP all gate the text fallback on it. Because the proxy is per turn, a call orphaned by a turn timeout records against its own turn and can never mark a later one as having replied — no identity guard needed.
+Every adapter asks the same question of the same object — "did this turn already post to the room?" — and no adapter keeps its own flag. `run_adapter_turn` wraps each turn's tools in an `ObservingTools` (`src/band/core/turn/observing.py`), which mints a `DeliveryReceipt` on the first successful room post, whether it came from a room-posting tool call or from the adapter calling `send_message` itself (a Copilot `ask_user` question). `delivered(tools)` reads it — `copilot_sdk`, `codex`, `opencode` (whose band tools resolve, via its own MCP server, to these very tools) and ACP all gate the text fallback on it. Because the proxy is per turn, a call orphaned by a turn timeout records against its own turn and can never mark a later one as having replied — no identity guard needed.
 
 `delivered()` walks the tools proxy chain, so **every** wrapper in it must be a `ToolsWrapper` (`src/band/core/wrapping.py`) — a wrapper that isn't ends the walk short of the observer and makes a delivered turn look silent (`DedupingAgentTools` is one for exactly this reason).
 
@@ -456,7 +456,7 @@ src/band/
 ├── converters/     # HistoryConverters — private format helpers per adapter
 ├── core/           # Contracts + turn machinery adapters are written against
 │   ├── contracts/  # RunResult, ModelRequest/Response, TurnEvents, delivery
-│   ├── backends/   # Private turn machinery (tool loop, ObservingTools, façades)
+│   ├── turn/       # Private turn machinery (oneshot, ObservingTools, native loop)
 │   ├── run/        # Event sink, cancellation, AgentStream
 │   ├── gateways.py # GatewayBase: hosts that own agent lifecycle + transport
 │   ├── serving.py  # EmbeddedServer: one uvicorn lifecycle for every transport

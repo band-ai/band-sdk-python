@@ -23,8 +23,8 @@ from band.core.contracts import (
     ToolResultEvent,
     TurnEvent,
 )
-from band.core.backends.native import NativeToolLoopBackend
-from band.core.backends.observing import turn_context
+from band.core.turn.native import NativeToolLoopBackend
+from band.core.turn.observing import turn_context
 from band.core.protocols import AgentToolsProtocol, EventSink, RunContext
 from band.core.simple_adapter import SimpleAdapter
 from band.core.run.cancellation import NeverCancelled
@@ -32,7 +32,7 @@ from band.core.run.context import SimpleRunContext
 from band.core.types import AdapterFeatures, Emit, PlatformMessage
 
 if TYPE_CHECKING:
-    from band.core.backends.native import ExecuteFn
+    from band.core.turn.native import ExecuteFn
 from band.core.run.sink import RecordingEventSink
 from band.runtime.narration import tool_call_content, tool_result_content
 from band.runtime.custom_tools import (

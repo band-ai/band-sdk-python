@@ -16,7 +16,7 @@ from band.core.contracts import (
     ToolStatus,
     TurnEvent,
 )
-from band.core.backends.observing import delivered, record_delivery, turn_context
+from band.core.turn.observing import delivered, record_delivery, turn_context
 from band.core.contracts.delivery import receipt_from_acp_chunks
 from band.core.protocols import AgentToolsProtocol, EventSink
 from band.integrations.acp.types import ChunkType, CollectedChunk

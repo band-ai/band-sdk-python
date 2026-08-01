@@ -17,7 +17,7 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
-from band.core.backends.observing import ObservingTools, delivered
+from band.core.turn.observing import ObservingTools, delivered
 from band.core.contracts.delivery import DeliveryReceipt
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPClientAdapter

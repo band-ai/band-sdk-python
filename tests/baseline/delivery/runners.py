@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 from unittest.mock import patch
 
-from band.core.backends.observing import ObservingTools
+from band.core.turn.observing import ObservingTools
 from band.runtime.tools import BAND_SEND_MESSAGE
 
 from tests.baseline.adapter import Adapter

@@ -24,7 +24,7 @@ from tests.core.contractsupport import (
     agent_input,
     native_turn,
 )
-from band.core.backends.native import NativeToolLoopBackend
+from band.core.turn.native import NativeToolLoopBackend
 
 
 @pytest.mark.asyncio

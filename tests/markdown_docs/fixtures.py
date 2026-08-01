@@ -182,7 +182,7 @@ def turn_adapter():
     a turn emit observable events, so a snippet about the observation stream
     needs one to have anything to show.
     """
-    from band.core.backends.native import NativeToolLoopBackend
+    from band.core.turn.native import NativeToolLoopBackend
     from band.core.contracts import ModelResponse, ModelToolCall
     from tests.core.contractsupport import NativeLoopAdapter
 
@@ -208,7 +208,7 @@ def turn_adapter():
             return next(rounds)
 
         def default_history_policy(self):
-            from band.core.backends.history import DefaultHistoryPolicy
+            from band.core.turn.history import DefaultHistoryPolicy
 
             return DefaultHistoryPolicy()
 

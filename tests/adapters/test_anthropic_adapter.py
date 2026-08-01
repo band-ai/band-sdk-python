@@ -15,7 +15,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.backends.oneshot import run_adapter_turn
+from band.core.turn.oneshot import run_adapter_turn
 from band.core.tools import FunctionTool
 from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
 from band.runtime.tools import ToolCallOutcome

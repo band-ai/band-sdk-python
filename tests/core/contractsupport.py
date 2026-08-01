@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from band.core.backends.observing import ObservingTools, turn_context
+from band.core.turn.observing import ObservingTools, turn_context
 from band.core.run.cancellation import FlagCancellation, NeverCancelled
 from band.core.contracts import (
     ModelMessage,
@@ -21,8 +21,8 @@ from band.core.contracts import (
     RunResult,
 )
 from band.core.run.sink import RecordingEventSink
-from band.core.backends.native import NativeToolLoopBackend
-from band.core.backends.oneshot import run_oneshot_turn
+from band.core.turn.native import NativeToolLoopBackend
+from band.core.turn.oneshot import run_oneshot_turn
 from band.core.protocols import (
     AgentToolsProtocol,
     CancellationToken,
@@ -79,7 +79,7 @@ class EchoModelProvider:
         )
 
     def default_history_policy(self):
-        from band.core.backends.history import DefaultHistoryPolicy
+        from band.core.turn.history import DefaultHistoryPolicy
 
         return DefaultHistoryPolicy()
 
@@ -356,7 +356,7 @@ class ShimTurn:
     context: SimpleRunContext
 
     async def run(self, *, content: str = "hello") -> RunResult:
-        from band.core.backends.oneshot import run_adapter_turn
+        from band.core.turn.oneshot import run_adapter_turn
 
         return await run_adapter_turn(
             self.adapter,

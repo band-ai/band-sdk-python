@@ -46,7 +46,7 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
-from band.core.backends.observing import send_non_reply_message
+from band.core.turn.observing import send_non_reply_message
 from band.core.exceptions import MissingDependencyError
 from band.core.instructions import (
     Instruction,

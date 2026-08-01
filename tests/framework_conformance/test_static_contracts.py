@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from band import RunResult
-from band.core.backends.native import NativeToolLoopBackend
-from band.core.backends.observing import ObservingTools
+from band.core.turn.native import NativeToolLoopBackend
+from band.core.turn.observing import ObservingTools
 from band.core.contracts import ModelRequest, ModelResponse
 from band.core.protocols import ModelContext
 from band.core.run.cancellation import NeverCancelled
@@ -22,7 +22,7 @@ from tests.core.adapterhelpers import (
 
 @pytest.mark.asyncio
 async def test_adapter_turn_satisfies_run_contract() -> None:
-    from band.core.backends.oneshot import run_adapter_turn
+    from band.core.turn.oneshot import run_adapter_turn
 
     adapter = RecordingAdapter()
     tools = FakeAgentTools(room_id="room-1")
@@ -60,7 +60,7 @@ async def test_observing_tools_soft_fail_returns_error_string() -> None:
 
 class EchoProvider:
     def default_history_policy(self):
-        from band.core.backends.history import DefaultHistoryPolicy
+        from band.core.turn.history import DefaultHistoryPolicy
 
         return DefaultHistoryPolicy()
 

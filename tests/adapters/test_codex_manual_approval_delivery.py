@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from band.core.backends.oneshot import run_adapter_turn
+from band.core.turn.oneshot import run_adapter_turn
 
 import pytest
 

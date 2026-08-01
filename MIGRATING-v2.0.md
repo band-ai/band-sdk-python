@@ -82,7 +82,7 @@ The following deprecated paths were removed in v2.0:
   `outcome` had exactly one legal value — its own validator rejected the rest
   — and nothing read the call id. A receipt is evidence that a room post
   succeeded; `tool_name` carries that.
-- `SimpleAdapterBackend` and `AgentBackend` were removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter` only. The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. The turn entrypoint on the contract is `handle_turn` (formerly `on_event` on the adapter protocol — not to be confused with platform `Execution.on_event`). Native Anthropic/Gemini adapters compose a private `NativeToolLoopBackend`; tests that need a bare loop use a small `SimpleAdapter` stand-in (`NativeLoopAdapter` in the test helpers).
+- The private turn package was renamed `band.core.backends` → `band.core.turn` (dead `adapter.py` re-export removed). `SimpleAdapterBackend` and `AgentBackend` were removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter` only. The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. The turn entrypoint on the contract is `handle_turn` (formerly `on_event` on the adapter protocol — not to be confused with platform `Execution.on_event`). Native Anthropic/Gemini adapters compose a private `NativeToolLoopBackend`; tests that need a bare loop use a small `SimpleAdapter` stand-in (`NativeLoopAdapter` in the test helpers).
 
 
 ## Breaking: features-only
