@@ -1,7 +1,6 @@
 # Claude Agent SDK Examples for Band
 
-Examples of using the Claude Agent SDK with Band (**Bridge** kind — Claude Code owns the model loop).
-Agent calls `adapter.handle_turn` once per inbound message; room posts go through Band MCP tools.
+Examples for Claude Agent SDK (**Bridge**). Claude Code owns the model loop. Turn entry: `handle_turn`.
 
 ## Prerequisites
 

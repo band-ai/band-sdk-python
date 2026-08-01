@@ -1,12 +1,9 @@
 # Anthropic SDK Examples for Band
 
-Examples for creating Band agents with the Anthropic SDK (**Native** kind).
+Examples for Band agents with the Anthropic SDK (**Native**).
 
-## Overview
-
-Band owns the tool loop (`NativeToolLoopBackend` + `AnthropicProvider`) behind
-`AnthropicAdapter`. Agent calls `handle_turn` once per inbound message; room posts
-go through tools (`band_send_message`).
+`AnthropicAdapter` runs `NativeToolLoopBackend` + `AnthropicProvider`. Turn
+entry: `handle_turn`. Room posts via tools.
 
 ## Prerequisites
 
@@ -49,16 +46,13 @@ await agent.run()
 ## Architecture
 
 ```text
-Host / Agent → AnthropicAdapter.handle_turn → Native tool loop → AnthropicProvider
+Agent → AnthropicAdapter.handle_turn → NativeToolLoopBackend → AnthropicProvider
 ```
 
-The adapter provides:
-
-- **Per-room session** — owned by the private tool loop (Anthropic SDK is stateless)
-- **Platform history hydration** — loads existing messages when joining a room
-- **Participant / contact context** — injected per turn
-- **Tool calling** — Band runs the tool loop; Claude requests tools, the adapter executes
-- **Event reporting** — optional `Emit.EXECUTION` / `Emit.USAGE` via `AdapterFeatures`
+- Per-room session on the tool loop (Anthropic SDK is stateless)
+- Platform history hydration on room join
+- Participant / contact context per turn
+- Tool loop in Band; optional `Emit.EXECUTION` / `Emit.USAGE`
 
 ---
 

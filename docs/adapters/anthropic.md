@@ -75,7 +75,7 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
-**Kind:** Native — Band runs the tool loop via a private `NativeToolLoopBackend` + `AnthropicProvider`. Agent calls `adapter.handle_turn` once per inbound message; this adapter’s `on_message` drives that loop. Room posts go through tools (`band_send_message`).
+**Kind:** Native — `NativeToolLoopBackend` + `AnthropicProvider`. Turn entry: `handle_turn` → `on_message`. Room posts via tools.
 
 When a message arrives in a Band room, the adapter gives Claude the conversation context in Anthropic message and tool-block format. It also builds a system prompt from Band's collaboration instructions plus your custom instructions.
 

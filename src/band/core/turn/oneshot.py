@@ -29,13 +29,10 @@ async def run_adapter_turn(
     *,
     context: RunContext,
 ) -> RunResult:
-    """Wrap tools for delivery/sink, call ``adapter.handle_turn``, return receipt.
+    """Wrap tools in ``ObservingTools``, call ``handle_turn``, return receipt.
 
-    ``on_message`` takes neither the turn's sink nor its token, so the per-turn
-    proxy carries the whole context: tool-first adapters (ACP RoomTurnEmitter)
-    dual-write TurnEvents onto the same sink ``AgentStream.observe`` reads, and
-    façade adapters running their own inner loop cancel with the outer turn.
-    Both reach it via ``turn_context()``.
+    The proxy carries the turn's sink and cancellation (``turn_context``) because
+    ``on_message`` has no parameters for them.
     """
     observing = ObservingTools(_inner=context.tools, turn=context)
     # __getattr__ forwarders are invisible to static analysis.

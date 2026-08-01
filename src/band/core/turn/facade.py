@@ -1,8 +1,7 @@
-"""Private helpers for Anthropic/Gemini over ``NativeToolLoopBackend``.
+"""Shared turn helpers for ``AnthropicAdapter`` / ``GeminiAdapter``.
 
-Not an architecture tier. Native adapters are ordinary ``SimpleAdapter``s that
-own a tool loop + ``ModelProvider``; this module only deduplicates their turn
-body.
+Wire projections, execution bridging, custom-tool execute, and the
+``NativeProviderAdapter`` base that owns ``NativeToolLoopBackend``.
 """
 
 from __future__ import annotations
@@ -246,16 +245,11 @@ TSchemas = TypeVar("TSchemas", bound=Sequence[Any])
 
 
 class NativeProviderAdapter(SimpleAdapter[H], Generic[H, TSchemas], ABC):
-    """Private mixin for ``AnthropicAdapter`` / ``GeminiAdapter`` only.
+    """Shared ``on_message`` for adapters that drive ``NativeToolLoopBackend``.
 
-    Not a public adapter kind and not a fourth architecture tier. The Native
-    kind is "an adapter that owns a ``NativeToolLoopBackend`` +
-    ``ModelProvider``"; this ABC just shares their ``on_message`` body.
-
-    The two subclasses differ in three places — history type, provider-native
-    tool schemas, and bootstrap seed projection. ``TSchemas`` keeps schemas
-    apart at the type level so an Anthropic ``ToolParam`` list cannot reach
-    the Gemini provider.
+    Subclasses supply history type ``H``, provider tool schemas ``TSchemas``,
+    ``_build_tools``, and ``_seed_session``. ``TSchemas`` keeps Anthropic and
+    Gemini schemas from mixing at the type level.
     """
 
     _backend: NativeToolLoopBackend

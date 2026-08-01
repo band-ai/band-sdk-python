@@ -427,13 +427,12 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 ## Supported Adapters
 
-All adapters share one contract (`FrameworkAdapter` / usually `SimpleAdapter`).
-They differ by **where the model loop lives** — Framework, Native, or Bridge.
-Gateways are **hosts** (lifecycle + inbound transport), not a fourth kind.
+Contract: `FrameworkAdapter` (usually `SimpleAdapter`). Grouped by where the
+model loop lives. Gateways own lifecycle + inbound transport.
 
 ### Framework
 
-Their SDK runs inside `on_message`.
+SDK loop inside `on_message`.
 
 | Integration      | Install Extra | Adapter                              | Guide | Example                                       |
 | ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
@@ -452,7 +451,7 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 
 ### Native
 
-Band's tool loop + a `ModelProvider` (ordinary adapters that *compose* that machinery — not a separate inheritance tier).
+Band tool loop + `ModelProvider`.
 
 | Integration      | Install Extra | Adapter                              | Guide | Example                                       |
 | ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
@@ -461,7 +460,7 @@ Band's tool loop + a `ModelProvider` (ordinary adapters that *compose* that mach
 
 ### Bridge
 
-A remote agent / CLI owns the model loop.
+Remote agent / CLI owns the model loop.
 
 | Integration        | Install Extra | Adapter                              | Guide | Example                                       |
 | ------------------ | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
@@ -472,9 +471,9 @@ A remote agent / CLI owns the model loop.
 | A2A (outbound)     | `a2a`         | `A2AAdapter`                         | | [examples](examples/a2a_bridge/)              |
 | ACP client         | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter` | | [examples](examples/acp/) |
 
-### Hosts (not an adapter kind)
+### Hosts
 
-Own an `Agent` plus one inbound transport via `GatewayBase`. Construct the agent but do not start it — the gateway claims it.
+`GatewayBase`: own an `Agent` plus one inbound transport. Construct the agent; do not start it — the gateway claims it.
 
 | Host | Extra | Owned adapter | Example |
 | ---- | ----- | ------------- | ------- |

@@ -79,7 +79,7 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
-**Kind:** Bridge — Claude Code (a subprocess) owns the model loop. Agent calls `adapter.handle_turn` once per inbound message; the adapter forwards the turn to Claude Code over the Agent SDK. Room posts go through Band tools exposed as an in-process MCP server.
+**Kind:** Bridge — Claude Code owns the model loop. Turn entry: `handle_turn`. Room posts via in-process Band MCP tools.
 
 Each Band room gets its own Claude Code session. On the first message in a room, the adapter gives Claude Code the conversation context and a system prompt with Band collaboration instructions. Then it gives Claude Code an in-process MCP server that exposes Band collaboration tools, optional memory/contact tools, and your custom tools.
 

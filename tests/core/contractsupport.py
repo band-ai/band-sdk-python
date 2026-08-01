@@ -261,12 +261,7 @@ class PostingAdapter(SimpleAdapter[object]):
 
 
 class NativeLoopAdapter(SimpleAdapter[list[dict[str, Any]]]):
-    """Test ``FrameworkAdapter`` over a bare ``NativeToolLoopBackend``.
-
-    Production Anthropic/Gemini use ``NativeProviderAdapter`` for the same
-    shape. Stream / oneshot tests that need a tool loop without a real
-    provider adapter use this.
-    """
+    """Test adapter that drives a bare ``NativeToolLoopBackend``."""
 
     def __init__(self, loop: NativeToolLoopBackend) -> None:
         super().__init__()

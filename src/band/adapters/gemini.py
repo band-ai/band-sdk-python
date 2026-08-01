@@ -49,12 +49,10 @@ logger = logging.getLogger(__name__)
 
 class GeminiAdapter(NativeProviderAdapter[GeminiMessages, list[types.Tool]]):
     """
-    Gemini SDK adapter using SimpleAdapter pattern.
+    Band adapter for the Gemini API (google-genai).
 
-    Native-kind ``SimpleAdapter``: owns a ``NativeToolLoopBackend`` +
-    ``GeminiProvider`` (google-genai). Shared turn body is a private helper
-    (``NativeProviderAdapter``); this class supplies Gemini schemas and
-    bootstrap projection only.
+    Owns a ``NativeToolLoopBackend`` and ``GeminiProvider``. Supplies Gemini
+    tool schemas and bootstrap history projection.
 
     Example:
         adapter = GeminiAdapter(

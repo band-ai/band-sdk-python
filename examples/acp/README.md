@@ -15,9 +15,7 @@ An editor (Zed, Cursor, JetBrains, Neovim) connects to Band as a custom ACP agen
 
 ## `clients/` — Band → remote ACP agent
 
-Band drives a remote ACP agent (Codex, Cursor, Claude Code, GitHub Copilot, …) as a
-**Bridge** adapter via `ACPClientAdapter`. Editor-facing ACP servers are owned by
-`ACPGateway` (a host), not a fourth adapter kind.
+Band → remote ACP agent via `ACPClientAdapter` (**Bridge**). Editor→Band servers use `ACPGateway`.
 
 | File | What it shows |
 |------|---------------|

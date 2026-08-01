@@ -1,18 +1,15 @@
 """
 Role-based prompt profiles for Band agents.
 
-Provides pre-defined role templates for adapter instructions.
-Roles define agent behavior, collaboration patterns, and output formats.
+Role prompt templates for adapter instructions.
 
 Usage:
     from band.prompts import get_role_prompt
     from band.adapters import AnthropicAdapter
 
     prompt = get_role_prompt("planner", agent_name="Design Agent")
-    # Native / many Framework adapters: instructions=
     adapter = AnthropicAdapter(instructions=prompt)
-    # Some Bridge adapters still take custom_section= on their config object
-    # (CodexAdapterConfig, OpencodeAdapterConfig, CopilotSDKAdapterConfig).
+    # Codex / OpenCode / Copilot SDK configs still use custom_section=
 """
 
 from __future__ import annotations

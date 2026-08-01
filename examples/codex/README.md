@@ -1,8 +1,7 @@
 # Codex Examples for Band
 
-**Kind:** Bridge — the Codex CLI/process owns the model loop. Agent calls
-`adapter.handle_turn` once per inbound message; each Band room maps to a Codex
-thread. Room posts go through Band collaboration tools.
+**Bridge** — Codex process owns the model loop; one thread per room. Turn
+entry: `handle_turn`. Room posts via Band tools.
 
 ## Quick Start
 
@@ -40,4 +39,4 @@ await agent.run()
 uv run python examples/codex/01_basic_agent.py
 ```
 
-See [docs/adapters/codex.md](../../docs/adapters/codex.md) for configuration.
+See [docs/adapters/codex.md](../../docs/adapters/codex.md).

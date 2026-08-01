@@ -478,55 +478,40 @@ src/band/
 
 ### How a turn runs
 
-Mental model (the only story to hold):
-
 ```text
 Host / transport → Agent → Adapter → Tools (+ delivery)
 ```
 
 `Agent` owns the platform subscription and preprocessing. Each inbound
 message becomes an `AgentInput`; Agent attaches per-turn tools (including
-delivery observation) and calls **`adapter.handle_turn(inp)` once**. That
-is the only turn entrypoint on the `FrameworkAdapter` contract. Room posts
-go through tools. `HistoryConverter`, `ObservingTools`, and the native tool
-loop are **private machinery** behind that story — not a second public
-architecture tier.
+delivery observation) and calls `adapter.handle_turn(inp)` once. Room posts
+go through tools. `HistoryConverter`, `ObservingTools`, and
+`NativeToolLoopBackend` are internal to that path.
 
-`SimpleAdapter` is the usual base class: it implements `handle_turn` by
-converting history, then calling the subclass's `on_message`. Subclasses
-override `on_message`, not `handle_turn` (unless they need a decorator, e.g.
+`SimpleAdapter` implements `handle_turn` (history convert → `on_message`).
+Subclasses override `on_message`, not `handle_turn` (unless decorating, e.g.
 Slack).
-
-Adapters come in three kinds (same `FrameworkAdapter` contract, different
-where the model loop lives):
 
 | Kind | Who runs the model loop | Examples |
 |------|-------------------------|----------|
 | **Framework** | Their SDK inside `on_message` | LangGraph, CrewAI, Pydantic AI, … |
-| **Native** | Band's tool loop + a `ModelProvider` | Anthropic, Gemini |
-| **Bridge** | A remote agent / CLI | ACP client, A2A, OpenCode, Codex, Copilot* |
+| **Native** | Band tool loop + `ModelProvider` | Anthropic, Gemini |
+| **Bridge** | Remote agent / CLI | ACP client, A2A, OpenCode, Codex, Copilot* |
 
-Native adapters compose a private `NativeToolLoopBackend` and a
-`ModelProvider`; that loop is not a peer of Adapter. Turn events land on
-the sink that `AgentStream.observe` reads.
+Turn events land on the sink that `AgentStream.observe` reads.
 
-### Gateways (hosts, not an adapter kind)
+### Gateways
 
-A gateway owns an agent's lifecycle plus one inbound transport, so nothing
-else has to start or stop it: `SlackGateway`, `ACPGateway`, `A2AGateway`, each
-a `GatewayBase[TheirAdapter]`. Construct the `Agent` but do not start it —
-the gateway claims it, and a second gateway claiming the same agent raises
-`LifecycleError`. Slack may wrap an inner framework/native/bridge adapter;
-that is composition, not a fourth kind.
+A gateway owns agent lifecycle plus one inbound transport:
+`SlackGateway`, `ACPGateway`, `A2AGateway` (`GatewayBase[TheirAdapter]`).
+Construct the `Agent` but do not start it — the gateway claims it; a second
+claim raises `LifecycleError`.
 
 | Host | Owned adapter | Notes |
 |------|---------------|-------|
-| `SlackGateway` | `SlackAdapter` | Wraps an inner adapter (brain); not a fourth kind |
+| `SlackGateway` | `SlackAdapter` | Wraps an inner adapter |
 | `ACPGateway` | `BandACPServerAdapter` | Editor → ACP → Band rooms |
 | `A2AGateway` | `A2AGatewayAdapter` | Remote A2A clients → Band peers |
-
-`NativeProviderAdapter` is a private helper for Anthropic/Gemini only — do not
-draw it as a peer of `SimpleAdapter` on architecture diagrams.
 
 ```python fixture:slack_agent
 from band import SlackGateway
@@ -660,7 +645,7 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 ### Phase 1: Scaffold Source Files
 
 1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters.parsing import parse_tool_call, parse_tool_result`.
-2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `instructions`, `features`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`. (`SimpleAdapter.handle_turn` converts history then calls `on_message` — do not reimplement the turn entrypoint unless you need a decorator.) (`custom_section=` was removed in v2 for Native/several Framework adapters — see MIGRATING-v2.0.md.)
+2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `instructions`, `features`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`. Prefer `instructions=` over removed `custom_section=` where the adapter rejects it (see `MIGRATING-v2.0.md`).
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
 ### Phase 2: Register with Conformance Infrastructure
@@ -683,7 +668,7 @@ In `src/band/converters/<framework>.py`, implement `convert()`: text messages as
 
 ### Phase 5: Implement the Adapter
 
-In `src/band/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` invokes the framework (Agent already called `handle_turn`), `on_cleanup` cleans per-room state safely.
+In `src/band/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` invokes the framework, `on_cleanup` cleans per-room state safely.
 
 ### Phase 6: Write Framework-Specific Tests
 

@@ -1,6 +1,6 @@
 # GitHub Copilot SDK Examples for Band
 
-**Kind:** Bridge — the Copilot CLI/SDK process owns the model loop. Agent calls `adapter.handle_turn` once per inbound message.
+**Kind:** Bridge — Copilot process owns the model loop; turn entry `handle_turn`.
 
 Examples of using the [GitHub Copilot SDK](https://github.com/github/copilot-sdk)
 (`github-copilot-sdk`) with the Band platform.

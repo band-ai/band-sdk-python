@@ -1,10 +1,7 @@
 # Gemini SDK Examples for Band
 
-Examples for creating Band agents with the Gemini SDK (**Native** kind).
-
-Band owns the tool loop (`NativeToolLoopBackend` + `GeminiProvider`) behind
-`GeminiAdapter`. Agent calls `handle_turn` once per inbound message; room posts
-go through tools (`band_send_message`).
+**Native** — `GeminiAdapter` runs `NativeToolLoopBackend` + `GeminiProvider`.
+Turn entry: `handle_turn`. Room posts via tools.
 
 ## Quick Start
 

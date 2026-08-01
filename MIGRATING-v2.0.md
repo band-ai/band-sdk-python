@@ -1,19 +1,13 @@
 # Migrating to Band SDK v2.0
 
-## Architecture mental model
-
-Hold this story; everything else is private machinery:
+## Architecture
 
 ```text
 Host / transport → Agent → adapter.handle_turn(inp) → Tools (+ delivery)
 ```
 
-The adapter type is the `FrameworkAdapter` contract. `SimpleAdapter` is
-the base class most adapters extend (`handle_turn` → history convert →
-`on_message`).
-
-Adapters share one contract (`SimpleAdapter`) and fall into three kinds by
-where the model loop lives:
+Contract: `FrameworkAdapter`. Usual base: `SimpleAdapter` (`handle_turn` →
+history convert → `on_message`).
 
 | Kind | Loop lives in | Examples |
 |------|---------------|----------|
@@ -21,14 +15,10 @@ where the model loop lives:
 | Native | Band + `ModelProvider` | Anthropic, Gemini |
 | Bridge | Remote agent / CLI | ACP client, A2A, OpenCode, Codex, Copilot* |
 
-Gateways (`SlackGateway`, `ACPGateway`, `A2AGateway`) are **hosts** — they
-own agent lifecycle and an inbound transport. They are not a fourth adapter
-kind. `HistoryConverter`, `ObservingTools`, and `NativeToolLoopBackend` stay
-behind the Adapter; do not treat them as peer architecture layers.
-`NativeProviderAdapter` is a private helper shared by Anthropic/Gemini only —
-not a public base class and not a fourth kind.
+Gateways (`SlackGateway`, `ACPGateway`, `A2AGateway`) own agent lifecycle and
+inbound transport. `HistoryConverter`, `ObservingTools`,
+`NativeToolLoopBackend`, and `NativeProviderAdapter` are internal.
 
-This guide accumulates old → new mappings as each redesign phase lands.
 v2.0 is a breaking release: removed constructor aliases raise `TypeError`
 (or fail dataclass construction) instead of emitting `BandDeprecationWarning`.
 
@@ -72,17 +62,16 @@ The following deprecated paths were removed in v2.0:
   (including `PREPEND`) are unaffected.
 - `InstructionPolicy.render(run_instructions=...)` was removed. No caller ever
   supplied it, so the run layer never rendered.
-- `RunRequest` was removed, along with the `AgentInput` ↔ `RunRequest`
-  mapping. Turns pass `AgentInput` straight into `FrameworkAdapter.handle_turn` —
-  the old `RunRequest` held the same fields under four different names.
-  `NativeToolLoopBackend` is an internal tool loop (not an adapter): it owns
-  its session, so it takes `session_id=`, `message=` and the two context
-  strings rather than an input whose history it would ignore. `SessionHistoryPolicy.prime_turn` takes the same three values.
+- `RunRequest` removed. Turns pass `AgentInput` into
+  `FrameworkAdapter.handle_turn`. `NativeToolLoopBackend.run` takes
+  `session_id=`, `message=`, and context strings (it owns session state).
+  `SessionHistoryPolicy.prime_turn` takes the same three values.
 - `DeliveryReceipt.outcome` and `DeliveryReceipt.tool_call_id` were removed.
   `outcome` had exactly one legal value — its own validator rejected the rest
   — and nothing read the call id. A receipt is evidence that a room post
   succeeded; `tool_name` carries that.
-- The private turn package was renamed `band.core.backends` → `band.core.turn` (dead `adapter.py` re-export removed). `SimpleAdapterBackend` and `AgentBackend` were removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter` only. The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. The turn entrypoint on the contract is `handle_turn` (formerly `on_event` on the adapter protocol — not to be confused with platform `Execution.on_event`). Native Anthropic/Gemini adapters compose a private `NativeToolLoopBackend`; tests that need a bare loop use a small `SimpleAdapter` stand-in (`NativeLoopAdapter` in the test helpers).
+- Turn package: `band.core.backends` → `band.core.turn`.
+- `SimpleAdapterBackend` / `AgentBackend` removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter`. ObservingTools wrap lives in `run_adapter_turn`. Adapter turn entrypoint: `handle_turn` (not platform `Execution.on_event`).
 
 
 ## Breaking: features-only
@@ -154,21 +143,15 @@ for removed in ("system_prompt", "prompt", "custom_section"):
 
 ## Phase 2 — Provider split & common options
 
-`AnthropicAdapter` / `GeminiAdapter` remain the public constructors (Native
-kind). Each is an ordinary `SimpleAdapter` that *composes* a provider
-(`AnthropicProvider` / `GeminiProvider`) with a private tool loop
-(`NativeToolLoopBackend`) — that loop is not an `AgentBackend` and not something
-`Agent` takes. LLM calls go through the provider; session history, tool rounds,
-and `TurnUsage` aggregation go through the loop. A private helper
-(`NativeProviderAdapter`) shares their `on_message` body; it is not a public
-architecture tier.
+`AnthropicAdapter` / `GeminiAdapter` compose `AnthropicProvider` /
+`GeminiProvider` with `NativeToolLoopBackend`. LLM calls go through the
+provider; session history, tool rounds, and `TurnUsage` go through the loop.
+Shared `on_message` lives on `NativeProviderAdapter`.
 
-The v1 `_call_anthropic` / `_call_gemini` methods are gone. The loop calls
-`provider.complete()` directly, so a completion is projected once instead of
-round-tripping through the adapter's native message shape and back. To drive a
-turn deterministically, replace the SDK client the provider owns — the adapter
-exposes it as `.client`. The snippet below calls `on_message` directly (the
-subclass hook); production goes through `adapter.handle_turn(inp)`:
+`_call_anthropic` / `_call_gemini` are gone — the loop calls
+`provider.complete()` directly. For deterministic tests, replace the provider's
+SDK client (exposed as `.client`). The snippet calls `on_message`; production
+uses `adapter.handle_turn(inp)`:
 
 ```python fixture:scripted_anthropic_adapter fixture:room_tools fixture:turn_input
 adapter, client = scripted_anthropic_adapter("Hello!")
@@ -241,10 +224,8 @@ assert UNSET is not None
    `GeminiHistoryPolicy`)
 3. ``DefaultHistoryPolicy``
 
-Adapters no longer pass ``history_policy=`` when constructing the private
-``NativeToolLoopBackend`` — the provider owns that pairing. A custom
-``ModelProvider`` should implement ``default_history_policy()`` if it expects a
-non-default session shape.
+Providers own history pairing via ``default_history_policy()``; adapters do
+not pass ``history_policy=`` into ``NativeToolLoopBackend``.
 
 ### Per-session turn usage
 
@@ -252,9 +233,7 @@ non-default session shape.
 |-----|-----|
 | ``loop.last_turn_usage`` (property) | ``loop.last_turn_usage(session_id)`` |
 
-One native tool loop serves every room the agent is in and their turns
-interleave, so a single "most recent turn" tally reported whichever room last
-called the model. The tally is keyed by session and cleared with it.
+Usage is keyed by session because one loop serves concurrent rooms.
 
 
 ### One body for tool narration

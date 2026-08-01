@@ -1,8 +1,4 @@
-"""
-Anthropic adapter using SimpleAdapter pattern.
-
-Extracted from band.integrations.anthropic.agent.BandAnthropicAgent.
-"""
+"""Anthropic SDK adapter (``NativeToolLoopBackend`` + ``AnthropicProvider``)."""
 
 from __future__ import annotations
 
@@ -45,12 +41,10 @@ logger = logging.getLogger(__name__)
 
 class AnthropicAdapter(NativeProviderAdapter[AnthropicMessages, list[ToolParam]]):
     """
-    Anthropic SDK adapter using SimpleAdapter pattern.
+    Band adapter for the Anthropic Messages API.
 
-    Native-kind ``SimpleAdapter``: owns a ``NativeToolLoopBackend`` +
-    ``AnthropicProvider``. Shared turn body is a private helper
-    (``NativeProviderAdapter``); this class supplies Anthropic schemas and
-    bootstrap projection only.
+    Owns a ``NativeToolLoopBackend`` and ``AnthropicProvider``. Supplies
+    Anthropic tool schemas and bootstrap history projection.
 
     Example:
         adapter = AnthropicAdapter(

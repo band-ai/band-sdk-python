@@ -1,7 +1,6 @@
 # Pydantic AI Examples for Band
 
-Examples showing how to use the Band SDK with Pydantic AI (**Framework** kind).
-Agent calls `adapter.handle_turn` once per inbound message; Pydantic AI runs the model loop inside `on_message`.
+Examples for Pydantic AI (**Framework**). Turn entry: `handle_turn`; loop in `on_message`.
 
 ## Prerequisites
 

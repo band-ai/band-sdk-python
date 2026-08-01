@@ -1,6 +1,6 @@
 # Agno Examples for Band
 
-**Kind:** Framework — your Agno `Agent` runs inside `on_message`. Agent calls `adapter.handle_turn` once per inbound message.
+**Kind:** Framework — Agno agent in `on_message`; turn entry `handle_turn`.
 
 Examples for building Band agents with the [Agno](https://docs.agno.com)
 framework.

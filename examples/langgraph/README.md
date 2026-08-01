@@ -1,7 +1,6 @@
 # LangGraph Examples for Band
 
-This guide explains how to integrate LangGraph agents with Band (**Framework** kind).
-Agent calls `adapter.handle_turn` once per inbound message; your graph runs inside `on_message`.
+LangGraph agents on Band (**Framework**). Turn entry: `handle_turn`; graph runs in `on_message`.
 
 ## Prerequisites
 
