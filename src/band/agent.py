@@ -95,7 +95,7 @@ class Agent:
     def __init__(
         self,
         runtime: PlatformRuntime,
-        adapter: FrameworkAdapter | SimpleAdapter,
+        adapter: FrameworkAdapter | SimpleAdapter[object],
         preprocessor: Preprocessor | None = None,
     ):
         self._runtime = runtime
@@ -109,7 +109,7 @@ class Agent:
     @classmethod
     def create(
         cls,
-        adapter: FrameworkAdapter | SimpleAdapter,
+        adapter: FrameworkAdapter | SimpleAdapter[object],
         agent_id: str,
         api_key: str,
         ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
@@ -167,7 +167,7 @@ class Agent:
         cls,
         name: str,
         *,
-        adapter: FrameworkAdapter | SimpleAdapter,
+        adapter: FrameworkAdapter | SimpleAdapter[object],
         config_path: str | Path | None = None,
         **kwargs: Any,
     ) -> "Agent":
@@ -202,7 +202,7 @@ class Agent:
         return self._runtime
 
     @property
-    def adapter(self) -> FrameworkAdapter | SimpleAdapter:
+    def adapter(self) -> FrameworkAdapter | SimpleAdapter[object]:
         """Framework adapter bound to this agent."""
         return self._adapter
 

@@ -6,8 +6,8 @@ Claim/mark/drain stay in the invoker; this is only the turn boundary:
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
 from dataclasses import replace
+from typing import Protocol, TypeAlias, cast, runtime_checkable
 
 from band.core.backends.observing import ObservingTools
 from band.core.contracts import RunResult
@@ -23,13 +23,19 @@ from band.core.run.context import SimpleRunContext
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
 
-Adapter = FrameworkAdapter | SimpleAdapter[Any]
+# ``SimpleAdapter`` implements ``FrameworkAdapter``; both spellings appear at
+# call sites (Agent constructor, tests), so the union keeps them explicit.
+Adapter: TypeAlias = FrameworkAdapter | SimpleAdapter[object]
 
 
+@runtime_checkable
 class TurnRunner(Protocol):
-    """Anything that can execute a prepared turn (tests' native façades)."""
+    """Prepared-turn executor for tests that drive a bare native loop."""
 
     async def run(self, inp: AgentInput, *, context: RunContext) -> RunResult: ...
+
+
+TurnTarget: TypeAlias = Adapter | TurnRunner
 
 
 async def run_adapter_turn(
@@ -57,20 +63,23 @@ async def run_adapter_turn(
 
 
 async def execute_turn(
-    target: Adapter | TurnRunner,
+    target: TurnTarget,
     inp: AgentInput,
     *,
     context: RunContext,
 ) -> RunResult:
     """Dispatch: adapters via ``on_event``, test runners via ``.run``."""
-    on_event = getattr(target, "on_event", None)
-    if on_event is not None:
-        return await run_adapter_turn(cast(Adapter, target), inp, context=context)
-    return await cast(TurnRunner, target).run(inp, context=context)
+    if isinstance(target, FrameworkAdapter):
+        return await run_adapter_turn(target, inp, context=context)
+    if isinstance(target, TurnRunner):
+        return await target.run(inp, context=context)
+    raise TypeError(
+        f"execute_turn expected FrameworkAdapter or TurnRunner, got {type(target)!r}"
+    )
 
 
 async def run_oneshot_turn(
-    target: Adapter | TurnRunner,
+    target: TurnTarget,
     inp: AgentInput,
     *,
     events: EventSink | None = None,

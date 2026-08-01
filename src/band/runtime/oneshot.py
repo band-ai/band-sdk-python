@@ -86,7 +86,7 @@ class OneShotInvoker:
         self,
         *,
         link: BandLink,
-        adapter: FrameworkAdapter | SimpleAdapter,
+        adapter: FrameworkAdapter | SimpleAdapter[object],
         agent_id: str,
         drain_cap: int = DEFAULT_DRAIN_CAP,
     ) -> None:

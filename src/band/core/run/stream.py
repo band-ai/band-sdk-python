@@ -8,8 +8,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from typing import Any
-
+from band.core.backends.oneshot import TurnTarget, execute_turn
 from band.core.contracts import EnvelopedTurnEvent, RunFailedEvent
 from band.core.exceptions import BandConnectionError, RunFailed, StreamError
 from band.core.protocols import AgentToolsProtocol, CancellationToken
@@ -39,10 +38,10 @@ class AgentStream:
     """
 
     _sink: RecordingEventSink
-    _queue: asyncio.Queue[Any] = field(repr=False)
+    _queue: asyncio.Queue[EnvelopedTurnEvent | object] = field(repr=False)
     _unsubscribe: Callable[[], None] | None = field(repr=False)
     _closed: bool = field(default=False, init=False)
-    _producer: asyncio.Task[Any] | None = field(default=None, init=False, repr=False)
+    _producer: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _cancellation: FlagCancellation | NeverCancelled = field(
         default_factory=NeverCancelled, repr=False, init=False
     )
@@ -52,14 +51,14 @@ class AgentStream:
     @classmethod
     def live_from_sink(cls, sink: RecordingEventSink) -> AgentStream:
         """Build a stream that waits for new sink envelopes."""
-        queue: asyncio.Queue[Any] = asyncio.Queue()
+        queue: asyncio.Queue[EnvelopedTurnEvent | object] = asyncio.Queue()
         unsubscribe = sink.add_observer(lambda enveloped: queue.put_nowait(enveloped))
         return cls(_sink=sink, _queue=queue, _unsubscribe=unsubscribe)
 
     @classmethod
     def observe(
         cls,
-        adapter: Any,
+        adapter: TurnTarget,
         inp: AgentInput,
         *,
         tools: AgentToolsProtocol,
@@ -67,8 +66,8 @@ class AgentStream:
     ) -> AgentStream:
         """Start a turn in the background and return a live stream.
 
-        ``adapter`` is a ``SimpleAdapter`` / ``FrameworkAdapter``, or a test
-        turn-runner with ``.run`` (e.g. a bare native loop façade).
+        ``adapter`` is a ``FrameworkAdapter`` / ``SimpleAdapter``, or a test
+        ``TurnRunner`` with ``.run`` (e.g. a bare native loop façade).
 
         Model/execution failures are emitted as ``RunFailedEvent`` (and the
         stream ends normally). Transport failures set a ``StreamError`` that
@@ -95,8 +94,6 @@ class AgentStream:
                 tools=tools, events=sink, cancellation=run_cancellation
             )
             try:
-                from band.core.backends.oneshot import execute_turn
-
                 stream._result = await execute_turn(adapter, inp, context=context)
             except asyncio.CancelledError:
                 raise
