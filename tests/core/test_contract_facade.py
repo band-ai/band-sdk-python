@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from band.core.backends.adapter import SimpleAdapterBackend
 from band.core.backends.facade import (
     ExecutionBridgingSink,
     NativeProviderAdapter,
@@ -288,7 +287,7 @@ class TestFacadeRunContext:
         tools = FakeAgentTools(room_id="room-facade")
         adapter = _EchoFacade(EchoModelProvider(tool_name=BAND_SEND_MESSAGE))
         stream = AgentStream.observe(
-            SimpleAdapterBackend(adapter),
+            adapter,
             agent_input(tools, content="hi"),
             tools=tools,
         )

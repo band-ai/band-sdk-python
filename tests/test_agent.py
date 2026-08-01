@@ -221,13 +221,13 @@ class TestStart:
 
     @pytest.mark.asyncio
     async def test_passes_on_cleanup_to_runtime(self, mock_runtime, mock_adapter):
-        """Should pass backend.close_session to runtime.start()."""
+        """Should pass adapter.on_cleanup to runtime.start()."""
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
 
         await agent.start()
 
         call_kwargs = mock_runtime.start.call_args.kwargs
-        assert call_kwargs["on_cleanup"] == agent._backend.close_session
+        assert call_kwargs["on_cleanup"] == agent._adapter.on_cleanup
 
 
 class TestStop:
@@ -352,7 +352,7 @@ class TestOnExecute:
     async def test_calls_adapter_on_event(
         self, mock_runtime, mock_adapter, mock_preprocessor
     ):
-        """Should drive the adapter through AgentBackend.run()."""
+        """Should drive the adapter through a oneshot turn."""
         from tests.core.adapterhelpers import make_agent_input
 
         mock_input = make_agent_input(content="hello")

@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import pytest
 
-from band.core.backends.adapter import SimpleAdapterBackend
 from band.core.backends.observing import ObservingTools
 from band.core.run.cancellation import FlagCancellation, NeverCancelled
 from band.core.contracts import (
@@ -270,7 +269,7 @@ class NativeFacadeBackend:
     a turn with rather than an ``AgentInput`` whose history it would ignore —
     which means it is not an ``AgentBackend``. In production the two provider
     adapters supply that shape; tests that need to observe a bare tool loop
-    (``AgentStream.observe``) use this stand-in for the same reason.
+    (``AgentStream.observe``) use this stand-in turn-runner for the same reason.
     """
 
     loop: NativeToolLoopBackend
@@ -341,13 +340,17 @@ async def native_turn(
 
 @dataclass
 class ShimTurn:
-    backend: SimpleAdapterBackend
+    adapter: SimpleAdapter[Any]
     tools: FakeAgentTools
     context: SimpleRunContext
 
     async def run(self, *, content: str = "hello") -> RunResult:
-        return await self.backend.run(
-            agent_input(self.tools, content=content), context=self.context
+        from band.core.backends.oneshot import run_adapter_turn
+
+        return await run_adapter_turn(
+            self.adapter,
+            agent_input(self.tools, content=content),
+            context=self.context,
         )
 
 
@@ -359,7 +362,7 @@ async def shim_turn(
 ) -> AsyncIterator[ShimTurn]:
     tools = tools or FakeAgentTools(room_id=ROOM_ID)
     yield ShimTurn(
-        backend=SimpleAdapterBackend(adapter),
+        adapter=adapter,
         tools=tools,
         context=SimpleRunContext(tools=cast(AgentToolsProtocol, tools)),
     )
@@ -367,14 +370,13 @@ async def shim_turn(
 
 @dataclass
 class OneshotTurn:
-    backend: SimpleAdapterBackend
     adapter: SimpleAdapter[Any]
     tools: FakeAgentTools
     content: str = "hello"
 
     async def run(self) -> RunResult:
         return await run_oneshot_turn(
-            self.backend, agent_input(self.tools, content=self.content)
+            self.adapter, agent_input(self.tools, content=self.content)
         )
 
 
@@ -387,7 +389,6 @@ async def oneshot(
 ) -> AsyncIterator[OneshotTurn]:
     tools = tools or FakeAgentTools(room_id=ROOM_ID)
     yield OneshotTurn(
-        backend=SimpleAdapterBackend(adapter),
         adapter=adapter,
         tools=tools,
         content=content,
@@ -402,8 +403,8 @@ def turn_tools(
 ) -> ObservingTools:
     """Tools as an adapter receives them: wrapped in a turn.
 
-    What ``SimpleAdapterBackend.run`` hands ``on_message``, for tests that drive
-    an adapter directly and still need the turn's sink or token reachable.
+    What a turn hands ``on_message``, for tests that drive an adapter directly
+    and still need the turn's sink or token reachable.
     """
     return ObservingTools(
         _inner=cast(AgentToolsProtocol, tools),

@@ -15,6 +15,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
+from band.core.backends.oneshot import run_adapter_turn
 from band.core.tools import FunctionTool
 from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
 from band.runtime.tools import ToolCallOutcome
@@ -467,7 +468,6 @@ class TestToolExecution:
         """
         import asyncio
 
-        from band.core.backends.adapter import SimpleAdapterBackend
         from band.core.run.cancellation import FlagCancellation
         from band.core.run.context import SimpleRunContext
         from tests.core.adapterhelpers import make_agent_input
@@ -483,11 +483,11 @@ class TestToolExecution:
             anthropic_reply(tool_calls=[("band_send_message", {"content": "hi"})]),
             anthropic_reply(tool_calls=[("band_send_message", {"content": "again"})]),
         )
-        backend = SimpleAdapterBackend(adapter)
         inp = make_agent_input(msg=sample_message, tools=mock_tools, room_id="room-123")
 
         with pytest.raises(asyncio.CancelledError):
-            await backend.run(
+            await run_adapter_turn(
+                adapter,
                 inp,
                 context=SimpleRunContext(tools=mock_tools, cancellation=cancellation),
             )
@@ -655,8 +655,7 @@ class TestShutdown:
         Driven through the backend the agent actually stops, not through
         `cleanup_all` directly: the leak was that nothing connected the two.
         """
-        from band.core.backends.adapter import SimpleAdapterBackend
-
+        
         adapter = AnthropicAdapter(provider_key="test-key")
         closed = False
 
@@ -667,6 +666,6 @@ class TestShutdown:
 
         adapter.client = ClosingClient()
 
-        await SimpleAdapterBackend(adapter).aclose()
+        await adapter.cleanup_all()
 
         assert closed, "the provider's HTTP client outlived the agent"

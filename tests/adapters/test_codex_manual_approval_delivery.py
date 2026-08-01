@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from band.core.backends.oneshot import run_adapter_turn
+
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.backends.adapter import SimpleAdapterBackend
 from band.core.run.context import SimpleRunContext
 from tests.core.adapterhelpers import make_agent_input
 from tests.adapters.test_codex_adapter import (
@@ -44,10 +45,10 @@ async def test_manual_approval_notice_keeps_the_final_reply() -> None:
         client_factory=lambda _config: FakeCodexClient(events=events),
     )
     tools = ToolSchemaFakeTools()
-    backend = SimpleAdapterBackend(adapter)
 
     await adapter.on_started("Codex Agent", "A coding agent")
-    await backend.run(
+    await run_adapter_turn(
+        adapter,
         make_agent_input(msg=make_platform_message(), tools=tools),
         context=SimpleRunContext(tools=tools),
     )

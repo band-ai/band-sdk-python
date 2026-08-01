@@ -7,7 +7,6 @@ import pytest
 from band import (
     AgentBackend,
     RunResult,
-    SimpleAdapterBackend,
 )
 from band.core.backends.native import NativeToolLoopBackend
 from band.core.backends.observing import ObservingTools
@@ -25,13 +24,16 @@ from tests.core.adapterhelpers import (
 
 
 @pytest.mark.asyncio
-async def test_simple_adapter_backend_satisfies_run_contract() -> None:
+async def test_adapter_turn_satisfies_run_contract() -> None:
+    from band.core.backends.oneshot import run_adapter_turn
+
     adapter = RecordingAdapter()
-    backend: AgentBackend = SimpleAdapterBackend(adapter)
     tools = FakeAgentTools(room_id="room-1")
     inp = make_agent_input("hi", tools=tools, room_id="room-1")
-    result = await backend.run(
-        inp, context=SimpleRunContext(tools=tools, cancellation=NeverCancelled())
+    result = await run_adapter_turn(
+        adapter,
+        inp,
+        context=SimpleRunContext(tools=tools, cancellation=NeverCancelled()),
     )
     assert isinstance(result, RunResult)
     assert result.delivery is None

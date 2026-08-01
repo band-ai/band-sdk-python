@@ -291,7 +291,7 @@ class TestInterruptedTurn:
     ):
         """The turn's cancellation token gates the loop, not just task cancel.
 
-        ``SimpleAdapterBackend`` carries the token on the turn's tools because
+        the adapter turn carries the token on the turn's tools because
         ``on_message`` cannot take it; a façade that ignores it keeps calling
         the model after ``AgentStream.aclose`` flips it.
         """

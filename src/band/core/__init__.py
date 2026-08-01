@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 
 from band.core.contracts import (
     BackendContext,
@@ -109,7 +108,6 @@ __all__ = [
     "tool_spec_to_anthropic_schema",
     "tool_spec_to_openai_schema",
     "SimpleAdapter",
-    "SimpleAdapterBackend",
     "RunFailed",
     "StreamError",
     "ToolStatus",
@@ -120,12 +118,3 @@ __all__ = [
     "resolve_sampling",
     "warn_deprecated",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    """Lazy exports that would otherwise create import cycles + rename aliases."""
-    if name == "SimpleAdapterBackend":
-        from band.core.backends.adapter import SimpleAdapterBackend
-
-        return SimpleAdapterBackend
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

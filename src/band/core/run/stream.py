@@ -12,7 +12,7 @@ from typing import Any
 
 from band.core.contracts import EnvelopedTurnEvent, RunFailedEvent
 from band.core.exceptions import BandConnectionError, RunFailed, StreamError
-from band.core.protocols import AgentBackend, AgentToolsProtocol, CancellationToken
+from band.core.protocols import AgentToolsProtocol, CancellationToken
 from band.core.run.cancellation import (
     AnyCancellation,
     FlagCancellation,
@@ -59,13 +59,16 @@ class AgentStream:
     @classmethod
     def observe(
         cls,
-        backend: AgentBackend,
+        adapter: Any,
         inp: AgentInput,
         *,
         tools: AgentToolsProtocol,
         cancellation: CancellationToken | None = None,
     ) -> AgentStream:
-        """Start ``backend.run`` in the background and return a live stream.
+        """Start a turn in the background and return a live stream.
+
+        ``adapter`` is a ``SimpleAdapter`` / ``FrameworkAdapter``, or a test
+        turn-runner with ``.run`` (e.g. a bare native loop façade).
 
         Model/execution failures are emitted as ``RunFailedEvent`` (and the
         stream ends normally). Transport failures set a ``StreamError`` that
@@ -92,7 +95,9 @@ class AgentStream:
                 tools=tools, events=sink, cancellation=run_cancellation
             )
             try:
-                stream._result = await backend.run(inp, context=context)
+                from band.core.backends.oneshot import execute_turn
+
+                stream._result = await execute_turn(adapter, inp, context=context)
             except asyncio.CancelledError:
                 raise
             except BandConnectionError as exc:

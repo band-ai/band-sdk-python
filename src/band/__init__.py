@@ -77,7 +77,6 @@ from .core.contracts import (
     ModelSamplingOptions,
     RunResult,
 )
-from .core.backends.adapter import SimpleAdapterBackend
 from .core.backends.native import NativeToolLoopBackend
 from .core.run.stream import AgentStream
 from .core.options import UNSET, resolve_sampling
@@ -202,7 +201,6 @@ __all__ = [
     "BackendContext",
     "ModelRequest",
     "ModelResponse",
-    "SimpleAdapterBackend",
     "FileStyle",
     "FormatStyle",
     "CHATTY_LOGGERS",

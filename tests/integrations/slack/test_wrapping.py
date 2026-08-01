@@ -16,6 +16,8 @@ Architecture under test:
 
 from __future__ import annotations
 
+from band.core.backends.oneshot import run_adapter_turn
+
 import asyncio
 import hashlib
 import hmac
@@ -31,7 +33,6 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
-from band.core.backends.adapter import SimpleAdapterBackend
 from band.core.backends.facade import make_custom_tool_executor
 from band.core.backends.observing import ObservingTools
 from band.core.run.context import SimpleRunContext
@@ -698,7 +699,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
 async def test_bound_room_still_tees_when_the_turn_runs_through_the_backend():
     """The real turn path hands the adapter *proxied* tools.
 
-    Agent turns reach an adapter through ``SimpleAdapterBackend``, which
+    Agent turns reach an adapter through the adapter turn, which
     proxies the tools to observe what the turn delivered. Slack must still
     install its tee (the brain keeps its Slack outbound tool) and must install
     it *underneath* that proxy, so the turn still reports its delivery.
@@ -730,7 +731,8 @@ async def test_bound_room_still_tees_when_the_turn_runs_through_the_backend():
         rest=rest,
         participants=[{"id": "peer-1", "name": "Peer"}],
     )
-    result = await SimpleAdapterBackend(adapter).run(
+    result = await run_adapter_turn(
+        adapter,
         make_agent_input(msg=msg, tools=turn_tools),
         context=SimpleRunContext(tools=turn_tools),
     )

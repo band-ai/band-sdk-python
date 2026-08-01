@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.core.backends.oneshot import run_adapter_turn
+
 import asyncio
 import json
 import logging
@@ -15,7 +17,6 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.backends.adapter import SimpleAdapterBackend
 from band.core.run.context import SimpleRunContext
 from band.core.types import (
     AdapterFeatures,
@@ -403,10 +404,10 @@ class TestCodexAdapter:
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
-        backend = SimpleAdapterBackend(adapter)
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await backend.run(
+        await run_adapter_turn(
+            adapter,
             make_agent_input(msg=make_platform_message(), tools=tools),
             context=SimpleRunContext(tools=tools),
         )
@@ -708,7 +709,7 @@ class TestCodexAdapter:
         )
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await SimpleAdapterBackend(adapter).aclose()
+        await adapter.cleanup_all()
 
         assert fake_client.closed is True
 

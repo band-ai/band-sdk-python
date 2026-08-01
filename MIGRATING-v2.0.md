@@ -77,6 +77,7 @@ The following deprecated paths were removed in v2.0:
   `outcome` had exactly one legal value — its own validator rejected the rest
   — and nothing read the call id. A receipt is evidence that a room post
   succeeded; `tool_name` carries that.
+- `SimpleAdapterBackend` was removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `SimpleAdapter` / `FrameworkAdapter` directly. The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. Test helpers that need a bare native loop still pass a small turn-runner with `.run` to `observe`.
 
 
 ## Breaking: features-only
@@ -300,10 +301,10 @@ Failure separation:
 | Model / execution | Yields `RunFailedEvent` (structured `RunFailed`); stream ends normally |
 | Transport (`BandConnectionError`) | Raises `StreamError` — aborts iteration |
 
-ACP client turns dual-write onto the same sink: `SimpleAdapterBackend.run`
+ACP client turns dual-write onto the same sink: the adapter turn
 binds `context.events`, and `RoomTurnEmitter` maps finalized chunks (plus
 denied-permission pairs and turn failures) to `TurnEvent`s. So
-`AgentStream.observe(SimpleAdapterBackend(acp_adapter), …)` sees the ACP turn
+`AgentStream.observe(acp_adapter, …)` sees the ACP turn
 end-to-end without a second execution path.
 
 ## Phase 3A — FunctionTool / `@tool`

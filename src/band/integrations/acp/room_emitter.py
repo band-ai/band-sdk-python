@@ -108,8 +108,8 @@ class RoomTurnEmitter:
     because whether to relay it depends on whether the whole turn already posted
     via a Band tool — if so the text would duplicate the reply already in the room.
 
-    When the turn carries an ``EventSink`` (via ``SimpleAdapterBackend`` /
-    ``AgentStream.observe``), each finalized chunk is also dual-written as a
+    When the turn carries an ``EventSink`` (via ``AgentStream.observe`` /
+    the per-turn tools proxy), each finalized chunk is also dual-written as a
     ``TurnEvent`` so ACP turns are observable end-to-end on the published stream.
     Text deltas are observed when finalized even though the room post is held
     until close.

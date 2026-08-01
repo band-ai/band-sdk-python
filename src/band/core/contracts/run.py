@@ -1,4 +1,4 @@
-"""AgentBackend run result and start context."""
+"""Turn run result and agent start context."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from band.core.types import TurnUsage
 
 
 class RunResult(FrozenModel):
-    """Outcome of ``AgentBackend.run``.
+    """Outcome of one adapter turn.
 
     Reply text, usage, and delivery only — turn events go through
     ``RunContext.events``. ``text`` is ``None`` when the turn produced no
@@ -26,7 +26,7 @@ class RunResult(FrozenModel):
 
 
 class BackendContext(FrozenModel):
-    """Agent-level context for ``AgentBackend.start``."""
+    """Agent-level context passed when an adapter starts (legacy name)."""
 
     agent_name: str = ""
     agent_description: str = ""

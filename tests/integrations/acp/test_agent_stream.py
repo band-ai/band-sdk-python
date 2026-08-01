@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from band.core.backends.adapter import SimpleAdapterBackend
 from band.core.backends.observing import ObservingTools
 from band.core.contracts import (
     RunFailedEvent,
@@ -142,7 +141,7 @@ async def test_room_emitter_observe_failure_yields_run_failed() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_stream_observe_sees_acp_emitter_through_shim() -> None:
-    """``AgentStream.observe`` + ``SimpleAdapterBackend`` binds the ACP sink."""
+    """``AgentStream.observe`` + the adapter turn binds the ACP sink."""
 
     class _AcpLikeAdapter(SimpleAdapter[list[dict[str, Any]]]):
         def __init__(self) -> None:
@@ -173,7 +172,7 @@ async def test_agent_stream_observe_sees_acp_emitter_through_shim() -> None:
             del room_id
 
     tools = FakeAgentTools(room_id="room-observe")
-    backend = SimpleAdapterBackend(_AcpLikeAdapter())
+    backend = _AcpLikeAdapter()
     request = agent_input(tools, content="hi")
     # agent_input already has a message; observe uses backend.run
     stream = AgentStream.observe(backend, request, tools=tools)
@@ -252,7 +251,7 @@ async def test_chunks_dispatched_on_another_task_reach_the_turn_sink() -> None:
     tools = FakeAgentTools(room_id="room-dispatched")
     adapter = _DispatchedAcpAdapter()
     stream = AgentStream.observe(
-        SimpleAdapterBackend(adapter),
+        adapter,
         agent_input(tools, content="hi"),
         tools=tools,
     )
@@ -272,7 +271,7 @@ async def test_each_turn_is_observed_on_its_own_sink() -> None:
     turn two reports into a sink whose consumer is already gone.
     """
     tools = FakeAgentTools(room_id="room-two-turns")
-    backend = SimpleAdapterBackend(_DispatchedAcpAdapter())
+    backend = _DispatchedAcpAdapter()
 
     async def observed(content: str) -> list[TurnEventKind]:
         stream = AgentStream.observe(
@@ -283,7 +282,7 @@ async def test_each_turn_is_observed_on_its_own_sink() -> None:
 
     first = await observed("first")
     second = await observed("second")
-    await backend.aclose()
+    await backend.cleanup_all()
 
     assert first == second == [TurnEventKind.THOUGHT, TurnEventKind.TEXT_DELTA]
     assert [m.get("content") for m in tools.messages_sent] == ["first", "second"]
@@ -325,7 +324,7 @@ async def test_consumer_crash_cancels_bound_acp_turn() -> None:
 
     tools = FakeAgentTools(room_id="room-cancel-acp")
     stream = AgentStream.observe(
-        SimpleAdapterBackend(_SlowAdapter()),
+        _SlowAdapter(),
         agent_input(tools, content="hi"),
         tools=tools,
     )

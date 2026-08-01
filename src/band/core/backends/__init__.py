@@ -1,1 +1,1 @@
-"""AgentBackend implementations and turn-boundary glue."""
+"""Private turn machinery: tool loop, ObservingTools, oneshot boundary."""
