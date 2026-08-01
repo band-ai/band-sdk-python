@@ -269,7 +269,7 @@ class NativeFacadeBackend:
     a turn with rather than an ``AgentInput`` whose history it would ignore —
     which means it is not an ``AgentBackend``. In production the two provider
     adapters supply that shape; tests that need to observe a bare tool loop
-    (``AgentStream.observe``) use this stand-in turn-runner for the same reason.
+    (``AgentStream.observe``) use this stand-in AgentBackend stand-in for the same reason.
     """
 
     loop: NativeToolLoopBackend
@@ -340,7 +340,7 @@ async def native_turn(
 
 @dataclass
 class ShimTurn:
-    adapter: SimpleAdapter[Any]
+    adapter: SimpleAdapter[object]
     tools: FakeAgentTools
     context: SimpleRunContext
 
@@ -356,7 +356,7 @@ class ShimTurn:
 
 @asynccontextmanager
 async def shim_turn(
-    adapter: SimpleAdapter[Any],
+    adapter: SimpleAdapter[object],
     *,
     tools: FakeAgentTools | None = None,
 ) -> AsyncIterator[ShimTurn]:
@@ -370,7 +370,7 @@ async def shim_turn(
 
 @dataclass
 class OneshotTurn:
-    adapter: SimpleAdapter[Any]
+    adapter: SimpleAdapter[object]
     tools: FakeAgentTools
     content: str = "hello"
 
@@ -382,7 +382,7 @@ class OneshotTurn:
 
 @asynccontextmanager
 async def oneshot(
-    adapter: SimpleAdapter[Any],
+    adapter: SimpleAdapter[object],
     *,
     content: str = "hello",
     tools: FakeAgentTools | None = None,

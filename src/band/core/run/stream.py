@@ -8,10 +8,15 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from collections.abc import Callable
-from band.core.backends.oneshot import TurnTarget, execute_turn
+from band.core.backends.oneshot import execute_turn
 from band.core.contracts import EnvelopedTurnEvent, RunFailedEvent
 from band.core.exceptions import BandConnectionError, RunFailed, StreamError
-from band.core.protocols import AgentToolsProtocol, CancellationToken
+from band.core.protocols import (
+    AgentBackend,
+    AgentToolsProtocol,
+    CancellationToken,
+    FrameworkAdapter,
+)
 from band.core.run.cancellation import (
     AnyCancellation,
     FlagCancellation,
@@ -58,7 +63,7 @@ class AgentStream:
     @classmethod
     def observe(
         cls,
-        adapter: TurnTarget,
+        adapter: FrameworkAdapter | AgentBackend,
         inp: AgentInput,
         *,
         tools: AgentToolsProtocol,
@@ -66,8 +71,8 @@ class AgentStream:
     ) -> AgentStream:
         """Start a turn in the background and return a live stream.
 
-        ``adapter`` is a ``FrameworkAdapter`` / ``SimpleAdapter``, or a test
-        ``TurnRunner`` with ``.run`` (e.g. a bare native loop façade).
+        ``adapter`` is a ``FrameworkAdapter``, or an ``AgentBackend`` test
+        runner (e.g. a bare native loop façade).
 
         Model/execution failures are emitted as ``RunFailedEvent`` (and the
         stream ends normally). Transport failures set a ``StreamError`` that

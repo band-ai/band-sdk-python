@@ -77,7 +77,7 @@ The following deprecated paths were removed in v2.0:
   `outcome` had exactly one legal value — its own validator rejected the rest
   — and nothing read the call id. A receipt is evidence that a room post
   succeeded; `tool_name` carries that.
-- `SimpleAdapterBackend` was removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `SimpleAdapter` / `FrameworkAdapter` directly. The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. Test helpers that need a bare native loop still pass a small turn-runner with `.run` to `observe`.
+- `SimpleAdapterBackend` was removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter` directly (or an `AgentBackend` when a test drives a bare native loop). The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`.
 
 
 ## Breaking: features-only

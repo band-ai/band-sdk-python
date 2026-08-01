@@ -45,7 +45,6 @@ from typing import Any
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.protocols import FrameworkAdapter
-from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.link import BandLink
 from band.runtime.context_serialization import context_item_to_dict
@@ -86,7 +85,7 @@ class OneShotInvoker:
         self,
         *,
         link: BandLink,
-        adapter: FrameworkAdapter | SimpleAdapter[object],
+        adapter: FrameworkAdapter,
         agent_id: str,
         drain_cap: int = DEFAULT_DRAIN_CAP,
     ) -> None:

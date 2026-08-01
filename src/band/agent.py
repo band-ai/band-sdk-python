@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, cast
 from band.core.backends.oneshot import run_oneshot_turn
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.run.cancellation import ExecutionCancellation
-from band.core.simple_adapter import SimpleAdapter
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import (
     AgentConfig,
@@ -95,7 +94,7 @@ class Agent:
     def __init__(
         self,
         runtime: PlatformRuntime,
-        adapter: FrameworkAdapter | SimpleAdapter[object],
+        adapter: FrameworkAdapter,
         preprocessor: Preprocessor | None = None,
     ):
         self._runtime = runtime
@@ -109,7 +108,7 @@ class Agent:
     @classmethod
     def create(
         cls,
-        adapter: FrameworkAdapter | SimpleAdapter[object],
+        adapter: FrameworkAdapter,
         agent_id: str,
         api_key: str,
         ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
@@ -167,7 +166,7 @@ class Agent:
         cls,
         name: str,
         *,
-        adapter: FrameworkAdapter | SimpleAdapter[object],
+        adapter: FrameworkAdapter,
         config_path: str | Path | None = None,
         **kwargs: Any,
     ) -> "Agent":
@@ -202,7 +201,7 @@ class Agent:
         return self._runtime
 
     @property
-    def adapter(self) -> FrameworkAdapter | SimpleAdapter[object]:
+    def adapter(self) -> FrameworkAdapter:
         """Framework adapter bound to this agent."""
         return self._adapter
 

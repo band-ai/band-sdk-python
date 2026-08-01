@@ -1,4 +1,4 @@
-"""Run one turn through an adapter (or a test turn-runner).
+"""Run one turn through an adapter (or an ``AgentBackend`` test runner).
 
 Claim/mark/drain stay in the invoker; this is only the turn boundary:
 ``AgentInput`` → ``RunResult``.
@@ -7,11 +7,12 @@ Claim/mark/drain stay in the invoker; this is only the turn boundary:
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Protocol, TypeAlias, cast, runtime_checkable
+from typing import cast
 
 from band.core.backends.observing import ObservingTools
 from band.core.contracts import RunResult
 from band.core.protocols import (
+    AgentBackend,
     AgentToolsProtocol,
     CancellationToken,
     EventSink,
@@ -20,26 +21,11 @@ from band.core.protocols import (
 )
 from band.core.run.cancellation import NeverCancelled
 from band.core.run.context import SimpleRunContext
-from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
-
-# ``SimpleAdapter`` implements ``FrameworkAdapter``; both spellings appear at
-# call sites (Agent constructor, tests), so the union keeps them explicit.
-Adapter: TypeAlias = FrameworkAdapter | SimpleAdapter[object]
-
-
-@runtime_checkable
-class TurnRunner(Protocol):
-    """Prepared-turn executor for tests that drive a bare native loop."""
-
-    async def run(self, inp: AgentInput, *, context: RunContext) -> RunResult: ...
-
-
-TurnTarget: TypeAlias = Adapter | TurnRunner
 
 
 async def run_adapter_turn(
-    adapter: Adapter,
+    adapter: FrameworkAdapter,
     inp: AgentInput,
     *,
     context: RunContext,
@@ -63,29 +49,25 @@ async def run_adapter_turn(
 
 
 async def execute_turn(
-    target: TurnTarget,
+    target: FrameworkAdapter | AgentBackend,
     inp: AgentInput,
     *,
     context: RunContext,
 ) -> RunResult:
-    """Dispatch: adapters via ``on_event``, test runners via ``.run``."""
+    """Dispatch: adapters via ``on_event``, backends via ``.run``."""
     if isinstance(target, FrameworkAdapter):
         return await run_adapter_turn(target, inp, context=context)
-    if isinstance(target, TurnRunner):
-        return await target.run(inp, context=context)
-    raise TypeError(
-        f"execute_turn expected FrameworkAdapter or TurnRunner, got {type(target)!r}"
-    )
+    return await target.run(inp, context=context)
 
 
 async def run_oneshot_turn(
-    target: TurnTarget,
+    target: FrameworkAdapter | AgentBackend,
     inp: AgentInput,
     *,
     events: EventSink | None = None,
     cancellation: CancellationToken | None = None,
 ) -> RunResult:
-    """Build the turn's context and hand ``inp`` to the adapter (or runner)."""
+    """Build the turn's context and hand ``inp`` to the adapter (or backend)."""
     tools: AgentToolsProtocol = inp.tools
     context = SimpleRunContext(
         tools=tools,

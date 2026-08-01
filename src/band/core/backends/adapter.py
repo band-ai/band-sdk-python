@@ -8,18 +8,12 @@ adapter directly. Import ``run_adapter_turn`` / ``run_oneshot_turn`` from
 from __future__ import annotations
 
 from band.core.backends.oneshot import (
-    Adapter,
-    TurnRunner,
-    TurnTarget,
     execute_turn,
     run_adapter_turn,
     run_oneshot_turn,
 )
 
 __all__ = [
-    "Adapter",
-    "TurnRunner",
-    "TurnTarget",
     "execute_turn",
     "run_adapter_turn",
     "run_oneshot_turn",
