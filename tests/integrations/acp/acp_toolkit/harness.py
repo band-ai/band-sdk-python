@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -16,6 +17,8 @@ from uuid import uuid4
 from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
+from band.core.backends.observing import ObservingTools, delivered
+from band.core.contracts.delivery import DeliveryReceipt
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
@@ -24,6 +27,11 @@ from band.testing import FakeAgentTools
 from .agent import FakeACPAgent
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
+
+
+def narrated(event: dict[str, Any]) -> dict[str, Any]:
+    """The tool narration payload carried by a ``tool_call``/``tool_result`` event."""
+    return json.loads(event["content"])
 
 
 @dataclass(frozen=True)
@@ -137,6 +145,8 @@ class Reply:
     messages: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     transcript: list[RoomActivity] = field(default_factory=list)
+    # The turn's delivery evidence, in-process or folded in from the ACP stream.
+    receipt: DeliveryReceipt | None = None
 
     @property
     def outline(self) -> list[str]:
@@ -172,6 +182,16 @@ class Reply:
         return self._events_of("tool_result")
 
     @property
+    def tool_names(self) -> list[str]:
+        """Each narrated call's tool name, read back from its event body."""
+        return [narrated(event)["name"] for event in self.tool_calls]
+
+    @property
+    def tool_outputs(self) -> list[Any]:
+        """Each narrated result's output, read back from its event body."""
+        return [narrated(event)["output"] for event in self.tool_results]
+
+    @property
     def plans(self) -> list[str]:
         # Task events, minus the adapter's trailing "ACP client session" bookkeeping.
         return [
@@ -204,6 +224,8 @@ class AcpSession:
         history: ACPClientSessionState | None = None,
         bootstrap: bool = False,
         room_context: list[dict[str, Any]] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -211,17 +233,25 @@ class AcpSession:
         adapter (re)start, when the runtime hands over the room's converted
         platform history. ``room_context`` seeds what the platform returns if
         the adapter re-fetches the room transcript itself (the off-bootstrap
-        rehydration path).
+        rehydration path). ``participants_msg`` / ``contacts_msg`` are the room
+        state the runtime hands an adapter on the turns where it changed.
         """
         tools = TranscriptTools()
         if room_context is not None:
             tools.set_room_context(room_context)
+        # A remote band-mcp reaches the platform without passing through the
+        # adapter's tools; the fake agent models that by writing here directly.
+        self.agent.room = tools
+        # The backend gives every turn a delivery observer, and the adapter's
+        # text-fallback suppression reads its receipt — so the harness runs the
+        # same chain rather than handing the adapter bare tools.
+        observing = ObservingTools(_inner=tools)
         await self.adapter.on_message(
             _message(content, room),
-            tools,
+            observing,
             history or ACPClientSessionState(),
-            None,
-            None,
+            participants_msg,
+            contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=room,
         )
@@ -229,6 +259,7 @@ class AcpSession:
             messages=tools.messages_sent,
             events=tools.events_sent,
             transcript=tools.transcript,
+            receipt=delivered(observing),
         )
 
     def session_id(self, room: str) -> str:

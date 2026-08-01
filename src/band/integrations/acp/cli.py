@@ -1,92 +1,79 @@
-"""CLI entry point for band-acp server."""
+"""CLI entry point for band-acp server.
+
+Flag parsing uses `Python Fire <https://github.com/google/python-fire>`_;
+validation and env merge stay in :class:`~band.integrations.acp.settings.AcpCliConfig`.
+"""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
-import os
-import sys
+from typing import Any
+
+import fire
+
+from band.config.logs import LogSettings
+from band.integrations.acp.settings import AcpCliConfig
+from band.logging_config import LogStream
 
 logger = logging.getLogger(__name__)
 
 
-def parse_args(args: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments.
-
-    Args:
-        args: Optional argument list (defaults to sys.argv).
-
-    Returns:
-        Parsed arguments namespace.
-    """
-    parser = argparse.ArgumentParser(
-        prog="band-acp",
-        description="Band ACP server — expose Band peers as an ACP agent.",
-    )
-    parser.add_argument(
-        "--agent-id",
-        default=os.environ.get("BAND_AGENT_ID"),
-        help="Band agent ID (env: BAND_AGENT_ID)",
-    )
-    parser.add_argument(
-        "--api-key",
-        default=os.environ.get("BAND_API_KEY"),
-        help="Band API key (env: BAND_API_KEY)",
-    )
-    parser.add_argument(
-        "--rest-url",
-        default=os.environ.get("BAND_REST_URL", "https://app.band.ai"),
-        help="Band REST API URL (default: https://app.band.ai)",
-    )
-    parser.add_argument(
-        "--ws-url",
-        default=os.environ.get(
-            "BAND_WS_URL",
-            "wss://app.band.ai/api/v1/socket/websocket",
-        ),
-        help="Band WebSocket URL",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)",
+def load_config(
+    *,
+    agent_id: str | None = None,
+    api_key: str | None = None,
+    rest_url: str | None = None,
+    ws_url: str | None = None,
+    log_level: str | None = None,
+) -> AcpCliConfig:
+    """Merge CLI kwargs over ``BAND_*`` env defaults and validate."""
+    return AcpCliConfig.from_cli(
+        agent_id=agent_id,
+        api_key=api_key,
+        rest_url=rest_url,
+        ws_url=ws_url,
+        log_level=log_level,
     )
 
-    return parser.parse_args(args)
 
+async def main(
+    *,
+    agent_id: str | None = None,
+    api_key: str | None = None,
+    rest_url: str | None = None,
+    ws_url: str | None = None,
+    log_level: str | None = None,
+) -> None:
+    """Run the band-acp server with validated config."""
+    config = load_config(
+        agent_id=agent_id,
+        api_key=api_key,
+        rest_url=rest_url,
+        ws_url=ws_url,
+        log_level=log_level,
+    )
 
-async def main(args: argparse.Namespace | None = None) -> None:
-    """Run the band-acp server.
-
-    Args:
-        args: Parsed arguments. If None, parses from sys.argv.
-    """
-    if args is None:
-        args = parse_args()
-
-    logging.basicConfig(level=getattr(logging, args.log_level))
-
-    if not args.agent_id:
-        raise ValueError("Agent ID is required. Use --agent-id or set BAND_AGENT_ID.")
-    if not args.api_key:
-        raise ValueError("API key is required. Use --api-key or set BAND_API_KEY.")
+    # Only an explicit CLI flag overrides BAND_LOG_*; omitted lets env win.
+    # The stream is not negotiable: stdout is the JSON-RPC transport, so a log
+    # line written there corrupts the editor's ACP session.
+    LogSettings.create(
+        log_level=config.log_level.value if config.log_level is not None else None,
+        log_stream=LogStream.STDERR,
+    ).configure()
 
     # Lazy imports to avoid import errors when ACP deps are not installed
-    from acp import run_agent
-
     from band import Agent
+    from band.integrations.acp.host import ACPGateway
     from band.integrations.acp.push_handler import ACPPushHandler
     from band.integrations.acp.server import ACPServer
     from band.integrations.acp.server_adapter import BandACPServerAdapter
 
     adapter = BandACPServerAdapter(
-        rest_url=args.rest_url,
-        api_key=args.api_key,
+        rest_url=config.rest_url,
+        api_key=config.api_key_value,
     )
 
-    # Wire up push handler
     push_handler = ACPPushHandler(adapter)
     adapter.set_push_handler(push_handler)
 
@@ -94,28 +81,61 @@ async def main(args: argparse.Namespace | None = None) -> None:
 
     agent = Agent.create(
         adapter=adapter,
-        agent_id=args.agent_id,
-        api_key=args.api_key,
-        rest_url=args.rest_url,
-        ws_url=args.ws_url,
+        agent_id=config.agent_id,
+        api_key=config.api_key_value,
+        rest_url=config.rest_url,
+        ws_url=config.ws_url,
     )
 
-    logger.info("Starting band-acp server (agent_id=%s)", args.agent_id)
+    logger.info("Starting band-acp server (agent_id=%s)", config.agent_id)
 
-    # Start Band agent in background, run ACP server in foreground
-    async with agent:
-        try:
-            await run_agent(server)
-        finally:
-            await adapter.close()
+    async with ACPGateway(agent=agent, server=server) as gateway:
+        await gateway.serve()
 
 
-def entry_point() -> None:
-    """CLI entry point for the band-acp command."""
+def run(
+    agent_id: str | None = None,
+    api_key: str | None = None,
+    rest_url: str | None = None,
+    ws_url: str | None = None,
+    log_level: str | None = None,
+) -> None:
+    """Band ACP server — expose Band peers as an ACP agent.
+
+    Args:
+        agent_id: Band agent ID (env: BAND_AGENT_ID).
+        api_key: Band API key (env: BAND_API_KEY).
+        rest_url: Band REST API URL (env: BAND_REST_URL).
+        ws_url: Band WebSocket URL (env: BAND_WS_URL).
+        log_level: Logging level DEBUG|INFO|WARNING|ERROR (env: BAND_LOG_LEVEL).
+            Omitted so BAND_LOG_* can apply; stdout is never used for logs.
+    """
     try:
-        asyncio.run(main())
+        asyncio.run(
+            main(
+                agent_id=agent_id,
+                api_key=api_key,
+                rest_url=rest_url,
+                ws_url=ws_url,
+                log_level=log_level,
+            )
+        )
     except KeyboardInterrupt:
         pass
-    except ValueError as e:
-        logger.error("Error: %s", e)
-        sys.exit(1)
+    except ValueError as exc:
+        logger.error("Error: %s", exc)
+        raise SystemExit(1) from exc
+
+
+def entry_point(command: str | list[str] | tuple[str, ...] | None = None) -> Any:
+    """CLI entry point for the ``band-acp`` command (Fire-generated flags).
+
+    Returns ``None`` on success so Fire does not write to stdout — that stream
+    carries ACP JSON-RPC frames for the editor.
+    """
+    # ``serialize=lambda _: None`` keeps Fire from printing the return value.
+    return fire.Fire(run, name="band-acp", command=command, serialize=lambda _: None)
+
+
+if __name__ == "__main__":
+    entry_point()

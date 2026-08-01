@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-
-from band import configure_logging
+from band import LogLevel, LogSettings, chatty_logger_levels
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging for the example."""
-    configure_logging(
-        level=level,
-        root_level=level,
-        extra_loggers={
-            "httpcore": logging.WARNING,
-            "httpx": logging.WARNING,
-        },
+    settings = LogSettings.create(log_level=level)
+    settings.for_application().configure(
+        extra_loggers=chatty_logger_levels("WARNING"),
     )

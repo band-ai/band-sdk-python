@@ -32,17 +32,16 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 
-from band import Agent
+from setup_logging import setup_logging
+from band import Agent, SlackGateway
 from band.adapters import AnthropicAdapter
 from band.integrations.slack import SlackAdapter, SlackApp
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+# The shared setup, not a bare LogSettings(): this driver exists to debug the
+# bridge, and slack_sdk's own INFO diagnostics are half of what there is to see.
+setup_logging()
 
 
 async def main() -> None:
@@ -98,35 +97,8 @@ async def main() -> None:
         ws_url=ws_url,
     )
 
-    if transport == "http":
-        # Mount the Slack router into a tiny ASGI app and run uvicorn
-        # alongside the Band WS agent loop.
-        import uvicorn
-        from starlette.applications import Starlette
-
-        starlette_app = Starlette()
-        starlette_app.mount("/slack", slack.router)
-        config = uvicorn.Config(
-            starlette_app, host="0.0.0.0", port=3000, log_level="info"
-        )
-        server = uvicorn.Server(config)
-        async with agent:
-            try:
-                await asyncio.gather(
-                    agent.run_forever(),
-                    server.serve(),
-                )
-            finally:
-                await slack.close()
-    else:
-        # Socket Mode: no HTTP surface. ``slack.on_started`` (invoked by
-        # Agent.__aenter__) opens the per-app websocket; we just keep
-        # the Band WS agent loop running until cancelled.
-        async with agent:
-            try:
-                await agent.run_forever()
-            finally:
-                await slack.close()
+    async with SlackGateway(agent=agent) as gateway:
+        await gateway.serve()
 
 
 if __name__ == "__main__":

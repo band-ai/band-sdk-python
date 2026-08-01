@@ -66,10 +66,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from band import Agent
+from band import Agent, LogSettings
 from band.config import load_agent_config
 from band.core.types import AdapterFeatures, Emit
-from band.platform.event import ContactRequestReceivedEvent, ContactEvent
+from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -128,13 +128,9 @@ def build_contact_config(
     raise ValueError(f"Unknown contacts mode: {mode}")
 
 
-def setup_logging(level: str = "INFO") -> logging.Logger:
-    """Configure logging."""
-    log_level = level.upper()
-    logging.basicConfig(
-        level=getattr(logging, log_level, logging.INFO),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+def setup_logging(level: str | None = None) -> logging.Logger:
+    """Configure logging from an explicit level or BAND_LOG_*."""
+    LogSettings.create(log_level=level).for_application().configure()
     return logging.getLogger(__name__)
 
 
@@ -282,7 +278,7 @@ async def run_pydantic_ai_agent(
 
     adapter = PydanticAIAdapter(
         model=model,
-        custom_section=section,
+        instructions=section,
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
 
@@ -326,7 +322,7 @@ async def run_anthropic_agent(
 
     adapter = AnthropicAdapter(
         model=model,
-        prompt=custom_section,
+        instructions=custom_section,
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
 
@@ -371,7 +367,7 @@ async def run_claude_sdk_agent(
     adapter = ClaudeSDKAdapter(
         model=model,
         fallback_model=fallback_model,
-        custom_section=custom_section,
+        instructions=custom_section,
         max_thinking_tokens=10000 if enable_thinking else None,
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
@@ -547,7 +543,7 @@ async def run_pydantic_ai_contacts_agent(
 
     adapter = PydanticAIAdapter(
         model=model,
-        custom_section=CONTACTS_INSTRUCTIONS,
+        instructions=CONTACTS_INSTRUCTIONS,
         features=AdapterFeatures(emit={Emit.EXECUTION}),  # Show tool calls
     )
 
@@ -601,7 +597,7 @@ async def run_contacts_auto_agent(
 
     adapter = PydanticAIAdapter(
         model=model,
-        custom_section="""You are a helpful assistant. Contact requests are handled automatically.
+        instructions="""You are a helpful assistant. Contact requests are handled automatically.
 When you see system messages about new contacts, acknowledge them to the user.""",
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
@@ -647,7 +643,7 @@ async def run_contacts_hub_agent(
 
     adapter = PydanticAIAdapter(
         model=model,
-        custom_section="""You are a helpful assistant that also manages contact requests.
+        instructions="""You are a helpful assistant that also manages contact requests.
 
 When you receive contact request notifications in the hub room:
 1. Review the request details (who sent it, any message included)
@@ -704,7 +700,7 @@ async def run_contacts_broadcast_agent(
 
     adapter = PydanticAIAdapter(
         model=model,
-        custom_section=CONTACTS_INSTRUCTIONS
+        instructions=CONTACTS_INSTRUCTIONS
         + """
 
 ## System Messages
@@ -805,7 +801,7 @@ async def run_a2a_gateway_agent(
     logger.info("Starting A2A Gateway on %s...", gateway_url)
     logger.info("Peers will be exposed at:")
     logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
+        "  - %s/agents/{peer_id}/.well-known/agent.json (discovery)", gateway_url
     )
     logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
     await agent.run()
@@ -904,8 +900,10 @@ Examples:
     parser.add_argument(
         "--log-level",
         "-l",
-        default=os.getenv("LOG_LEVEL", "INFO"),
-        help="Logging level (default: INFO or LOG_LEVEL env var)",
+        default=None,
+        type=str.upper,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (env: BAND_LOG_LEVEL, default: INFO)",
     )
     parser.add_argument(
         "--thinking",

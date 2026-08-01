@@ -53,7 +53,7 @@ async def main() -> None:
     # Create adapter with Tom's character prompt
     adapter = PydanticAIAdapter(
         model="openai:gpt-5.4-mini",
-        custom_section=generate_tom_prompt("Tom"),
+        instructions=generate_tom_prompt("Tom"),
     )
 
     # Create and start agent

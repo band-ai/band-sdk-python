@@ -59,7 +59,7 @@ async def main() -> None:
     # Create adapter with custom instructions
     adapter = PydanticAIAdapter(
         model="anthropic:claude-3-5-sonnet-latest",
-        custom_section=CUSTOM_PROMPT,
+        instructions=CUSTOM_PROMPT,
     )
 
     # Create and start agent

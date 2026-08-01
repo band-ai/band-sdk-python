@@ -26,8 +26,9 @@ from typing import Any
 
 import yaml
 
-from band.docker.repo_init import initialize_repo
 from band.config.loader import load_agent_config
+from band.config.logs import LogSettings
+from band.docker.repo_init import initialize_repo
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -45,10 +46,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -138,6 +135,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the agent from YAML configuration."""
+    LogSettings().for_application().configure()
     global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
     _shutdown_event = asyncio.Event()
 
@@ -174,7 +172,7 @@ async def main() -> None:
         lock_timeout_s=lock_timeout_s,
     )
 
-    from band import Agent
+    from band import AdapterFeatures, Agent, Emit
     from band.adapters import ClaudeSDKAdapter
 
     agent_id = config["agent_id"]
@@ -227,9 +225,9 @@ async def main() -> None:
     adapter = ClaudeSDKAdapter(
         model=model,
         fallback_model=fallback_model,
-        custom_section=final_prompt,
+        instructions=final_prompt,
         max_thinking_tokens=thinking_tokens,
-        enable_execution_reporting=True,
+        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
         additional_tools=custom_tools if custom_tools else None,
         cwd=workspace,
     )

@@ -1,175 +1,189 @@
 # Migrating to v0.3.0
 
-v0.3.0 normalizes the adapter constructor surface across every framework
-adapter. Existing code keeps working — old parameters emit a
-`DeprecationWarning` for one release and will be removed in v0.4.0.
-
-This guide shows what changed and how to update your code.
+v0.3.0 normalized the adapter constructor surface around
+`features=AdapterFeatures(...)`. Later releases finished the job: the old
+boolean / alias kwargs are **removed** (see
+[`MIGRATING-v2.0.md`](MIGRATING-v2.0.md) for the full v2 map). The snippets
+below show the **current** spellings.
 
 ## TL;DR
 
 ```python
-# Before (v0.2.x)
-adapter = AnthropicAdapter(
-    anthropic_api_key="sk-...",
-    custom_section="Be helpful.",
-    enable_memory_tools=True,
-    enable_execution_reporting=True,
-)
-
-# After (v0.3.0)
 from band import AdapterFeatures, Capability, Emit
+from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
-    api_key="sk-...",
-    prompt="Be helpful.",
+    provider_key="sk-...",
+    instructions="Be helpful.",
     features=AdapterFeatures(
         capabilities={Capability.MEMORY},
         emit={Emit.EXECUTION},
     ),
 )
+assert Capability.MEMORY in adapter.features.capabilities
+assert Emit.EXECUTION in adapter.features.emit
 ```
+
+| Removed (do not use) | Current |
+|---|---|
+| `enable_memory_tools=True` | `features=AdapterFeatures(capabilities={Capability.MEMORY})` |
+| `enable_execution_reporting=True` | `features=AdapterFeatures(emit={Emit.EXECUTION})` |
+| `anthropic_api_key=` / `api_key=` (Anthropic) | `provider_key=` |
+| `gemini_api_key=` / `api_key=` (Gemini) | `provider_key=` |
+| `custom_section=` / `prompt=` (Anthropic, Gemini, …) | `instructions=` |
+| `max_tokens=` (Anthropic) | `max_output_tokens=` |
 
 ## Universal changes (every adapter)
 
-These apply to all 14 adapters:
+These apply across the adapter surface:
 `AnthropicAdapter`, `GeminiAdapter`, `LangGraphAdapter`, `ClaudeSDKAdapter`,
 `CodexAdapter`, `OpencodeAdapter`, `CrewAIAdapter`, `PydanticAIAdapter`,
 `GoogleADKAdapter`, `ParlantAdapter`, `LettaAdapter`, `A2AAdapter`,
 `A2AGatewayAdapter`, `ACPClientAdapter`.
 
-### `enable_memory_tools` → `features.capabilities`
+### Memory tools → `features.capabilities`
 
 ```python
-# Before
-adapter = AnyAdapter(enable_memory_tools=True)
+from band import AdapterFeatures, Capability
 
-# After
 adapter = AnyAdapter(features=AdapterFeatures(capabilities={Capability.MEMORY}))
+assert Capability.MEMORY in adapter.kwargs["features"].capabilities
 ```
 
-### `enable_execution_reporting` → `features.emit`
+### Execution reporting → `features.emit`
 
 ```python
-# Before
-adapter = AnyAdapter(enable_execution_reporting=True)
+from band import AdapterFeatures, Emit
 
-# After
 adapter = AnyAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+assert Emit.EXECUTION in adapter.kwargs["features"].emit
 ```
 
-### Codex `emit_thought_events` and `enable_task_events`
+### Codex thoughts and task events
+
+Config booleans (`enable_execution_reporting`, `emit_thought_events`,
+`enable_task_events`) were removed. Pass emit channels on `features=`.
+When `features` is omitted, Codex still defaults to `{Emit.TASK_EVENTS}`.
 
 ```python
-# Before
-config = CodexAdapterConfig(
-    enable_execution_reporting=True,
-    emit_thought_events=True,
-    enable_task_events=True,
-)
-adapter = CodexAdapter(config=config)
+from band import AdapterFeatures, Emit
+from band.adapters import CodexAdapter, CodexAdapterConfig
 
-# After
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(...),  # framework-specific options remain on the config
+    config=CodexAdapterConfig(),
     features=AdapterFeatures(
         emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
     ),
 )
-```
+assert adapter.features.emit == frozenset(
+    {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+)
 
-The config-based adapters (`CodexAdapter`, `OpencodeAdapter`, `LettaAdapter`)
-still build features automatically from the config booleans if you do not
-pass `features=` explicitly, so existing config-only callers keep working.
+defaulted = CodexAdapter()
+assert Emit.TASK_EVENTS in defaulted.features.emit
+```
 
 ### `ClaudeSDKAdapter` execution + thoughts
 
-`ClaudeSDKAdapter` historically emitted thought events under the
-`enable_execution_reporting` flag. The migration preserves this:
+ClaudeSDK used to fold thought emission into `enable_execution_reporting`.
+Request both channels explicitly:
 
 ```python
-# Before
-adapter = ClaudeSDKAdapter(enable_execution_reporting=True)
+from band import AdapterFeatures, Emit
+from band.adapters import ClaudeSDKAdapter
 
-# After (equivalent)
 adapter = ClaudeSDKAdapter(
     features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
 )
+assert Emit.EXECUTION in adapter.features.emit
+assert Emit.THOUGHTS in adapter.features.emit
 ```
 
-If you want execution reporting **without** thought events, use:
+Execution reporting **without** thought events:
 
 ```python
+from band import AdapterFeatures, Emit
+from band.adapters import ClaudeSDKAdapter
+
 adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+assert adapter.features.emit == frozenset({Emit.EXECUTION})
 ```
 
-### Conflict detection
+### Removed kwargs raise `TypeError`
 
-Passing both old booleans and the new `features=` raises
-`BandConfigError`:
+Legacy boolean / alias kwargs are rejected (they must not silently land in
+`**provider_options`):
 
-```python notest
-# Raises BandConfigError
+```python
+from band.adapters import AnthropicAdapter
+
+try:
+    AnthropicAdapter(enable_memory_tools=True)
+except TypeError as exc:
+    assert "features" in str(exc)
+else:
+    raise AssertionError("expected TypeError")
+```
+
+## Selective renames (`AnthropicAdapter` and `GeminiAdapter`)
+
+### API keys → `provider_key`
+
+```python
+from band.adapters import AnthropicAdapter, GeminiAdapter
+
+anthropic = AnthropicAdapter(provider_key="sk-...")
+gemini = GeminiAdapter(provider_key="AIza-...")
+assert anthropic.model
+assert gemini.model
+```
+
+### Instructions
+
+Phase-1 adapters take `instructions=` (bare `str` appends; use
+`Instruction(..., mode=InstructionMode.REPLACE)` to replace the whole
+prompt). LangGraph / Codex / CrewAI / etc. still use their native prompt
+fields (`custom_section`, `backstory`, …).
+
+```python
+from band.adapters import AnthropicAdapter
+
+adapter = AnthropicAdapter(instructions="Be helpful.")
+assert adapter._instructions is not None
+```
+
+### `include_base_instructions` (Anthropic + Gemini)
+
+Opt out of the SDK's built-in base instructions while keeping the agent
+identity header:
+
+```python
+from band.adapters import AnthropicAdapter
+
 adapter = AnthropicAdapter(
-    enable_memory_tools=True,
-    features=AdapterFeatures(capabilities={Capability.MEMORY}),
-)
-```
-
-## Selective renames (`AnthropicAdapter` and `GeminiAdapter` only)
-
-### `anthropic_api_key` / `gemini_api_key` → `api_key`
-
-```python
-# Before
-adapter = AnthropicAdapter(anthropic_api_key="sk-...")
-adapter = GeminiAdapter(gemini_api_key="AIza-...")
-
-# After
-adapter = AnthropicAdapter(api_key="sk-...")
-adapter = GeminiAdapter(api_key="AIza-...")
-```
-
-### `custom_section` → `prompt`
-
-```python
-# Before
-adapter = AnthropicAdapter(custom_section="Be helpful.")
-
-# After
-adapter = AnthropicAdapter(prompt="Be helpful.")
-```
-
-The other adapters keep `custom_section` because their natural prompt
-concept differs (e.g. CrewAI uses `backstory`, LangGraph uses
-`prompt_template`).
-
-### New: `include_base_instructions` (Anthropic + Gemini)
-
-You can now opt out of the SDK's built-in base instructions while keeping
-the agent identity header:
-
-```python
-adapter = AnthropicAdapter(
-    prompt="You are a totally custom bot.",
+    instructions="You are a totally custom bot.",
     include_base_instructions=False,
 )
+assert adapter._include_base_instructions is False
 ```
 
 ## Capability-gated prompt sections
 
-`render_system_prompt()` now includes memory and contact tool
-instructions only when the corresponding `Capability` is set:
+`InstructionPolicy` / system-prompt rendering includes memory and contact
+tool instructions only when the corresponding `Capability` is set:
 
 ```python
+from band import AdapterFeatures, Capability
+from band.adapters import AnthropicAdapter
+
 adapter = AnthropicAdapter(
     features=AdapterFeatures(capabilities={Capability.MEMORY}),
 )
-# adapter._system_prompt now contains a "## Memory Tools" section
+assert Capability.MEMORY in adapter.features.capabilities
 ```
 
 If your adapter sets `Capability.CONTACTS`, the rendered prompt also
-contains a "## Contact Management Tools" section.
+contains a contact-management tools section.
 
 ## Hub-room auto-enables contact tools
 
@@ -187,41 +201,49 @@ v0.3.0 adds four exception classes at the package root:
 
 ```python
 from band import (
-    BandError,           # Base for all SDK exceptions
-    BandConfigError,     # Configuration / setup errors
-    BandConnectionError, # Transport (WebSocket / REST) failures
-    BandToolError,       # Tool execution failures
+    BandError,  # Base for all SDK exceptions
+    BandConfigError,  # Configuration / setup errors
+    BandConnectionError,  # Transport (WebSocket / REST) failures
+    BandToolError,  # Tool execution failures
 )
+
+assert issubclass(BandConfigError, BandError)
+assert issubclass(BandConnectionError, BandError)
+assert issubclass(BandToolError, BandError)
 ```
 
-`AgentTools.send_message()` now raises `BandToolError` when called
-with no resolvable mentions, instead of returning a `{"error": "..."}`
-dict. The dispatch path through `execute_tool_call()` still surfaces the
-error as a string for the LLM, so adapters using `execute_tool_call()`
-need no changes.
+`AgentTools.send_message()` raises `BandToolError` when called with no
+resolvable mentions, instead of returning a `{"error": "..."}` dict. The
+dispatch path through `execute_tool_call()` still surfaces the error as a
+string for the LLM, so adapters using `execute_tool_call()` need no
+changes.
 
-`BandConfigError` ships with a `with_suggestion()` factory that
-attaches "Did you mean 'X'?" hints based on Levenshtein distance:
+`BandConfigError` ships with a `with_suggestion()` factory that attaches
+"Did you mean 'X'?" hints based on Levenshtein distance:
 
-```python notest
-raise BandConfigError.with_suggestion(
+```python
+from band import BandConfigError, Capability
+
+err = BandConfigError.with_suggestion(
     "Unknown capability 'memry'.",
     "memry",
     [c.value for c in Capability],
 )
-# BandConfigError: Unknown capability 'memry'. Did you mean 'memory'?
+assert isinstance(err, BandConfigError)
+assert "memory" in str(err)
 ```
 
 ## `Agent.from_config()`
 
-A new convenience factory loads credentials from a YAML config file:
+A convenience factory loads credentials from a YAML config file:
 
 ```python fixture:agent_config_path
 from band import Agent
+from band.adapters import AnthropicAdapter
 
 agent = Agent.from_config(
     "researcher",
-    adapter=AnthropicAdapter(...),
+    adapter=AnthropicAdapter(),
 )
 await agent.run()
 ```
@@ -243,16 +265,8 @@ uv add band-sdk[claude-sdk]
 If you do not use `ClaudeSDKAdapter`, you no longer pull in
 `claude-agent-sdk` (and its Node.js requirement).
 
-## Removal timeline
+## Current status
 
-| Item | Deprecated in | Removed in |
-|------|---------------|-----------|
-| `enable_memory_tools` (all adapters) | v0.3.0 | v0.4.0 |
-| `enable_execution_reporting` (all adapters) | v0.3.0 | v0.4.0 |
-| `anthropic_api_key` (Anthropic) | v0.3.0 | v0.4.0 |
-| `gemini_api_key` (Gemini) | v0.3.0 | v0.4.0 |
-| `custom_section` (Anthropic, Gemini) | v0.3.0 | v0.4.0 |
-
-All shims emit a `DeprecationWarning` so you can find every callsite
-with `python -W error::DeprecationWarning` or
-`pytest -W error::DeprecationWarning`.
+The constructor aliases listed in the TL;DR table are **removed** in v2.0.
+Use the current spellings above; see [`MIGRATING-v2.0.md`](MIGRATING-v2.0.md)
+for the complete redesign map (instructions, providers, gateways).

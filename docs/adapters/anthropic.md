@@ -25,6 +25,7 @@ Credentials can also be loaded from `agent_config.yaml` with `Agent.from_config(
 import asyncio
 
 from band import Agent
+from band import FunctionTool
 from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
@@ -90,11 +91,12 @@ This section covers `AnthropicAdapter(...)` constructor parameters. Pass these d
 |-----------|------|---------|-------------|
 | `model` | `str` | `"claude-sonnet-4-5-20250929"` | Anthropic model ID. |
 | `provider_key` | `str \| None` | `None` | Anthropic API key. When omitted, the Anthropic SDK reads `ANTHROPIC_API_KEY`. |
-| `prompt` | `str \| None` | `None` | Custom instructions appended after Band's base collaboration instructions. |
-| `system_prompt` | `str \| None` | `None` | Replaces the whole system prompt. When set, `prompt`, `include_base_instructions`, and memory/contact instruction sections are bypassed. Tools are still exposed according to `features`, so include your own Band tool-use instructions. |
-| `include_base_instructions` | `bool` | `True` | Include Band's base collaboration instructions. Only used when `system_prompt` is not set. |
-| `max_tokens` | `int` | `4096` | Maximum tokens for each Anthropic response. |
-| `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
+| `instructions` | `str \| Instruction \| None` | `None` | Custom instructions. A bare `str` appends after Band's base collaboration instructions. Use `Instruction(text=..., mode=InstructionMode.REPLACE)` to replace the whole system prompt. |
+| `include_base_instructions` | `bool` | `True` | Include Band's base collaboration instructions. Ignored when `instructions` uses `InstructionMode.REPLACE`. |
+| `max_output_tokens` | `int \| None` | `None` | Maximum tokens for each Anthropic response (provider default `4096` when unset). |
+| `temperature` | `float \| None` | `None` | Sampling temperature forwarded to the Anthropic provider. |
+| `raw_options` | `dict[str, Any] \| None` | `None` | Advanced Anthropic wire options. They cannot replace named options or Anthropic's required `max_tokens` default. |
+| `additional_tools` | `list[FunctionTool \| Callable] \| None` | `None` | Custom tools as `FunctionTool` or `@tool`-decorated callables. |
 | `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
 | `history_converter` | `AnthropicHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
@@ -112,6 +114,7 @@ For this adapter, all capabilities and emit options are off by default.
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
 | `Emit.EXECUTION` | Yes | Sends `tool_call` and `tool_result` events with tool name, arguments/output, and a `tool_call_id`. |
+| `Emit.USAGE` | Yes | Sends Anthropic input/output token usage as a task event with structured metadata. |
 | `Emit.THOUGHTS` | No | Not supported by this adapter. |
 | `Emit.TASK_EVENTS` | No | Not supported by this adapter. |
 
@@ -132,14 +135,14 @@ adapter = AnthropicAdapter(
 
 ## Custom Tools
 
-Use `additional_tools` when you want Claude to call functions from your own application. Each custom tool is a tuple:
-
-- A Pydantic model class that defines the tool input schema.
-- A sync or async callable that receives an instance of that model.
+Use `additional_tools` when you want Claude to call functions from your own application.
+For an existing Pydantic model and model-based handler, convert the pair explicitly
+to a `FunctionTool`:
 
 ```python
 from pydantic import BaseModel, Field
 
+from band import FunctionTool
 from band.adapters import AnthropicAdapter
 
 
@@ -155,7 +158,9 @@ def get_weather(args: WeatherInput) -> str:
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
-    additional_tools=[(WeatherInput, get_weather)],
+    additional_tools=[
+        FunctionTool.from_custom_tool_def((WeatherInput, get_weather)),
+    ],
 )
 ```
 
@@ -176,7 +181,7 @@ See [examples/anthropic/](../../examples/anthropic/) for runnable scripts.
 | File | Start here when you want to... |
 |------|--------------------------------|
 | `01_basic_agent.py` | Run a minimal Claude agent with Band collaboration tools. |
-| `02_custom_instructions.py` | Add custom instructions with `prompt`. |
+| `02_custom_instructions.py` | Add custom instructions with `instructions`. |
 | `03_tom_agent.py` | Run one side of the Tom/Jerry multi-agent collaboration demo. |
 | `04_jerry_agent.py` | Run the other side of the Tom/Jerry demo. |
 | `05_contact_management.py` | Configure contact request handling with `ContactEventConfig`. |

@@ -62,12 +62,19 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
     """
     Derive tool name from input model class name.
 
+    Prefers ``__band_tool_name__`` when present (stamped by ``FunctionTool``),
+    since class-name derivation lowercases and drops underscores
+    (``MyCalcInput`` -> ``"mycalc"``).
+
     Convention: Remove "Input" suffix and lowercase.
     Examples:
         WeatherInput -> "weather"
         CalculatorInput -> "calculator"
         SearchWebInput -> "searchweb"
     """
+    stamped = getattr(input_model, "__band_tool_name__", None)
+    if isinstance(stamped, str) and stamped:
+        return stamped
     name = input_model.__name__
     if name.endswith("Input"):
         name = name[:-5]  # Remove "Input" suffix
@@ -84,17 +91,12 @@ def custom_tool_to_openai_schema(input_model: type[BaseModel]) -> dict[str, Any]
     Returns:
         OpenAI-compatible tool schema with type="function"
     """
-    schema = input_model.model_json_schema()
-    schema.pop("title", None)  # Remove title, not needed in schema
+    from band.core.tools import FunctionTool, tool_spec_to_openai_schema
 
-    return {
-        "type": "function",
-        "function": {
-            "name": get_custom_tool_name(input_model),
-            "description": input_model.__doc__ or "",
-            "parameters": schema,
-        },
-    }
+    function_tool = FunctionTool.from_custom_tool_def(
+        (input_model, _schema_stub_handler)
+    )
+    return tool_spec_to_openai_schema(function_tool.spec())
 
 
 def custom_tool_to_anthropic_schema(input_model: type[BaseModel]) -> dict[str, Any]:
@@ -107,14 +109,17 @@ def custom_tool_to_anthropic_schema(input_model: type[BaseModel]) -> dict[str, A
     Returns:
         Anthropic-compatible tool schema
     """
-    schema = input_model.model_json_schema()
-    schema.pop("title", None)  # Remove title, not needed in schema
+    from band.core.tools import FunctionTool, tool_spec_to_anthropic_schema
 
-    return {
-        "name": get_custom_tool_name(input_model),
-        "description": input_model.__doc__ or "",
-        "input_schema": schema,
-    }
+    function_tool = FunctionTool.from_custom_tool_def(
+        (input_model, _schema_stub_handler)
+    )
+    return tool_spec_to_anthropic_schema(function_tool.spec())
+
+
+def _schema_stub_handler(_args: BaseModel) -> None:
+    """Unused handler for schema-only :class:`FunctionTool` construction."""
+    return None
 
 
 def custom_tools_to_schemas(

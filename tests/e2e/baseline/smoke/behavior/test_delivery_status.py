@@ -80,8 +80,10 @@ async def test_healthy_message_reaches_processed_via_processing(
         title="e2e-delivery-healthy", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
-            room_id, "Say hi.", mention_id=agent.id, mention_name=agent.name
+        mid = await user_ops.mention(
+            room_id,
+            agent,
+            "Say hi.",
         )
         replies = await capture.wait_for_reply(mid, agent.id)
         history = capture.delivery_history(mid, agent.id)
@@ -109,8 +111,10 @@ async def test_failing_agent_reaches_failed_state(
             title="e2e-delivery-failing", participants=[agent.id]
         )
         async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id, "This will fail.", mention_id=agent.id, mention_name=agent.name
+            mid = await user_ops.mention(
+                room_id,
+                agent,
+                "This will fail.",
             )
             reached = await capture.wait_for_delivery(
                 mid, agent.id, until={DeliveryStatus.FAILED}

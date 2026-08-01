@@ -6,7 +6,7 @@ Slack thread. This is a wrapper around an inner adapter, not a
 peer-slug gateway.
 
 Example:
-    from band import Agent
+    from band import Agent, SlackGateway
     from band.adapters import AnthropicAdapter
     from band.integrations.slack import SlackAdapter, SlackApp
 
@@ -27,12 +27,18 @@ Example:
 
     agent = Agent.create(adapter=slack, agent_id="slack-bridge", api_key="...")
 
-    # HTTP transport: mount slack.router into your ASGI app, e.g.:
-    #     app.mount("/slack", slack.router)
-    await agent.run()
+    async with SlackGateway(agent=agent) as gateway:
+        await gateway.serve()
 """
 
 from band.integrations.slack.adapter import SlackAdapter
-from band.integrations.slack.types import SlackApp, SlackSessionState
+from band.integrations.slack.host import SlackGateway
+from band.integrations.slack.types import SlackApp, SlackSessionState, SlackTransport
 
-__all__ = ["SlackAdapter", "SlackApp", "SlackSessionState"]
+__all__ = [
+    "SlackAdapter",
+    "SlackApp",
+    "SlackGateway",
+    "SlackSessionState",
+    "SlackTransport",
+]

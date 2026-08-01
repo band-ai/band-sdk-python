@@ -129,14 +129,13 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
             title="e2e-copilot-ask-user", participants=[agent.id]
         )
         async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
+            mid = await user_ops.mention(
                 room_id,
+                agent,
                 "I need to deploy release v2. Use the ask_user tool to ask "
                 "your operator which channel to deploy to and wait for my "
                 "response before continuing. Then reply stating exactly "
                 "the channel the operator chose.",
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             replies = await capture.wait_for_reply(
                 mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 2
@@ -191,13 +190,12 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
             # Turn 1: the trigger makes the model call ask_user; the question
             # must land in the room, not anywhere else.
             mark = capture.messages.snapshot()
-            mid = await user_ops.send_message(
+            mid = await user_ops.mention(
                 room_id,
+                agent,
                 "Use the ask_user tool to ask me which channel to deploy "
                 "release v2 to. After I answer, reply stating exactly the "
                 "channel I chose.",
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             replies = await capture.wait_for_reply(
                 mid, agent.id, since=mark, deadline_s=baseline_settings.e2e_timeout * 2
@@ -206,11 +204,10 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
 
             # Turn 2: the user's next room message is the answer.
             mark = capture.messages.snapshot()
-            mid = await user_ops.send_message(
+            mid = await user_ops.mention(
                 room_id,
+                agent,
                 f"Deploy to the {secret_channel} channel.",
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             replies = await capture.wait_for_reply(
                 mid, agent.id, since=mark, deadline_s=baseline_settings.e2e_timeout * 2

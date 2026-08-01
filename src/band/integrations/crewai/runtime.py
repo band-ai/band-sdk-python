@@ -12,6 +12,8 @@ CrewAIFlowAdapter share one bridge implementation.
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import asyncio
 import logging
 import threading
@@ -42,7 +44,7 @@ def _ensure_nest_asyncio() -> None:
     try:
         import nest_asyncio
     except ImportError as e:  # pragma: no cover - same import guard as the adapter
-        raise ImportError(
+        raise MissingDependencyError(
             "crewai is required for CrewAI adapter.\n"
             "Install with: pip install 'band-sdk[crewai]'\n"
             "Or: uv add crewai nest-asyncio"

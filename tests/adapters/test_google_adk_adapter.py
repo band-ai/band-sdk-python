@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
-from band.core.types import PlatformMessage
+from band.core.instructions import Instruction, InstructionMode
+from band.core.types import AdapterFeatures, Emit, PlatformMessage
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -90,15 +91,23 @@ class TestInitialization:
         adapter = GoogleADKAdapter(model="gemini-2.5-pro")
         assert adapter.model == "gemini-2.5-pro"
 
-    def test_system_prompt_override(self):
-        """Should store custom system_prompt override."""
-        adapter = GoogleADKAdapter(system_prompt="You are a custom assistant.")
-        assert adapter._system_prompt_override == "You are a custom assistant."
+    def test_replace_instructions(self):
+        """Should preserve explicit REPLACE instructions."""
+        adapter = GoogleADKAdapter(
+            instructions=Instruction(
+                text="You are a custom assistant.",
+                mode=InstructionMode.REPLACE,
+            )
+        )
+        assert adapter._instructions == Instruction(
+            text="You are a custom assistant.",
+            mode=InstructionMode.REPLACE,
+        )
 
-    def test_custom_section(self):
-        """Should store custom section."""
-        adapter = GoogleADKAdapter(custom_section="Be helpful.")
-        assert adapter.custom_section == "Be helpful."
+    def test_instructions(self):
+        """Should preserve canonical instructions."""
+        adapter = GoogleADKAdapter(instructions="Be helpful.")
+        assert adapter._instructions == "Be helpful."
 
     def test_execution_reporting_default(self):
         """Should default execution reporting to False."""
@@ -171,9 +180,14 @@ class TestOnStarted:
         assert "TestBot" in adapter._system_prompt
 
     @pytest.mark.asyncio
-    async def test_uses_custom_system_prompt_when_provided(self):
-        """Should use custom system_prompt instead of rendered one."""
-        adapter = GoogleADKAdapter(system_prompt="Custom prompt here.")
+    async def test_uses_replace_instructions_when_provided(self):
+        """Should replace rendered instructions when explicitly requested."""
+        adapter = GoogleADKAdapter(
+            instructions=Instruction(
+                text="Custom prompt here.",
+                mode=InstructionMode.REPLACE,
+            )
+        )
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
 
         assert adapter._system_prompt == "Custom prompt here."
@@ -806,7 +820,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_function_calls(self, mock_tools):
         """Should report function calls as tool_call events."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
 
         mock_fc = MagicMock()
         mock_fc.name = "band_send_message"
@@ -827,7 +841,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_function_responses(self, mock_tools):
         """Should report function responses as tool_result events."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
 
         mock_fr = MagicMock()
         mock_fr.name = "band_send_message"
@@ -848,7 +862,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_skips_event_without_function_methods(self, mock_tools):
         """Should skip events that lack function call/response methods."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
 
         event = MagicMock(spec=[])  # No attributes
 
@@ -859,7 +873,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_handles_report_failure_gracefully(self, mock_tools):
         """Should not raise when event reporting fails."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
         mock_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
 
         mock_fc = MagicMock()

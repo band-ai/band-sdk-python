@@ -31,7 +31,12 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+from band.core.backends.adapter import SimpleAdapterBackend
+from band.core.backends.facade import make_custom_tool_executor
+from band.core.backends.observing import ObservingTools
+from band.core.run.context import SimpleRunContext
 from band.core.simple_adapter import SimpleAdapter
+from tests.core.adapterhelpers import make_agent_input
 from band.core.types import (
     AdapterFeatures,
     AgentInput,
@@ -114,6 +119,31 @@ class _SlackReplyBrain(SimpleAdapter[Any]):
 
     async def on_cleanup(self, room_id: str) -> None:
         self.cleaned_up.append(room_id)
+
+
+class _RoomPostingBrain(SimpleAdapter[Any]):
+    """Brain that answers by posting into the Band room via the tool path."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tools_seen: Any = None
+
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: Any,
+        history: Any,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        self.tools_seen = tools
+        await tools.execute_tool_call_structured(
+            "band_send_message",
+            {"content": "on it @Peer", "mentions": ["peer-1"]},
+        )
 
 
 def _make_rest_mock(room_ids: list[str]) -> MagicMock:
@@ -665,6 +695,58 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
 
 
 @pytest.mark.asyncio
+async def test_bound_room_still_tees_when_the_turn_runs_through_the_backend():
+    """The real turn path hands the adapter *proxied* tools.
+
+    Agent turns reach an adapter through ``SimpleAdapterBackend``, which
+    proxies the tools to observe what the turn delivered. Slack must still
+    install its tee (the brain keeps its Slack outbound tool) and must install
+    it *underneath* that proxy, so the turn still reports its delivery.
+    """
+    brain = _RoomPostingBrain()
+    adapter, _, _, rest = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    # Bind room-1 to a Slack thread.
+    await _post_slack_event(
+        adapter, app, _mention_event(channel="C1", ts="100.0", text="initial")
+    )
+    await adapter.wait_idle()
+
+    msg = PlatformMessage(
+        id="m2",
+        room_id="room-1",
+        content="peer says hi",
+        sender_id="peer-1",
+        sender_type="peer",
+        sender_name="Peer",
+        message_type="text",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
+    turn_tools = AgentTools(
+        room_id="room-1",
+        rest=rest,
+        participants=[{"id": "peer-1", "name": "Peer"}],
+    )
+    result = await SimpleAdapterBackend(adapter).run(
+        make_agent_input(msg=msg, tools=turn_tools),
+        context=SimpleRunContext(tools=turn_tools),
+    )
+
+    advertised = {
+        schema["name"] for schema in brain.tools_seen.get_anthropic_tool_schemas()
+    }
+    assert SLACK_SEND_MESSAGE_TOOL_NAME in advertised, (
+        f"brain lost its Slack outbound tool; saw {sorted(advertised)}"
+    )
+    assert result.delivery is not None, (
+        "the tee must sit under the delivery proxy, not replace it"
+    )
+
+
+@pytest.mark.asyncio
 async def test_on_message_merges_existing_participants_msg_with_context_note():
     """Caller-provided participants_msg is preserved when we inject our note."""
     adapter, inner, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
@@ -808,7 +890,9 @@ def _make_tee_tools(
     slack: AsyncMock | None = None,
 ) -> tuple[_SlackTeeingTools, MagicMock, AsyncMock]:
     rest = MagicMock()
-    rest.agent_api_events.create_agent_chat_event = AsyncMock()
+    rest.agent_api_events.create_agent_chat_event = AsyncMock(
+        return_value=SimpleNamespace(data=SimpleNamespace(id="e"))
+    )
     rest.agent_api_messages.create_agent_chat_message = AsyncMock(
         return_value=SimpleNamespace(data=SimpleNamespace(id="m"))
     )
@@ -885,6 +969,49 @@ async def test_execute_tool_call_routes_slack_send_message():
     )
     assert result == {"ok": True}
     slack.chat_postMessage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_native_structured_dispatch_routes_slack_send_message():
+    """The native adapters dispatch through the structured tool contract."""
+    tools, _, slack = _make_tee_tools()
+    observed = ObservingTools(_inner=tools)
+    execute = make_custom_tool_executor([])
+
+    outcome = await execute(
+        SimpleNamespace(tools=observed),
+        SimpleNamespace(
+            name=SLACK_SEND_MESSAGE_TOOL_NAME,
+            arguments={"content": "hi from the native loop"},
+        ),
+    )
+
+    assert outcome.ok is True
+    assert outcome.value == {"ok": True}
+    slack.chat_postMessage.assert_awaited_once_with(
+        channel="C", text="hi from the native loop", thread_ts="1.0"
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_structured_dispatch_updates_slack_plan_for_band_tools():
+    """Ordinary native tool calls retain Slack plan progress side effects."""
+    tools, _, slack = _make_tee_tools()
+    slack.chat_postMessage.return_value = {"ok": True, "ts": "plan-1"}
+    observed = ObservingTools(_inner=tools)
+    execute = make_custom_tool_executor([])
+
+    outcome = await execute(
+        SimpleNamespace(tools=observed),
+        SimpleNamespace(
+            name="band_send_event",
+            arguments={"content": "working", "message_type": "thought"},
+        ),
+    )
+
+    assert outcome.ok is True
+    slack.chat_postMessage.assert_awaited_once()
+    slack.chat_update.assert_awaited_once()
 
 
 @pytest.mark.asyncio

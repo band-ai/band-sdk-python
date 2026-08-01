@@ -23,6 +23,7 @@ from tests.e2e.baseline.fixtures.agents import (
 )
 from tests.e2e.baseline.fixtures.capture import judge, reply_capture
 from tests.e2e.baseline.fixtures.platform import (
+    agent_room,
     baseline_run_id,
     baseline_settings,
     baseline_user_client,
@@ -52,6 +53,7 @@ from tests.toolkit.timeouts import effective_timeout
 __all__ = [
     "adapter_id",
     "agent",
+    "agent_room",
     "agents",
     "baseline_run_id",
     "baseline_settings",

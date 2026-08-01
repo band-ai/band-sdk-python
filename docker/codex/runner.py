@@ -31,8 +31,9 @@ from typing import Any, Literal
 
 import yaml
 
-from band.docker.repo_init import initialize_repo
 from band.config.loader import load_agent_config
+from band.config.logs import LogSettings
+from band.docker.repo_init import initialize_repo
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -47,10 +48,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 CodexTransport = Literal["stdio", "ws"]
@@ -166,6 +163,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the Codex agent from YAML configuration."""
+    LogSettings().for_application().configure()
     global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
     _shutdown_event = asyncio.Event()
 
@@ -202,7 +200,7 @@ async def main() -> None:
         lock_timeout_s=lock_timeout_s,
     )
 
-    from band import Agent
+    from band import AdapterFeatures, Agent, Emit
     from band.adapters import CodexAdapter
     from band.adapters.codex import CodexAdapterConfig
 
@@ -271,13 +269,11 @@ async def main() -> None:
                 part for part in (custom_section, repo_init.context_bundle) if part
             ),
             include_base_instructions=True,
-            enable_task_events=True,
             emit_turn_task_markers=codex_turn_markers,
-            enable_execution_reporting=False,
-            emit_thought_events=False,
             fallback_send_agent_text=True,
             experimental_api=True,
-        )
+        ),
+        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
     agent = Agent.create(

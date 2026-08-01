@@ -15,12 +15,15 @@ ingress/egress. One process, one Band identity, two transports:
 
 from __future__ import annotations
 
+from band.core.deprecation import warn_deprecated
+from band.core.exceptions import MissingDependencyError
+
 import asyncio
 import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from band.client.rest import (
     AsyncRestClient,
@@ -31,6 +34,7 @@ from band.client.rest import (
 from band.converters.slack import SlackHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.wrapping import innermost_tools, substitute_innermost_tools
 from band.core.types import (
     AdapterFeatures,
     AgentInput,
@@ -48,17 +52,16 @@ from band.integrations.slack.block_kit import (
     render_plan_blocks,
 )
 from band.integrations.slack.server import build_router
-from band.integrations.slack.types import SlackApp, SlackRoomBinding
-from band.runtime.tools import AgentTools
+from band.integrations.slack.types import SlackApp, SlackRoomBinding, SlackTransport
+from band.runtime.tools import AgentTools, ToolCallOutcome
+
+from starlette.routing import Router
+
+from band.integrations.slack.socket import SlackSocketListener
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
-    from starlette.routing import Router
 
-    from band.integrations.slack.socket import SlackSocketListener
-
-
-SlackTransport = Literal["http", "socket"]
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +146,7 @@ class _SlackTeeingTools(AgentTools):
             rest=wrap.rest,
             participants=list(wrap.participants),
             hub_room_id=wrap._hub_room_id,
+            agent_id=wrap.agent_id,
         )
         # Carry ExecutionContext over so any tool methods that lean on
         # it (e.g. lookup_peers) keep working.
@@ -246,9 +250,10 @@ class _SlackTeeingTools(AgentTools):
 
     # ── Dispatch ────────────────────────────────────────────────────
 
-    async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        """Route ``slack_send_message`` to our handler; render plan blocks
-        in Slack as a side effect of every other tool call.
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Dispatch tools and render plan blocks in Slack.
 
         Plan rendering is observed directly here (not by intercepting
         ``send_event``) so it's independent of the brain's
@@ -261,16 +266,26 @@ class _SlackTeeingTools(AgentTools):
           plan-block rendering. Lives on this object as
           ``_show_tool_progress``.
         """
-        # Our own Slack-only tool — not a "progress task" because it IS
-        # the user-facing reply, not work-in-progress.
+        # Our own Slack-only tool is not a progress task because it is the
+        # user-facing reply, not work-in-progress.
         if tool_name == SLACK_SEND_MESSAGE_TOOL_NAME:
             content = arguments.get("content")
             if not isinstance(content, str) or not content:
-                return (
+                error = (
                     f"Error: {SLACK_SEND_MESSAGE_TOOL_NAME} requires a "
                     "non-empty 'content' string."
                 )
-            return await self.slack_send_message(content)
+                return ToolCallOutcome(value=error, ok=False, error_message=error)
+            result = await self.slack_send_message(content)
+            if result.get("ok") is False:
+                return ToolCallOutcome(
+                    value=result,
+                    ok=False,
+                    error_message=str(
+                        result.get("error") or "Slack message delivery failed"
+                    ),
+                )
+            return ToolCallOutcome(value=result, ok=True)
 
         # Mark in_progress before executing, mark completed/error after.
         task: PlanTask | None = None
@@ -306,6 +321,11 @@ class _SlackTeeingTools(AgentTools):
                 task.state = TaskState.ERROR
                 task.error_message = outcome.error_message
             await self._upsert_plan_message()
+        return outcome
+
+    async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        """Execute a tool and return the legacy plain result value."""
+        outcome = await self.execute_tool_call_structured(tool_name, arguments)
         return outcome.value
 
 
@@ -338,6 +358,9 @@ class SlackAdapter(SimpleAdapter[Any]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
+    _http_router: Router | None
+    _socket_mode_listeners: list[SlackSocketListener]
+
     def __init__(
         self,
         *,
@@ -346,7 +369,8 @@ class SlackAdapter(SimpleAdapter[Any]):
         rest_url: str = "https://app.band.ai",
         api_key: str = "",
         port: int = 3000,
-        transport: SlackTransport = "http",
+        transport: SlackTransport | str = SlackTransport.HTTP,
+        manage_ingress: bool = True,
         web_client_factory: WebClientFactory | None = None,
         rest_client: AsyncRestClient | None = None,
         features: AdapterFeatures | None = None,
@@ -371,6 +395,11 @@ class SlackAdapter(SimpleAdapter[Any]):
                 a Socket Mode websocket to Slack per app — no public URL
                 or signing secret is needed; each ``SlackApp`` must supply
                 ``app_token`` (``xapp-...``).
+            manage_ingress: When ``True`` (default), ``on_started`` starts
+                Socket Mode listeners for ``transport="socket"`` so
+                ``Agent.run()`` keeps working. When ``False``,
+                :class:`~band.integrations.slack.host.SlackGateway` owns
+                foreground ``serve()``.
             web_client_factory: Optional factory for injecting mock
                 ``AsyncWebClient`` instances in tests.
             rest_client: Optional ``AsyncRestClient`` injection seam.
@@ -394,7 +423,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         try:
             import slack_sdk  # noqa: F401
         except ImportError as exc:
-            raise ImportError(
+            raise MissingDependencyError(
                 "slack-sdk is required for SlackAdapter. "
                 "Install with: uv add band-sdk[slack]"
             ) from exc
@@ -402,26 +431,33 @@ class SlackAdapter(SimpleAdapter[Any]):
         if not apps:
             raise ValueError("SlackAdapter requires at least one SlackApp config")
 
-        if transport == "http":
-            missing = [a.slug for a in apps if not a.signing_secret or not a.bot_token]
-            if missing:
-                raise ValueError(
-                    "SlackAdapter(transport='http') requires signing_secret "
-                    "and bot_token on every SlackApp; missing for: "
-                    f"{', '.join(missing)}"
-                )
-        elif transport == "socket":
-            missing = [a.slug for a in apps if not a.app_token or not a.bot_token]
-            if missing:
-                raise ValueError(
-                    "SlackAdapter(transport='socket') requires app_token "
-                    "(xapp-...) and bot_token on every SlackApp; missing "
-                    f"for: {', '.join(missing)}"
-                )
-        else:
+        try:
+            transport = SlackTransport(transport)
+        except ValueError as exc:
+            allowed = ", ".join(repr(member.value) for member in SlackTransport)
             raise ValueError(
-                f"Unknown transport={transport!r}; expected 'http' or 'socket'"
-            )
+                f"Unknown transport={transport!r}; expected {allowed}"
+            ) from exc
+
+        match transport:
+            case SlackTransport.HTTP:
+                missing = [
+                    a.slug for a in apps if not a.signing_secret or not a.bot_token
+                ]
+                if missing:
+                    raise ValueError(
+                        "SlackAdapter(transport='http') requires signing_secret "
+                        "and bot_token on every SlackApp; missing for: "
+                        f"{', '.join(missing)}"
+                    )
+            case SlackTransport.SOCKET:
+                missing = [a.slug for a in apps if not a.app_token or not a.bot_token]
+                if missing:
+                    raise ValueError(
+                        "SlackAdapter(transport='socket') requires app_token "
+                        "(xapp-...) and bot_token on every SlackApp; missing "
+                        f"for: {', '.join(missing)}"
+                    )
 
         # Use the inner adapter's history converter and feature settings
         # so the brain sees its native history type and capabilities.
@@ -433,10 +469,17 @@ class SlackAdapter(SimpleAdapter[Any]):
         self.apps = apps
         self._rest_url = rest_url
         self._api_key = api_key
+        if (
+            not isinstance(port, int)
+            or isinstance(port, bool)
+            or not (1 <= port <= 65535)
+        ):
+            raise ValueError(f"port must be an int in 1..65535, got {port!r}")
         self._port = port
         self._transport: SlackTransport = transport
-        self._router: Router | None = None
-        self._socket_listeners: list[SlackSocketListener] = []
+        self.manage_ingress = manage_ingress
+        self._http_router = None
+        self._socket_mode_listeners = []
         self._web_client_factory: WebClientFactory = (
             web_client_factory or self._default_web_client_factory
         )
@@ -483,6 +526,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         return self._transport
 
     @property
+    def port(self) -> int:
+        """TCP port for HTTP ingress (``transport="http"``)."""
+        return self._port
+
+    @property
     def router(self) -> Router:
         """Starlette router serving the configured Slack apps.
 
@@ -495,9 +543,12 @@ class SlackAdapter(SimpleAdapter[Any]):
                 "SlackAdapter.router is only available for transport='http'; "
                 f"this adapter is using transport={self._transport!r}."
             )
-        if self._router is None:
-            self._router = build_router(self.apps, dispatcher=self._dispatch_event)
-        return self._router
+        if self._http_router is None:
+            # pyrefly infers Never after the None check; attribute is annotated above.
+            self._http_router = build_router(  # pyrefly: ignore[bad-assignment]
+                self.apps, dispatcher=self._dispatch_event
+            )
+        return self._http_router
 
     async def wait_idle(self) -> None:
         """Wait for all background event handlers to complete."""
@@ -537,24 +588,39 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         await self._inner.on_started(agent_name, agent_description)
 
-        if self._transport == "socket":
-            # Lazy import so HTTP-only installs don't pay the aiohttp /
-            # Socket Mode import cost.
-            from band.integrations.slack.socket import (
-                start_socket_listeners,
+        if self._transport == "socket" and self.manage_ingress:
+            warn_deprecated(
+                "SlackAdapter-managed Socket Mode ingress (Agent.run())",
+                "SlackGateway(agent=...).serve()",
+                stacklevel=2,
             )
-
-            self._socket_listeners = await start_socket_listeners(
-                apps=self.apps,
-                web_client_factory=self._get_client,
-                dispatcher=self._dispatch_event,
-            )
+            await self.start_ingress()
 
         logger.info(
             "Slack adapter started: %s (apps=%d, transport=%s)",
             agent_name,
             len(self.apps),
             self._transport,
+        )
+
+    async def start_ingress(self) -> None:
+        """Open Slack ingress (Socket Mode listeners).
+
+        Called by :class:`~band.integrations.slack.host.SlackGateway` when
+        ``manage_ingress=False``. Idempotent for repeated calls.
+        """
+        if self._transport != "socket":
+            return
+        if self._socket_mode_listeners:
+            return
+
+        from band.integrations.slack.socket import start_socket_listeners
+
+        # pyrefly infers Never after the empty-list guard; attribute is annotated above.
+        self._socket_mode_listeners = await start_socket_listeners(  # pyrefly: ignore[bad-assignment]
+            apps=self.apps,
+            web_client_factory=self._get_client,
+            dispatcher=self._dispatch_event,
         )
 
     async def close(self) -> None:
@@ -564,9 +630,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         For HTTP it's a no-op — the developer's ASGI server owns the
         HTTP lifecycle. Safe to call multiple times.
         """
-        if self._socket_listeners:
-            listeners = self._socket_listeners
-            self._socket_listeners = []
+        if self._socket_mode_listeners:
+            listeners = self._socket_mode_listeners
+            self._socket_mode_listeners = []
             for listener in listeners:
                 try:
                     await listener.stop()
@@ -575,6 +641,13 @@ class SlackAdapter(SimpleAdapter[Any]):
                         "Failed to stop Slack Socket Mode listener (app=%s)",
                         listener.app.slug,
                     )
+
+    async def cleanup_all(self) -> None:
+        """Release socket listeners and forward to the inner adapter."""
+        await self.close()
+        inner_cleanup = getattr(self._inner, "cleanup_all", None)
+        if inner_cleanup is not None:
+            await inner_cleanup()
 
     async def on_event(self, inp: AgentInput) -> None:
         """Rehydrate Slack binding on bootstrap, then delegate as normal.
@@ -635,16 +708,22 @@ class SlackAdapter(SimpleAdapter[Any]):
         """Delegate to the inner brain, teeing replies to Slack if bound."""
         binding = self._room_to_binding.get(room_id)
         slack_client: AsyncWebClient | None = None
-        if binding is not None and isinstance(tools, AgentTools):
+        # The turn's tools may arrive proxied; the tee replaces the concrete
+        # tools underneath so those proxies still see every call.
+        concrete = innermost_tools(tools)
+        if binding is not None and isinstance(concrete, AgentTools):
             app = self._apps_by_slug.get(binding.app_slug)
             if app is not None:
                 slack_client = self._get_client(app)
-                tools = _SlackTeeingTools(
-                    wrap=tools,
-                    slack=slack_client,
-                    binding=binding,
-                    write_tool_names=self._write_tool_names,
-                    show_tool_progress=self._show_tool_progress,
+                tools = substitute_innermost_tools(
+                    tools,
+                    _SlackTeeingTools(
+                        wrap=concrete,
+                        slack=slack_client,
+                        binding=binding,
+                        write_tool_names=self._write_tool_names,
+                        show_tool_progress=self._show_tool_progress,
+                    ),
                 )
             else:
                 logger.warning(

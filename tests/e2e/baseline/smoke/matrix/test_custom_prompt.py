@@ -67,11 +67,10 @@ async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
 
     async with reply_capture(room_id) as capture:
         # Turn 1: opaque lookup — the code (tool result) and the marker (prompt) land.
-        code_mid = await user_ops.send_message(
+        code_mid = await user_ops.mention(
             room_id,
+            agent,
             lookup_code_instruction(KEY),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         turn_one = await capture.wait_for_reply(code_mid, agent.id)
         turn_one.assert_contains_any([ACCESS_CODES[KEY]])  # tool result round-tripped
@@ -80,11 +79,10 @@ async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
         # Turn 2: roster question — a known member appears, the marker persists, and a
         # known invitable-but-absent peer is not fabricated.
         mark = capture.messages.snapshot()
-        who_mid = await user_ops.send_message(
+        who_mid = await user_ops.mention(
             room_id,
+            agent,
             "Who is currently in this room? Name them.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         turn_two = await capture.wait_for_reply(who_mid, agent.id, since=mark)
 

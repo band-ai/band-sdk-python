@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,7 +17,7 @@ import httpx
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
-from band.core.exceptions import BandConfigError
+from band.core.backends.observing import delivered
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -55,7 +54,6 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ToolDefinition,
-    is_room_posting_tool,
     iter_tool_definitions,
 )
 
@@ -84,9 +82,6 @@ class _RoomState:
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
-    # Set when a room-posting band tool (band_send_message) completed this turn,
-    # so the text fallback stays silent instead of double-posting the reply.
-    replied_via_room_tool: bool = False
     # Bound in _get_or_create_room_state, immediately after construction.
     approvals: RoomApprovals = field(init=False)
     last_error_message: str | None = None
@@ -108,7 +103,6 @@ class _RoomState:
         self.assistant_part_types.clear()
         self.reported_tool_calls.clear()
         self.reported_tool_results.clear()
-        self.replied_via_room_tool = False
         # A new dict preserves the prior turn's snapshot for its watch task.
         self.usage_by_message = {}
         self.last_error_message = None
@@ -214,41 +208,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     ) -> None:
         self._config = config or OpencodeAdapterConfig()
 
-        # Detect non-default legacy booleans (enable_task_events defaults to
-        # True, so only enable_memory_tools and enable_execution_reporting
-        # count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_memory_tools or self._config.enable_execution_reporting
-        )
-
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in OpencodeAdapterConfig "
-                "(enable_memory_tools / enable_execution_reporting) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
         if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_memory_tools and enable_execution_reporting in "
-                    "OpencodeAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}, "
-                    "emit={Emit.EXECUTION}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
+            features = AdapterFeatures(emit=frozenset({Emit.TASK_EVENTS}))
 
         super().__init__(
             history_converter=history_converter or OpencodeHistoryConverter(),
@@ -782,26 +743,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _report_tool_part(
         self, room_state: _RoomState, part: OpencodePart
     ) -> None:
-        """Note a room-posting reply and report the tool's call/result.
-
-        Room-posting detection runs regardless of ``Emit.EXECUTION`` (which only
-        governs the tool_call/tool_result narration); the text-fallback
-        suppression must hold even when execution reporting is off.
-        """
+        """Report the tool's call/result to the room."""
         if part.state is None:
             return
 
         state = part.state
         tool_name = self._canonical_tool_name(part.tool or "unknown")
-
-        # A completed room-posting band tool IS the turn's reply -- suppress the
-        # text fallback (codex/copilot_sdk/ACP parity). An errored call did not
-        # post, so it must not suppress. ``status`` is the raw wire string, so
-        # compare by value (the StrEnum member equals its string).
-        if state.status == OpencodeToolStatus.COMPLETED and is_room_posting_tool(
-            tool_name
-        ):
-            room_state.replied_via_room_tool = True
 
         if Emit.EXECUTION not in self.features.emit:
             return
@@ -820,13 +767,28 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         assert part.id is not None
         call_id = part.call_id or part.id
 
-        if room_state.mark_tool_call(call_id):
+        if self._call_arguments_settled(state) and room_state.mark_tool_call(call_id):
             await self._report_tool_call(room_state, tool_name, state, call_id)
 
         match state.status:
             case OpencodeToolStatus.COMPLETED | OpencodeToolStatus.ERROR:
                 if room_state.mark_tool_result(call_id):
                     await self._report_tool_result(room_state, state, call_id)
+
+    @staticmethod
+    def _call_arguments_settled(state: OpencodeToolState) -> bool:
+        """Whether this frame can narrate the call with the arguments it ran on.
+
+        OpenCode streams one tool part repeatedly, and the early frames can
+        carry an empty ``input`` — the arguments land later. Narrating the first
+        frame would post an argument-less ``tool_call`` and dedupe away the
+        frame that has them, so hold until the input arrives, or until the call
+        is over for a tool that genuinely takes none.
+        """
+        return bool(state.input) or state.status in {
+            OpencodeToolStatus.COMPLETED,
+            OpencodeToolStatus.ERROR,
+        }
 
     def _apply_part_delta(
         self, room_state: _RoomState, event: MessagePartDeltaEvent
@@ -1093,6 +1055,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             if part_text.strip()
         ).strip()
 
+        # A room-posting band tool already delivered the reply; don't double-post
+        # its plain text or a "no reply" filler. An error is still surfaced --
+        # it is not a text reply. OpenCode's band tools run in this process
+        # (the adapter's own MCP server resolves them to these very tools), so
+        # the turn's receipt is REST truth -- unlike the SSE tool status, which
+        # only reports what the model was told.
+        replied = delivered(room_state.tools) is not None
+
         # If this logs but the room never sees a reply, the fallback REST post
         # (or the test's observer WebSocket) is the fault, not model completion.
         logger.info(
@@ -1101,13 +1071,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             room_state.room_id,
             len(text),
             bool(room_state.last_error_message),
-            room_state.replied_via_room_tool,
+            replied,
         )
 
-        # A room-posting band tool already delivered the reply; don't double-post
-        # its plain text or a "no reply" filler. An error is still surfaced --
-        # it is not a text reply.
-        replied = room_state.replied_via_room_tool
         try:
             if text and not replied:
                 await room_state.tools.send_message(

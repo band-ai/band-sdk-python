@@ -36,20 +36,19 @@ Prerequisites:
 
 Test the demo:
     # Check orchestrator agent card
-    curl http://localhost:10001/.well-known/agent-card.json
+    curl http://localhost:10001/.well-known/agent.json
 
     # Send a JSON-RPC message to the orchestrator (it will route to gateway peers)
     curl -X POST http://localhost:10001/ \\
         -H "Content-Type: application/json" \\
-        -H "A2A-Version: 1.0" \\
         -d '{
             "jsonrpc": "2.0",
             "id": "1",
-            "method": "SendMessage",
+            "method": "message/send",
             "params": {
                 "message": {
-                    "role": "ROLE_USER",
-                    "parts": [{"text": "Ask the weather peer about NYC"}],
+                    "role": "user",
+                    "parts": [{"kind": "text", "text": "Ask the weather peer about NYC"}],
                     "messageId": "msg-1",
                     "contextId": "ctx-1"
                 }
@@ -69,22 +68,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import uvicorn
-from a2a.server.routes.agent_card_routes import create_agent_card_routes
-from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
-from a2a.server.routes.rest_routes import create_rest_routes
+from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,
     InMemoryTaskStore,
 )
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from dotenv import load_dotenv
-from starlette.applications import Starlette
 
 from demo_orchestrator.agent import OrchestratorAgent
 from demo_orchestrator.agent_executor import OrchestratorAgentExecutor
 from setup_logging import setup_logging
-from band import Agent
+from band import Agent, A2AGateway
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config
 
@@ -148,7 +144,8 @@ async def run_gateway() -> None:
     )
 
     logger.info("Starting A2A Gateway on %s...", gateway_url)
-    await agent.run()
+    async with A2AGateway(agent=agent) as gateway:
+        await gateway.serve()
 
 
 def run_orchestrator() -> None:
@@ -179,13 +176,7 @@ def run_orchestrator() -> None:
     agent_card = AgentCard(
         name="Demo Orchestrator",
         description="Routes user requests to Band platform peers via A2A Gateway",
-        supported_interfaces=[
-            AgentInterface(
-                protocol_binding="JSONRPC",
-                protocol_version="1.0",
-                url=f"http://{ORCHESTRATOR_HOST}:{ORCHESTRATOR_PORT}/",
-            )
-        ],
+        url=f"http://{ORCHESTRATOR_HOST}:{ORCHESTRATOR_PORT}/",
         version="1.0.0",
         default_input_modes=OrchestratorAgent.SUPPORTED_CONTENT_TYPES,
         default_output_modes=OrchestratorAgent.SUPPORTED_CONTENT_TYPES,
@@ -197,20 +188,12 @@ def run_orchestrator() -> None:
     request_handler = DefaultRequestHandler(
         agent_executor=OrchestratorAgentExecutor(agent),
         task_store=InMemoryTaskStore(),
-        agent_card=agent_card,
         push_config_store=InMemoryPushNotificationConfigStore(),
     )
 
-    server = Starlette(
-        routes=(
-            create_agent_card_routes(agent_card)
-            + create_jsonrpc_routes(
-                request_handler,
-                rpc_url="/",
-                enable_v0_3_compat=True,
-            )
-            + create_rest_routes(request_handler, enable_v0_3_compat=True)
-        )
+    server = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=request_handler,
     )
 
     logger.info(
@@ -220,7 +203,7 @@ def run_orchestrator() -> None:
     )
 
     # Run uvicorn (blocking)
-    uvicorn.run(server, host=ORCHESTRATOR_HOST, port=ORCHESTRATOR_PORT)
+    uvicorn.run(server.build(), host=ORCHESTRATOR_HOST, port=ORCHESTRATOR_PORT)
 
 
 async def main() -> None:
@@ -239,9 +222,7 @@ async def main() -> None:
     )
     logger.info("")
     logger.info("Test with:")
-    logger.info(
-        "  curl http://localhost:%s/.well-known/agent-card.json", ORCHESTRATOR_PORT
-    )
+    logger.info("  curl http://localhost:%s/.well-known/agent.json", ORCHESTRATOR_PORT)
     logger.info("")
 
     # Run gateway in background, orchestrator in foreground

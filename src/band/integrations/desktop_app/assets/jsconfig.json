@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "moduleDetection": "force",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["room-view.js"]
+}

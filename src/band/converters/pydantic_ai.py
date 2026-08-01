@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import logging
 from typing import Any
 
@@ -16,7 +18,7 @@ try:
         UserPromptPart,
     )
 except ImportError as e:
-    raise ImportError(
+    raise MissingDependencyError(
         "Pydantic AI dependencies not installed. "
         "Install with: uv add band-sdk[pydantic_ai]"
     ) from e

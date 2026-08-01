@@ -55,7 +55,7 @@ class Emit(str, Enum):
 
 def _as_int(value: object) -> int:
     """Coerce a usage field to an int; anything non-int (None, missing) → 0."""
-    return value if isinstance(value, int) else 0
+    return value if isinstance(value, int) and value >= 0 else 0
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,18 @@ class TurnUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        if any(
+            value < 0
+            for value in (
+                self.input_tokens,
+                self.output_tokens,
+                self.cache_read_tokens,
+                self.cache_write_tokens,
+            )
+        ):
+            raise ValueError("TurnUsage counts must be non-negative")
 
     # Convention: each field is the provider's *raw* reported value — no folding.
     # Whether cache is already counted inside ``input_tokens`` is provider-specific
@@ -269,8 +281,10 @@ class AdapterFeatures:
         exclude_tools: Iterable[str] | None = None,
         include_categories: Iterable[str] | None = None,
     ) -> None:
-        object.__setattr__(self, "capabilities", frozenset(capabilities))
-        object.__setattr__(self, "emit", frozenset(emit))
+        object.__setattr__(
+            self, "capabilities", frozenset(Capability(value) for value in capabilities)
+        )
+        object.__setattr__(self, "emit", frozenset(Emit(value) for value in emit))
         object.__setattr__(
             self,
             "include_tools",

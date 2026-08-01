@@ -14,15 +14,14 @@ This module provides bidirectional ACP support:
    - Outbound A2A: `A2AAdapter` bridges to a remote A2A peer.
    - Outbound ACP: `ACPClientAdapter` bridges to `ACPRuntime` for subprocess/session plumbing.
    - Inbound A2A: `GatewayServer` + `A2AGatewayAdapter`.
-   - Inbound ACP: `ACPServer` + `BandACPServerAdapter`.
+   - Inbound ACP: `ACPGateway` + `ACPServer` + `BandACPServerAdapter`.
 
    Where ACP differs: outbound ACP can manage local subprocess lifecycle and keep
    runtime-specific behavior in thin profiles; A2A outbound is always remote.
 
 Example (ACP Server):
     from band import Agent
-    from band.integrations.acp import BandACPServerAdapter, ACPServer
-    from acp import run_agent
+    from band.integrations.acp import ACPGateway, BandACPServerAdapter, ACPServer
 
     adapter = BandACPServerAdapter(
         rest_url="https://app.band.ai",
@@ -30,8 +29,8 @@ Example (ACP Server):
     )
     server = ACPServer(adapter)
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
-    await agent.start()
-    await run_agent(server)
+    async with ACPGateway(agent=agent, server=server) as gateway:
+        await gateway.serve()
 
 Example (ACP Client):
     from band import Agent
@@ -47,6 +46,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from band.integrations.acp.host import ACPGateway
     from band.integrations.acp.client_adapter import ACPClientAdapter
     from band.integrations.acp.client_types import (
         ACPClientSessionState,
@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "ACPGateway",
     "ACPClientAdapter",
     "ACPClientSessionState",
     "ACPPushHandler",
@@ -78,6 +79,7 @@ __all__ = [
 ]
 
 _IMPORT_MAP: dict[str, tuple[str, str]] = {
+    "ACPGateway": ("band.integrations.acp.host", "ACPGateway"),
     "ACPClientAdapter": ("band.integrations.acp.client_adapter", "ACPClientAdapter"),
     "ACPClientSessionState": (
         "band.integrations.acp.client_types",

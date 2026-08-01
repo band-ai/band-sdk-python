@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime
 from collections.abc import AsyncIterator, Callable
 from typing import Any, TypeAlias, cast
@@ -19,6 +20,10 @@ from band.core.types import (
     PlatformMessage,
 )
 from band.integrations.opencode.types import OpencodeSessionState
+from band.runtime.mcp_server import (
+    MCPToolRegistration,
+    build_resolved_band_mcp_tool_registrations,
+)
 from band.testing import FakeAgentTools
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
@@ -244,6 +249,8 @@ class FakeOpencodeClient:
         self,
         *,
         prompt_event_sequences: list[list[RawOpencodeEvent]] | None = None,
+        mcp: FakeMCPBackend | None = None,
+        room_id: str = "room-1",
         reply_permission_events: dict[str, list[RawOpencodeEvent]] | None = None,
         reply_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
         reject_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
@@ -273,6 +280,10 @@ class FakeOpencodeClient:
         self._reject_question_events = reject_question_events or {}
         self._get_session_missing = get_session_missing or set()
         self._prompt_exceptions = list(prompt_exceptions or [])
+        # Given an MCP backend, a scripted band tool part is executed and not
+        # merely narrated — the same order a real serve works in.
+        self._mcp = mcp
+        self._room_id = room_id
 
     async def create_session(
         self,
@@ -319,7 +330,24 @@ class FakeOpencodeClient:
             raise self._prompt_exceptions.pop(0)
         if self._prompt_event_sequences:
             for event in self._prompt_event_sequences.pop(0):
+                await self._run_reported_tool_call(event)
                 await self._queue.put(event)
+
+    async def _run_reported_tool_call(self, event: RawOpencodeEvent) -> None:
+        """Run the Band tool a scripted tool part reports, as a real serve does.
+
+        A tool part is narration; the call itself goes to the MCP server, which
+        is the only thing that reaches the platform. The scripted part already
+        states the outcome, so a failing call is swallowed here.
+        """
+        if self._mcp is None:
+            return
+        part = event.get("properties", {}).get("part", {})
+        if part.get("type") != "tool" or not self._mcp.serves(part.get("tool", "")):
+            return
+        arguments = {"room_id": self._room_id, **part.get("state", {}).get("input", {})}
+        with contextlib.suppress(Exception):
+            await self._mcp.call_tool(part["tool"], arguments)
 
     async def reply_permission(
         self,
@@ -405,6 +433,28 @@ class FakeMCPBackend:
         self.stop_calls = 0
         self._stop_started = stop_started
         self._stop_release = stop_release
+        # Registrations built from what the adapter passed the factory, so a
+        # scripted band tool call runs the same resolve-and-execute path the
+        # served MCP server would.
+        self._registrations: dict[str, MCPToolRegistration] = {}
+
+    def bind(self, **factory_kwargs: Any) -> None:
+        """Adopt the adapter's tool definitions and per-room tools resolver."""
+        self._registrations = {
+            registration.name: registration
+            for registration in build_resolved_band_mcp_tool_registrations(
+                get_tools=factory_kwargs["get_tools"],
+                tool_definitions=factory_kwargs.get("tool_definitions"),
+                additional_tools=factory_kwargs.get("additional_tools"),
+            )
+        }
+
+    def serves(self, tool_name: str) -> bool:
+        return tool_name in self._registrations
+
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        """Invoke a registered Band tool as OpenCode's MCP client would."""
+        return await self._registrations[tool_name].execute(arguments)
 
     async def stop(self) -> None:
         self.stop_calls += 1
@@ -421,6 +471,7 @@ def make_fake_mcp_backend_factory(
     fake = backend or FakeMCPBackend()
 
     async def factory(**kwargs: Any) -> FakeMCPBackend:
+        fake.bind(**kwargs)
         return fake
 
     mock = AsyncMock(side_effect=factory)
@@ -438,14 +489,14 @@ async def wait_for(predicate: Callable[[], bool], timeout_s: float = 1.0) -> Non
 
 async def run_single_turn(
     adapter: OpencodeAdapter,
-    tools: FakeAgentTools,
+    tools: FakeAgentTools | AgentToolsProtocol,
     *,
     content: str = "hello",
 ) -> None:
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
         make_platform_message(content=content),
-        tools_protocol(tools),
+        cast(AgentToolsProtocol, tools),
         OpencodeSessionState(),
         participants_msg=None,
         contacts_msg=None,

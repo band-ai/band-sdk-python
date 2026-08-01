@@ -70,7 +70,6 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
@@ -78,6 +77,7 @@ from band import Agent
 from band.config import load_agent_config
 from band.integrations.acp.push_handler import ACPPushHandler
 from band.integrations.acp.router import AgentRouter
+from band.integrations.acp.host import ACPGateway
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 
@@ -144,11 +144,8 @@ async def main() -> None:
     logger.info("Starting Band ACP server for JetBrains...")
     logger.info("IDE will connect via stdio ACP protocol.")
 
-    await agent.start()
-    try:
-        await run_agent(server)
-    finally:
-        await agent.stop()
+    async with ACPGateway(agent=agent, server=server) as gateway:
+        await gateway.serve()
 
 
 if __name__ == "__main__":

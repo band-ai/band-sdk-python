@@ -148,3 +148,37 @@ class TestSimpleAdapterFeatures:
                 await adapter.on_started("test-agent", "A test agent")
         # _BareAdapter has empty SUPPORTED_EMIT, so EXECUTION is unsupported
         assert "does not support emit values" in caplog.text
+
+
+class TestFeatureClassVarValidation:
+    def test_rejects_non_emit_members(self) -> None:
+        with pytest.raises(TypeError, match="SUPPORTED_EMIT"):
+
+            class BadEmit(SimpleAdapter[list[dict[str, object]]]):  # type: ignore[type-arg]
+                SUPPORTED_EMIT = frozenset({"execution"})  # type: ignore[assignment]
+
+                async def on_message(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                    return None
+
+    def test_subclass_cannot_narrow_parent_emit(self) -> None:
+        class Parent(SimpleAdapter[list[dict[str, object]]]):
+            SUPPORTED_EMIT = frozenset({Emit.EXECUTION, Emit.USAGE})
+
+            async def on_message(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                return None
+
+        class Child(Parent):
+            SUPPORTED_EMIT = frozenset({Emit.USAGE})
+
+            async def on_message(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                return None
+
+        assert Child.SUPPORTED_EMIT == frozenset({Emit.EXECUTION, Emit.USAGE})
+
+    def test_undeclared_subclass_keeps_empty(self) -> None:
+        class EmptyBrain(SimpleAdapter[list[dict[str, object]]]):
+            async def on_message(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                return None
+
+        assert EmptyBrain.SUPPORTED_EMIT == frozenset()
+        assert EmptyBrain.SUPPORTED_CAPABILITIES == frozenset()

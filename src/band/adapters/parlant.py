@@ -42,15 +42,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     Example:
         import parlant.sdk as p
 
-        from band.integrations.parlant import reserve_server_ports
-
-        # Reserved rather than fixed, so several agents can share one host
-        ports = reserve_server_ports()
-
-        async with p.Server(
-            port=ports.port,
-            tool_service_port=ports.tool_service_port,
-        ) as server:
+        async with p.Server() as server:
             agent = await server.create_agent(
                 name="Assistant",
                 description="A helpful assistant",

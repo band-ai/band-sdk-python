@@ -21,6 +21,7 @@ from band.adapters.copilot_sdk import (
     CopilotSDKAdapterConfig,
 )
 from band.converters.copilot_sdk import CopilotSDKSessionState
+from band.core.backends.observing import ObservingTools
 from band.core.types import PlatformMessage
 from band.testing import FakeAgentTools
 
@@ -107,6 +108,9 @@ class FakeCopilotSession:
 
     def find_tool(self, name: str) -> Any:
         return next(t for t in self.kwargs.get("tools") or [] if t.name == name)
+
+    def _register_user_input_handler(self, handler: Any) -> None:
+        self.kwargs["on_user_input_request"] = handler
 
     async def send_and_wait(
         self, prompt: str, *, timeout: float = 60.0, **_: Any
@@ -214,7 +218,9 @@ async def run_message(
     msg = make_platform_message(room_id=room_id, content=content)
     await adapter.on_message(
         msg=msg,
-        tools=tools,
+        # Every adapter is handed its tools already wrapped by the backend;
+        # the observer is what records the turn's room posts.
+        tools=ObservingTools(_inner=tools),
         history=history or CopilotSDKSessionState(),
         participants_msg=None,
         contacts_msg=None,

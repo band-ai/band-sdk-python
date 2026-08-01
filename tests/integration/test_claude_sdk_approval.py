@@ -183,7 +183,7 @@ class TestClaudeSDKApprovalIntegration:
         adapter = ClaudeSDKAdapter(
             model="claude-sonnet-4-5-20250929",
             approval_mode="manual",
-            custom_section="You are a test bot. Be concise.",
+            instructions="You are a test bot. Be concise.",
         )
 
         # Create agent
@@ -315,7 +315,7 @@ class TestClaudeSDKApprovalIntegration:
             model="claude-sonnet-4-5-20250929",
             approval_mode="auto_accept",
             approval_text_notifications=True,
-            custom_section=(
+            instructions=(
                 "You are a coding assistant. When asked to do something, "
                 "always use the Bash tool to run a command first."
             ),

@@ -261,6 +261,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         # per turn in reset_session.
         self._result_chunks: dict[str, dict[str, CollectedChunk]] = {}
         self._emitted_results: dict[str, set[str]] = {}
+        # Per session, each call's reported title. ACP puts the name on the
+        # opening tool_call frame only, so a result frame has to be told which
+        # call it belongs to or it can only be narrated as "tool".
+        self._call_titles: dict[str, dict[str, str]] = {}
         # An open text/thought run being coalesced until the next boundary, and the
         # per-session live sink that finalized chunks are posted to, in order.
         self._open_runs: dict[str, CollectedChunk] = {}
@@ -392,8 +396,15 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         await self._close_open_run(session_id)
         if chunk.chunk_type == ChunkType.TOOL_RESULT:
             await self._ingest_tool_result(session_id, chunk)
-        else:
-            await self._finalize(session_id, chunk)
+            return
+        if chunk.chunk_type == ChunkType.TOOL_CALL:
+            self._remember_call_title(session_id, chunk)
+        await self._finalize(session_id, chunk)
+
+    def _remember_call_title(self, session_id: str, chunk: CollectedChunk) -> None:
+        call_id = str(chunk.metadata.get("tool_call_id", ""))
+        if call_id and chunk.content:
+            self._call_titles.setdefault(session_id, {})[call_id] = chunk.content
 
     async def _close_open_run(self, session_id: str) -> None:
         """Finalize the open text/thought run, if any — a boundary was reached."""
@@ -414,6 +425,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         if not call_id:
             await self._finalize(session_id, chunk)
             return
+        title = self._call_titles.get(session_id, {}).get(call_id)
+        if title:
+            chunk.metadata["tool_name"] = title
         results = self._result_chunks.setdefault(session_id, {})
         canonical = results.get(call_id)
         if canonical is None:
@@ -558,6 +572,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self._permission_handlers.pop(session_id, None)
         self._result_chunks.pop(session_id, None)
         self._emitted_results.pop(session_id, None)
+        self._call_titles.pop(session_id, None)
         self._open_runs.pop(session_id, None)
         self._sinks.pop(session_id, None)
 
@@ -768,11 +783,13 @@ class ACPRuntime:
                 ACP_SESSION_LOAD_TIMEOUT_SECONDS,
             )
             return False
-        except RequestError as error:
+        except Exception as error:
             # Any load failure is equally recoverable: the caller falls back to
             # a fresh session (with history replay) rather than letting a remote
             # protocol error kill the bootstrap turn.
-            if self._is_missing_session_error(error):
+            if isinstance(error, RequestError) and self._is_missing_session_error(
+                error
+            ):
                 logger.info("ACP session %s is no longer available", session_id)
             else:
                 logger.warning(

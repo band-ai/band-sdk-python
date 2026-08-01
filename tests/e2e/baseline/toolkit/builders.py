@@ -28,6 +28,7 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
     Adapter,
     _custom_tool_defs,
+    _function_tools,
     _reject_tools,
     adapter,
 )
@@ -50,8 +51,8 @@ def _build_anthropic(
     return AnthropicAdapter(
         model=s.llm_models.anthropic_model,
         provider_key=s.llm_credentials.anthropic_api_key or None,
-        prompt=prompt,
-        additional_tools=_custom_tool_defs(tools),
+        instructions=prompt,
+        additional_tools=_function_tools(tools),
         features=features,
     )
 
@@ -68,7 +69,7 @@ def _build_claude_sdk(
 
     return ClaudeSDKAdapter(
         model=s.llm_models.anthropic_model,
-        custom_section=prompt,
+        instructions=prompt,
         additional_tools=_custom_tool_defs(tools),
         features=features,
     )
@@ -160,7 +161,7 @@ def _build_pydantic_ai(
     )
     return PydanticAIAdapter(
         model=f"openai:{s.llm_models.openai_model}",
-        custom_section=prompt,
+        instructions=prompt,
         additional_tools=native,
         features=features,
     )
@@ -179,8 +180,8 @@ def _build_gemini(
     return GeminiAdapter(
         model=s.llm_models.gemini_model,
         provider_key=s.llm_credentials.google_api_key or None,
-        prompt=prompt,
-        additional_tools=_custom_tool_defs(tools),
+        instructions=prompt,
+        additional_tools=_function_tools(tools),
         features=features,
     )
 
@@ -198,7 +199,7 @@ def _build_google_adk(
     # google-adk reads the provider key / Vertex config from the environment.
     return GoogleADKAdapter(
         model=s.llm_models.gemini_model,
-        custom_section=prompt,
+        instructions=prompt,
         additional_tools=_custom_tool_defs(tools),
         features=features,
     )

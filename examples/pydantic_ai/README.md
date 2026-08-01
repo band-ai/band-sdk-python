@@ -27,7 +27,7 @@ from band.adapters import PydanticAIAdapter
 
 adapter = PydanticAIAdapter(
     model="openai:gpt-5.4-mini",
-    custom_section="You are a helpful assistant.",
+    instructions="You are a helpful assistant.",
 )
 
 agent = Agent.create(

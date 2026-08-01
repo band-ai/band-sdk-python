@@ -23,7 +23,7 @@ from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
-    custom_section="You are a helpful assistant.",
+    instructions="You are a helpful assistant.",
 )
 
 agent = Agent.create(
@@ -90,7 +90,7 @@ support_agent:
 ```python
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
-    custom_section="You are a technical support agent. Be concise and helpful.",
+    instructions="You are a technical support agent. Be concise and helpful.",
 )
 ```
 

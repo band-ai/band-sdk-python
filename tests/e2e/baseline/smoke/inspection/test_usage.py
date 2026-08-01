@@ -103,11 +103,10 @@ async def test_usage_recorded_for_a_turn(
         title="e2e-usage-recorded", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "Say hello in one short sentence.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         usage = await capture.usage(sender_id=agent.id)
@@ -187,20 +186,18 @@ async def test_usage_not_cumulative_across_turns(
         title="e2e-usage-not-cumulative", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        first = await user_ops.send_message(
+        first = await user_ops.mention(
             room_id,
+            agent,
             "Explain in thorough detail how ocean tides work — cover the moon's "
             "gravity, the sun's role, and spring versus neap tides. Write at least "
             "six full paragraphs.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(first, agent.id)
-        second = await user_ops.send_message(
+        second = await user_ops.mention(
             room_id,
+            agent,
             "Reply with a single word: yes.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(second, agent.id)
         # Both turns are complete and persisted; read the whole room's usage,

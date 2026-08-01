@@ -61,7 +61,7 @@ async def main() -> None:
     # Create adapter with custom instructions and execution reporting
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
-        prompt=CUSTOM_PROMPT,
+        instructions=CUSTOM_PROMPT,
         # Enable execution reporting to see tool calls in the chat
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )

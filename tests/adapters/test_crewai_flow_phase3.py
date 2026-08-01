@@ -544,8 +544,8 @@ class TestRuntimeTools:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        assert tools.messages_sent == [
-            {"id": "msg-0", "content": "inbox text", "mentions": ["user-1"]}
+        assert [(m.content, m.mentions) for m in tools.messages_sent] == [
+            ("inbox text", ["user-1"])
         ]
 
     @pytest.mark.asyncio
@@ -627,10 +627,12 @@ class TestRuntimeTools:
         assert json.loads(tool_events[0]["content"]) == {
             "name": "echo",
             "args": {"message": "hello"},
+            "tool_call_id": None,
         }
         assert json.loads(tool_events[1]["content"]) == {
             "name": "echo",
             "output": "Echo: hello",
+            "tool_call_id": None,
             "is_error": False,
         }
 
@@ -680,8 +682,8 @@ class TestRuntimeTools:
                 "handle": participant_id,
             }
         ]
-        assert tools.messages_sent == [
-            {"id": "msg-0", "content": "please help", "mentions": [participant_id]}
+        assert [(m.content, m.mentions) for m in tools.messages_sent] == [
+            ("please help", [participant_id])
         ]
 
     @pytest.mark.asyncio
@@ -926,8 +928,8 @@ class TestRuntimeTools:
 
         await _run_one_turn(adapter, tools, _msg())
 
-        assert tools.messages_sent == [
-            {"id": "msg-0", "content": "subcrew visible", "mentions": ["@example/peer"]}
+        assert [(m.content, m.mentions) for m in tools.messages_sent] == [
+            ("subcrew visible", ["@example/peer"])
         ]
 
 

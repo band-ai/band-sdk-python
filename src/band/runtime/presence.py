@@ -18,6 +18,7 @@ from band.platform.event import (
     RoomRemovedEvent,
     ReconnectedEvent,
     PlatformEvent,
+    WebSocketDisconnectedEvent,
     ContactEvent,
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
@@ -25,6 +26,7 @@ from band.platform.event import (
     ContactRemovedEvent,
 )
 from band.platform.link import BandLink
+from band.runtime.tools import iter_chat_pages
 
 # Type alias for contact event callback (agent-level, no tools)
 ContactEventHandler = Callable[[ContactEvent], Awaitable[None]]
@@ -95,6 +97,7 @@ class RoomPresence:
         )
         self.on_contact_event: ContactEventHandler | None = None
         self.on_reconnected: Callable[[], Awaitable[None]] | None = None
+        self.on_disconnected: Callable[[], Awaitable[None]] | None = None
 
         # Internal task for consuming events from link
         self._event_task: asyncio.Task | None = None
@@ -174,6 +177,15 @@ class RoomPresence:
                 await self._handle_room_left(event)
             case ReconnectedEvent():
                 await self._handle_reconnect()
+            case WebSocketDisconnectedEvent():
+                # Terminal for this connection (e.g. another consumer of the
+                # same key superseded it). The transport will not recover by
+                # itself, so the owner must be told rather than left waiting.
+                if self.on_disconnected:
+                    try:
+                        await self.on_disconnected()
+                    except Exception as e:
+                        logger.warning("on_disconnected callback error: %s", e)
             case (
                 ContactRequestReceivedEvent()
                 | ContactRequestUpdatedEvent()
@@ -204,22 +216,7 @@ class RoomPresence:
             logger.debug("Room %s filtered out", room_id)
             return
 
-        # Track room
-        self.rooms.add(room_id)
-
-        # Subscribe to room channels
-        await self.link.subscribe_room(room_id)
-
-        # Notify callback
-        if self.on_room_joined:
-            try:
-                await self.on_room_joined(room_id, payload)
-            except Exception as e:
-                logger.error(
-                    "on_room_joined error for %s: %s", room_id, e, exc_info=True
-                )
-
-        logger.info("Agent joined room: %s", room_id)
+        await self._join_room(room_id, payload, context="room_added")
 
     async def _handle_room_removed(self, event: RoomRemovedEvent) -> None:
         """Handle room_removed event."""
@@ -276,7 +273,7 @@ class RoomPresence:
                 logger.warning("Failed to sync rooms after reconnect: %s", e)
                 return
 
-            current_room_ids = {room_id for room_id, _ in rooms_from_api}
+            current_room_ids = set(rooms_from_api)
             self.rooms = old_rooms & current_room_ids
 
             gone_rooms = old_rooms - current_room_ids
@@ -303,12 +300,9 @@ class RoomPresence:
             surviving_room_ids = sorted(self.rooms)
 
             if self.auto_subscribe_existing:
-                new_rooms = [
-                    (room_id, payload)
-                    for room_id, payload in rooms_from_api
-                    if room_id not in old_rooms
-                ]
-                await self._subscribe_rooms(new_rooms, context="reconnect")
+                # Surviving rooms are already in self.rooms, so this joins
+                # exactly the ones that appeared while the socket was down.
+                await self._subscribe_rooms(rooms_from_api, context="reconnect")
 
             if self.on_room_event:
                 reconnect_event = ReconnectedEvent()
@@ -374,67 +368,95 @@ class RoomPresence:
                     exc_info=True,
                 )
 
-    async def _list_existing_rooms(self) -> list[tuple[str, dict[str, Any]]]:
-        """Fetch all current rooms from the API, applying the room filter."""
-        all_rooms = []
-        page = 1
-        page_size = 100
-        while True:
-            response = await self.link.rest.agent_api_chats.list_agent_chats(
+    async def _list_existing_rooms(self) -> dict[str, dict[str, Any]]:
+        """Every current room the filter accepts, keyed by room ID.
+
+        Keyed rather than listed because the listing is offset-paginated: a
+        room added while it pages shifts the rest along, so one room can come
+        back on two pages.
+        """
+
+        async def fetch(page: int, page_size: int) -> Any:
+            return await self.link.rest.agent_api_chats.list_agent_chats(
                 page=page,
                 page_size=page_size,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-            if response.data:
-                all_rooms.extend(response.data)
 
-            total_pages = getattr(response.metadata, "total_pages", None)
-            if total_pages is None or page >= total_pages:
-                break
-            page += 1
-
-        rooms: list[tuple[str, dict[str, Any]]] = []
-        for room in all_rooms:
-            payload = room.model_dump(exclude_none=True)
-            if self.room_filter and not self.room_filter(payload):
-                continue
-            rooms.append((room.id, payload))
-
+        rooms: dict[str, dict[str, Any]] = {}
+        async for response in iter_chat_pages(fetch):
+            for room in response.data or []:
+                payload = room.model_dump(exclude_none=True)
+                if self.room_filter and not self.room_filter(payload):
+                    continue
+                rooms[room.id] = payload
         return rooms
+
+    async def _join_room(
+        self,
+        room_id: str,
+        payload: dict[str, Any],
+        *,
+        context: str,
+    ) -> bool:
+        """Track, subscribe to and announce one room, at most once.
+
+        The startup snapshot and a ``room_added`` event can name the same room,
+        because the agent's room channel is live before the snapshot is read.
+        Claiming the room in ``self.rooms`` before the first await is what makes
+        the second caller a no-op instead of a second channel join and a second
+        ``on_room_joined``.
+        """
+        if room_id in self.rooms:
+            logger.debug("Already joined room %s, ignoring %s", room_id, context)
+            return False
+        self.rooms.add(room_id)
+
+        try:
+            await self.link.subscribe_room(room_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to subscribe to room %s during %s: %s", room_id, context, e
+            )
+            self.rooms.discard(room_id)
+            return False
+
+        # A callback that raises is the caller's problem, not a failed join:
+        # the room is subscribed either way, and untracking it here would drop
+        # every event it goes on to deliver.
+        if self.on_room_joined:
+            try:
+                await self.on_room_joined(room_id, payload)
+            except Exception as e:
+                logger.error(
+                    "on_room_joined error for %s: %s", room_id, e, exc_info=True
+                )
+
+        logger.info("Agent joined room: %s", room_id)
+        return True
 
     async def _subscribe_rooms(
         self,
-        rooms_to_join: list[tuple[str, dict[str, Any]]],
+        rooms_to_join: dict[str, dict[str, Any]],
         *,
         context: str,
     ) -> None:
-        """Subscribe to rooms in parallel and report aggregate success/failure."""
-        if not rooms_to_join:
+        """Join every room not already joined, in parallel."""
+        pending = {
+            room_id: payload
+            for room_id, payload in rooms_to_join.items()
+            if room_id not in self.rooms
+        }
+        if not pending:
             return
 
-        async def safe_subscribe(room_id: str, payload: dict[str, Any]) -> bool:
-            """Subscribe to a single room, returning True on success."""
-            try:
-                await self.link.subscribe_room(room_id)
-                self.rooms.add(room_id)
-
-                if self.on_room_joined:
-                    await self.on_room_joined(room_id, payload)
-                return True
-            except Exception as e:
-                logger.warning(
-                    "Failed to subscribe to room %s during %s: %s",
-                    room_id,
-                    context,
-                    e,
-                )
-                self.rooms.discard(room_id)
-                return False
-
         results = await asyncio.gather(
-            *[safe_subscribe(room_id, payload) for room_id, payload in rooms_to_join],
+            *[
+                self._join_room(room_id, payload, context=context)
+                for room_id, payload in pending.items()
+            ],
         )
-        succeeded = sum(1 for result in results if result)
+        succeeded = sum(results)
         failed = len(results) - succeeded
 
         if failed:

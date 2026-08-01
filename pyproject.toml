@@ -29,23 +29,32 @@ dependencies = [
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
     "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
+    "python-dateutil>=2.9.0.post0",
+    "typing_extensions>=4.12.0",
 ]
 
 [project.optional-dependencies]
 logging = [
-    "python-json-logger>=3.0.0",
+    # 3.1.0 moved pythonjsonlogger.jsonlogger to pythonjsonlogger.json, which is
+    # the module the JSON formatter is configured against.
+    "python-json-logger>=3.1.0",
     "rich>=14.0.0",
+]
+desktop = [
+    "mcp>=1.25.0,<2",
 ]
 codex = [
     "websockets>=13.0",
 ]
 opencode = [
     "httpx>=0.24.0",
-    "mcp>=1.25.0",
+    # Capped like every other mcp consumer here: 2.x drops the lowlevel Server
+    # decorator registration that LocalMCPServer builds its tool surface with.
+    "mcp>=1.25.0,<2",
 ]
 letta = [
     "letta-client>=0.1.0",
-    "mcp>=1.25.0",
+    "mcp>=1.25.0,<2",
 ]
 pydantic-ai = [
     "pydantic-ai-slim[anthropic]>=2.18.0",
@@ -88,16 +97,16 @@ gemini = [
     "google-genai>=1.43.0",  # httpx is a transitive dep used for retry exception types
 ]
 a2a = [
-    "a2a-sdk>=1.1.2,<2",  # Official A2A Python SDK; brings protobuf transitively
+    "a2a-sdk>=0.3.22",  # Official A2A Python SDK; brings protobuf>=5.29.5 transitively
 ]
 a2a_gateway = [
-    "a2a-sdk[http-server]>=1.1.2,<2",  # Route factories require sse-starlette
+    "a2a-sdk>=0.3.22",  # Official A2A Python SDK; brings protobuf>=5.29.5 transitively
     "starlette>=0.40.0",  # HTTP server framework
     "uvicorn>=0.32.0",  # ASGI server
     "python-multipart>=0.0.22",
 ]
 a2a_gateway_demo = [
-    "a2a-sdk[http-server]>=1.1.2,<2",  # Demo builds gateway route factories
+    "a2a-sdk>=0.3.22",      # A2A client for calling gateway peers
     "starlette>=0.40.0",    # HTTP server
     "uvicorn>=0.32.0",      # ASGI server
     "langgraph>=1.0.0",     # LangGraph for orchestrator agent
@@ -106,7 +115,8 @@ a2a_gateway_demo = [
 ]
 acp = [
     "agent-client-protocol>=0.9.0",  # ACP Python SDK
-    "mcp>=1.25.0",
+    "fire>=0.7.0",  # CLI surface for band-acp
+    "mcp>=1.25.0,<2",
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
 ]
@@ -178,7 +188,7 @@ dev = [
     "openai>=2.0.0",
     "beautifulsoup4>=4.12.0",
     # Include a2a-sdk for testing
-    "a2a-sdk>=1.1.2,<2",
+    "a2a-sdk>=0.3.22",
     # Include a2a_gateway deps for testing
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
@@ -189,7 +199,8 @@ dev = [
     "werkzeug>=3.1.6",
     # Include ACP deps for testing
     "agent-client-protocol>=0.9.0",
-    "mcp>=1.25.0",
+    "fire>=0.7.0",
+    "mcp>=1.25.0,<2",
     # Include Slack deps for testing
     "slack-sdk>=3.27.0",
     # Include Gemini SDK for testing
@@ -207,6 +218,13 @@ dev = [
     "python-dotenv>=1.2.2",
     # Include bridge_agentcore deps for testing
     "boto3>=1.35.0",
+    # The logging extra's JSON formatter, so its tests run instead of skipping.
+    "python-json-logger>=3.1.0",
+    # Host-side OpenTelemetry, for the correlation tests and examples/opentelemetry.
+    # Band core never depends on these; only the tests and the example do.
+    "opentelemetry-sdk>=1.44.0",
+    # LoggingInstrumentor's inject_trace_context option, added in 0.64b0.
+    "opentelemetry-instrumentation-logging>=0.65b0",
     # Pretty E2E test output
     "rich>=13.0.0",
     # Development tools
@@ -248,6 +266,7 @@ dev-crewai = [
 
 [project.scripts]
 band-acp = "band.integrations.acp.cli:entry_point"
+band-room-view = "band.integrations.desktop_app.cli:entry_point"
 band-trigger = "band.cli.trigger:main"
 
 [tool.setuptools.packages.find]
@@ -262,6 +281,7 @@ include-package-data = true
 [tool.setuptools.package-data]
 "band" = ["py.typed"]
 "band.integrations.slack" = ["templates/*.yaml"]
+"band.integrations.desktop_app" = ["assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

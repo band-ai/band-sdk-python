@@ -137,17 +137,15 @@ async def test_tool_calls_isolated_per_room(
         # The two captures are independent (separate nudges), so both rooms can run
         # concurrently: send both, settle both, read both.
         m_one, m_two = await asyncio.gather(
-            user_ops.send_message(
+            user_ops.mention(
                 room_one,
+                agent,
                 "look up the access code for key 'alpha'",
-                mention_id=agent.id,
-                mention_name=agent.name,
             ),
-            user_ops.send_message(
+            user_ops.mention(
                 room_two,
+                agent,
                 "look up the access code for key 'beta'",
-                mention_id=agent.id,
-                mention_name=agent.name,
             ),
         )
         await asyncio.gather(
@@ -186,11 +184,10 @@ async def test_capture_scopes_to_current_turn(
     )
     async with reply_capture(room_id) as capture:
         # Turn 1.
-        m_one = await user_ops.send_message(
+        m_one = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'alpha'",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         # Wait for turn 1's reply to be captured — turn_boundary() reads its timestamp
         # and raises on an empty buffer, so the processed signal alone isn't enough.
@@ -201,11 +198,10 @@ async def test_capture_scopes_to_current_turn(
 
         # Turn 2, same capture reused. Barriering on turn 2's own id scopes the wait
         # to the new turn — it can't return on turn 1's reply.
-        m_two = await user_ops.send_message(
+        m_two = await user_ops.mention(
             room_id,
+            agent,
             "now look up the access code for key 'beta'",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(m_two, agent.id)
         # Contrast a scoped read against an unscoped one to prove `since` (not some

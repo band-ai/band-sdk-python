@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from band.core.contracts.events import ToolStatus as ToolStatus
+
 
 class ChunkType(StrEnum):
     """The kind of a parsed ACP session-update chunk.
@@ -24,18 +26,6 @@ class ChunkType(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PLAN = "plan"
-
-
-class ToolStatus(StrEnum):
-    """ACP tool-call lifecycle status, as reported on tool_call updates.
-
-    Single source of truth for the status values the runtime records on a
-    tool_call/tool_result chunk and the consumers compare against.
-    """
-
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 
 @dataclass

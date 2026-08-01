@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from band.runtime.tools import ToolCallOutcome, serialize_tool_result
-from band.testing.fake_tools import FakeAgentTools
+from band.testing.fake_tools import FakeAgentTools, RecordedToolCall
 
 
 class BaselineTools(FakeAgentTools):
@@ -83,7 +83,9 @@ class BaselineTools(FakeAgentTools):
         """
         if not isinstance(arguments, dict):
             raise ValueError(f"{tool_name} arguments must be an object")
-        self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
+        self.tool_calls.append(
+            RecordedToolCall(tool_name=tool_name, arguments=arguments)
+        )
         return ToolCallOutcome(
             value=serialize_tool_result(await self._dispatch(tool_name, arguments)),
             ok=True,

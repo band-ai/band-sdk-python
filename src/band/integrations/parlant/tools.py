@@ -24,7 +24,6 @@ because Parlant's @p.tool decorator checks annotation types at runtime.
 
 import json
 import logging
-import warnings
 from typing import Any, Optional
 
 from band.core.exceptions import BandToolError
@@ -77,26 +76,6 @@ def mark_message_sent(session_id: str) -> None:
 def was_message_sent(session_id: str) -> bool:
     """Check if a message was sent via the send_message tool for this session."""
     return _session_message_sent.get(session_id, False)
-
-
-# Keep old API for backwards compatibility (deprecated)
-def set_current_tools(tools: Optional[Any]) -> None:
-    """Deprecated: Use set_session_tools instead."""
-    warnings.warn(
-        "set_current_tools is deprecated, use set_session_tools instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-
-def get_current_tools() -> Optional[Any]:
-    """Deprecated: Use get_session_tools instead."""
-    warnings.warn(
-        "get_current_tools is deprecated, use get_session_tools instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return None  # Always returns None, tools now accessed via session_id
 
 
 def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:

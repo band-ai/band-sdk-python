@@ -51,14 +51,11 @@ Run with
 HTTP transport
 --------------
 Set ``SLACK_TRANSPORT=http`` and provide ``SLACK_SIGNING_SECRET``.
-The example below mounts ``slack.router`` into a Starlette app on
-port 3000; point Slack's Event Subscriptions request URL at
-``https://<your-public-host>/slack/dev/events``. To embed in an
-existing FastAPI service instead::
-
-    from fastapi import FastAPI
-    app = FastAPI()
-    app.mount("/slack", slack.router)
+``SlackGateway.serve()`` runs uvicorn on ``slack.port`` (default 3000)
+and serves ``slack.router`` directly — point Slack's Event Subscriptions
+request URL at ``https://<your-public-host>/dev/events``. To embed in
+an existing FastAPI service instead, mount ``slack.router`` yourself and
+keep using the legacy ``Agent.run()`` path (deprecated).
 """
 
 from __future__ import annotations
@@ -70,7 +67,7 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from band import AdapterFeatures, Agent, Emit
+from band import AdapterFeatures, Agent, Emit, SlackGateway
 from band.adapters import AnthropicAdapter
 from band.config import load_agent_config
 from band.integrations.slack import SlackAdapter, SlackApp
@@ -115,17 +112,9 @@ async def main() -> None:
 
     agent_id, api_key = load_agent_config("slack_basic_bot")
 
-    # AnthropicAdapter reads ANTHROPIC_API_KEY from the environment.
-    #
-    # features=AdapterFeatures(emit={Emit.EXECUTION}) enables tool-call
-    # emission: every tool the brain runs is recorded into the Band room
-    # as tool_call / tool_result events, so the room's audit timeline shows
-    # what the agent did and with what result. This is the Band-side
-    # record; the Slack-side plan/task progress blocks are a separate knob
-    # (SlackAdapter(show_tool_progress=...), on by default).
     brain = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
-        prompt=(
+        instructions=(
             "You are a helpful Slack assistant. Keep replies concise and "
             "use Slack-flavored markdown when it improves readability."
         ),
@@ -157,29 +146,8 @@ async def main() -> None:
 
     logger.info("Starting Slack bot (transport=%s)...", transport)
 
-    if transport == "socket":
-        async with agent:
-            try:
-                await agent.run_forever()
-            finally:
-                await slack.close()
-    else:
-        # HTTP transport: serve the Slack router alongside the agent.
-        # In a real service you'd mount ``slack.router`` into your
-        # existing FastAPI/Starlette app instead of running uvicorn
-        # standalone like this.
-        import uvicorn
-        from starlette.applications import Starlette
-
-        web_app = Starlette()
-        web_app.mount("/slack", slack.router)
-        config = uvicorn.Config(web_app, host="0.0.0.0", port=3000, log_level="info")
-        server = uvicorn.Server(config)
-        async with agent:
-            try:
-                await asyncio.gather(agent.run_forever(), server.serve())
-            finally:
-                await slack.close()
+    async with SlackGateway(agent=agent) as gateway:
+        await gateway.serve()
 
 
 if __name__ == "__main__":

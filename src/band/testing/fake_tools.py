@@ -5,7 +5,11 @@ from __future__ import annotations
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from anthropic.types import ToolParam
 
 from band.client.rest import (
     AgentContact,
@@ -44,6 +48,60 @@ def page_slice(
     return items[start : start + page_size]
 
 
+@dataclass(frozen=True, slots=True)
+class RecordedMessage:
+    """One message posted through the fake tools surface."""
+
+    id: str
+    content: str
+    mentions: list[Any]
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedEvent:
+    """One non-message event posted through the fake tools surface."""
+
+    id: str
+    content: str
+    message_type: str
+    metadata: dict[str, Any]
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedToolCall:
+    """One ``execute_tool_call*`` invocation recorded by the fake."""
+
+    tool_name: str
+    arguments: dict[str, Any]
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
 class FakeAgentTools:
     """
     Fake implementation of AgentToolsProtocol for testing.
@@ -60,7 +118,7 @@ class FakeAgentTools:
                                      is_session_bootstrap=True, room_id="room-1")
 
             assert len(tools.messages_sent) == 1
-            assert tools.messages_sent[0]["content"] == "Expected response"
+            assert tools.messages_sent[0].content == "Expected response"
     """
 
     def __init__(
@@ -76,8 +134,8 @@ class FakeAgentTools:
     ):
         self.room_id = room_id
         self._hub_room_id = hub_room_id
-        self.messages_sent: list[dict[str, Any]] = []
-        self.events_sent: list[dict[str, Any]] = []
+        self.messages_sent: list[RecordedMessage] = []
+        self.events_sent: list[RecordedEvent] = []
         self._participants: list[dict[str, Any]] = participants or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
         # Seeds are validated and canonicalized at seed time (not list time),
@@ -95,7 +153,7 @@ class FakeAgentTools:
         ]
         self.participants_added: list[dict[str, Any]] = []
         self.participants_removed: list[dict[str, Any]] = []
-        self.tool_calls: list[dict[str, Any]] = []
+        self.tool_calls: list[RecordedToolCall] = []
         self.context_calls: list[dict[str, Any]] = []
 
     @property
@@ -110,7 +168,7 @@ class FakeAgentTools:
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
-    ) -> dict[str, Any]:
+    ) -> RecordedMessage:
         """Record a sent message, enforcing the platform's mention requirement.
 
         The API rejects a mention-less message, so ``AgentTools.send_message``
@@ -127,11 +185,11 @@ class FakeAgentTools:
                     available_mention_handles(self._participants),
                 )
             )
-        msg = {
-            "id": f"msg-{len(self.messages_sent)}",
-            "content": content,
-            "mentions": mentions or [],
-        }
+        msg = RecordedMessage(
+            id=f"msg-{len(self.messages_sent)}",
+            content=content,
+            mentions=list(mentions or []),
+        )
         self.messages_sent.append(msg)
         return msg
 
@@ -140,13 +198,13 @@ class FakeAgentTools:
         content: str,
         message_type: str,
         metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        event = {
-            "id": f"evt-{len(self.events_sent)}",
-            "content": content,
-            "message_type": message_type,
-            "metadata": metadata or {},
-        }
+    ) -> RecordedEvent:
+        event = RecordedEvent(
+            id=f"evt-{len(self.events_sent)}",
+            content=content,
+            message_type=message_type,
+            metadata=dict(metadata or {}),
+        )
         self.events_sent.append(event)
         return event
 
@@ -379,7 +437,7 @@ class FakeAgentTools:
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ToolParam]:
         return []
 
     def get_openai_tool_schemas(
@@ -398,7 +456,9 @@ class FakeAgentTools:
     ) -> ToolCallOutcome:
         """Record the call and report success. Override in a subclass to return
         ``ok=False`` (a base tool failing without raising) for failure-path tests."""
-        self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
+        self.tool_calls.append(
+            RecordedToolCall(tool_name=tool_name, arguments=arguments)
+        )
         return ToolCallOutcome(value={"status": "ok"}, ok=True)
 
     # --- Assertion helpers ---
@@ -416,16 +476,16 @@ class FakeAgentTools:
                 f"Expected {count} messages, got {len(self.messages_sent)}"
             )
         if content is not None:
-            matching = [m for m in self.messages_sent if m["content"] == content]
+            matching = [m for m in self.messages_sent if m.content == content]
             assert matching, (
                 f"No message with content {content!r} found. "
-                f"Sent: {[m['content'] for m in self.messages_sent]}"
+                f"Sent: {[m.content for m in self.messages_sent]}"
             )
         if mentions is not None:
-            matching = [m for m in self.messages_sent if m["mentions"] == mentions]
+            matching = [m for m in self.messages_sent if m.mentions == mentions]
             assert matching, (
                 f"No message with mentions {mentions!r} found. "
-                f"Sent: {[m['mentions'] for m in self.messages_sent]}"
+                f"Sent: {[m.mentions for m in self.messages_sent]}"
             )
 
     def assert_event_sent(
@@ -439,7 +499,7 @@ class FakeAgentTools:
         matching = [
             e
             for e in self.events_sent
-            if message_type is None or e["message_type"] == message_type
+            if message_type is None or e.message_type == message_type
         ]
         if count is None and message_type is None:
             assert matching, "Expected at least one event; none were sent"

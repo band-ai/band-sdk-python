@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from typing import Literal
 
-from band.core.exceptions import BandConfigError
 from band.runtime.mcp_server import LOCAL_MCP_HOST
 
 MCPTransport = Literal["sse", "streamable_http"]
@@ -76,13 +74,9 @@ class LettaAdapterConfig:
     agent_id: str | None = None
     model: str | None = None
     provider_key: str | None = None  # Required for Letta Cloud; omit for self-hosted
-    api_key: str | None = None  # deprecated, use provider_key
     base_url: str = "https://api.letta.com"
     custom_section: str = ""
     include_base_instructions: bool = True
-    enable_execution_reporting: bool = False
-    enable_task_events: bool = True
-    enable_memory_tools: bool = False
     persona: str | None = None
     turn_timeout_s: float = 300.0
     memory_blocks: list[dict[str, str]] = field(default_factory=list)
@@ -97,10 +91,6 @@ class LettaAdapterConfig:
 
     # MCP tool path configuration (see LettaMCPConfig).
     mcp: LettaMCPConfig = field(default_factory=LettaMCPConfig)
-    # Deprecated compatibility shims for the pre-nested MCP config API.
-    mcp_server_url: str | None = field(default=None, kw_only=True)
-    mcp_server_name: str | None = field(default=None, kw_only=True)
-
     # Relay the agent's plain assistant text into the room when it did not
     # call the MCP send tool. Keeps the agent responsive when the model skips
     # tools, but can mask a dead MCP tool path — disable to make an unused
@@ -123,41 +113,3 @@ class LettaAdapterConfig:
     # Operating mode: per_room creates one Letta agent per room,
     # shared uses one agent with per-room Conversations for isolation.
     mode: Literal["per_room", "shared"] = "per_room"
-
-    def __post_init__(self) -> None:
-        if self.api_key is not None:
-            warnings.warn(
-                "api_key is deprecated on LettaAdapterConfig, use provider_key instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if self.provider_key is not None:
-                raise BandConfigError("Cannot pass both provider_key and api_key")
-            self.provider_key = self.api_key
-            self.api_key = None
-
-        if self.mcp_server_url is not None or self.mcp_server_name is not None:
-            warnings.warn(
-                "mcp_server_url and mcp_server_name are deprecated on "
-                "LettaAdapterConfig, use mcp=LettaMCPConfig(...) instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            server_url = (
-                self.mcp_server_url
-                if self.mcp_server_url is not None
-                else self.mcp.server_url
-            )
-            server_name = (
-                self.mcp_server_name
-                if self.mcp_server_name is not None
-                else self.mcp.server_name
-            )
-            self.mcp = LettaMCPConfig(
-                mode="external",
-                server_url=server_url,
-                server_name=server_name,
-                transport=self.mcp.transport,
-            )
-            self.mcp_server_url = None
-            self.mcp_server_name = None

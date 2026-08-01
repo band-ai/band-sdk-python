@@ -507,12 +507,16 @@ class TestEmitExecutionReporter:
         assert json.loads(call_kwargs["content"]) == {
             "name": "lookup",
             "args": {"key": "alpha"},
+            # crewai's callback carries no call id; the key is still present so
+            # every narration event has one shape to read.
+            "tool_call_id": None,
         }
 
         assert result_kwargs["message_type"] == "tool_result"
         assert json.loads(result_kwargs["content"]) == {
             "name": "lookup",
             "output": "SECRET-123",
+            "tool_call_id": None,
             "is_error": False,
         }
 
@@ -530,6 +534,7 @@ class TestEmitExecutionReporter:
         assert json.loads(tools.send_event.call_args.kwargs["content"]) == {
             "name": "lookup",
             "output": "boom",
+            "tool_call_id": None,
             "is_error": True,
         }
 

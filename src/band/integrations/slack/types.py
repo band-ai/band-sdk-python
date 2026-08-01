@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class SlackTransport(StrEnum):
+    """Ingress transport for :class:`~band.integrations.slack.adapter.SlackAdapter`."""
+
+    HTTP = "http"
+    SOCKET = "socket"
 
 
 @dataclass

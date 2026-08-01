@@ -53,7 +53,7 @@ from band.adapters import ClaudeSDKAdapter
 adapter = ClaudeSDKAdapter(
     # Omit `model` to use the npm `claude` binary's default, or pass a
     # family alias (`"sonnet"` / `"opus"` / `"haiku"`).
-    custom_section="You are a helpful assistant.",
+    instructions="You are a helpful assistant.",
 )
 
 agent = Agent.create(

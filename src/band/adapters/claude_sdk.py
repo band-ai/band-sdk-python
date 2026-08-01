@@ -11,10 +11,8 @@ when on_message is called so the MCP server can access them.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
-import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +28,7 @@ try:
         ToolUseBlock,
         ToolResultBlock,
         ResultMessage,
+        UserMessage,
     )
     from claude_agent_sdk._errors import CLIConnectionError  # type: ignore[import-not-found]
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
@@ -47,7 +46,13 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
-from band.core.exceptions import BandConfigError
+from band.core.backends.observing import send_non_reply_message
+from band.core.exceptions import MissingDependencyError
+from band.core.instructions import (
+    Instruction,
+    InstructionMode,
+    normalize_instructions,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -72,6 +77,7 @@ from band.integrations.claude_sdk.dedup_tools import (
     DedupingAgentTools,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -92,8 +98,6 @@ BAND_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
 # All tools: chat + contacts + memory (17 total). For chat-only tools (7),
 # see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
 BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
-
-_BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 
 # Default model used when the caller does not specify one. Letting the npm
 # `claude` CLI auto-select its default fails under API-key auth: the CLI sends
@@ -149,20 +153,6 @@ class _PendingApproval:
     requester: dict[str, str]
 
 
-def __getattr__(name: str) -> Any:
-    if name == "BAND_TOOLS":
-        warnings.warn(
-            "BAND_TOOLS is deprecated, use BAND_ALL_TOOLS instead. "
-            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory). "
-            "For chat-only tools, use "
-            "band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _BAND_TOOLS
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     """
     Claude Agent SDK adapter using SimpleAdapter pattern.
@@ -174,7 +164,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
     Example:
         adapter = ClaudeSDKAdapter(
-            custom_section="You are a helpful assistant.",
+            instructions="You are a helpful assistant.",
         )
         # Or pin a model / family alias:
         # adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
@@ -195,11 +185,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self,
         model: str | None = None,
         fallback_model: str | None = None,
-        custom_section: str | None = None,
+        *,
+        instructions: str | Instruction | None = None,
         max_thinking_tokens: int | None = None,
         permission_mode: PermissionMode = "acceptEdits",
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
@@ -228,15 +217,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 ``ClaudeAgentOptions.fallback_model``. The npm ``claude``
                 binary uses it when the primary model is unavailable.
                 Aliases are accepted here too.
-            custom_section: Custom instructions added to system prompt
+            instructions: Instructions composed with the SDK base prompt.
             max_thinking_tokens: Max tokens for extended thinking (optional)
             permission_mode: SDK permission mode
-            enable_execution_reporting: Deprecated. Use
-                ``features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS})``.
-                If True, emit tool_call/tool_result *and* thought events.
-            enable_memory_tools: Deprecated. Use
-                ``features=AdapterFeatures(capabilities={Capability.MEMORY})``.
-                If True, includes memory management tools (enterprise only).
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -260,9 +243,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 issue ``/approve`` and ``/decline`` commands.  When ``None``
                 (default), any room participant can approve.  ``/approvals``
                 and ``/status`` are always available to all participants.
-            features: Unified adapter feature settings. When provided alongside
-                deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
-                raises ``BandConfigError``.
+            features: Unified adapter feature settings.
             send_message_dedup_ttl_seconds: Window (seconds) inside which two
                 ``band_send_message`` MCP tool calls with identical
                 ``(content, mentions)`` are collapsed into one platform POST.
@@ -271,48 +252,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 Defaults to 30 s; set to ``0`` to disable dedup entirely.
         """
         if not _CLAUDE_SDK_AVAILABLE:
-            raise ImportError(
+            raise MissingDependencyError(
                 "claude-agent-sdk is required for ClaudeSDKAdapter.\n"
                 "Install with: pip install band-sdk[claude_sdk]\n"
                 "Or: uv add band-sdk[claude_sdk]"
             )
-        # --- Shim deprecated params into features -------------------------
-        _has_legacy = enable_execution_reporting or enable_memory_tools
-        if _has_legacy and features is not None:
-            raise BandConfigError(
-                "Cannot combine 'features' with deprecated "
-                "'enable_execution_reporting' / 'enable_memory_tools'. "
-                "Use AdapterFeatures exclusively."
-            )
-
-        if _has_legacy:
-            _emit: set[Emit] = set()
-            _caps: set[Capability] = set()
-
-            if enable_execution_reporting:
-                warnings.warn(
-                    "enable_execution_reporting is deprecated. "
-                    "Use features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}).",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                # ClaudeSDK historically emitted both execution AND thought
-                # events under this single flag.
-                _emit.update({Emit.EXECUTION, Emit.THOUGHTS})
-
-            if enable_memory_tools:
-                warnings.warn(
-                    "enable_memory_tools is deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}).",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                _caps.add(Capability.MEMORY)
-
-            features = AdapterFeatures(
-                capabilities=frozenset(_caps),
-                emit=frozenset(_emit),
-            )
+        self._instructions = instructions
 
         super().__init__(
             history_converter=history_converter or ClaudeSDKHistoryConverter(),
@@ -321,7 +266,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         self.model = model
         self.fallback_model = fallback_model
-        self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
         self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
         if cwd and not Path(cwd).is_dir():
@@ -383,12 +327,17 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._mcp_server = self._mcp_backend.server
 
         # Generate system prompt with agent info
-        system_prompt = generate_claude_sdk_agent_prompt(
-            agent_name=agent_name,
-            agent_description=agent_description,
-            custom_section=self.custom_section,
-            features=self.features,
-        )
+        normalized = normalize_instructions(self._instructions)
+        if normalized is not None and normalized.mode == InstructionMode.REPLACE:
+            system_prompt = normalized.text
+        else:
+            custom_text = normalized.text if normalized is not None else None
+            system_prompt = generate_claude_sdk_agent_prompt(
+                agent_name=agent_name,
+                agent_description=agent_description,
+                custom_section=custom_text,
+                features=self.features,
+            )
 
         # Build SDK options. When the caller doesn't pin a model, default to a
         # known-good one rather than the npm `claude` binary's auto-selection,
@@ -528,7 +477,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if self.send_message_dedup_ttl_seconds > 0:
             existing = self._room_tools.get(room_id)
             if isinstance(existing, DedupingAgentTools):
-                if existing._inner is not tools:
+                if existing.inner is not tools:
                     await existing.update_inner(tools)
                 tools = cast(AgentToolsProtocol, existing)
             else:
@@ -682,6 +631,40 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         logger.debug("Message %s processed successfully", msg.id)
 
+    async def _report_tool_results(
+        self,
+        sdk_message: UserMessage,
+        room_id: str,
+        tools: AgentToolsProtocol,
+        tool_names: dict[str, str],
+    ) -> None:
+        """Narrate the tool results carried by one user turn."""
+        if Emit.EXECUTION not in self.features.emit or isinstance(
+            sdk_message.content, str
+        ):
+            return
+        for block in sdk_message.content:
+            if not isinstance(block, ToolResultBlock):
+                continue
+            logger.debug(
+                "Room %s: Tool result: %s... error=%s",
+                room_id,
+                block.tool_use_id[:20],
+                block.is_error,
+            )
+            try:
+                await tools.send_event(
+                    content=tool_result_content(
+                        tool_names.get(block.tool_use_id, "tool"),
+                        output=block.content,
+                        tool_call_id=block.tool_use_id,
+                        is_error=block.is_error,
+                    ),
+                    message_type="tool_result",
+                )
+            except Exception as e:
+                logger.warning("Failed to send tool_result event: %s", e)
+
     # --- Copied from BandClaudeSDKAgent._process_response ---
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
@@ -691,6 +674,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         MCP tools handle actual execution - we log and optionally report events here.
         """
+        # A result names only the call it answers, so keep this turn's calls to
+        # narrate it with the tool's name like every other adapter does.
+        tool_names: dict[str, str] = {}
         async for sdk_message in client.receive_response():
             if isinstance(sdk_message, AssistantMessage):
                 for block in sdk_message.content:
@@ -723,6 +709,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                         # Bare name for the cross-adapter tool_call record (the SDK
                         # namespaces our tools mcp__band__*; see _semantic_tool_name).
                         tool_name = self._semantic_tool_name(block.name)
+                        tool_names[block.id] = tool_name
                         logger.info(
                             "Room %s: Tool call: %s with %s...",
                             room_id,
@@ -732,40 +719,20 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                         if Emit.EXECUTION in self.features.emit:
                             try:
                                 await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            "name": tool_name,
-                                            "args": block.input,
-                                            "tool_call_id": block.id,
-                                        }
+                                    content=tool_call_content(
+                                        tool_name,
+                                        args=block.input,
+                                        tool_call_id=block.id,
                                     ),
                                     message_type="tool_call",
                                 )
                             except Exception as e:
                                 logger.warning("Failed to send tool_call event: %s", e)
 
-                    elif isinstance(block, ToolResultBlock):
-                        logger.debug(
-                            "Room %s: Tool result: %s... error=%s",
-                            room_id,
-                            block.tool_use_id[:20],
-                            block.is_error,
-                        )
-                        if Emit.EXECUTION in self.features.emit:
-                            try:
-                                await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            "output": block.content,
-                                            "tool_call_id": block.tool_use_id,
-                                        }
-                                    ),
-                                    message_type="tool_result",
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to send tool_result event: %s", e
-                                )
+            elif isinstance(sdk_message, UserMessage):
+                # Tool results come back as a user turn, not on the assistant
+                # message that made the call.
+                await self._report_tool_results(sdk_message, room_id, tools, tool_names)
 
             elif isinstance(sdk_message, ResultMessage):
                 logger.info(
@@ -932,7 +899,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return
         mention = [requester["id"]] if requester else None
         try:
-            await tools.send_message(
+            await send_non_reply_message(
+                tools,
                 f"Approval requested ({summary}). Policy decision: **{decision}**.",
                 mentions=mention,
             )
@@ -982,7 +950,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         mention = [requester["id"]] if requester else None
         if tools:
             try:
-                await tools.send_message(
+                await send_non_reply_message(
+                    tools,
                     f"Approval requested ({summary}). Token: `{token}`.\n"
                     f"Reply `/approve {token}` or `/decline {token}`.\n"
                     "Use `/approvals` to list pending approvals.",
@@ -1011,7 +980,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             decision: ApprovalDecision = self.approval_timeout_decision
             if tools:
                 try:
-                    await tools.send_message(
+                    await send_non_reply_message(
+                        tools,
                         f"Approval `{token}` timed out. Decision: **{decision}**.",
                         mentions=mention,
                     )

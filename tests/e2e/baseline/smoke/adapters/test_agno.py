@@ -58,11 +58,10 @@ async def test_agno_executes_native_tool(
         title="e2e-agno-native-tool", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'alpha'",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
@@ -96,11 +95,10 @@ async def test_agno_handles_multiple_native_tools(
         title="e2e-agno-multi-tool", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'beta' and get the weather for Zorath",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)

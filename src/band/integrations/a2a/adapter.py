@@ -3,38 +3,70 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
-from contextlib import aclosing
-from typing import ClassVar, cast
+from typing import ClassVar, Any
+from uuid import uuid4
 
-import httpx
 from a2a.client import Client, ClientConfig, ClientFactory
-from a2a.helpers import get_message_text, new_text_message
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
+    AgentCard,
     Message as A2AMessage,
+    Part,
     Role,
-    SendMessageRequest,
-    SubscribeToTaskRequest,
-    StreamResponse,
     Task,
+    TaskArtifactUpdateEvent,
+    TaskIdParams,
     TaskState,
+    TaskStatusUpdateEvent,
+    TextPart,
 )
+from a2a.utils import get_message_text
 
 from band.converters.a2a import A2AHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
-from band.integrations.a2a.protocol import (
-    TERMINAL_TASK_STATE_NAMES,
-    TERMINAL_TASK_STATES,
-    apply_task_stream_event,
-    state_name,
-    task_id_from_stream_event,
-    task_response_text,
-)
 from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
 logger = logging.getLogger(__name__)
+
+# Terminal states where task cannot be resumed
+TERMINAL_STATES = (
+    TaskState.completed,
+    TaskState.failed,
+    TaskState.canceled,
+    TaskState.rejected,
+    TaskState.auth_required,
+)
+
+# String values of terminal states for comparison with A2ASessionState.task_state
+TERMINAL_STATE_VALUES = frozenset(s.value for s in TERMINAL_STATES)
+
+
+class _StaticHeadersInterceptor(ClientCallInterceptor):
+    """Attach static headers to all outbound A2A requests."""
+
+    def __init__(self, headers: dict[str, str]) -> None:
+        self._headers = dict(headers)
+
+    async def intercept(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+        http_kwargs: dict[str, Any],
+        agent_card: AgentCard | None,
+        context: ClientCallContext | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        del method_name, agent_card, context
+
+        if not self._headers:
+            return request_payload, http_kwargs
+
+        updated_http_kwargs = dict(http_kwargs)
+        headers = dict(updated_http_kwargs.get("headers", {}))
+        headers.update(self._headers)
+        updated_http_kwargs["headers"] = headers
+        return request_payload, updated_http_kwargs
 
 
 class A2AAdapter(SimpleAdapter[A2ASessionState]):
@@ -93,10 +125,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self.auth = auth
         self.streaming = streaming
         self._client: Client | None = None
-        self._http_client: httpx.AsyncClient | None = None
         self._contexts: dict[str, str] = {}  # room_id → A2A context_id
         self._tasks: dict[str, str] = {}  # room_id → last task_id
-        self._task_cache: dict[tuple[str, str], Task] = {}
         # Track sender per task for mentions: (room_id, task_id) → sender info
         self._task_senders: dict[tuple[str, str], dict[str, str]] = {}
 
@@ -106,11 +136,16 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         headers = self.auth.to_headers() if self.auth else {}
 
-        self._http_client = httpx.AsyncClient(headers=headers)
-        factory = ClientFactory(
-            ClientConfig(streaming=self.streaming, httpx_client=self._http_client)
+        # Build client configuration
+        config = ClientConfig(streaming=self.streaming)
+
+        # Connect to remote A2A agent
+        self._client = await ClientFactory.connect(
+            agent=self.remote_url,
+            client_config=config,
+            interceptors=[_StaticHeadersInterceptor(headers)] if headers else None,
+            resolver_http_kwargs={"headers": headers} if headers else None,
         )
-        self._client = await factory.create_from_url(self.remote_url)
 
         logger.info(
             "Connected to A2A agent at %s (streaming=%s, auth=%s)",
@@ -150,9 +185,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         try:
             # Send to remote A2A agent and process events
-            async for event in self._client.send_message(
-                SendMessageRequest(message=a2a_message)
-            ):
+            async for event in self._client.send_message(a2a_message):
                 await self._handle_event(
                     event, tools, room_id, msg.sender_id, msg.sender_name
                 )
@@ -167,105 +200,91 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def _handle_event(
         self,
-        event: StreamResponse,
+        event: tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None]
+        | A2AMessage,
         tools: AgentToolsProtocol,
         room_id: str,
         sender_id: str,
         sender_name: str | None,
     ) -> None:
         """Handle A2A event and forward to Band platform."""
-        if event.HasField("message"):
-            await self._deliver_message(event.message, tools, sender_id, sender_name)
+        # Handle direct message reply (rare - most responses come via Task)
+        if isinstance(event, A2AMessage):
+            text = get_message_text(event)
+            if text:
+                await tools.send_message(
+                    content=text,
+                    mentions=[{"id": sender_id, "name": sender_name or ""}],
+                )
             return
 
-        task = self._reduce_task_event(room_id, event)
-        if task is None:
-            return
+        # Unpack task event
+        task, update = event
         key = (room_id, task.id)
-        self._remember_task(room_id, task)
-        self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
-        state = task.status.state
-        try:
-            await self._deliver_task_update(task, tools, self._task_senders[key])
-            if state == TaskState.TASK_STATE_INPUT_REQUIRED:
-                await self._emit_task_event(tools, task, state)
-        finally:
-            # A terminal task must be persisted and released even when Band
-            # delivery fails, or the room keeps addressing a finished task.
-            if state in TERMINAL_TASK_STATES:
-                await self._emit_task_event(tools, task, state)
-                self._finalize_task(room_id, task.id)
+        # Store sender info on first event for this task
+        if key not in self._task_senders:
+            self._task_senders[key] = {"id": sender_id, "name": sender_name or ""}
 
-    async def _deliver_message(
-        self,
-        message: A2AMessage,
-        tools: AgentToolsProtocol,
-        sender_id: str,
-        sender_name: str | None,
-    ) -> None:
-        """Forward a direct A2A message to its Band sender."""
-        text = get_message_text(message)
-        if text:
-            await tools.send_message(
-                content=text,
-                mentions=[{"id": sender_id, "name": sender_name or ""}],
-            )
-
-    def _reduce_task_event(self, room_id: str, event: StreamResponse) -> Task | None:
-        """Reduce a raw task delta and retain its current snapshot."""
-        task_id = task_id_from_stream_event(event)
-        if task_id is None:
-            return None
-        task = apply_task_stream_event(self._task_cache.get((room_id, task_id)), event)
-        if task is not None:
-            self._task_cache[(room_id, task.id)] = task
-        return task
-
-    def _remember_task(self, room_id: str, task: Task) -> None:
-        """Record task identity needed for subsequent turns and resumption."""
+        # Track task/context for multi-turn and resumption
         self._tasks[room_id] = task.id
         if task.context_id:
             self._contexts[room_id] = task.context_id
 
-    async def _deliver_task_update(
-        self,
-        task: Task,
-        tools: AgentToolsProtocol,
-        sender: dict[str, str],
-    ) -> None:
-        """Translate one reduced A2A task state into Band output."""
         state = task.status.state
-        if state == TaskState.TASK_STATE_WORKING:
-            status_text = self._get_status_text(task)
-            if status_text:
-                await tools.send_event(content=status_text, message_type="thought")
-            return
 
-        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            text = self._get_status_text(task) or "Please provide more information."
-            await tools.send_message(content=text, mentions=[sender])
-            return
+        try:
+            # Handle based on task state
+            if state == TaskState.working:
+                # Stream progress as thought event (no mentions needed for events)
+                status_text = self._get_status_text(task)
+                if status_text:
+                    await tools.send_event(content=status_text, message_type="thought")
 
-        if state == TaskState.TASK_STATE_COMPLETED:
-            response = self._extract_response(task)
-            if response:
-                await tools.send_message(content=response, mentions=[sender])
-            return
+            elif state == TaskState.input_required:
+                # Agent needs more info - send as message with mention
+                text = self._get_status_text(task) or "Please provide more information."
+                sender = self._task_senders.get(key)
+                await tools.send_message(
+                    content=text,
+                    mentions=[sender] if sender else None,
+                )
+                # Emit task event for rehydration (input_required is resumable)
+                await self._emit_task_event(tools, task, state)
 
-        if state in TERMINAL_TASK_STATES:
-            error_text = self._get_status_text(task) or f"Task {state_name(state)}"
-            await tools.send_event(
-                content=error_text,
-                message_type="error",
-                metadata={"a2a_state": state_name(state)},
-            )
+            elif state == TaskState.completed:
+                # Extract and send final response with mention
+                response = self._extract_response(task)
+                if response:
+                    sender = self._task_senders.get(key)
+                    await tools.send_message(
+                        content=response,
+                        mentions=[sender] if sender else None,
+                    )
 
-    def _finalize_task(self, room_id: str, task_id: str) -> None:
-        """Release a terminal task after its Band output and state are persisted."""
-        self._task_senders.pop((room_id, task_id), None)
-        self._task_cache.pop((room_id, task_id), None)
-        self._tasks.pop(room_id, None)
+            elif state in (
+                TaskState.failed,
+                TaskState.canceled,
+                TaskState.rejected,
+                TaskState.auth_required,
+            ):
+                # Error states - send as error event (no mentions needed)
+                error_text = self._get_status_text(task) or f"Task {state.value}"
+                await tools.send_event(
+                    content=error_text,
+                    message_type="error",
+                    metadata={"a2a_state": state.value},
+                )
+        finally:
+            # Clean up on terminal states
+            if state in TERMINAL_STATES:
+                # Emit task event for rehydration (records final state)
+                await self._emit_task_event(tools, task, state)
+                # Clean up sender tracking
+                self._task_senders.pop(key, None)
+                # Clear task_id so next message starts a new task
+                # (context_id is preserved for multi-turn conversation)
+                self._tasks.pop(room_id, None)
 
     def _to_a2a_message(self, msg: PlatformMessage, room_id: str) -> A2AMessage:
         """Convert Band message to A2A format."""
@@ -277,16 +296,17 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             context_id,
             task_id,
         )
-        return new_text_message(
-            msg.content,
-            role=Role.ROLE_USER,
-            context_id=context_id,
-            task_id=task_id,
+        return A2AMessage(
+            role=Role.user,
+            message_id=str(uuid4()),
+            parts=[Part(root=TextPart(text=msg.content))],
+            context_id=context_id,  # Existing context or None
+            task_id=task_id,  # Continue existing task
         )
 
     def _get_status_text(self, task: Task) -> str | None:
         """Extract text from task status message."""
-        if task.status.HasField("message"):
+        if task.status.message:
             return get_message_text(task.status.message)
         return None
 
@@ -298,32 +318,38 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         2. Status message
         3. Last agent message in history
         """
-        return task_response_text(task)
+        # First: check artifacts
+        if task.artifacts:
+            for artifact in task.artifacts:
+                for part in artifact.parts:
+                    if isinstance(part.root, TextPart):
+                        return part.root.text
+
+        # Fallback: check status message
+        if task.status.message:
+            text = get_message_text(task.status.message)
+            if text:
+                return text
+
+        # Last resort: check history for last agent message
+        if task.history:
+            for msg in reversed(task.history):
+                if msg.role == Role.agent:
+                    text = get_message_text(msg)
+                    if text:
+                        return text
+
+        return ""
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up A2A context for room."""
         self._contexts.pop(room_id, None)
         self._tasks.pop(room_id, None)
-        # A resubscribed task may live in the cache without a sender entry,
-        # so sweep both key sets.
-        stale_keys = [
-            key
-            for key in self._task_senders.keys() | self._task_cache.keys()
-            if key[0] == room_id
-        ]
-        for key in stale_keys:
+        # Clean up any task_senders entries for this room
+        keys_to_remove = [key for key in self._task_senders if key[0] == room_id]
+        for key in keys_to_remove:
             self._task_senders.pop(key, None)
-            self._task_cache.pop(key, None)
         logger.debug("Cleaned up A2A context for room %s", room_id)
-
-    async def cleanup_all(self) -> None:
-        """Close the owned A2A client and its HTTP transport."""
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
 
     async def _emit_task_event(
         self, tools: AgentToolsProtocol, task: Task, state: TaskState
@@ -338,12 +364,12 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             state: Current task state.
         """
         await tools.send_event(
-            content=f"A2A task {state_name(state)}",
+            content=f"A2A task {state.value}",
             message_type="task",
             metadata={
                 "a2a_context_id": task.context_id,
                 "a2a_task_id": task.id,
-                "a2a_task_state": state_name(state),
+                "a2a_task_state": state.value,
             },
         )
 
@@ -367,7 +393,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             )
 
         # Try to resume task if it was in a resumable state
-        if state.task_id and state.task_state not in TERMINAL_TASK_STATE_NAMES:
+        if state.task_id and state.task_state not in TERMINAL_STATE_VALUES:
             await self._try_resubscribe(room_id, state.task_id)
 
     async def _try_resubscribe(self, room_id: str, task_id: str) -> None:
@@ -384,33 +410,24 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             return
 
         try:
-            # aclosing: only the first event is consumed, so close the
-            # subscription stream deterministically instead of leaving it
-            # to async-generator GC. The client returns an async generator,
-            # typed as the narrower AsyncIterator — hence the cast.
-            subscription = cast(
-                "AsyncGenerator[StreamResponse]",
-                self._client.subscribe(SubscribeToTaskRequest(id=task_id)),
-            )
-            async with aclosing(subscription) as events:
-                async for event in events:
-                    task = self._reduce_task_event(room_id, event)
-                    if task is None:
-                        continue
-
+            async for event in self._client.resubscribe(TaskIdParams(id=task_id)):
+                if isinstance(event, tuple):
+                    task, _ = event
                     current_state = task.status.state
-                    if current_state not in TERMINAL_TASK_STATES:
-                        self._remember_task(room_id, task)
+                    if current_state not in TERMINAL_STATES:
+                        self._tasks[room_id] = task_id
+                        if task.context_id:
+                            self._contexts[room_id] = task.context_id
                         logger.info(
                             "Resumed A2A task %s (state=%s)",
                             task_id,
-                            state_name(current_state),
+                            current_state.value,
                         )
                     else:
                         logger.info(
                             "A2A task %s already terminal (state=%s)",
                             task_id,
-                            state_name(current_state),
+                            current_state.value,
                         )
                     break  # Only need first event to get current state
         except Exception as e:

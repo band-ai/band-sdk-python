@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from band.core.backends.observing import send_non_reply_message
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import (
     OpencodeClientProtocol,
@@ -366,7 +367,12 @@ class RoomApprovals:
         )
 
     async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
-        """Post a room message best-effort.
+        """Post approval plumbing text best-effort — never the turn's reply.
+
+        Every message from here is control plane (an ask, an ack, a hint), so
+        it must not count as the turn's delivery: the model's real reply still
+        comes after the ask is answered, and taking these for it would silence
+        the text fallback.
 
         A send failure must never strand the turn or crash the SSE event loop:
         the platform requires at least one mention, so a sender-less turn (no
@@ -377,7 +383,7 @@ class RoomApprovals:
         if tools is None:
             return
         try:
-            await tools.send_message(text, mentions=mentions)
+            await send_non_reply_message(tools, text, mentions=mentions)
         except Exception:
             logger.exception(
                 "Failed to post approval message to room %s", self._ports.room_id

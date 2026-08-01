@@ -9,6 +9,12 @@ from band.core.exceptions import (
     BandConnectionError,
     BandError,
     BandToolError,
+    DuplicateToolError,
+    LifecycleError,
+    MissingDependencyError,
+    RunFailed,
+    StreamError,
+    UnsupportedOptionError,
 )
 
 
@@ -17,6 +23,16 @@ class TestExceptionHierarchy:
         assert issubclass(BandConfigError, BandError)
         assert issubclass(BandConnectionError, BandError)
         assert issubclass(BandToolError, BandError)
+        assert issubclass(MissingDependencyError, BandError)
+        assert issubclass(UnsupportedOptionError, BandError)
+        assert issubclass(DuplicateToolError, BandError)
+        assert issubclass(LifecycleError, BandError)
+        assert issubclass(RunFailed, BandError)
+        assert issubclass(StreamError, BandError)
+
+    def test_missing_dependency_is_also_import_error(self) -> None:
+        assert issubclass(MissingDependencyError, ImportError)
+        assert issubclass(MissingDependencyError, BandConfigError)
 
     def test_band_error_inherits_from_exception(self) -> None:
         assert issubclass(BandError, Exception)
@@ -24,6 +40,10 @@ class TestExceptionHierarchy:
     def test_can_catch_with_base_class(self) -> None:
         with pytest.raises(BandError):
             raise BandConfigError("bad config")
+
+    def test_missing_dependency_catchable_as_import_error(self) -> None:
+        with pytest.raises(ImportError):
+            raise MissingDependencyError("need package")
 
     def test_message_preserved(self) -> None:
         err = BandToolError("send_message failed: 403")

@@ -55,7 +55,7 @@ from .formatters import (
     format_history_for_llm,
     build_participants_message,
 )
-from .prompts import render_system_prompt, BASE_INSTRUCTIONS, TEMPLATES
+from .prompts import render_system_prompt, BASE_INSTRUCTIONS
 from .participant_tracker import ParticipantTracker
 from .retry_tracker import MessageRetryTracker
 from .shutdown import GracefulShutdown, run_with_graceful_shutdown
@@ -94,7 +94,6 @@ __all__ = [
     # Prompts
     "render_system_prompt",
     "BASE_INSTRUCTIONS",
-    "TEMPLATES",
     # Trackers
     "ParticipantTracker",
     "MessageRetryTracker",

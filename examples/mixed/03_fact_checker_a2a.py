@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway]"]
+# dependencies = ["band-sdk[a2a]"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
@@ -24,8 +24,8 @@ import logging
 import os
 
 import uvicorn
-from a2a.helpers import new_task_from_user_message, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
@@ -33,18 +33,17 @@ from a2a.server.tasks import (
     InMemoryTaskStore,
     TaskUpdater,
 )
-from a2a.server.routes.agent_card_routes import create_agent_card_routes
-from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
-from a2a.server.routes.rest_routes import create_rest_routes
-from starlette.applications import Starlette
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
-    AgentInterface,
     AgentSkill,
     Part,
+    TaskState,
+    TextPart,
     UnsupportedOperationError,
 )
+from a2a.utils import new_agent_text_message, new_task
+from a2a.utils.errors import ServerError
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
@@ -78,22 +77,21 @@ class FactCheckerExecutor(AgentExecutor):
         request_text = context.get_user_input()
         task = context.current_task
 
-        if task is None:
-            if context.message is None:
-                raise ValueError("A2A request is missing its message")
-            task = new_task_from_user_message(context.message)
+        if not task:
+            task = new_task(context.message)  # type: ignore[arg-type]
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        await updater.start_work(
-            new_text_message(
+        await updater.update_status(
+            TaskState.working,
+            new_agent_text_message(
                 "Reviewing the request for API, config, and test-surface details...",
-                context_id=task.context_id,
-                task_id=task.id,
+                task.context_id,
+                task.id,
             ),
         )
         await updater.add_artifact(
-            [Part(text=_fact_check_response(request_text))],
+            [Part(root=TextPart(text=_fact_check_response(request_text)))],
             name="fact_check_report",
         )
         await updater.complete()
@@ -103,7 +101,7 @@ class FactCheckerExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
-        raise UnsupportedOperationError()
+        raise ServerError(error=UnsupportedOperationError())
 
 
 def main() -> None:
@@ -118,14 +116,8 @@ def main() -> None:
     agent_card = AgentCard(
         name="Mixed Contract Checker",
         description="Deterministic contract-checking A2A service for the mixed example",
+        url=f"{base_url}/",
         version="1.0.0",
-        supported_interfaces=[
-            AgentInterface(
-                url=base_url,
-                protocol_binding="JSONRPC",
-                protocol_version="1.0",
-            )
-        ],
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         capabilities=AgentCapabilities(streaming=True, push_notifications=False),
@@ -145,18 +137,12 @@ def main() -> None:
     request_handler = DefaultRequestHandler(
         agent_executor=FactCheckerExecutor(),
         task_store=InMemoryTaskStore(),
-        agent_card=agent_card,
         push_config_store=InMemoryPushNotificationConfigStore(),
     )
-    app = Starlette(
-        routes=(
-            create_agent_card_routes(agent_card)
-            + create_jsonrpc_routes(
-                request_handler, rpc_url="/", enable_v0_3_compat=True
-            )
-            + create_rest_routes(request_handler, enable_v0_3_compat=True)
-        )
-    )
+    app = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=request_handler,
+    ).build()
 
     logger.info("Starting mixed contract checker A2A server on %s", base_url)
     uvicorn.run(app, host=host, port=port, log_level="warning")

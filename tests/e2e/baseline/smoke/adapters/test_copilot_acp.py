@@ -56,11 +56,10 @@ async def test_acp_band_tool_call_is_narrated(
     )
 
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             emit_event_instruction(MessageType.THOUGHT, marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         thoughts = await capture.thoughts(sender_id=agent.id)
@@ -88,8 +87,8 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
     An MCP bridge that forwards both a result's readable text and its
     structuredContent companion into one block duplicates the payload -- the
     room event then reads as the same JSON twice (once readable, once
-    re-encoded). The contract: the emitted tool_result content is a single
-    well-formed JSON document, the platform's actual response.
+    re-encoded). The contract: the narrated ``output`` is a single well-formed
+    JSON document, the platform's actual response.
 
     The marker proves the tool ran (via the thought it posted); it is NOT
     asserted inside the tool_result, because the platform's create-event
@@ -104,20 +103,19 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
     )
 
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             emit_event_instruction(MessageType.THOUGHT, marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         thoughts = await capture.thoughts(sender_id=agent.id)
         tool_results = await capture.events(MessageType.TOOL_RESULT, sender_id=agent.id)
 
     thoughts.assert_contains_any([marker])
-    band_results = tool_results.containing('"success"')
+    band_results = tool_results.outputs_containing('"success"')
     band_results.assert_at_least(1)
-    band_results.assert_json_content()
+    band_results.assert_json_output()
 
 
 def resumemiss_config(settings: BaselineSettings, phase_dir: Path) -> Any:

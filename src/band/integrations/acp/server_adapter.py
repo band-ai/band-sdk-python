@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from band.client.rest import (
@@ -19,7 +19,7 @@ from band.client.rest import (
 from band.converters.acp_server import ACPServerHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage
 from band.integrations.acp.event_converter import EventConverter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 
@@ -58,7 +58,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     Example:
         from band import Agent
-        from band.integrations.acp import BandACPServerAdapter, ACPServer
+        from band.integrations.acp import ACPGateway, BandACPServerAdapter, ACPServer
 
         adapter = BandACPServerAdapter(
             rest_url="https://app.band.ai",
@@ -66,9 +66,12 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         )
         server = ACPServer(adapter)
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
-        await agent.start()
-        await run_agent(server)
+        async with ACPGateway(agent=agent, server=server) as gateway:
+            await gateway.serve()
     """
+
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
     def __init__(
         self,

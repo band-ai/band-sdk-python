@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import json
 import logging
 import re
@@ -11,7 +13,7 @@ from typing import Any
 try:
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 except ImportError as e:
-    raise ImportError(
+    raise MissingDependencyError(
         "LangChain dependencies not installed. Install with: uv add band-sdk[langgraph]"
     ) from e
 

@@ -18,18 +18,19 @@ from __future__ import annotations
 
 import asyncio
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
+from band.core.bases import BandSettings
 
 from band import Agent
 from band.core.simple_adapter import SimpleAdapter
 
 
-class EchoAgentSettings(BaseSettings):
+class EchoAgentSettings(BandSettings):
     """Container-injected config. pydantic-settings is a core band-sdk
     dependency, so it's present in the image's core-only venv that runs this
     script via ``$BAND_SDK_PYTHON -c <source>``."""
 
-    model_config = SettingsConfigDict(env_prefix="BAND_", case_sensitive=False)
+    model_config = SettingsConfigDict(env_prefix="BAND_")
 
     agent_id: str  # BAND_AGENT_ID
     api_key: str  # BAND_API_KEY

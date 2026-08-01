@@ -43,12 +43,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
 from band import Agent
-from band.adapters import ACPServer, BandACPServerAdapter
+from band.adapters import ACPServer, BandACPServerAdapter, ACPGateway
 from band.config import load_agent_config
 from band.integrations.acp import AgentRouter
 
@@ -112,13 +111,8 @@ async def main() -> None:
     logger.info("Slash commands: /codex, /claude, /gemini")
     logger.info("Session modes: code -> codex, research -> gemini")
 
-    # Start platform connection (non-blocking)
-    await agent.start()
-    try:
-        # Block on stdio until editor disconnects
-        await run_agent(server)
-    finally:
-        await agent.stop()
+    async with ACPGateway(agent=agent, server=server) as gateway:
+        await gateway.serve()
 
 
 if __name__ == "__main__":

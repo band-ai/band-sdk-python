@@ -8,23 +8,23 @@ tool surface.
 
 from __future__ import annotations
 
+from band.core.exceptions import BandToolError, MissingDependencyError
+
 import inspect
 import json
 import logging
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 try:
     from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool  # type: ignore[import-not-found]
 except ImportError as e:
-    raise ImportError(
+    raise MissingDependencyError(
         "claude-agent-sdk is required for Claude SDK tools.\n"
         "Install with: pip install band-sdk[claude_sdk]\n"
         "Or: uv add band-sdk[claude_sdk]"
     ) from e
 
-from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -51,25 +51,9 @@ logger = logging.getLogger(__name__)
 BAND_CHAT_TOOLS: list[str] = mcp_tool_names(CHAT_TOOL_NAMES)
 BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
 
-_BAND_TOOLS: list[str] = BAND_CHAT_TOOLS
-
 ToolResolver = Callable[[str], AgentToolsProtocol | None]
 ParticipantHandlesResolver = Callable[[str], list[str]]
 ToolResultHook = Callable[[str, str, Any], Awaitable[None] | None]
-
-
-def __getattr__(name: str) -> Any:
-    if name == "BAND_TOOLS":
-        warnings.warn(
-            "BAND_TOOLS is deprecated, use BAND_CHAT_TOOLS instead. "
-            f"Note: this contains only chat tools ({len(_BAND_TOOLS)}). "
-            "For all tools including contacts and memory, use "
-            "band.adapters.claude_sdk.BAND_ALL_TOOLS.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return _BAND_TOOLS
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _make_result(data: Any) -> dict[str, Any]:

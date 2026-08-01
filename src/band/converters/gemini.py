@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import logging
 from typing import Any
 
 try:
     from google.genai import types  # type: ignore[missing-import]
 except ImportError as e:
-    raise ImportError(
+    raise MissingDependencyError(
         "Google GenAI dependencies not installed. Install with: uv add band-sdk[gemini]"
     ) from e
 

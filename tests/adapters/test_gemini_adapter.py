@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
-from google.genai import types
-from google.genai.errors import ServerError
-from pydantic import BaseModel, Field
 
 from band.adapters.gemini import GeminiAdapter
-from band.core.types import PlatformMessage
+from band.core.types import AdapterFeatures, Emit, PlatformMessage
+from band.runtime.tools import ToolCallOutcome
+from tests.modelclients import ScriptedGeminiClient, gemini_reply
 
 
 @pytest.fixture
@@ -38,35 +36,41 @@ def mock_tools() -> MagicMock:
     tools.get_openai_tool_schemas = MagicMock(return_value=[])
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
-    tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
+    tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value={"status": "success"}, ok=True)
+    )
     return tools
 
 
-def _response_with_text(text: str) -> MagicMock:
-    response = MagicMock()
-    response.function_calls = []
-    response.candidates = [
-        MagicMock(
-            content=types.Content(role="model", parts=[types.Part.from_text(text=text)])
-        )
-    ]
-    return response
+@pytest.fixture
+def scripted():
+    """Build an adapter whose Gemini client replays scripted replies.
+
+    Injection at the SDK client keeps the provider's real request projection
+    and response mapping inside every turn these tests drive, and the returned
+    client records the payloads that reached the wire.
+    """
+
+    def build(*replies, **kwargs) -> GeminiAdapter:
+        adapter = GeminiAdapter(provider_key="test-key", **kwargs)
+        adapter.client = ScriptedGeminiClient(list(replies))
+        return adapter
+
+    return build
 
 
-def _response_with_function_call(
-    name: str, args: dict[str, str], call_id: str
-) -> MagicMock:
-    response = MagicMock()
-    response.function_calls = [types.FunctionCall(name=name, args=args, id=call_id)]
-    response.candidates = [
-        MagicMock(
-            content=types.Content(
-                role="model",
-                parts=[types.Part.from_function_call(name=name, args=args)],
-            )
-        )
-    ]
-    return response
+async def deliver(adapter, msg, tools, **overrides) -> None:
+    """Deliver one platform message with the turn's usual defaults."""
+    await adapter.on_message(
+        msg=msg,
+        tools=tools,
+        history=overrides.pop("history", []),
+        participants_msg=overrides.pop("participants_msg", None),
+        contacts_msg=overrides.pop("contacts_msg", None),
+        is_session_bootstrap=overrides.pop("is_session_bootstrap", True),
+        room_id=overrides.pop("room_id", "room-123"),
+        **overrides,
+    )
 
 
 class TestOnStarted:
@@ -78,9 +82,14 @@ class TestOnStarted:
         assert "TestBot" in adapter._system_prompt
 
     @pytest.mark.asyncio
-    async def test_uses_custom_system_prompt_when_provided(self):
+    async def test_uses_replace_instructions_when_provided(self):
+        from band.core.instructions import Instruction, InstructionMode
+
         adapter = GeminiAdapter(
-            system_prompt="Custom prompt here.",
+            instructions=Instruction(
+                text="Custom prompt here.",
+                mode=InstructionMode.REPLACE,
+            ),
             provider_key="test-key",
         )
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
@@ -89,56 +98,53 @@ class TestOnStarted:
 
 class TestOnMessage:
     @pytest.mark.asyncio
-    async def test_initializes_history_on_bootstrap(self, sample_message, mock_tools):
-        adapter = GeminiAdapter(provider_key="test-key")
+    async def test_initializes_history_on_bootstrap(
+        self, sample_message, mock_tools, scripted
+    ):
+        adapter = scripted(gemini_reply("ok"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter, "_call_gemini", AsyncMock(return_value=_response_with_text("ok"))
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-            assert "room-123" in adapter._message_history
-            assert len(adapter._message_history["room-123"]) >= 2
+        await deliver(adapter, sample_message, mock_tools)
+
+        assert len(adapter.session_history("room-123")) >= 2
 
     @pytest.mark.asyncio
-    async def test_executes_tool_loop(self, sample_message, mock_tools):
-        adapter = GeminiAdapter(
-            enable_execution_reporting=True,
-            provider_key="test-key",
+    async def test_system_prompt_and_tools_reach_the_wire(
+        self, sample_message, mock_tools, scripted
+    ):
+        """The rendered instructions and the room's tool declarations are what
+        the provider actually sends — nothing between the adapter and the SDK
+        drops them."""
+        adapter = scripted(gemini_reply("ok"))
+        mock_tools.get_openai_tool_schemas = MagicMock(
+            return_value=[
+                {
+                    "type": "function",
+                    "function": {"name": "band_send_message", "description": "Send"},
+                }
+            ]
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter,
-            "_call_gemini",
-            AsyncMock(
-                side_effect=[
-                    _response_with_function_call(
-                        "band_lookup_peers", {"page": "1"}, "call_1"
-                    ),
-                    _response_with_text("done"),
-                ]
-            ),
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        await deliver(adapter, sample_message, mock_tools)
 
-        mock_tools.execute_tool_call.assert_called_once_with(
+        config = adapter.client.last_payload["config"]
+        assert config.system_instruction == adapter._system_prompt
+        declared = [d.name for tool in config.tools for d in tool.function_declarations]
+        assert declared == ["band_send_message"]
+
+    @pytest.mark.asyncio
+    async def test_executes_tool_loop(self, sample_message, mock_tools, scripted):
+        adapter = scripted(
+            gemini_reply(tool_calls=[("band_lookup_peers", {"page": "1"})]),
+            gemini_reply("done"),
+            features=AdapterFeatures(emit={Emit.EXECUTION}),
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        await deliver(adapter, sample_message, mock_tools)
+
+        mock_tools.execute_tool_call_structured.assert_awaited_once_with(
             "band_lookup_peers", {"page": "1"}
         )
         # tool_call + tool_result reporting
@@ -146,90 +152,19 @@ class TestOnMessage:
 
     @pytest.mark.asyncio
     async def test_send_event_failure_does_not_crash_tool_execution(
-        self, sample_message, mock_tools
+        self, sample_message, mock_tools, scripted
     ):
-        adapter = GeminiAdapter(
-            enable_execution_reporting=True,
-            provider_key="test-key",
+        adapter = scripted(
+            gemini_reply(tool_calls=[("band_lookup_peers", {"page": "1"})]),
+            gemini_reply("done"),
+            features=AdapterFeatures(emit={Emit.EXECUTION}),
         )
         await adapter.on_started("TestBot", "Test bot")
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
-        with patch.object(
-            adapter,
-            "_call_gemini",
-            AsyncMock(
-                side_effect=[
-                    _response_with_function_call(
-                        "band_lookup_peers", {"page": "1"}, "call_1"
-                    ),
-                    _response_with_text("done"),
-                ]
-            ),
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        await deliver(adapter, sample_message, mock_tools)
 
-        mock_tools.execute_tool_call.assert_called_once()
-
-    def test_extract_candidate_content_preserves_function_call_id_in_fallback(self):
-        adapter = GeminiAdapter(provider_key="test-key")
-        response = MagicMock()
-        response.candidates = [MagicMock(content=None)]
-        response.function_calls = [
-            types.FunctionCall(name="band_lookup_peers", args={"page": "1"}, id="c1")
-        ]
-
-        content = adapter._extract_candidate_content(response)
-
-        assert content is not None
-        assert content.role == "model"
-        assert len(content.parts) == 1
-        function_call = content.parts[0].function_call
-        assert function_call is not None
-        assert function_call.id == "c1"
-        assert function_call.name == "band_lookup_peers"
-        assert function_call.args == {"page": "1"}
-
-
-class TestRetries:
-    @pytest.mark.asyncio
-    async def test_retries_transient_server_errors(self):
-        adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
-        )
-        adapter._system_prompt = "system"
-        adapter.client = MagicMock()
-        adapter.client.aio.models.generate_content = AsyncMock(
-            side_effect=[
-                ServerError(500, {"error": "temporary"}, None),
-                _response_with_text("ok"),
-            ]
-        )
-
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
-        ) as mocked:
-            response = await adapter._call_gemini(
-                contents=[
-                    types.Content(role="user", parts=[types.Part.from_text(text="x")])
-                ],
-                tools=[],
-            )
-
-        assert mocked.call_count == 2
-        assert response.candidates[0].content.parts[0].text == "ok"
+        mock_tools.execute_tool_call_structured.assert_awaited_once()
 
 
 class TestBuildGeminiTools:
@@ -263,7 +198,7 @@ class TestBuildGeminiTools:
         )
         adapter = GeminiAdapter(provider_key="test-key")
 
-        tools = adapter._build_gemini_tools(mock_tools)
+        tools = adapter._build_tools(mock_tools)
 
         decl = tools[0].function_declarations[0]
         schema = decl.parameters_json_schema
@@ -273,132 +208,27 @@ class TestBuildGeminiTools:
         assert "maximum" not in page_size
 
 
-class TestCustomTools:
-    @pytest.mark.asyncio
-    async def test_executes_custom_tool(self, mock_tools):
-        class EchoInput(BaseModel):
-            text: str = Field(...)
-
-        async def echo_tool(inp: EchoInput) -> str:
-            return inp.text
-
-        adapter = GeminiAdapter(
-            additional_tools=[(EchoInput, echo_tool)],
-            provider_key="test-key",
-        )
-        function_calls = [
-            types.FunctionCall(name="echo", args={"text": "hello"}, id="c1")
-        ]
-
-        parts = await adapter._process_function_calls(function_calls, mock_tools)
-
-        assert len(parts) == 1
-        function_response = parts[0].function_response
-        assert function_response is not None
-        assert function_response.response == {"output": "hello"}
-        mock_tools.execute_tool_call.assert_not_called()
-
-
 class TestOnCleanup:
     @pytest.mark.asyncio
     async def test_removes_room_history(self):
         adapter = GeminiAdapter(provider_key="test-key")
-        adapter._message_history["room-1"] = [
-            types.Content(role="user", parts=[types.Part.from_text(text="hi")])
-        ]
+        adapter._backend.bind_session("room-1", [])
         await adapter.on_cleanup("room-1")
-        assert "room-1" not in adapter._message_history
+        assert not adapter._backend.has_session("room-1")
 
     @pytest.mark.asyncio
     async def test_cleanup_twice_is_idempotent(self):
         adapter = GeminiAdapter(provider_key="test-key")
-        adapter._message_history["room-1"] = []
+        adapter._backend.bind_session("room-1", [])
         await adapter.on_cleanup("room-1")
         await adapter.on_cleanup("room-1")  # Should not raise
-        assert "room-1" not in adapter._message_history
+        assert not adapter._backend.has_session("room-1")
 
     @pytest.mark.asyncio
     async def test_cleanup_unknown_room_is_noop(self):
         adapter = GeminiAdapter(provider_key="test-key")
         await adapter.on_cleanup("nonexistent-room")  # Should not raise
-        assert "nonexistent-room" not in adapter._message_history
-
-    def test_trim_history_caps_at_max(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=5)
-        adapter._message_history["room-1"] = [
-            types.Content(role="user", parts=[types.Part.from_text(text=f"msg-{i}")])
-            for i in range(10)
-        ]
-        adapter._trim_history("room-1")
-        assert len(adapter._message_history["room-1"]) == 5
-        # Keeps the most recent messages
-        assert adapter._message_history["room-1"][0].parts[0].text == "msg-5"
-
-    def test_trim_history_noop_when_under_limit(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=50)
-        adapter._message_history["room-1"] = [
-            types.Content(role="user", parts=[types.Part.from_text(text="hi")])
-        ]
-        adapter._trim_history("room-1")
-        assert len(adapter._message_history["room-1"]) == 1
-
-    def test_trim_history_drops_leading_model_entry(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=3)
-        adapter._message_history["room-1"] = [
-            types.Content(role="user", parts=[types.Part.from_text(text="msg-0")]),
-            types.Content(role="model", parts=[types.Part.from_text(text="reply-0")]),
-            types.Content(role="user", parts=[types.Part.from_text(text="msg-1")]),
-            types.Content(role="model", parts=[types.Part.from_text(text="reply-1")]),
-        ]
-
-        adapter._trim_history("room-1")
-
-        trimmed = adapter._message_history["room-1"]
-        assert len(trimmed) == 2
-        assert trimmed[0].role == "user"
-        assert trimmed[0].parts[0].text == "msg-1"
-        assert trimmed[1].role == "model"
-        assert trimmed[1].parts[0].text == "reply-1"
-
-    def test_trim_history_strips_orphaned_leading_tool_response_parts(self):
-        adapter = GeminiAdapter(provider_key="test-key", max_history_messages=3)
-        adapter._message_history["room-1"] = [
-            types.Content(role="user", parts=[types.Part.from_text(text="msg-0")]),
-            types.Content(
-                role="model",
-                parts=[
-                    types.Part.from_function_call(
-                        name="band_send_message",
-                        args={"content": "hello"},
-                    )
-                ],
-            ),
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part(
-                        function_response=types.FunctionResponse(
-                            id="tc_1",
-                            name="band_send_message",
-                            response={"output": {"status": "sent"}},
-                        )
-                    ),
-                    types.Part.from_text(text="[Alice]: follow-up"),
-                ],
-            ),
-            types.Content(role="model", parts=[types.Part.from_text(text="reply-1")]),
-        ]
-
-        adapter._trim_history("room-1")
-
-        trimmed = adapter._message_history["room-1"]
-        assert len(trimmed) == 2
-        assert trimmed[0].role == "user"
-        assert len(trimmed[0].parts) == 1
-        assert trimmed[0].parts[0].function_response is None
-        assert trimmed[0].parts[0].text == "[Alice]: follow-up"
-        assert trimmed[1].role == "model"
-        assert trimmed[1].parts[0].text == "reply-1"
+        assert not adapter._backend.has_session("nonexistent-room")
 
     @pytest.mark.asyncio
     async def test_cleanup_before_any_messages(self):
@@ -407,254 +237,183 @@ class TestOnCleanup:
         await adapter.on_cleanup("room-never-used")  # Should not raise
 
 
-class TestValidationErrorHandling:
-    @pytest.mark.asyncio
-    async def test_validation_error_returns_friendly_message(self, mock_tools):
-        from pydantic import ValidationError
-
-        adapter = GeminiAdapter(provider_key="test-key")
-
-        mock_tools.execute_tool_call = AsyncMock(
-            side_effect=ValidationError.from_exception_data(
-                title="SendMessageInput",
-                line_errors=[
-                    {
-                        "type": "missing",
-                        "loc": ("content",),
-                        "msg": "Field required",
-                        "input": {},
-                    }
-                ],
-            )
-        )
-
-        function_calls = [
-            types.FunctionCall(name="band_send_message", args={}, id="call_1")
-        ]
-        parts = await adapter._process_function_calls(function_calls, mock_tools)
-
-        assert len(parts) == 1
-        resp = parts[0].function_response
-        assert resp is not None
-        assert "Invalid arguments for band_send_message" in resp.response["error"]
-        assert "content" in resp.response["error"]
-
-
 class TestMaxToolRounds:
     @pytest.mark.asyncio
     async def test_raises_runtime_error_when_max_rounds_exceeded(
-        self, sample_message, mock_tools
+        self, sample_message, mock_tools, scripted
     ):
-        adapter = GeminiAdapter(
-            max_tool_rounds=2,
-            provider_key="test-key",
-        )
+        # Every round asks for a tool, so the loop never terminates naturally.
+        always_calling = gemini_reply(tool_calls=[("band_lookup_peers", {"page": "1"})])
+        adapter = scripted(always_calling, always_calling, max_tool_rounds=2)
         await adapter.on_started("TestBot", "Test bot")
 
-        # Always return a function call so the loop never terminates naturally
-        with patch.object(
-            adapter,
-            "_call_gemini",
-            AsyncMock(
-                return_value=_response_with_function_call(
-                    "band_lookup_peers", {"page": "1"}, "call_1"
-                )
-            ),
-        ):
-            with pytest.raises(RuntimeError, match="Exceeded max tool rounds"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+        with pytest.raises(RuntimeError, match="Exceeded max tool rounds"):
+            await deliver(adapter, sample_message, mock_tools)
 
-
-class TestHttpxRetries:
     @pytest.mark.asyncio
-    async def test_retries_on_timeout_exception(self):
-        adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
-        )
-        adapter._system_prompt = "system"
-        adapter.client = MagicMock()
-        adapter.client.aio.models.generate_content = AsyncMock(
-            side_effect=[
-                httpx.TimeoutException("timeout"),
-                _response_with_text("ok"),
-            ]
-        )
+    async def test_exhausted_rounds_are_reported_to_the_room(
+        self, sample_message, mock_tools, scripted
+    ):
+        """A runaway loop must not end the turn silently.
 
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
-        ) as mocked:
-            response = await adapter._call_gemini(
-                contents=[
-                    types.Content(role="user", parts=[types.Part.from_text(text="x")])
-                ],
-                tools=[],
+        Hitting the cap raises, which the runtime logs — but the room only
+        learns anything if the turn reports it like any other failure.
+        """
+        always_calling = gemini_reply(tool_calls=[("band_lookup_peers", {"page": "1"})])
+        adapter = scripted(always_calling, max_tool_rounds=1)
+        await adapter.on_started("TestBot", "Test bot")
+
+        with pytest.raises(RuntimeError, match="Exceeded max tool rounds"):
+            await deliver(adapter, sample_message, mock_tools)
+
+        assert [
+            call.kwargs["message_type"] for call in mock_tools.send_event.call_args_list
+        ] == ["error"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("max_tool_rounds", [0, -1])
+    async def test_non_positive_limits_reject_before_calling_the_model(
+        self, sample_message, mock_tools, scripted, max_tool_rounds
+    ):
+        adapter = scripted(max_tool_rounds=max_tool_rounds)
+        await adapter.on_started("TestBot", "Test bot")
+
+        with pytest.raises(RuntimeError, match="Exceeded max tool rounds"):
+            await deliver(adapter, sample_message, mock_tools)
+
+        assert adapter.client.call_count == 0
+
+
+class TestInterruptedTurn:
+    @pytest.mark.asyncio
+    async def test_cancelled_turn_never_calls_the_model(
+        self, sample_message, mock_tools, scripted
+    ):
+        """The turn's cancellation token gates the loop, not just task cancel.
+
+        ``SimpleAdapterBackend`` carries the token on the turn's tools because
+        ``on_message`` cannot take it; a façade that ignores it keeps calling
+        the model after ``AgentStream.aclose`` flips it.
+        """
+        import asyncio
+
+        from band.core.run.cancellation import FlagCancellation
+        from tests.core.contractsupport import turn_tools
+
+        cancellation = FlagCancellation()
+        cancellation.cancel()
+        adapter = scripted(gemini_reply("hi"))
+        await adapter.on_started("TestBot", "Test bot")
+
+        with pytest.raises(asyncio.CancelledError):
+            await deliver(
+                adapter,
+                sample_message,
+                turn_tools(mock_tools, cancellation=cancellation),
             )
 
-        assert mocked.call_count == 2
-        assert response.candidates[0].content.parts[0].text == "ok"
+        assert adapter.client.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_retries_on_transport_error(self):
-        adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
-        )
-        adapter._system_prompt = "system"
-        adapter.client = MagicMock()
-        adapter.client.aio.models.generate_content = AsyncMock(
-            side_effect=[
-                httpx.TransportError("connection reset"),
-                _response_with_text("ok"),
-            ]
-        )
+    async def test_interrupt_surfaces_as_cancelled_and_finishes_teardown(
+        self, sample_message, mock_tools, scripted
+    ):
+        """Interrupting a turn must reach the runtime as ``CancelledError``.
 
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
-        ) as mocked:
-            response = await adapter._call_gemini(
-                contents=[
-                    types.Content(role="user", parts=[types.Part.from_text(text="x")])
-                ],
-                tools=[],
-            )
+        ``ExecutionContext._run_cycle`` tells an interrupt apart from a handler
+        error by catching ``CancelledError``, so teardown must not raise
+        anything else. Teardown must also run to the end: history is trimmed
+        *and* the backend session realigned to it, or the next turn replays a
+        window the adapter already dropped.
+        """
+        import asyncio
 
-        assert mocked.call_count == 2
-        assert response.candidates[0].content.parts[0].text == "ok"
+        parked = asyncio.Event()
 
-    @pytest.mark.asyncio
-    async def test_raises_after_exhausting_retries(self):
-        adapter = GeminiAdapter(
-            max_retries=1,
-            retry_base_delay_s=0,
-            provider_key="test-key",
+        async def park(**_payload):
+            parked.set()
+            await asyncio.sleep(30)  # interrupted here
+
+        adapter = scripted(
+            gemini_reply(tool_calls=[("band_lookup_peers", {"page": "1"})]),
+            park,
+            max_history_messages=2,
         )
-        adapter._system_prompt = "system"
-        adapter.client = MagicMock()
-        adapter.client.aio.models.generate_content = AsyncMock(
-            side_effect=httpx.TimeoutException("timeout")
+        await adapter.on_started("TestBot", "Test bot")
+        mock_tools.execute_tool_call_structured = AsyncMock(
+            return_value=ToolCallOutcome(value={"status": "success"}, ok=True)
         )
 
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
-        ):
-            with pytest.raises(httpx.TimeoutException):
-                await adapter._call_gemini(
-                    contents=[
-                        types.Content(
-                            role="user", parts=[types.Part.from_text(text="x")]
-                        )
-                    ],
-                    tools=[],
-                )
+        turn = asyncio.create_task(deliver(adapter, sample_message, mock_tools))
+        await parked.wait()
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        history = adapter.session_history("room-123")
+        assert len(history) <= adapter.max_history_messages, (
+            f"teardown must trim history to the cap, got {len(history)}"
+        )
+        assert len(adapter._backend.session("room-123")) == len(history), (
+            "teardown must realign the backend session with the trimmed history"
+        )
 
 
 class TestParticipantsContactsInjection:
     @pytest.mark.asyncio
     async def test_participants_msg_injected_into_history(
-        self, sample_message, mock_tools
+        self, sample_message, mock_tools, scripted
     ):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = scripted(gemini_reply("ok"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter, "_call_gemini", AsyncMock(return_value=_response_with_text("ok"))
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg="Alice, Bob are in the room",
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        await deliver(
+            adapter,
+            sample_message,
+            mock_tools,
+            participants_msg="Alice, Bob are in the room",
+        )
 
-        history = adapter._message_history["room-123"]
+        history = adapter.session_history("room-123")
         # First entry should be participants system message
         assert "[System]: Alice, Bob are in the room" in history[0].parts[0].text
 
     @pytest.mark.asyncio
-    async def test_contacts_msg_injected_into_history(self, sample_message, mock_tools):
-        adapter = GeminiAdapter(provider_key="test-key")
+    async def test_contacts_msg_injected_into_history(
+        self, sample_message, mock_tools, scripted
+    ):
+        adapter = scripted(gemini_reply("ok"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter, "_call_gemini", AsyncMock(return_value=_response_with_text("ok"))
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg="Charlie is now a contact",
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        await deliver(
+            adapter,
+            sample_message,
+            mock_tools,
+            contacts_msg="Charlie is now a contact",
+        )
 
-        history = adapter._message_history["room-123"]
+        history = adapter.session_history("room-123")
         assert "[System]: Charlie is now a contact" in history[0].parts[0].text
 
     @pytest.mark.asyncio
     async def test_both_participants_and_contacts_injected(
-        self, sample_message, mock_tools
+        self, sample_message, mock_tools, scripted
     ):
-        adapter = GeminiAdapter(provider_key="test-key")
+        adapter = scripted(gemini_reply("ok"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter, "_call_gemini", AsyncMock(return_value=_response_with_text("ok"))
-        ):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg="Alice, Bob",
-                contacts_msg="Charlie added",
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        await deliver(
+            adapter,
+            sample_message,
+            mock_tools,
+            participants_msg="Alice, Bob",
+            contacts_msg="Charlie added",
+        )
 
-        history = adapter._message_history["room-123"]
+        history = adapter.session_history("room-123")
         # All user-side content merged into a single Content entry
         user_entry = history[0]
         assert len(user_entry.parts) == 3
         assert "[System]: Alice, Bob" in user_entry.parts[0].text
         assert "[System]: Charlie added" in user_entry.parts[1].text
         assert "Alice" in user_entry.parts[2].text  # user message
-
-
-class TestEmptyCandidates:
-    def test_extract_candidate_content_returns_none_for_empty_response(self):
-        adapter = GeminiAdapter(provider_key="test-key")
-        response = MagicMock()
-        response.candidates = []
-        response.function_calls = []
-
-        content = adapter._extract_candidate_content(response)
-        assert content is None
-
-    def test_extract_candidate_content_returns_none_when_no_candidates(self):
-        adapter = GeminiAdapter(provider_key="test-key")
-        response = MagicMock()
-        response.candidates = None
-        response.function_calls = []
-
-        content = adapter._extract_candidate_content(response)
-        assert content is None

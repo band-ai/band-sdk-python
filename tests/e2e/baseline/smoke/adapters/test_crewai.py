@@ -55,11 +55,10 @@ async def test_crewai_executes_custom_tool(
         title="e2e-crewai-tool", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'gamma'",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
@@ -87,11 +86,10 @@ async def test_crewai_flow_replies(
         title="e2e-crewai-flow", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "Please say hello.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id)
 

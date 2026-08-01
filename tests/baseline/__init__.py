@@ -3,4 +3,7 @@
 This package is intentionally separate from ``tests.e2e.baseline``.  It drives
 real adapter code with injected model decisions and in-memory platform tools, so
 it remains part of the ordinary offline unit-test suite.
+
+Delivery / text-fallback contracts live under ``tests.baseline.delivery``
+(scenarios → tools → outcome → checks → runners).
 """

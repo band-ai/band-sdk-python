@@ -12,6 +12,7 @@ from band_rest import AsyncRestClient
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
     ResourceManager,
     new_run_id,
     user_rest_client,
@@ -22,6 +23,7 @@ from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient, user_ws_obser
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "agent_room",
     "baseline_run_id",
     "baseline_settings",
     "baseline_user_client",
@@ -94,6 +96,19 @@ async def resource_manager(
     yield resources
     if baseline_settings.run.autoclean:
         await resources.reap_all()
+
+
+@pytest.fixture
+async def agent_room(
+    request: pytest.FixtureRequest,
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+) -> str:
+    """Single-agent room for the running ``agent``; reaped with the resources."""
+    return await resource_manager.provision_room(
+        title=f"e2e-{agent.adapter_id}-{request.node.name}",
+        participants=[agent.id],
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

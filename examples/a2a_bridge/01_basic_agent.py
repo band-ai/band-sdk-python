@@ -25,7 +25,7 @@ Prerequisites:
        python -m app --host localhost --port 10000
 
     2. Verify the agent is running:
-       curl http://localhost:10000/.well-known/agent-card.json
+       curl http://localhost:10000/.well-known/agent.json
 
 Run with:
     uv run examples/a2a_bridge/01_basic_agent.py

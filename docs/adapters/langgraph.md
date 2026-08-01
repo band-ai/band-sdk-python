@@ -138,7 +138,6 @@ This section covers `LangGraphAdapter(...)` constructor parameters. Pass these d
 | `checkpointer` | `BaseCheckpointSaver \| None` | `None` | LangGraph checkpointer for state persistence. The simple pattern creates an in-memory checkpointer when this is omitted. |
 | `graph_factory` | `Callable[[list], Pregel] \| None` | `None` | Function that receives Band tools and returns a graph. Use for custom graphs that need Band tools. |
 | `graph` | `Pregel \| None` | `None` | Fully self-contained static graph. Advanced use only. |
-| `prompt_template` | `str` | `"default"` | Band system prompt template name. Applies when the adapter injects the prompt in the simple or `graph_factory` path. |
 | `custom_section` | `str` | `""` | Custom instructions appended to Band's generated system prompt. Applies in the simple or `graph_factory` path. |
 | `additional_tools` | `list \| None` | `None` | Extra LangChain tools merged with Band tools in the simple pattern. For a custom factory, merge your tools inside the factory. |
 | `recursion_limit` | `int` | `50` | LangGraph recursion limit for each invocation. |

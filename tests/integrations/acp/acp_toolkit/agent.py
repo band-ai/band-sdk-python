@@ -30,6 +30,8 @@ from acp.schema import (
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from band.runtime.tools import BAND_SEND_MESSAGE
+
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 
@@ -65,6 +67,8 @@ class FakeACPAgent:
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
         self.approved: bool | None = None
+        # Set per turn by the harness — the room a remote band-mcp would POST to.
+        self.room: Any = None
 
     # -- scripting ---------------------------------------------------------------
 
@@ -121,6 +125,34 @@ class FakeACPAgent:
                     sid,
                     update_tool_call(tool_call_id, raw_output=result, status=status),
                 )
+
+        self._script.append(_action)
+        return self
+
+    def will_call_band_tool(
+        self,
+        tool_call_id: str,
+        *,
+        content: str,
+        title: str = BAND_SEND_MESSAGE,
+        status: str = "completed",
+    ) -> FakeACPAgent:
+        """A remote band-mcp call: really posts to the room, mid-call.
+
+        Models the config the SDK cannot observe (``inject_band_tools=False``,
+        tools served by a band-mcp in another process): the post reaches the
+        platform directly, and the session-update stream is the only thing the
+        adapter sees. A non-completed status posts nothing — a failed call must
+        leave the room empty so the text fallback still has to speak.
+        """
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a.emit(sid, start_tool_call(tool_call_id, title))
+            if status == "completed" and a.room is not None:
+                await a.room.send_message(content, [{"id": "peer-1"}])
+            await a.emit(
+                sid, update_tool_call(tool_call_id, raw_output=content, status=status)
+            )
 
         self._script.append(_action)
         return self

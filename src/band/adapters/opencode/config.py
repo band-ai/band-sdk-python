@@ -23,9 +23,6 @@ class OpencodeAdapterConfig:
     variant: str | None = None
     custom_section: str = ""
     include_base_instructions: bool = False
-    enable_task_events: bool = True
-    enable_execution_reporting: bool = False
-    enable_memory_tools: bool = False
     fallback_send_agent_text: bool = True
     turn_timeout_s: float = 300.0
     approval_mode: ApprovalMode = "manual"

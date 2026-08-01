@@ -339,8 +339,8 @@ class TestReplyMatching:
             is_session_bootstrap=False,
         )
 
-        assert tools.messages_sent == [
-            {"id": "msg-0", "content": "final answer", "mentions": ["@example/peer-b"]}
+        assert [(m.content, m.mentions) for m in tools.messages_sent] == [
+            ("final answer", ["@example/peer-b"])
         ]
         statuses = [
             e["metadata"].get(ns, {}).get("status")
@@ -407,8 +407,8 @@ class TestReplyMatching:
             is_session_bootstrap=False,
         )
 
-        assert tools.messages_sent == [
-            {"id": "msg-0", "content": "first answer", "mentions": ["@example/peer-a"]}
+        assert [(m.content, m.mentions) for m in tools.messages_sent] == [
+            ("first answer", ["@example/peer-a"])
         ]
         statuses = [
             e["metadata"].get(ns, {}).get("status")

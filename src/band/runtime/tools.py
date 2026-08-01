@@ -7,9 +7,9 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 from __future__ import annotations
 
 import logging
-import warnings
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
@@ -45,6 +45,29 @@ if TYPE_CHECKING:
     from .execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
+
+CHAT_PAGE_SIZE = 100
+# The walk below stops on the server's own page count, so it is capped too:
+# 5,000 rooms is far past any real agent, and a listing that never reports a
+# final page then degrades to a bounded read instead of looping forever.
+MAX_CHAT_PAGES = 50
+
+
+async def iter_chat_pages(
+    fetch: Callable[[int, int], Awaitable[Any]],
+) -> AsyncIterator[Any]:
+    """Yield each page of a chat listing, oldest page first."""
+    for page in range(1, MAX_CHAT_PAGES + 1):
+        response = await fetch(page, CHAT_PAGE_SIZE)
+        yield response
+        total_pages = getattr(response.metadata, "total_pages", None)
+        if not total_pages or page >= int(total_pages):
+            return
+    logger.warning(
+        "Stopped listing chats at the %d page cap; some rooms were not read",
+        MAX_CHAT_PAGES,
+    )
+
 
 # The Agent Events API enforces a hard cap on event content (see
 # thenvoi-platform's events_controller.ex `@content_max_length`) and rejects
@@ -722,8 +745,11 @@ class ListMyPeersInput(BaseModel):
 # the ``<server>-`` prefix match already covers; ``create_agent_chat_message``
 # is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
 # still match.
+BAND_SEND_MESSAGE = "band_send_message"
+LEGACY_CREATE_AGENT_CHAT_MESSAGE = "create_agent_chat_message"
+BAND_LIST_CONTACTS = "band_list_contacts"
 ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {"band_send_message", "create_agent_chat_message"}
+    {BAND_SEND_MESSAGE, LEGACY_CREATE_AGENT_CHAT_MESSAGE}
 )
 
 
@@ -732,6 +758,23 @@ def _matches_tool_name(tool_name: str, names: frozenset[str]) -> bool:
     if tool_name in names:
         return True
     return tool_name.endswith(tuple(f"-{name}" for name in names))
+
+
+def canonical_tool_name(tool_name: str) -> str:
+    """The band tool an MCP-prefixed name refers to, or the name unchanged.
+
+    An MCP client advertises our tools under its own server name
+    (``band-band_send_message``), and that spelling reaches us through a
+    framework's tool-call stream. Narration and delivery evidence speak the
+    canonical vocabulary, so a consumer matches one set of names whichever
+    client ran the tool. A name that is not ours passes through untouched.
+    """
+    if tool_name in _CANONICAL_TOOL_NAMES:
+        return tool_name
+    for name in _CANONICAL_TOOL_NAMES:
+        if tool_name.endswith(f"-{name}"):
+            return name
+    return tool_name
 
 
 def is_room_posting_tool(tool_name: str) -> bool:
@@ -749,8 +792,8 @@ def is_room_posting_tool(tool_name: str) -> bool:
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
-    "band_send_message": ToolDefinition(
-        name="band_send_message",
+    BAND_SEND_MESSAGE: ToolDefinition(
+        name=BAND_SEND_MESSAGE,
         input_model=SendMessageInput,
         method_name="send_message",
     ),
@@ -784,8 +827,8 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         input_model=CreateChatroomInput,
         method_name="create_chatroom",
     ),
-    "band_list_contacts": ToolDefinition(
-        name="band_list_contacts",
+    BAND_LIST_CONTACTS: ToolDefinition(
+        name=BAND_LIST_CONTACTS,
         input_model=ListContactsInput,
         method_name="list_contacts",
     ),
@@ -1033,7 +1076,7 @@ MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
 # band_get_contact_context) would be silently misclassified.
 CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_list_contacts",
+        BAND_LIST_CONTACTS,
         "band_add_contact",
         "band_remove_contact",
         "band_list_contact_requests",
@@ -1051,7 +1094,7 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_get_participants",
         "band_lookup_peers",
-        "band_list_contacts",
+        BAND_LIST_CONTACTS,
         "band_list_contact_requests",
         "band_list_memories",
         "band_get_memory",
@@ -1095,6 +1138,11 @@ HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 
 # Derived from TOOL_MODELS — single source of truth
 ALL_TOOL_NAMES: frozenset[str] = frozenset(TOOL_MODELS.keys())
+
+# What an MCP-prefixed spelling can be resolved back to (see
+# ``canonical_tool_name``): our own tools plus the legacy room-posting name a
+# band-mcp <=1.3.1 still advertises.
+_CANONICAL_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES | ROOM_POSTING_TOOL_NAMES
 
 
 def band_tool_errored(tool_name: str | None, content: Any) -> bool:
@@ -1206,28 +1254,14 @@ def get_tool_description(name: str) -> str:
     Descriptions are sourced from the Pydantic model docstrings.
 
     Args:
-        name: Tool name (e.g., "band_send_message", "band_lookup_peers")
-              Also accepts unprefixed names for backwards compatibility (deprecated).
+        name: Canonical tool name (e.g., "band_send_message", "band_lookup_peers")
 
     Returns:
         Tool description string
     """
-    # Try exact match first
     model = TOOL_MODELS.get(name)
     if model and model.__doc__:
         return model.__doc__
-
-    # Try with prefix for backwards compatibility (deprecated)
-    if not name.startswith("band_"):
-        prefixed_name = f"band_{name}"
-        model = TOOL_MODELS.get(prefixed_name)
-        if model and model.__doc__:
-            warnings.warn(
-                f"Tool name '{name}' is deprecated. Use '{prefixed_name}' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return model.__doc__
 
     return f"Execute {name}"
 
@@ -1451,9 +1485,9 @@ class AgentTools(AgentToolsProtocol):
 
         Args:
             content: Message content to send
-            mentions: List of participant handles (strings). SDK resolves handles to IDs.
+            mentions: List of participant handles (strings), or resolved dictionaries
+                      containing an ``id``. SDK resolves handles to IDs.
                       Format: @<username> for users, @<username>/<agent-name> for agents.
-                      Passing list[dict[str, str]] is deprecated; use list[str] instead.
 
         Returns:
             Fern ChatMessage model (Pydantic). Serialized to dict by
@@ -1466,19 +1500,6 @@ class AgentTools(AgentToolsProtocol):
             ChatMessageRequest,
             ChatMessageRequestMentionsItem,
         )
-
-        # Deprecation warning for dict-style mentions WITHOUT an id: those
-        # lean on name/handle resolution, which list[str] does better.
-        # Id-bearing dicts are adapter-supplied ground truth (the message's
-        # own sender_id) — the one shape that can never miss the
-        # participants cache — and stay first-class.
-        if any(isinstance(m, dict) and not m.get("id") for m in mentions or []):
-            warnings.warn(
-                "Passing mentions as list[dict] without an 'id' is deprecated. "
-                "Use list[str] with handles instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         resolved_mentions = self._resolve_mentions(mentions or [])
 
@@ -1608,7 +1629,10 @@ class AgentTools(AgentToolsProtocol):
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         data = [context_item_to_dict(item) for item in (response.data or [])]
-        meta = getattr(response, "meta", None)
+        # The context response carries pagination twice: `metadata` is required,
+        # `meta` is optional and may be absent. Prefer the required one, or
+        # paging silently collapses to a single synthesized page.
+        meta = getattr(response, "metadata", None) or getattr(response, "meta", None)
         if meta is None:
             meta_dict: dict[str, Any] = {
                 "page": page,
@@ -2221,14 +2245,14 @@ class AgentTools(AgentToolsProtocol):
                 # Strip @ prefix if present (LLMs often include it)
                 identifier = mention.lstrip("@")
             else:
-                # Already-resolved dict with ID and handle
-                if mention.get("id"):
-                    resolved.append(
-                        {"id": mention["id"], "handle": mention.get("handle", "")}
+                mention_id = mention.get("id")
+                if not mention_id:
+                    raise TypeError(
+                        "Mention dictionaries must include an 'id'; use a string "
+                        "handle for unresolved mentions."
                     )
-                    continue
-                raw_identifier = mention.get("handle") or mention.get("name", "")
-                identifier = raw_identifier.lstrip("@")
+                resolved.append({"id": mention_id, "handle": mention.get("handle", "")})
+                continue
 
             # Try handle lookup first (handles are unique), then name, then ID
             participant = handle_to_participant.get(identifier)

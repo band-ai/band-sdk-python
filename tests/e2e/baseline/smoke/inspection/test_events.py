@@ -51,11 +51,10 @@ async def test_event_emitted(
         title="e2e-events", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             emit_event_instruction(event_type, marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         # Token-barrier: the FIFO echo proves the emit turn (its event POST
         # included) was fully processed and persisted before we read it.
@@ -93,8 +92,10 @@ async def test_event_subclasses_one_turn(
         title="e2e-events-all", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
-            room_id, instruction, mention_id=agent.id, mention_name=agent.name
+        mid = await user_ops.mention(
+            room_id,
+            agent,
+            instruction,
         )
         await capture.wait_for_processed(mid, agent.id)
         thoughts = await capture.thoughts(sender_id=agent.id)
@@ -121,11 +122,10 @@ async def test_multiple_thoughts_assert_at_least(
         title="e2e-events-multi", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             emit_thoughts_instruction([first, second]),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         thoughts = await capture.thoughts(sender_id=agent.id)

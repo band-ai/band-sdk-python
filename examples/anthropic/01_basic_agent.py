@@ -44,7 +44,7 @@ async def main() -> None:
     # Create adapter with framework-specific settings
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
-        prompt="You are a helpful assistant. Be concise and friendly.",
+        instructions="You are a helpful assistant. Be concise and friendly.",
     )
 
     # Create and start agent

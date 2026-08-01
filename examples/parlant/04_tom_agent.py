@@ -34,7 +34,6 @@ from prompts.characters import generate_tom_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
 from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
@@ -52,13 +51,8 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
 
-    # Reserved rather than fixed, so Tom and Jerry can run side by side
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
-        nlp_service=p.NLPServices.openai,
-    ) as server:
+    # Load Tom's credentials from agent_config.yaml
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
         parlant_tools = create_parlant_tools()
 
         # Create Parlant agent with Tom's personality

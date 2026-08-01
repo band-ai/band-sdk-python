@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +15,7 @@ from band.cli.trigger import (
     run,
 )
 from band_rest.core.api_error import ApiError
+from tests.logsupport import band_log_env, restored_logging
 
 
 # --- Helpers ---
@@ -646,6 +648,44 @@ class TestMain:
             main()
 
         assert capsys.readouterr().out.strip() == "room-xyz"
+
+    def test_keeps_logs_off_the_machine_readable_stdout(self, monkeypatch, capsys):
+        """BAND_LOG_STREAM must not be able to redirect logs onto stdout.
+
+        stdout carries only the room ID for the caller to parse, so a log line
+        written there makes a successful trigger unreadable — the stream is
+        pinned rather than configurable.
+        """
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "band-trigger",
+                "--api-key",
+                "k",
+                "--target-handle",
+                "@a/b",
+                "--message",
+                "hi",
+            ],
+        )
+
+        def _run_and_log(coro):
+            coro.close()
+            logging.getLogger("band.cli.trigger").info("probe line")
+            return "room-xyz"
+
+        with (
+            restored_logging(),
+            band_log_env(monkeypatch, STREAM="stdout", FILE=None),
+            patch("band.cli.trigger.asyncio.run", side_effect=_run_and_log),
+            pytest.raises(SystemExit),
+        ):
+            main()
+
+        captured = capsys.readouterr()
+
+        assert captured.out.strip() == "room-xyz"
+        assert "probe line" in captured.err
 
     def test_writes_error_to_stderr(self, monkeypatch, capsys):
         monkeypatch.setattr(

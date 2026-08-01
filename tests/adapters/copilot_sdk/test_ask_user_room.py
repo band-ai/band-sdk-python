@@ -135,3 +135,30 @@ class TestAskUserRoom:
 
         assert answer == room_inactive_answer()
         assert len(tools.messages_sent) == 1  # only the turn's own reply
+
+    @pytest.mark.asyncio
+    async def test_dispatched_callback_keeps_its_turns_tools(self):
+        """A callback retained by the SDK cannot mark a later turn delivered."""
+        callbacks: list[Any] = []
+
+        async def capture_callback(session: Any) -> None:
+            callbacks.append(session.kwargs["on_user_input_request"])
+
+        client = FakeCopilotClient(turn_events=[capture_callback])
+        adapter = await make_started_adapter(
+            client, CopilotSDKAdapterConfig(ask_user=ASK_USER_ROOM)
+        )
+        first_tools = FakeAgentTools()
+        second_tools = FakeAgentTools()
+
+        await run_message(adapter, first_tools, content="first")
+        await run_message(adapter, second_tools, content="second")
+        await callbacks[0](QUESTION, {"session_id": client.sessions[0].session_id})
+
+        assert [item["content"] for item in first_tools.messages_sent] == [
+            "Hello from Copilot",
+            render_room_question(QUESTION),
+        ]
+        assert [item["content"] for item in second_tools.messages_sent] == [
+            "Hello from Copilot"
+        ]

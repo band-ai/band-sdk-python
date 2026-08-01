@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from band.core.bases import BandSettings
 
 # Importing for the .env.test side effect keeps the two settings sources in
 # lockstep: both read the same already-loaded environment.
@@ -24,12 +24,8 @@ DEFAULT_WORKSPACE = str(Path.home() / "band-e2e" / "vscode-chat-workspace")
 DEFAULT_BAND_MCP_PORT = 8631
 
 
-class VSCodeChatSettings(BaseSettings):
+class VSCodeChatSettings(BandSettings):
     """Env knobs for driving a real signed-in VS Code window (field == env var)."""
-
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
 
     vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
     code_command: str = "code"  # CODE_COMMAND (VS Code CLI binary override)

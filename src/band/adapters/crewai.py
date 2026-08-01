@@ -8,13 +8,13 @@ nest_asyncio process-global warning and the tool builder contract.
 
 from __future__ import annotations
 
+
 import asyncio
 import logging
-import warnings
 from contextvars import ContextVar
 from typing import ClassVar, TYPE_CHECKING, Any
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import MissingDependencyError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -113,15 +113,12 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         goal: str | None = None,
         backstory: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         verbose: bool = False,
         max_iter: int = 20,
         max_rpm: int | None = None,
         allow_delegation: bool = False,
         history_converter: CrewAIHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        system_prompt: str | None = None,  # Deprecated
         features: AdapterFeatures | None = None,
     ):
         """Initialize the CrewAI adapter.
@@ -133,7 +130,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             goal: Agent's primary goal or objective
             backstory: Agent's background and expertise description
             custom_section: Custom instructions added to the agent's backstory
-            enable_execution_reporting: If True, sends tool_call/tool_result events
             verbose: If True, enables detailed logging from CrewAI
             max_iter: Maximum iterations for the agent (default: 20)
             max_rpm: Maximum requests per minute (rate limiting)
@@ -142,50 +138,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             additional_tools: List of custom tools as (InputModel, callable) tuples.
                 Each InputModel is a Pydantic model defining the tool's input schema,
                 and the callable is the function to execute (sync or async).
-            system_prompt: Deprecated. Use 'backstory' instead for prompt customization.
         """
-        if system_prompt is not None:
-            warnings.warn(
-                "The 'system_prompt' parameter is deprecated and will be removed in a "
-                "future version. Use 'backstory' parameter instead for prompt "
-                "customization. The CrewAI SDK uses role/goal/backstory pattern.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # If backstory not provided, use system_prompt as backstory for compatibility
-            if backstory is None:
-                backstory = system_prompt
-
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # NOTE: unlike ClaudeSDK, CrewAI's legacy enable_execution_reporting
-            # maps to {Emit.EXECUTION} only (no THOUGHTS). CrewAI had no native
-            # thought emission under this flag, so migrating to THOUGHTS would
-            # turn on a new behavior, not preserve existing behavior.
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or CrewAIHistoryConverter(),
             features=features,
@@ -212,7 +165,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             from crewai import Agent as CrewAIAgent
             from crewai import LLM
         except ImportError as e:
-            raise ImportError(
+            raise MissingDependencyError(
                 "crewai is required for CrewAI adapter.\n"
                 "Install with: pip install 'band-sdk[crewai]'\n"
                 "Or: uv add crewai nest-asyncio"

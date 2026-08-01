@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from acp.helpers import update_agent_message_text
 
+from band.core.backends.observing import ObservingTools
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -15,10 +17,11 @@ from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
-from band.integrations.acp.room_emitter import turn_replied_in_room
+from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import CollectedChunk
 from band.testing import FakeAgentTools
 
+from .acp_toolkit import narrated
 from .conftest import make_platform_message
 
 
@@ -237,6 +240,35 @@ class TestACPClientAdapterLocalMcpConfig:
 
         assert first.url == second.url
         mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_get_or_start_band_mcp_server_is_shared_by_concurrent_rooms(
+        self,
+    ) -> None:
+        adapter = ACPClientAdapter(command="codex")
+        started = asyncio.Event()
+        release = asyncio.Event()
+        mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
+        backend = MagicMock(local_server=mock_server)
+
+        async def create_backend(**_kwargs):
+            started.set()
+            await release.wait()
+            return backend
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(side_effect=create_backend),
+        ) as mock_create_backend:
+            first = asyncio.create_task(adapter._get_or_start_band_mcp_server())
+            await started.wait()
+            second = asyncio.create_task(adapter._get_or_start_band_mcp_server())
+            await asyncio.sleep(0)
+            assert mock_create_backend.await_count == 1
+            release.set()
+            first_config, second_config = await asyncio.gather(first, second)
+
+        assert first_config.url == second_config.url
 
     def test_build_system_context_mentions_band_tools(self) -> None:
         """Should keep ACP system context minimal and room-aware."""
@@ -500,7 +532,7 @@ class TestACPClientAdapterOnMessage:
         adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_on_message_creates_new_session_when_persisted_session_cannot_load(
+    async def test_on_message_replays_when_persisted_session_load_fails(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """A rebooted ephemeral ACP agent creates a session before prompting."""
@@ -510,7 +542,9 @@ class TestACPClientAdapterOnMessage:
             return_value=fresh_session
         )
         adapter_with_mocks._runtime._agent_supports_session_load = True
-        adapter_with_mocks._runtime._conn.load_session = AsyncMock(return_value=None)
+        adapter_with_mocks._runtime._conn.load_session = AsyncMock(
+            side_effect=RuntimeError("transport disconnected")
+        )
 
         async def prompt_new_session(**kwargs):
             session_id = kwargs["session_id"]
@@ -803,7 +837,7 @@ class TestACPClientAdapterPermissionHandler:
         assert all(
             event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
         )
-        assert perm_events[1]["content"] == "Permission cancelled"
+        assert narrated(perm_events[1])["output"] == "Permission cancelled"
         assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
@@ -1129,55 +1163,35 @@ class TestResolveLauncher:
             assert _resolve_launcher(["mystery-bin", "arg"]) == ["mystery-bin", "arg"]
 
 
-class TestTurnRepliedInRoom:
-    """`turn_replied_in_room`: detect a room post from the ACP tool-call stream.
+@pytest.mark.asyncio
+async def test_completed_band_post_keeps_text_fallback_suppressed_after_revision() -> (
+    None
+):
+    tools = FakeAgentTools()
+    # Production always hands the emitter the turn's observing proxy — the
+    # receipt it records is what suppression reads.
+    observing = ObservingTools(_inner=tools)
+    result = CollectedChunk(
+        chunk_type="tool_result",
+        content="sent",
+        metadata={"tool_call_id": "tc-1", "status": "completed"},
+    )
 
-    ACP has no structured tool-name field and tools may run out-of-process, so the
-    adapter reads the collected chunk stream. These lock the id-correlation edges.
-    """
-
-    @staticmethod
-    def _chunk(chunk_type: str, content: str, **metadata: object) -> CollectedChunk:
-        return CollectedChunk(chunk_type=chunk_type, content=content, metadata=metadata)
-
-    def test_completed_posting_tool_call_counts_as_reply(self) -> None:
-        chunks = [
-            self._chunk(
-                "tool_call",
-                "band_send_message",
-                tool_call_id="tc-1",
-                status="completed",
+    async with RoomTurnEmitter(
+        observing,
+        mentions=[{"id": "user-1"}],
+        session_id="session-1",
+        room_id="room-1",
+    ) as emitter:
+        await emitter.emit(
+            CollectedChunk(
+                chunk_type="tool_call",
+                content="band_send_message",
+                metadata={"tool_call_id": "tc-1", "status": "in_progress"},
             )
-        ]
-        assert turn_replied_in_room(chunks)
+        )
+        await emitter.emit(result)
+        result.metadata["status"] = "failed"
+        await emitter.emit(CollectedChunk(chunk_type="text", content="fallback"))
 
-    def test_posting_call_correlated_to_completed_result_counts(self) -> None:
-        # The tool_call arrives before its terminal status; the completed result seals it.
-        chunks = [
-            self._chunk(
-                "tool_call",
-                "band_send_message",
-                tool_call_id="tc-1",
-                status="in_progress",
-            ),
-            self._chunk("tool_result", "", tool_call_id="tc-1", status="completed"),
-        ]
-        assert turn_replied_in_room(chunks)
-
-    def test_empty_ids_do_not_cross_match(self) -> None:
-        # A not-yet-completed posting call with NO id and a completed NON-posting result
-        # with NO id both default to "" — they must not correlate, or the text fallback
-        # is falsely suppressed and the turn goes silent.
-        chunks = [
-            self._chunk("tool_call", "band_send_message", status="in_progress"),
-            self._chunk("tool_result", "", status="completed"),
-        ]
-        assert not turn_replied_in_room(chunks)
-
-    def test_non_posting_tool_never_counts(self) -> None:
-        chunks = [
-            self._chunk(
-                "tool_call", "get_weather", tool_call_id="tc-1", status="completed"
-            )
-        ]
-        assert not turn_replied_in_room(chunks)
+    assert tools.messages_sent == []

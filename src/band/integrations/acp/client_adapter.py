@@ -169,7 +169,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
-            client_factory=lambda: BandACPClient(profile=self._profile),
+            # Same modelling gap the class carries: ACP's Client declares
+            # optional methods that pyrefly reads as abstract.
+            client_factory=lambda: BandACPClient(profile=self._profile),  # type: ignore[bad-instantiation]
             spawn_process=transport,
         )
 
@@ -179,12 +181,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._band_mcp_server: LocalMCPServer | None = None
         self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
+        self._mcp_lock = asyncio.Lock()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
-        await self._spawn_process()
-
-    async def _spawn_process(self) -> None:
         await self._runtime.start(respawn=False)
 
     async def on_message(
@@ -198,7 +198,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        del participants_msg, contacts_msg
         await self._ensure_connection()
 
         if self._inject_band_tools:
@@ -224,7 +223,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
 
         prompt_text = await self._build_prompt_text(
-            room_id, session_id, msg, replay=replay
+            room_id,
+            session_id,
+            msg,
+            replay=replay,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
         )
         sender_name = msg.sender_name or msg.sender_id or "Unknown"
         mentions = [{"id": msg.sender_id, "name": sender_name}]
@@ -397,22 +401,23 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         )
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
-        backend = self._band_mcp_backend
-        if backend is None:
-            backend = await create_band_mcp_backend(
-                kind=self._runtime._agent_mcp_transport,
-                tool_definitions=list(iter_tool_definitions(include_memory=False)),
-                get_tools=self._room_tools.get,
-                additional_tools=self._custom_tools,
-            )
-            self._band_mcp_backend = backend
-            self._band_mcp_server = backend.local_server
+        async with self._mcp_lock:
+            backend = self._band_mcp_backend
+            if backend is None:
+                backend = await create_band_mcp_backend(
+                    kind=self._runtime._agent_mcp_transport,
+                    tool_definitions=list(iter_tool_definitions(include_memory=False)),
+                    get_tools=self._room_tools.get,
+                    additional_tools=self._custom_tools,
+                )
+                self._band_mcp_backend = backend
+                self._band_mcp_server = backend.local_server
 
-        local_server = backend.local_server
-        if local_server is None:
-            raise RuntimeError("ACP MCP backend did not create a local server")
+            local_server = backend.local_server
+            if local_server is None:
+                raise RuntimeError("ACP MCP backend did not create a local server")
 
-        return self._build_local_mcp_server_config(local_server)
+            return self._build_local_mcp_server_config(local_server)
 
     async def _get_or_create_session(self, room_id: str) -> tuple[str, bool]:
         """This room's ACP session id, plus whether it was created just now.
@@ -456,10 +461,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         msg: PlatformMessage,
         *,
         replay: list[str] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> str:
         """Add room context, and the transcript replay if one is due, on the
         first prompt sent to an ACP session. The current message always comes
-        last, so the model answers it rather than the replayed history."""
+        last, so the model answers it rather than the replayed history.
+
+        Room state (who is here, what changed in the agent's contacts) rides
+        every turn, not just the first: the roster names the handles
+        ``band_send_message`` validates against, and a session outlives the
+        participant list it was opened with. The runtime only produces these
+        when they change, so a steady room adds nothing to the prompt."""
         async with self._session_lock:
             needs_bootstrap = session_id not in self._bootstrapped_sessions
             if needs_bootstrap:
@@ -469,11 +482,14 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # room the model always knows who is speaking now and, on replay turns,
         # where the transcript ends and the live message begins.
         live_message = msg.format_for_llm()
+        room_state = [
+            f"[System]: {text}" for text in (participants_msg, contacts_msg) if text
+        ]
 
         if not needs_bootstrap:
-            return live_message
+            return "\n\n".join([*room_state, live_message])
 
-        sections = [self._build_system_context(room_id, msg)]
+        sections = [self._build_system_context(room_id, msg), *room_state]
         if replay:
             # The live message sits under the nonce'd boundary marker the
             # header names; on ordinary turns it needs none.

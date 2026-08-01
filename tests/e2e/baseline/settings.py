@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
+from band.core.bases import BandSettings
 
 from tests.paths import ENV_TEST_FILE
 
@@ -30,12 +31,10 @@ from tests.paths import ENV_TEST_FILE
 load_dotenv(ENV_TEST_FILE, override=False)
 
 
-class BandEndpoints(BaseSettings):
+class BandEndpoints(BandSettings):
     """Band platform URLs."""
 
-    model_config = SettingsConfigDict(
-        env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
-    )
+    model_config = SettingsConfigDict(env_prefix="BAND_")
 
     # Reuse the existing BAND_BASE_URL; BAND_REST_URL is accepted as an alias.
     # Defaults mirror the SDK's own (see ``band.agent.Agent.create``) so a run
@@ -50,12 +49,10 @@ class BandEndpoints(BaseSettings):
     ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"  # BAND_WS_URL
 
 
-class BandCredentials(BaseSettings):
+class BandCredentials(BandSettings):
     """Band platform API keys."""
 
-    model_config = SettingsConfigDict(
-        env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
-    )
+    model_config = SettingsConfigDict(env_prefix="BAND_")
 
     api_key: str = ""  # BAND_API_KEY (agent / app key)
     api_key_user: str = ""  # BAND_API_KEY_USER (the test-user / driver key)
@@ -63,15 +60,10 @@ class BandCredentials(BaseSettings):
     api_key_user_2: str = ""  # BAND_API_KEY_USER_2
 
 
-class BaselineRun(BaseSettings):
+class BaselineRun(BandSettings):
     """Run-level scoping, provisioning, and cleanup policy."""
 
-    model_config = SettingsConfigDict(
-        env_ignore_empty=True,
-        env_prefix="BAND_E2E_",
-        extra="ignore",
-        case_sensitive=False,
-    )
+    model_config = SettingsConfigDict(env_prefix="BAND_E2E_")
 
     # CI-lane scoping: restrict collection to one lane's adapters (a CI job is a
     # uv extra + optional backend setup). Adapters outside the lane skip-with-
@@ -92,12 +84,8 @@ class BaselineRun(BaseSettings):
     scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
 
 
-class LLMCredentials(BaseSettings):
+class LLMCredentials(BandSettings):
     """Model-provider API keys / config (standard provider env-var names, no prefix)."""
-
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
 
     openai_api_key: str = ""  # OPENAI_API_KEY
     anthropic_api_key: str = ""  # ANTHROPIC_API_KEY
@@ -108,17 +96,13 @@ class LLMCredentials(BaseSettings):
     google_cloud_project: str = ""  # GOOGLE_CLOUD_PROJECT
 
 
-class Backends(BaseSettings):
+class Backends(BandSettings):
     """Config for the external-backend adapters (codex / opencode / letta / copilot_sdk).
 
     Reads each backend's standard env vars (no shared prefix). Defaults that the
     matrix relies on live here -- the single source -- not scattered through the
     adapter builders or the requirement predicates.
     """
-
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
 
     # Codex CLI (stdio app-server).
     codex_command: str = ""  # CODEX_COMMAND (override the `codex` binary + args)
@@ -169,15 +153,10 @@ class Backends(BaseSettings):
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
 
 
-class LLMModels(BaseSettings):
+class LLMModels(BandSettings):
     """Model ids for the agents under test and the judge."""
 
-    model_config = SettingsConfigDict(
-        env_ignore_empty=True,
-        env_prefix="E2E_",
-        extra="ignore",
-        case_sensitive=False,
-    )
+    model_config = SettingsConfigDict(env_prefix="E2E_")
 
     # LangGraph/OpenAI agent model. Honors the documented E2E_LLM_MODEL (and
     # accepts E2E_OPENAI_MODEL as an alias).
@@ -202,10 +181,8 @@ class LLMModels(BaseSettings):
         return self
 
 
-class BaselineSettings(BaseSettings):
+class BaselineSettings(BandSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
-
-    model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
     # E2E_TESTS_ENABLED — the master gate for the live baseline suite.
     e2e_tests_enabled: bool = False

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import json
 import logging
 from typing import Any
@@ -13,7 +15,7 @@ from .parsing import parse_tool_call, parse_tool_result
 try:
     from agno.models.message import Message
 except ImportError as e:
-    raise ImportError(
+    raise MissingDependencyError(
         "agno is required for the Agno converter.\n"
         "Install with: pip install 'band-sdk[agno]'"
     ) from e

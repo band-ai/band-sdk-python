@@ -5,8 +5,8 @@ import json
 import logging
 import random
 import socket
-from collections.abc import Awaitable, Callable, Generator, Sequence
-from contextlib import asynccontextmanager, contextmanager, suppress
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,11 +17,11 @@ from mcp.types import Tool
 from pydantic import BaseModel
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
+from band.core.serving import EmbeddedServer
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Mount, Route
-import uvicorn
 
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -53,25 +53,6 @@ SERVER_START_TIMEOUT_S = 5.0
 SERVER_STOP_TIMEOUT_S = 5
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
-
-
-class EmbeddedUvicornServer(uvicorn.Server):
-    """A uvicorn server that leaves process signal handling to its host.
-
-    uvicorn's ``serve()`` captures SIGINT/SIGTERM for itself. Embedded in a
-    host process that may run several servers over its lifetime, that hijacks
-    the host's signal handling, and registers the server as process state that
-    other libraries introspect: sse_starlette discovers "the" uvicorn server
-    through the installed signal handler and latches a process-global shutdown
-    flag when it stops mid-stream — after which every later SSE response in
-    the process (any subsequent server's) closes right after its headers.
-    Shutdown here is driven programmatically via ``should_exit`` (see
-    ``LocalMCPServer.stop``), so signal capture is dropped entirely.
-    """
-
-    @contextmanager
-    def capture_signals(self) -> Generator[None, None, None]:
-        yield
 
 
 RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
@@ -374,9 +355,7 @@ class LocalMCPServer:
             registration.name: registration for registration in registrations
         }
         self._mcp_server: Server[Any, Any] | None = None
-        self._uvicorn_server: uvicorn.Server | None = None
-        self._serve_task: asyncio.Task[None] | None = None
-        self._socket: socket.socket | None = None
+        self._http: EmbeddedServer | None = None
         self._port: int | None = None
 
     @property
@@ -399,36 +378,28 @@ class LocalMCPServer:
 
     async def start(self) -> None:
         """Start the local MCP server."""
-        if self._serve_task and not self._serve_task.done():
+        if self._http is not None and self._http.running:
             return
 
         reserved_socket, port = self._reserve_socket()
         server = self._build_server()
-        app = self._build_app(server)
-        uvicorn_server = EmbeddedUvicornServer(
-            uvicorn.Config(
-                app,
-                host=self._host,
-                port=port,
-                lifespan="on",
-                log_level="warning",
-                access_log=False,
-                timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
-            )
-        )
-        serve_task = asyncio.create_task(
-            uvicorn_server.serve(sockets=[reserved_socket])
-        )
-
-        self._socket = reserved_socket
         self._port = port
         self._mcp_server = server
-        self._uvicorn_server = uvicorn_server
-        self._serve_task = serve_task
+        self._http = EmbeddedServer(
+            self._build_app(server),
+            host=self._host,
+            port=port,
+            lifespan="on",
+            log_level="warning",
+            access_log=False,
+            sockets=[reserved_socket],
+            stop_timeout_s=SERVER_STOP_TIMEOUT_S,
+        )
+        await self._http.start()
 
         try:
-            await self._wait_until_started()
-        except Exception:
+            await self._http.wait_until_serving(SERVER_START_TIMEOUT_S)
+        except BaseException:
             await self.stop()
             raise
 
@@ -442,22 +413,10 @@ class LocalMCPServer:
 
     async def stop(self) -> None:
         """Stop the local MCP server."""
-        if self._uvicorn_server is not None:
-            self._uvicorn_server.should_exit = True
-
-        if self._serve_task is not None:
-            try:
-                await self._serve_task
-            except asyncio.CancelledError:
-                logger.debug("Local MCP server task cancelled for %s", self._name)
-
-        if self._socket is not None:
-            self._socket.close()
-
+        if self._http is not None:
+            await self._http.stop()
         self._mcp_server = None
-        self._uvicorn_server = None
-        self._serve_task = None
-        self._socket = None
+        self._http = None
         self._port = None
 
     def _build_server(self) -> Server[Any, Any]:
@@ -581,15 +540,3 @@ class LocalMCPServer:
             "Could not find a free localhost MCP port in range "
             f"{self._port_min}-{self._port_max}"
         ) from last_error
-
-    async def _wait_until_started(self) -> None:
-        if self._serve_task is None or self._uvicorn_server is None:
-            raise RuntimeError("Local MCP server task not initialized")
-
-        deadline = asyncio.get_running_loop().time() + SERVER_START_TIMEOUT_S
-        while not self._uvicorn_server.started:
-            if self._serve_task.done():
-                await self._serve_task
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("Timed out waiting for local MCP server startup")
-            await asyncio.sleep(0.05)

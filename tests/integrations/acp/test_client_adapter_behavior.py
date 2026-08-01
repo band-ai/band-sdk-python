@@ -24,7 +24,7 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 
-from .acp_toolkit import FakeACPAgent, acp_adapter
+from .acp_toolkit import FakeACPAgent, acp_adapter, narrated
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -66,28 +66,10 @@ async def test_streamed_text_deltas_become_one_message(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_band_tool_call_suppresses_text_fallback(fake_agent) -> None:
-    # Detection-only: the ACP stream *reports* a completed band_send_message call,
-    # but the fake doesn't actually post — will_call_tool only emits the frames — so
-    # this pins the suppression decision (tool-first delivery, matching copilot_sdk /
-    # codex), not the post. The end-to-end "exactly one visible reply" outcome, where
-    # a real band-mcp tool posts, is covered by
-    # test_band_mcp_reply_is_not_replayed_as_acp_tool_events (inject_band_tools=True).
-    fake_agent.will_say("Posting the answer to the room now.").will_call_tool(
-        "tc-1", "band_send_message", result='{"id": "msg-1"}'
-    )
-    async with acp_adapter(fake_agent) as session:
-        reply = await session.send("question?")
-
-    # Fallback text suppressed, but the call is narrated like any other tool.
-    assert reply.texts == []
-    assert reply.outline == ["tool_call", "tool_result", "task"]
-
-
-@pytest.mark.asyncio
 async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
     fake_agent,
 ) -> None:
+    # edge: legacy prefixed name — not in delivery matrix
     # Detection-only, and necessarily so: a remote band-mcp posts out-of-process, so
     # the SDK never executes the tool — detection reads the ACP tool-call stream,
     # where an MCP client prefixes the server name onto the (legacy) tool name. The
@@ -102,28 +84,9 @@ async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
 
     assert reply.texts == []
     assert reply.outline == ["tool_call", "tool_result", "task"]
-
-
-@pytest.mark.asyncio
-async def test_text_relayed_when_band_post_failed(fake_agent) -> None:
-    # A failed post must not suppress the text fallback, or the turn goes silent.
-    fake_agent.will_call_tool(
-        "tc-1", "band_send_message", result="boom", status="failed"
-    ).will_say("The answer is 42.")
-    async with acp_adapter(fake_agent) as session:
-        reply = await session.send("question?")
-
-    assert reply.texts == ["The answer is 42."]
-
-
-@pytest.mark.asyncio
-async def test_text_relayed_alongside_non_posting_tool(fake_agent) -> None:
-    # Ordinary (non-posting) tool use keeps the text reply flowing to the room.
-    fake_agent.will_call_tool("tc-1", "get_weather", result="72F").will_say("It's 72F.")
-    async with acp_adapter(fake_agent) as session:
-        reply = await session.send("weather?")
-
-    assert reply.texts == ["It's 72F."]
+    # Narrated canonically: a consumer matching band tool names must not have to
+    # know which MCP server ran the call, or how that client spells the prefix.
+    assert reply.tool_names == ["create_agent_chat_message"]
 
 
 @pytest.mark.asyncio
@@ -144,9 +107,14 @@ async def test_tool_call_and_result_relayed_as_events(fake_agent) -> None:
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("weather?")
 
-    assert len(reply.tool_calls) == 1
-    assert len(reply.tool_results) == 1
-    assert reply.tool_results[0]["content"] == "72F"
+    # Narration is posted in the SDK-wide tool_call/tool_result body, so a room
+    # consumer reads an ACP agent's tools the same way it reads any other's.
+    assert narrated(reply.tool_calls[0]) == {
+        "name": "get_weather",
+        "args": {"city": "SF"},
+        "tool_call_id": "tc-1",
+    }
+    assert reply.tool_outputs == ["72F"]
 
 
 @pytest.mark.asyncio
@@ -169,12 +137,12 @@ async def test_streamed_tool_result_updates_collapse_into_one_event(fake_agent) 
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("run ls", room="room-1")
 
-    assert len(reply.tool_results) == 1
-    assert reply.tool_results[0]["content"] == listing
+    assert reply.tool_outputs == [listing]
 
 
 @pytest.mark.asyncio
 async def test_trailing_statusless_update_keeps_room_post_detected(fake_agent) -> None:
+    # edge: trailing statusless update — not in delivery matrix
     """A trailing status-less frame must not un-suppress the text fallback.
 
     The agent posts via ``band_send_message`` (reported ``completed``) and then
@@ -581,3 +549,29 @@ async def test_replay_after_midrun_respawn() -> None:
     assert prompt.rstrip().endswith("What is my favorite color?"), (
         "the live message must come last so the model answers it, not the transcript"
     )
+
+
+@pytest.mark.asyncio
+async def test_room_state_reaches_the_model_on_every_turn(fake_agent) -> None:
+    """The roster and contact changes must be in the prompt, not dropped.
+
+    ``band_send_message`` validates mentions against the room's handles, so an
+    agent that is never told them can only guess one — the platform then
+    rejects the post and the turn says nothing. The runtime emits this only
+    when it changes, so a later turn without it carries nothing extra.
+    """
+    roster = "## Current Participants\n- Ada (handle: ada, type: User)"
+    fake_agent.will_say("ok")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send(
+            "who is here?",
+            participants_msg=roster,
+            contacts_msg="[Contacts]: Bob is now a contact",
+        )
+        await session.send("still there?")
+
+    first, second = fake_agent.prompt_texts()
+    assert roster in first
+    assert "[Contacts]: Bob is now a contact" in first
+    assert "Current Participants" not in second

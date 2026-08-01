@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
+    from band.core.backends.history import SessionHistoryPolicy
     from anthropic.types import ToolParam
 
     from band.client.rest import (
@@ -12,6 +13,13 @@ if TYPE_CHECKING:
         ListAgentContactsResponse,
         ListAgentMemoriesResponse,
         ListAgentPeersResponse,
+    )
+    from band.core.contracts import (
+        BackendContext,
+        ModelRequest,
+        ModelResponse,
+        RunResult,
+        TurnEvent,
     )
     from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
@@ -315,3 +323,111 @@ class Preprocessor(Protocol):
             AgentInput if event should be processed, None to skip
         """
         ...
+
+
+# ---------------------------------------------------------------------------
+# AgentBackend / ModelProvider / Gateway contracts
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class EventSink(Protocol):
+    """Runtime-owned sink for causally ordered turn events.
+
+    Assigns the envelope (``run_id``, sequence, timestamp) and fans out to observers.
+    """
+
+    async def emit(self, event: TurnEvent) -> None:
+        """Emit one turn event."""
+        ...
+
+
+@runtime_checkable
+class CancellationToken(Protocol):
+    """View over ``ExecutionContext.interrupt()`` — no parallel cancel mechanism."""
+
+    @property
+    def cancelled(self) -> bool:
+        """True once the runtime has signalled interrupt/stop for this run."""
+        ...
+
+    def throw_if_cancelled(self) -> None:
+        """Raise ``asyncio.CancelledError`` if cancelled."""
+        ...
+
+
+@runtime_checkable
+class RunContext(Protocol):
+    """Per-run context for ``AgentBackend.run``."""
+
+    @property
+    def tools(self) -> AgentToolsProtocol: ...
+
+    @property
+    def events(self) -> EventSink: ...
+
+    @property
+    def cancellation(self) -> CancellationToken: ...
+
+
+@runtime_checkable
+class AgentBackend(Protocol):
+    """Orchestrates one session turn (not a ``ModelProvider``).
+
+    Lifecycle: ``start``/``close_session``/``aclose`` map to
+    ``on_started``/``on_cleanup``/``cleanup_all``. Same-session runs are
+    serialized by ``ExecutionContext``; interrupt/stop use its ``interrupt()``.
+    """
+
+    async def start(self, context: BackendContext) -> None: ...
+
+    async def run(self, inp: AgentInput, *, context: RunContext) -> RunResult: ...
+
+    async def close_session(self, session_id: str) -> None: ...
+
+    async def aclose(self) -> None: ...
+
+
+@runtime_checkable
+class ModelProvider(Protocol):
+    """LLM request/response translation. Owns its SDK client."""
+
+    async def complete(
+        self, request: ModelRequest, *, context: ModelContext
+    ) -> ModelResponse: ...
+
+    def default_history_policy(self) -> SessionHistoryPolicy:
+        """Session history shape this provider expects for tool-loop backends."""
+        ...
+
+
+@runtime_checkable
+class ModelContext(Protocol):
+    """Per-call context for ``ModelProvider.complete``."""
+
+    @property
+    def cancellation(self) -> CancellationToken: ...
+
+
+@runtime_checkable
+class Gateway(Protocol):
+    """Owns credentials, transport, and exclusive agent lifecycle.
+
+    Receives a constructed-but-not-started ``Agent``. Passing an already-started
+    agent, or the same agent to two gateways, is an error.
+    """
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    async def serve(self) -> None: ...
+
+    async def __aenter__(self) -> Self: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> bool | None: ...

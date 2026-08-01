@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from band.core.bases import BandSettings
 
 
 class MissingSentinel:
@@ -17,7 +17,7 @@ class MissingSentinel:
 MISSING = MissingSentinel()
 
 
-class StrictnessSettings(BaseSettings):
+class StrictnessSettings(BandSettings):
     """Env switches deciding whether a missing framework is fatal.
 
     Parsed as booleans, not merely tested for presence: CI sets the opt-out
@@ -25,10 +25,6 @@ class StrictnessSettings(BaseSettings):
     ``BAND_ALLOW_MISSING_FRAMEWORKS=0`` — which a presence check would read as
     "opt out" and silently turn strictness off.
     """
-
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
 
     ci: bool = False
     github_actions: bool = False

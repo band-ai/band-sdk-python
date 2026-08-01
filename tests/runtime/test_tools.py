@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -21,6 +22,7 @@ from band.runtime.tools import (
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    canonical_tool_name,
     is_room_posting_tool,
 )
 
@@ -1232,13 +1234,13 @@ class TestMentionResolution:
 
         assert resolved[0] == {"id": "custom-id", "handle": "@custom"}
 
-    def test_resolve_dict_mentions_without_id(self, mock_rest_client, participants):
-        """Should resolve dict mentions without ID by name lookup."""
+    def test_resolve_dict_mentions_without_id_raises(
+        self, mock_rest_client, participants
+    ):
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        resolved = tools._resolve_mentions([{"name": "User One"}])
-
-        assert resolved[0] == {"id": "user-1", "handle": "@user-one"}
+        with pytest.raises(TypeError, match="must include an 'id'"):
+            tools._resolve_mentions([{"name": "User One"}])
 
     def test_resolve_unknown_raises(self, mock_rest_client, participants):
         """Should raise for unknown mention."""
@@ -1428,3 +1430,48 @@ class TestIsRoomPostingTool:
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
         assert is_room_posting_tool("band_send_message_draft") is False
+
+
+class TestCanonicalToolName:
+    """One vocabulary out of the SDK, whichever MCP client ran the tool."""
+
+    def test_prefixed_names_resolve_to_the_band_tool(self):
+        assert canonical_tool_name("band-band_send_message") == "band_send_message"
+        assert (
+            canonical_tool_name("mcpserver-create_agent_chat_message")
+            == "create_agent_chat_message"
+        )
+
+    def test_canonical_and_foreign_names_pass_through(self):
+        assert canonical_tool_name("band_send_message") == "band_send_message"
+        assert canonical_tool_name("get_weather") == "get_weather"
+
+    def test_no_substring_false_positive(self):
+        """Only a ``<server>-`` prefix resolves, not any name ending in ours."""
+        assert (
+            canonical_tool_name("totally_band_send_message")
+            == "totally_band_send_message"
+        )
+
+
+class TestFetchRoomContext:
+    """Paging the agent context endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_prefers_the_required_pagination_field(self, mock_rest_client):
+        """`metadata` is required; `meta` is optional and often absent.
+
+        Reading only `meta` collapses every room to one synthesized page, so a
+        caller paging through history silently stops at the first page.
+        """
+        pagination = MagicMock()
+        pagination.model_dump.return_value = {"total_pages": 3}
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            return_value=SimpleNamespace(data=[], metadata=pagination)
+        )
+
+        context = await AgentTools("room-123", mock_rest_client).fetch_room_context(
+            room_id="room-123"
+        )
+
+        assert context["meta"]["total_pages"] == 3

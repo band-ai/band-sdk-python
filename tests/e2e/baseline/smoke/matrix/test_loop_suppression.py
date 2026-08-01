@@ -75,11 +75,10 @@ async def test_peer_message_drives_turn_without_loop(
 
         # Loop-suppression: snapshot after the peer turn, then a follow-up user probe.
         mark = capture.messages.snapshot()
-        probe_mid = await user_ops.send_message(
+        probe_mid = await user_ops.mention(
             room_id,
+            agent,
             liveness_probe(unique_marker("probe")),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(probe_mid, agent.id)
         # FIFO puts any self-dispatch loop ahead of the probe reply, so it's captured

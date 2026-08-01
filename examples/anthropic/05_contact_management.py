@@ -59,7 +59,7 @@ async def main() -> None:
         raise ValueError("BAND_REST_URL environment variable is required")
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
-        prompt=(
+        instructions=(
             "You are a helpful assistant with contact management capabilities.\n"
             "You can list, add, and remove contacts, and manage contact requests.\n"
             "Incoming contact requests are auto-approved."

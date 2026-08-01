@@ -282,8 +282,8 @@ class TestBandEntrypointBinding:
         with _bind_room_tools(tools):
             result = await entry(page=1)
 
-        assert tools.tool_calls == [
-            {"tool_name": "band_lookup_peers", "arguments": {"page": 1}}
+        assert [(call.tool_name, call.arguments) for call in tools.tool_calls] == [
+            ("band_lookup_peers", {"page": 1})
         ]
         assert json.loads(result) == {"status": "ok"}
 

@@ -21,7 +21,8 @@ from band.converters.copilot_sdk import (
     CopilotSDKHistoryConverter,
     CopilotSDKSessionState,
 )
-from band.core.exceptions import BandConfigError
+from band.core.backends.observing import delivered
+from band.core.exceptions import BandConfigError, MissingDependencyError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import Capability, Emit, MessageType, TurnUsage
@@ -42,7 +43,7 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category, is_room_posting_tool
+from band.runtime.tools import get_band_tool_category
 
 try:
     from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
@@ -71,6 +72,8 @@ if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
     from band.core.types import AdapterFeatures, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
+
+from band.runtime.narration import tool_call_content, tool_result_content
 
 logger = logging.getLogger(__name__)
 
@@ -168,10 +171,6 @@ class TurnState:
     # Mention target for anything this turn posts to the room: whoever
     # sent the message that triggered it.
     sender_mention: dict[str, str]
-    # True once the turn produced a room message (a Band messaging tool or a
-    # room-routed ask_user question) — the final text then must not be
-    # auto-sent on top of it.
-    replied_in_room: bool = False
     # Reasoning blocks keyed by reasoning_id: the CLI re-emits a block's
     # ``assistant.reasoning`` event several times per turn (same id), so keying
     # by id posts each block once, not 2-3x. Last write wins.
@@ -232,7 +231,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 owns (created and stopped by the adapter; test seam).
         """
         if not _COPILOT_SDK_AVAILABLE:
-            raise ImportError(
+            raise MissingDependencyError(
                 "github-copilot-sdk is required for CopilotSDKAdapter.\n"
                 "Install with: pip install 'band-sdk[copilot_sdk]'\n"
                 "Requires GitHub Copilot authentication (token or logged-in user)."
@@ -383,19 +382,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         # Same-session calls must not interleave; other rooms run concurrently.
         async with self._session_manager.turn_lock(room_id):
-            session, inject_text = await self._obtain_session(
-                room_id, history, tools, is_session_bootstrap=is_session_bootstrap
-            )
-            prompt = self._compose_prompt(
-                msg,
-                participants_msg,
-                contacts_msg,
-                room_id=room_id,
-                inject_text=inject_text,
-            )
-
-            # The session's tool handler records band_send_message calls in
-            # this slot; safe because the turn lock serializes turns per room.
             turn = TurnState(
                 sender_mention={
                     "id": msg.sender_id,
@@ -403,7 +389,19 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 }
             )
             self._turn_state[room_id] = turn
+            session: CopilotSession | None = None
             try:
+                session, inject_text = await self._obtain_session(
+                    room_id, history, tools, is_session_bootstrap=is_session_bootstrap
+                )
+                self._bind_room_ask_user_handler(session, tools, turn)
+                prompt = self._compose_prompt(
+                    msg,
+                    participants_msg,
+                    contacts_msg,
+                    room_id=room_id,
+                    inject_text=inject_text,
+                )
                 final_text = await self._run_turn(session, prompt, turn)
             except Exception as exc:
                 logger.exception("Room %s: Copilot turn failed", room_id)
@@ -413,6 +411,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 await self._report_error(tools, str(exc))
                 raise
             finally:
+                self._unbind_room_ask_user_handler(session)
                 self._turn_state.pop(room_id, None)
                 # No-op unless Emit.USAGE is on / usage is non-empty; best-effort,
                 # never raises. In the finally so a turn that errors or times out
@@ -423,13 +422,13 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
             # Session errors raise out of send_and_wait, so a None here
             # with no room output means the model genuinely said nothing.
-            if final_text is None and not turn.replied_in_room:
+            if final_text is None and delivered(tools) is None:
                 await self._report_error(tools, "no assistant reply")
                 raise RuntimeError("Copilot turn produced no reply")
 
             # The turn may already have replied into the room; sending its
             # final text too would duplicate the reply.
-            if final_text and not turn.replied_in_room:
+            if final_text and delivered(tools) is None:
                 await tools.send_message(final_text, mentions=[turn.sender_mention])
 
             await self._persist_session_id(room_id, tools)
@@ -562,22 +561,57 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             kwargs["on_user_input_request"] = (
                 self.config.ask_user
                 if callable(self.config.ask_user)
-                else self._make_room_ask_user_handler(room_id)
+                else self._inactive_room_ask_user_handler
             )
         return kwargs
 
-    def _make_room_ask_user_handler(self, room_id: str) -> UserInputHandler:
-        """Bind the room id for the session's ask_user → room bridge."""
+    def _bind_room_ask_user_handler(
+        self,
+        session: CopilotSession,
+        tools: AgentToolsProtocol,
+        turn: TurnState,
+    ) -> None:
+        """Bind ``ask_user`` to this turn's delivery observer.
+
+        The SDK keeps the callback on the session beyond ``send_and_wait``.
+        Rebinding for each serialized turn lets a callback already dispatched
+        by an older turn retain that turn's tools instead of consulting mutable
+        room maps after a newer turn starts.
+        """
+        if self.config.ask_user == ASK_USER_ROOM:
+            session._register_user_input_handler(  # type: ignore[attr-defined]
+                self._make_room_ask_user_handler(tools, turn)
+            )
+
+    def _unbind_room_ask_user_handler(self, session: CopilotSession | None) -> None:
+        if session is not None and self.config.ask_user == ASK_USER_ROOM:
+            session._register_user_input_handler(  # type: ignore[attr-defined]
+                self._inactive_room_ask_user_handler
+            )
+
+    @staticmethod
+    async def _inactive_room_ask_user_handler(
+        _request: UserInputRequest, _context: dict[str, str]
+    ) -> UserInputResponse:
+        return room_inactive_answer()
+
+    def _make_room_ask_user_handler(
+        self, tools: AgentToolsProtocol, turn: TurnState
+    ) -> UserInputHandler:
+        """Bind a room ask to one turn's tools and mention target."""
 
         async def handle(
             request: UserInputRequest, _context: dict[str, str]
         ) -> UserInputResponse:
-            return await self._deliver_question_to_room(room_id, request)
+            return await self._deliver_question_to_room(tools, turn, request)
 
         return handle
 
     async def _deliver_question_to_room(
-        self, room_id: str, request: UserInputRequest
+        self,
+        tools: AgentToolsProtocol,
+        turn: TurnState,
+        request: UserInputRequest,
     ) -> UserInputResponse:
         """Post an ask_user question to the room and resolve the tool call.
 
@@ -588,36 +622,18 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         becomes the turn's room output and the answer arrives as the next
         message on the same persisted session.
         """
-        room_tools = self._room_tools.get(room_id)
-        turn = self._turn_state.get(room_id)
-        if room_tools is None or turn is None:
-            # A late dispatch after the turn/room ended (the SDK never
-            # cancels pending asks) must degrade, not crash the RPC.
-            return room_inactive_answer()
         rendered = render_room_question(request)
         try:
-            await room_tools.send_message(rendered, mentions=[turn.sender_mention])
+            await tools.send_message(rendered, mentions=[turn.sender_mention])
         except Exception as exc:
-            logger.warning(
-                "Room %s: ask_user question delivery failed: %s", room_id, exc
-            )
+            logger.warning("ask_user question delivery failed: %s", exc)
             return delivery_failed_answer(exc)
-        # The question is this turn's reply; suppress the final-text
-        # fallback so a "waiting for your answer" wrap-up can't shadow it.
-        self._mark_replied_in_room(room_id, turn)
+        # The question is this turn's reply; posting it recorded a delivery on
+        # the turn's tools, which suppresses the final-text fallback so a
+        # "waiting for your answer" wrap-up can't shadow it.
         # The ack echoes the rendered form so the model knows exactly what
         # the user sees — e.g. that a bare "2" means numbered choice 2.
         return question_delivered_answer(rendered)
-
-    def _mark_replied_in_room(self, room_id: str, turn: TurnState) -> None:
-        """Record that ``turn`` produced a room message.
-
-        Guarded by identity: an operation orphaned by a turn timeout (the
-        SDK never cancels in-flight dispatches) must not mark a LATER turn
-        as having replied.
-        """
-        if self._turn_state.get(room_id) is turn:
-            turn.replied_in_room = True
 
     # --- Tool bridging -------------------------------------------------------
 
@@ -682,10 +698,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             invocation.arguments if isinstance(invocation.arguments, dict) else {}
         )
         # Resolve at call time: sessions outlive any single message, and a
-        # fresh AgentToolsProtocol arrives with every on_message. The turn
-        # is captured here (before any await) so a call orphaned by a turn
-        # timeout can never mark a LATER turn as having replied.
-        turn = self._turn_state.get(room_id)
+        # fresh AgentToolsProtocol arrives with every on_message. Resolved
+        # before any await, so a call orphaned by a turn timeout records its
+        # delivery against that turn's tools, never a later turn's.
         room_tools = self._room_tools.get(room_id)
         if room_tools is None:
             return ToolResult(
@@ -736,8 +751,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         text_result = (
             result if isinstance(result, str) else json.dumps(result, default=str)
         )
-        if is_room_posting_tool(tool_name) and turn is not None:
-            self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)
         return ToolResult(text_result_for_llm=text_result)
@@ -770,12 +783,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     ) -> None:
         await self._send_event_safe(
             room_tools,
-            json.dumps(
-                {
-                    "name": invocation.tool_name,
-                    "args": arguments,
-                    "tool_call_id": invocation.tool_call_id,
-                }
+            tool_call_content(
+                invocation.tool_name,
+                args=arguments,
+                tool_call_id=invocation.tool_call_id,
             ),
             MessageType.TOOL_CALL,
         )
@@ -788,12 +799,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     ) -> None:
         await self._send_event_safe(
             room_tools,
-            json.dumps(
-                {
-                    "name": invocation.tool_name,
-                    "output": output,
-                    "tool_call_id": invocation.tool_call_id,
-                }
+            tool_result_content(
+                invocation.tool_name,
+                output=output,
+                tool_call_id=invocation.tool_call_id,
             ),
             MessageType.TOOL_RESULT,
         )

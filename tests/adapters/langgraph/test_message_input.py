@@ -287,40 +287,6 @@ class TestOnMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_enable_memory_tools_shim_enables_memory_capability(
-        self, sample_message, mock_tools, mock_llm, mock_checkpointer
-    ):
-        with pytest.warns(DeprecationWarning):
-            adapter = LangGraphAdapter(
-                llm=mock_llm,
-                checkpointer=mock_checkpointer,
-                enable_memory_tools=True,
-            )
-        await adapter.on_started("TestBot", "Test bot")
-
-        mock_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
-        adapter.graph_factory = MagicMock(return_value=mock_graph)
-
-        with patch(
-            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
-        ) as mock_convert:
-            mock_convert.return_value = []
-
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        assert (
-            Capability.MEMORY in mock_convert.call_args.kwargs["features"].capabilities
-        )
-
-    @pytest.mark.asyncio
     async def test_real_compiled_graph_emits_tool_events(
         self, sample_message, mock_tools
     ):

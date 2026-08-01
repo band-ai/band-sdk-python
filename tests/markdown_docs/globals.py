@@ -25,6 +25,7 @@ MARKDOWN_AGENT_ID = "markdown-docs-agent"
 MARKDOWN_RESEARCHER_AGENT_ID = "markdown-docs-researcher"
 MARKDOWN_API_KEY = "markdown-docs-test"
 MARKDOWN_REST_URL = "https://example.test"
+MARKDOWN_ROOM_ID = "markdown-docs-room"
 
 
 class MarkdownAgentFactory:
@@ -115,7 +116,7 @@ def _fixture_doubles() -> dict[str, object]:
     if anthropic_cls is not None:
         adapter: object = anthropic_cls(
             model="claude-sonnet-4-5",
-            api_key=MARKDOWN_API_KEY,
+            provider_key=MARKDOWN_API_KEY,
         )
     else:
         adapter = AnyAdapter(

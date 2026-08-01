@@ -5,14 +5,13 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from pydantic import BaseModel
 
-from band import BandConfigError
-from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.opencode import OpencodeAdapter
 from band.core.types import (
     AdapterFeatures,
     Capability,
+    Emit,
 )
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
@@ -30,6 +29,18 @@ from tests.adapters.opencode.helpers import (
     make_platform_message,
     tools_protocol,
 )
+
+
+def test_default_features_include_task_events() -> None:
+    adapter = OpencodeAdapter()
+
+    assert adapter.features.emit == frozenset({Emit.TASK_EVENTS})
+
+
+def test_explicit_empty_features_disable_task_events() -> None:
+    adapter = OpencodeAdapter(features=AdapterFeatures())
+
+    assert adapter.features.emit == frozenset()
 
 
 async def test_mcp_server_name_is_stable_per_agent_and_distinct_per_agent() -> None:
@@ -200,14 +211,6 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     await adapter.on_cleanup("room-1")
     assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
     assert fake_backend.stop_calls == 1
-
-
-def test_legacy_feature_flags_cannot_mix_with_features() -> None:
-    with pytest.raises(BandConfigError, match="Cannot pass both legacy boolean flags"):
-        OpencodeAdapter(
-            config=OpencodeAdapterConfig(enable_memory_tools=True),
-            features=AdapterFeatures(),
-        )
 
 
 async def test_bootstrap_creates_session_relays_text_and_persists_task(

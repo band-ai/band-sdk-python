@@ -42,7 +42,7 @@ Run with:
     uv run examples/a2a_gateway/01_basic_gateway.py
 
 Then remote agents can connect:
-    - Discovery: GET http://localhost:10000/agents/weather/.well-known/agent-card.json
+    - Discovery: GET http://localhost:10000/agents/weather/.well-known/agent.json
     - JSON-RPC:  POST http://localhost:10000/agents/weather
     - Stream:    POST http://localhost:10000/agents/weather/v1/message:stream
 """
@@ -56,7 +56,7 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from band import Agent
+from band import Agent, A2AGateway
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config
 
@@ -95,8 +95,7 @@ async def main() -> None:
         port=gateway_port,
     )
 
-    # Create and start agent
-    # The gateway connects to Band and starts its HTTP server
+    # Create and run the gateway (foreground HTTP server)
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
@@ -108,12 +107,13 @@ async def main() -> None:
     logger.info("Starting A2A Gateway on %s...", gateway_url)
     logger.info("Peers will be exposed at:")
     logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
+        "  - %s/agents/{peer_id}/.well-known/agent.json (discovery)", gateway_url
     )
     logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
     logger.info("Waiting for peers to be discovered...")
 
-    await agent.run()
+    async with A2AGateway(agent=agent) as gateway:
+        await gateway.serve()
 
 
 if __name__ == "__main__":

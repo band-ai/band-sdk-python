@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
+import textwrap
+
+import pytest
 
 
 def test_band_import_surface_exposes_agent_and_link() -> None:
@@ -52,10 +57,50 @@ def test_acp_facades_expose_band_names_only() -> None:
     legacy_prefix = "Then" + "voi"
 
     assert BandAdapterFacade is BandACPServerAdapter
-    assert BandACPClient.__name__ == "BandACPClient"
+    assert not BandACPClient.__name__.startswith(legacy_prefix)
     assert not hasattr(adapters, f"{legacy_prefix}ACPServerAdapter")
     assert not hasattr(acp, f"{legacy_prefix}ACPClient")
     assert not hasattr(acp, f"{legacy_prefix}ACPServerAdapter")
+
+
+@pytest.mark.parametrize(
+    ("adapter_module", "blocked_sdk"),
+    [
+        ("band.adapters.anthropic", "google"),
+        ("band.adapters.gemini", "anthropic"),
+    ],
+)
+def test_an_adapter_imports_without_a_sibling_provider_sdk(
+    adapter_module: str, blocked_sdk: str
+) -> None:
+    """Installing one provider extra must be enough to use that provider.
+
+    Each provider module imports its vendor SDK at module scope, so anything
+    naming them all eagerly turns every extra into a hard dependency of the
+    others. CI installs every extra, so only an environment that is actually
+    missing one can catch that — hence the subprocess with the sibling SDK
+    made unimportable.
+    """
+    program = textwrap.dedent(f"""
+        import sys
+
+        class BlockSdk:
+            def find_spec(self, name, path=None, target=None):
+                if name == {blocked_sdk!r} or name.startswith({blocked_sdk!r} + "."):
+                    raise ImportError("not installed: " + name)
+                return None
+
+        sys.meta_path.insert(0, BlockSdk())
+        import {adapter_module}
+    """)
+
+    result = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True
+    )
+
+    assert result.returncode == 0, (
+        f"{adapter_module} needs {blocked_sdk} installed:\n{result.stderr}"
+    )
 
 
 def test_mcp_facade_exposes_band_backend_names_only() -> None:

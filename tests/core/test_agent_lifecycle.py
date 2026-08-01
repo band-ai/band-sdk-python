@@ -7,16 +7,22 @@ resources (e.g. a CLI runtime subprocess) don't outlive the agent.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from band.agent import Agent
+from band.core.run.cancellation import ExecutionCancellation
+from band.testing import FakeAgentTools
+from tests.core.contractsupport import agent_input
 
 
 def make_agent(adapter: object) -> Agent:
     runtime = AsyncMock()
     runtime.stop.return_value = True
+    runtime.claim_single_instance = MagicMock()
+    runtime.release_single_instance = MagicMock()
     agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
     agent._started = True
     return agent
@@ -28,13 +34,19 @@ class TestStartFailureCleansUpAdapter:
         """on_started may spawn resources; a failed runtime.start must free them."""
         adapter = AsyncMock()
         runtime = AsyncMock()
+        runtime.agent_name = ""
+        runtime.agent_description = ""
         runtime.start.side_effect = RuntimeError("websocket refused")
+        runtime.claim_single_instance = MagicMock()
+        runtime.release_single_instance = MagicMock()
         agent = Agent(runtime=runtime, adapter=adapter)  # type: ignore[arg-type]
 
         with pytest.raises(RuntimeError, match="websocket refused"):
             await agent.start()
 
         adapter.cleanup_all.assert_awaited_once()
+        runtime.claim_single_instance.assert_called_once()
+        runtime.release_single_instance.assert_called_once()
 
 
 class TestStopCleansUpAdapter:
@@ -80,3 +92,30 @@ class TestStopCleansUpAdapter:
         agent = make_agent(MinimalAdapter())
 
         assert await agent.stop() is True
+
+
+@pytest.mark.asyncio
+async def test_agent_execution_passes_the_runtime_cancellation_token() -> None:
+    adapter = AsyncMock()
+    agent = make_agent(adapter)
+    input_for_turn = agent_input(FakeAgentTools(room_id="room-execution"))
+
+    class Preprocessor:
+        async def process(self, **_kwargs):
+            return input_for_turn
+
+    class Backend:
+        context = None
+
+        async def run(self, _request, *, context):
+            self.context = context
+
+    backend = Backend()
+    agent._preprocessor = Preprocessor()
+    agent._backend = backend  # type: ignore[assignment]
+    context = SimpleNamespace(_interrupt_kind=None, _pending_interrupt=None)
+
+    await agent._on_execute(context, object())
+
+    assert isinstance(backend.context.cancellation, ExecutionCancellation)
+    assert backend.context.cancellation._ctx is context

@@ -58,9 +58,7 @@ async def test_next_includes_processing_messages(
 ) -> None:
     agent = await resource_manager.provision_agent("nextsemantics")
     room_id = await resource_manager.provision_room(participants=[agent.id])
-    mid = await user_ops.send_message(
-        room_id, "probe", mention_id=agent.id, mention_name=agent.name
-    )
+    mid = await user_ops.mention(room_id, agent, "probe")
 
     link = BandLink(
         agent_id=agent.id,

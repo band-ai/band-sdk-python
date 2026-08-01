@@ -88,6 +88,15 @@ When you run these examples from this repository, `uv run` uses the local checko
 
 ## Running the basic gateway
 
+```python notest
+from band import Agent, A2AGateway
+from band.adapters import A2AGatewayAdapter
+
+agent = Agent.create(adapter=A2AGatewayAdapter(...), ...)
+async with A2AGateway(agent=agent) as gateway:
+    await gateway.serve()
+```
+
 ```bash
 uv run examples/a2a_gateway/01_basic_gateway.py
 ```
@@ -95,7 +104,7 @@ uv run examples/a2a_gateway/01_basic_gateway.py
 Once it is up, the most useful endpoints are:
 
 - `GET http://localhost:10000/peers`
-- `GET http://localhost:10000/agents/<peer-id>/.well-known/agent-card.json`
+- `GET http://localhost:10000/agents/<peer-id>/.well-known/agent.json`
 - `POST http://localhost:10000/agents/<peer-id>`
 - `POST http://localhost:10000/agents/<peer-id>/v1/message:stream`
 
@@ -118,28 +127,26 @@ Pick one peer id from the response.
 ### 3. Fetch the peer's agent card
 
 ```bash
-curl http://localhost:10000/agents/<peer-id>/.well-known/agent-card.json
+curl http://localhost:10000/agents/<peer-id>/.well-known/agent.json
 ```
 
 ### 4. Send a message
 
 Use a stable `contextId` so you can test room reuse.
 
-For A2A 1.0 JSON-RPC clients, send requests to the base agent route with the
-`A2A-Version: 1.0` header. The 1.0 method is `SendMessage`:
+For JSON-RPC clients, send requests to the base agent route:
 
 ```bash
 curl -X POST http://localhost:10000/agents/<peer-id> \
   -H "Content-Type: application/json" \
-  -H "A2A-Version: 1.0" \
   -d '{
     "jsonrpc": "2.0",
     "id": "1",
-    "method": "SendMessage",
+    "method": "message/send",
     "params": {
       "message": {
-        "role": "ROLE_USER",
-        "parts": [{"text": "Hello from an A2A client"}],
+        "role": "user",
+        "parts": [{"kind": "text", "text": "Hello from an A2A client"}],
         "messageId": "msg-1",
         "contextId": "ctx-1"
       }
@@ -147,21 +154,16 @@ curl -X POST http://localhost:10000/agents/<peer-id> \
   }'
 ```
 
-For the REST streaming binding, POST the message to the unversioned route
-with the same `A2A-Version: 1.0` header (the `/v1/...` routes are the v0.3
-compatibility binding, which uses the older payload shapes):
+If you want the legacy streaming route, send a raw A2A `Message` body instead:
 
 ```bash
-curl -N -X POST http://localhost:10000/agents/<peer-id>/message:stream \
+curl -N -X POST http://localhost:10000/agents/<peer-id>/v1/message:stream \
   -H "Content-Type: application/json" \
-  -H "A2A-Version: 1.0" \
   -d '{
-    "message": {
-      "role": "ROLE_USER",
-      "parts": [{"text": "Hello from an A2A client"}],
-      "messageId": "msg-1",
-      "contextId": "ctx-1"
-    }
+    "role": "user",
+    "parts": [{"kind": "text", "text": "Hello from an A2A client"}],
+    "messageId": "msg-1",
+    "contextId": "ctx-1"
   }'
 ```
 
@@ -198,7 +200,7 @@ uv run examples/a2a_gateway/02_with_demo_agent.py
 Then check the orchestrator card:
 
 ```bash
-curl http://localhost:10001/.well-known/agent-card.json
+curl http://localhost:10001/.well-known/agent.json
 ```
 
 The orchestrator's job is to accept an incoming A2A request and route it to one of the peers exposed by the gateway.
@@ -208,7 +210,7 @@ The orchestrator's job is to accept an incoming A2A request and route it to one 
 ### Basic gateway
 
 - `/peers` returns real Band peers
-- `/.well-known/agent-card.json` returns a valid card for a peer
+- `/.well-known/agent.json` returns a valid card for a peer
 - a message call returns a peer response
 - the same `contextId` reuses the same room
 

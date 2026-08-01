@@ -6,6 +6,19 @@ on:
   # Run on the merge queue's temporary branch so these required checks report
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
+  # Run the whole gate on any branch on demand — a stacked PR (one whose base is
+  # another feature branch) never fires `pull_request` here, so without this its
+  # only signal is whatever someone ran locally. No inputs: half a gate that
+  # reports green is worse than no gate.
+  workflow_dispatch:
+
+# One run per PR (or per branch, dispatched), so a re-push supersedes the run it
+# obsoletes instead of racing it. A dispatch keys on the ref, so it stands beside
+# a PR's run rather than cancelling the checks that PR needs. The merge queue is
+# never cancelled: its checks gate the queued merge, and killing them stalls it.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
 
@@ -13,19 +26,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: '3.12'
 
@@ -65,19 +78,19 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -113,19 +126,19 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -163,16 +176,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: '3.12'
 
@@ -192,28 +205,45 @@ jobs:
         print('Core imports successful')
         "
 
-    - name: Verify gateway extras install independently
+    - name: Start the Desktop room view from a fresh resolve
+      # The lockfile says nothing about what a user's `uv tool install` picks:
+      # a released mcp that broke our API resolved fine here and killed the
+      # server at startup. Resolve the declared range afresh and prove the
+      # console script still comes up.
       run: |
-        uv venv /tmp/test-a2a-gateway
         WHEEL=$(ls dist/*.whl)
-        uv pip install "${WHEEL}[a2a_gateway]" --python /tmp/test-a2a-gateway/bin/python
-        /tmp/test-a2a-gateway/bin/python -c "
-        from band.adapters.a2a_gateway import A2AGatewayAdapter
-        print('Gateway extra import successful')
-        "
-        uv venv /tmp/test-a2a-gateway-demo
-        uv pip install "${WHEEL}[a2a_gateway_demo]" --python /tmp/test-a2a-gateway-demo/bin/python
-        /tmp/test-a2a-gateway-demo/bin/python -c "
-        from a2a.server.routes.rest_routes import create_rest_routes
-        print('Gateway demo extra route import successful')
+        uv venv /tmp/desktop-install
+        uv pip install "${WHEEL}[desktop]" --python /tmp/desktop-install/bin/python
+        /tmp/desktop-install/bin/python -c "
+        from band.integrations.desktop_app.server import create_server, room_view_tools
+        from band.integrations.desktop_app.service import RoomTranscriptService
+        create_server(RoomTranscriptService(object()))
+        print(f'room view starts with {len(room_view_tools())} tools')
         "
 
-    - name: Install with all extras
+    - name: Build the OpenCode Band-tools server from a fresh resolve
+      # Same lesson as the room view above, and the extra that learned it late:
+      # an unbounded mcp resolved to a major release whose lowlevel Server has
+      # no decorator registration, so this path died on any fresh install while
+      # the locked environment stayed green.
+      run: |
+        WHEEL=$(ls dist/*.whl)
+        uv venv /tmp/opencode-install
+        uv pip install "${WHEEL}[opencode]" --python /tmp/opencode-install/bin/python
+        /tmp/opencode-install/bin/python -c "
+        from band.runtime.mcp_server import LocalMCPServer
+        LocalMCPServer('smoke', [])._build_server()
+        print('opencode band tools server builds')
+        "
+
+    - name: Install the dev extra
+      # Every framework except crewai, which conflicts with parlant and
+      # pydantic-ai and has its own job.
       run: |
         WHEEL=$(ls dist/*.whl)
         uv pip install "${WHEEL}[dev]" --python /tmp/test-install/bin/python
 
-    - name: Verify all imports (with extras)
+    - name: Verify framework imports
       run: |
         /tmp/test-install/bin/python -c "
         from band import Agent, BandLink, AgentRuntime

@@ -55,7 +55,7 @@ async def main() -> None:
     # Create adapter with Google ADK settings
     adapter = GoogleADKAdapter(
         model="gemini-2.5-flash",
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        instructions="You are a helpful assistant. Be concise and friendly.",
     )
 
     # Create and start agent

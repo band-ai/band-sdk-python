@@ -29,7 +29,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -108,12 +107,7 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
     # Start Parlant server
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
-        nlp_service=p.NLPServices.openai,
-    ) as server:
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create support agent with guidelines
         parlant_agent = await setup_support_agent(server)
         logger.info("Support agent created: %s", parlant_agent.id)

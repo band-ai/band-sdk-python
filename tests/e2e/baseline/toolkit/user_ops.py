@@ -9,6 +9,7 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import httpx
 from band_rest import (
@@ -23,6 +24,9 @@ from band_rest import (
 )
 
 from band.core.types import MessageType
+
+if TYPE_CHECKING:
+    from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 
 
 class UserOps:
@@ -56,6 +60,15 @@ class UserOps:
             ),
         )
         return response.data.id
+
+    async def mention(self, room_id: str, agent: ProvisionedAgent, content: str) -> str:
+        """Send a user message mentioning ``agent``; return the message id."""
+        return await self.send_message(
+            room_id,
+            content,
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
 
     async def add_participant(
         self, room_id: str, participant_id: str, *, role: str = "member"

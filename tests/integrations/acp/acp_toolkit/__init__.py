@@ -31,6 +31,7 @@ from .harness import (
     TranscriptTools,
     acp_adapter,
     make_acp_connection,
+    narrated,
 )
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "TranscriptTools",
     "acp_adapter",
     "make_acp_connection",
+    "narrated",
 ]

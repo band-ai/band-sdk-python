@@ -41,6 +41,21 @@ def _warn_unsupported(
     warnings.warn(message, UserWarning, stacklevel=3)
 
 
+def _reject_non_members(
+    cls: type,
+    attr: str,
+    values: frozenset[Any],
+    expected: type,
+) -> None:
+    """Raise ``TypeError`` when a feature ClassVar holds non-enum members."""
+    bad = [value for value in values if not isinstance(value, expected)]
+    if bad:
+        raise TypeError(
+            f"{cls.__name__}.{attr} members must be {expected.__name__} "
+            f"instances; got {bad[0]!r}"
+        )
+
+
 class SimpleAdapter(Generic[H], ABC):
     """
     Simple base class for framework adapters.
@@ -76,6 +91,25 @@ class SimpleAdapter(Generic[H], ABC):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        emit = frozenset(getattr(cls, "SUPPORTED_EMIT", ()))
+        caps = frozenset(getattr(cls, "SUPPORTED_CAPABILITIES", ()))
+        _reject_non_members(cls, "SUPPORTED_EMIT", emit, Emit)
+        _reject_non_members(cls, "SUPPORTED_CAPABILITIES", caps, Capability)
+
+        # Union with base declarations so a subclass cannot silently narrow.
+        for base in cls.__mro__[1:]:
+            if base is SimpleAdapter:
+                break
+            if not issubclass(base, SimpleAdapter):
+                continue
+            emit |= frozenset(getattr(base, "SUPPORTED_EMIT", ()))
+            caps |= frozenset(getattr(base, "SUPPORTED_CAPABILITIES", ()))
+
+        cls.SUPPORTED_EMIT = frozenset(emit)
+        cls.SUPPORTED_CAPABILITIES = frozenset(caps)
 
     def __init__(
         self,

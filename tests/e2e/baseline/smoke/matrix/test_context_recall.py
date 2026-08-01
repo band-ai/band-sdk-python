@@ -64,30 +64,26 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_within_session(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """Turn 2 recalls a note stated in turn 1 (in-session history conversion)."""
     note = unique_marker("note")
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-recall-session-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             REMEMBER.format(note=note),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
 
         mark = capture.messages.snapshot()
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             RECALL,
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id, since=mark)
         replies.assert_contains_any([note])

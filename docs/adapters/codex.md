@@ -242,7 +242,6 @@ These `CodexAdapterConfig(...)` flags add more telemetry detail:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `enable_task_events` | `bool` | `True` | When `features` is omitted, include `Emit.TASK_EVENTS` by default. Ignored when you pass explicit `features=` to `CodexAdapter(...)`. |
 | `emit_turn_task_markers` | `bool` | `False` | Emit simple "Codex turn" task markers on turn completion. |
 | `emit_turn_lifecycle_events` | `bool` | `False` | Emit enriched turn lifecycle events at turn start and completion. |
 | `emit_diff_events` | `bool` | `False` | Include file diffs in event metadata, capped at 64 KB. |

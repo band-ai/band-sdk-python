@@ -22,6 +22,7 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
     tcp_spawn_process,
 )
+from band.integrations.acp.room_emitter import chunk_to_turn_event
 from band.integrations.acp.types import CollectedChunk
 
 
@@ -523,6 +524,41 @@ class TestACPCollectingClientCoalescing:
         )
 
 
+@pytest.mark.asyncio
+async def test_a_tool_result_is_narrated_under_the_name_of_its_call() -> None:
+    """ACP names a call only on its opening frame.
+
+    A result frame carries a ``tool_call_id`` and nothing else identifying,
+    so unless the runtime carries the name across, every tool result in the
+    room is narrated as the anonymous "tool" and the reader cannot tell which
+    call produced which output.
+    """
+    client = ACPCollectingClient()
+    await client.session_update(
+        "s1",
+        MagicMock(
+            session_update="tool_call",
+            tool_call_id="tc-7",
+            title="band_lookup_peers",
+            raw_input={},
+            status="in_progress",
+        ),
+    )
+    await client.session_update(
+        "s1",
+        MagicMock(
+            session_update="tool_call_update",
+            tool_call_id="tc-7",
+            raw_output="two peers",
+            content=None,
+            status="completed",
+        ),
+    )
+
+    result = client.get_collected_chunks("s1")[-1]
+    assert chunk_to_turn_event(result).tool_name == "band_lookup_peers"
+
+
 class ConcurrencyProbe:
     """An async context manager that records the peak number of tasks inside it.
 
@@ -761,6 +797,20 @@ class TestACPRuntime:
         )
 
         assert loaded is False
+
+    @pytest.mark.parametrize("error", [RuntimeError("connection dropped"), OSError()])
+    async def test_load_session_treats_transport_errors_as_miss(
+        self, error: Exception
+    ) -> None:
+        mock_conn = AsyncMock()
+        mock_conn.load_session = AsyncMock(side_effect=error)
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+        runtime._agent_supports_session_load = True
+
+        assert not await runtime.load_session(
+            cwd="/tmp", session_id="sess-1", mcp_servers=[]
+        )
 
     @pytest.mark.asyncio
     async def test_start_cleans_up_failed_initialize(self) -> None:

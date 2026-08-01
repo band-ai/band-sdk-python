@@ -62,7 +62,7 @@ async def main() -> None:
     # adapter's pinned default (the npm `claude` binary's auto-selection
     # fails under API-key auth); pass `model=` to override.
     adapter = ClaudeSDKAdapter(
-        custom_section="You are a helpful assistant. Be concise and friendly.",
+        instructions="You are a helpful assistant. Be concise and friendly.",
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )
 

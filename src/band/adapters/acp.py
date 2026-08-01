@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.host import ACPGateway
 from band.integrations.acp.server import ACPServer
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 __all__ = [
     "ACPClientAdapter",
+    "ACPGateway",
     "ACPServer",
     "BandACPServerAdapter",
 ]

@@ -20,6 +20,8 @@ real work into a background asyncio task.
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -127,7 +129,7 @@ def _default_client_factory(
     try:
         from slack_sdk.socket_mode.aiohttp import SocketModeClient
     except ImportError as exc:  # pragma: no cover — import-time guard
-        raise ImportError(
+        raise MissingDependencyError(
             "Socket Mode requires aiohttp. Install with "
             "`uv add aiohttp` (or `pip install aiohttp`); slack-sdk's "
             "aiohttp Socket Mode client depends on it."

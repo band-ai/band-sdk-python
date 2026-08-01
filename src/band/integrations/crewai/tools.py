@@ -51,6 +51,7 @@ from band.core.memory_types import (
 )
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
     AdapterFeatures,
@@ -174,7 +175,7 @@ class EmitExecutionReporter:
             return
         try:
             await tools.send_event(
-                content=json.dumps({"name": tool_name, "args": input_data}),
+                content=tool_call_content(tool_name, args=input_data),
                 message_type="tool_call",
             )
         except Exception as e:
@@ -191,8 +192,8 @@ class EmitExecutionReporter:
             return
         try:
             await tools.send_event(
-                content=json.dumps(
-                    {"name": tool_name, "output": result, "is_error": is_error}
+                content=tool_result_content(
+                    tool_name, output=result, is_error=is_error
                 ),
                 message_type="tool_result",
             )

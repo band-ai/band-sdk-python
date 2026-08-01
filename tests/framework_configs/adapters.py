@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK
+from band.core.types import AdapterFeatures, Emit
 
 __all__ = ["AdapterConfig", "ADAPTER_CONFIGS", "ADAPTER_EXCLUDED_MODULES"]
 
@@ -236,17 +237,18 @@ def _build_anthropic_config() -> AdapterConfig:
         adapter_factory=_anthropic_factory,
         expected_initial_values={
             "model": _default_from_init(AnthropicAdapter, "model"),
-            "max_tokens": _default_from_init(AnthropicAdapter, "max_tokens"),
+            # Canonical knob is max_output_tokens; max_tokens is a mirrored alias.
+            "max_tokens": 4096,
         },
         custom_kwargs={
             "model": "claude-opus-4-20250514",
-            "max_tokens": 8192,
-            "prompt": "Be helpful.",
+            "max_output_tokens": 8192,
+            "instructions": "Be helpful.",
         },
         custom_expected={
             "model": "claude-opus-4-20250514",
             "max_tokens": 8192,
-            "_prompt": "Be helpful.",
+            "_instructions": "Be helpful.",
         },
     )
 
@@ -259,7 +261,6 @@ def _build_langgraph_config() -> AdapterConfig:
         display_name="LangGraph",
         adapter_factory=_langgraph_factory,
         expected_initial_values={
-            "prompt_template": _default_from_init(LangGraphAdapter, "prompt_template"),
             "custom_section": _default_from_init(LangGraphAdapter, "custom_section"),
         },
         custom_kwargs={
@@ -417,7 +418,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
         expected_initial_values={
             "model": _default_from_init(ClaudeSDKAdapter, "model"),
             "fallback_model": _default_from_init(ClaudeSDKAdapter, "fallback_model"),
-            "custom_section": _default_from_init(ClaudeSDKAdapter, "custom_section"),
+            "_instructions": _default_from_init(ClaudeSDKAdapter, "instructions"),
             "max_thinking_tokens": _default_from_init(
                 ClaudeSDKAdapter, "max_thinking_tokens"
             ),
@@ -426,14 +427,14 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
         custom_kwargs={
             "model": "claude-opus-4-20250514",
             "fallback_model": "sonnet",
-            "custom_section": "Be helpful.",
+            "instructions": "Be helpful.",
             "max_thinking_tokens": 10000,
             "permission_mode": "bypassPermissions",
         },
         custom_expected={
             "model": "claude-opus-4-20250514",
             "fallback_model": "sonnet",
-            "custom_section": "Be helpful.",
+            "_instructions": "Be helpful.",
             "max_thinking_tokens": 10000,
             "permission_mode": "bypassPermissions",
         },
@@ -452,18 +453,19 @@ def _build_pydantic_ai_config() -> AdapterConfig:
             # Injected by _pydantic_ai_factory, not a real __init__ default.
             # Verifies that the factory injection is stored correctly.
             "model": _PYDANTIC_AI_INJECTED_MODEL,
-            "system_prompt": _default_from_init(PydanticAIAdapter, "system_prompt"),
-            "custom_section": _default_from_init(PydanticAIAdapter, "custom_section"),
+            "_instructions": _default_from_init(PydanticAIAdapter, "instructions"),
+            # None, so the agent inherits whatever Agent.instrument_all() the host set.
+            "instrument": _default_from_init(PydanticAIAdapter, "instrument"),
         },
         custom_kwargs={
             "model": "anthropic:claude-sonnet-4-5-20250929",
-            "system_prompt": "You are a helpful bot.",
-            "custom_section": "Be concise.",
+            "instructions": "Be concise.",
+            "instrument": True,
         },
         custom_expected={
             "model": "anthropic:claude-sonnet-4-5-20250929",
-            "system_prompt": "You are a helpful bot.",
-            "custom_section": "Be concise.",
+            "_instructions": "Be concise.",
+            "instrument": True,
         },
         skip_on_started_conformance=True,  # on_started creates real OpenAI client; tested in test_pydantic_ai_adapter
     )
@@ -514,10 +516,10 @@ def _build_codex_config() -> AdapterConfig:
             "config": CodexAdapterConfig(),
         },
         custom_kwargs={
-            "config": CodexAdapterConfig(enable_execution_reporting=True),
+            "features": AdapterFeatures(emit={Emit.EXECUTION}),
         },
         custom_expected={
-            "config": CodexAdapterConfig(enable_execution_reporting=True),
+            "features": AdapterFeatures(emit={Emit.EXECUTION}),
         },
         has_custom_tools_attr=True,
         custom_tools_attr="_custom_tools",
@@ -536,15 +538,15 @@ def _build_letta_config() -> AdapterConfig:
             "config": LettaAdapterConfig(),
         },
         custom_kwargs={
+            "features": AdapterFeatures(emit={Emit.EXECUTION}),
             "config": LettaAdapterConfig(
-                enable_execution_reporting=True,
                 mode="shared",
                 mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         custom_expected={
+            "features": AdapterFeatures(emit={Emit.EXECUTION}),
             "config": LettaAdapterConfig(
-                enable_execution_reporting=True,
                 mode="shared",
                 mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
@@ -566,16 +568,16 @@ def _build_opencode_config() -> AdapterConfig:
             "config": OpencodeAdapterConfig(),
         },
         custom_kwargs={
+            "features": AdapterFeatures(emit={Emit.EXECUTION}),
             "config": OpencodeAdapterConfig(
-                enable_execution_reporting=True,
                 approval_mode="auto_accept",
                 provider_id="opencode",
                 model_id="minimax-m2.5-free",
             ),
         },
         custom_expected={
+            "features": AdapterFeatures(emit={Emit.EXECUTION}),
             "config": OpencodeAdapterConfig(
-                enable_execution_reporting=True,
                 approval_mode="auto_accept",
                 provider_id="opencode",
                 model_id="minimax-m2.5-free",
@@ -616,17 +618,15 @@ def _build_gemini_config() -> AdapterConfig:
         adapter_factory=_gemini_factory,
         expected_initial_values={
             "model": _default_from_init(GeminiAdapter, "model"),
-            "system_prompt": _default_from_init(GeminiAdapter, "system_prompt"),
+            "_instructions": _default_from_init(GeminiAdapter, "instructions"),
         },
         custom_kwargs={
             "model": "gemini-2.5-flash",
-            "system_prompt": "You are a helpful bot.",
-            "prompt": "Be concise.",
+            "instructions": "Be concise.",
         },
         custom_expected={
             "model": "gemini-2.5-flash",
-            "system_prompt": "You are a helpful bot.",
-            "_prompt": "Be concise.",
+            "_instructions": "Be concise.",
         },
     )
 
@@ -664,7 +664,7 @@ def _build_google_adk_config() -> AdapterConfig:
         adapter_factory=_google_adk_factory,
         expected_initial_values={
             "model": _default_from_init(GoogleADKAdapter, "model"),
-            "custom_section": _default_from_init(GoogleADKAdapter, "custom_section"),
+            "_instructions": _default_from_init(GoogleADKAdapter, "instructions"),
             "max_history_messages": _default_from_init(
                 GoogleADKAdapter, "max_history_messages"
             ),
@@ -674,11 +674,11 @@ def _build_google_adk_config() -> AdapterConfig:
         },
         custom_kwargs={
             "model": "gemini-2.5-pro",
-            "custom_section": "Be helpful.",
+            "instructions": "Be helpful.",
         },
         custom_expected={
             "model": "gemini-2.5-pro",
-            "custom_section": "Be helpful.",
+            "_instructions": "Be helpful.",
         },
         skip_on_started_conformance=False,
     )

@@ -164,14 +164,9 @@ class TestGetToolDescription:
         assert len(desc) > 0
         assert "Execute" not in desc  # Should be real description, not fallback
 
-    def test_deprecation_warning_for_unprefixed_name(self):
-        """Should emit deprecation warning for unprefixed tool name."""
-        with pytest.warns(DeprecationWarning, match="send_message.*deprecated"):
-            desc = get_tool_description("send_message")
-
-        # Should still return the description
-        assert desc is not None
-        assert len(desc) > 0
+    def test_unprefixed_name_uses_unknown_tool_fallback(self):
+        desc = get_tool_description("send_message")
+        assert desc == "Execute send_message"
 
     def test_fallback_for_unknown_tool(self):
         """Should return fallback for unknown tool name."""

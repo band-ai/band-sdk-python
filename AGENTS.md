@@ -39,14 +39,34 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 The SDK uses Fern-generated REST client with property-based namespace API:
 
-```python notest
-# Pattern: agent_api_<resource>.method()
-await link.rest.agent_api_chats.create_agent_chat(...)
-await link.rest.agent_api_messages.create_agent_chat_message(...)
-await link.rest.agent_api_participants.list_agent_chat_participants(...)
-```
+```python fixture:client
+# Pattern: link.rest.agent_api_<resource>.<method>()
+from band.client.rest import ChatRoomRequest
 
-**Sub-clients**: `identity`, `peers`, `contacts`, `chats`, `messages`, `events`, `participants`, `context`, `memories`, `profile`, `agents`
+created = await client.agent_api_chats.create_agent_chat(
+    chat=ChatRoomRequest(title="Design review")
+)
+assert created.data.id == "room-1"
+
+# The agent-side surface, in full. `human_api_*` namespaces exist too and are
+# not interchangeable: a user key reaches them, an agent key does not.
+assert sorted(
+    name.removeprefix("agent_api_")
+    for name in dir(client)
+    if name.startswith("agent_api_")
+) == [
+    "activity",
+    "chats",
+    "contacts",
+    "context",
+    "events",
+    "identity",
+    "memories",
+    "messages",
+    "participants",
+    "peers",
+]
+```
 
 ## WebSocket Channels & Events
 
@@ -64,7 +84,10 @@ await link.rest.agent_api_participants.list_agent_chat_participants(...)
 
 All models use `ConfigDict(extra="allow")` to accept additional fields from the backend.
 
-```python notest
+`MessageMetadata` and `Mention` live in `band.client.streaming.client`; the
+rest in `band.platform.event`.
+
+```text
 MessageCreatedPayload:
   id, content, message_type, sender_id, sender_type,
   sender_name?, metadata? (MessageMetadata), chat_room_id?,
@@ -91,11 +114,28 @@ Mention:
 
 ### PlatformEvent Union (Tagged Union Pattern)
 
-```python notest
-PlatformEvent = (
-    MessageEvent | RoomAddedEvent | RoomRemovedEvent
-    | ParticipantAddedEvent | ParticipantRemovedEvent
-)
+```python
+import typing
+
+from band.platform.event import PlatformEvent
+
+# Every arm the runtime can hand a subscriber. Contact and connection events
+# ride the same union as room events — a handler that matches on type must
+# account for all of them.
+assert sorted(arm.__name__ for arm in typing.get_args(PlatformEvent)) == [
+    "ContactAddedEvent",
+    "ContactRemovedEvent",
+    "ContactRequestReceivedEvent",
+    "ContactRequestUpdatedEvent",
+    "MessageEvent",
+    "ParticipantAddedEvent",
+    "ParticipantRemovedEvent",
+    "ReconnectedEvent",
+    "RoomAddedEvent",
+    "RoomDeletedEvent",
+    "RoomRemovedEvent",
+    "WebSocketDisconnectedEvent",
+]
 ```
 
 Each event has: `type` (literal), `room_id`, `payload`, `raw`
@@ -268,9 +308,9 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
 | `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
-| `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
+| `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; records out-of-process room posts onto the turn's delivery receipt |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
-| `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
+| `src/band/integrations/acp/client_types.py` | `BandACPClient` — alias for `ACPCollectingClient` |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
 | `src/band/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
@@ -329,7 +369,17 @@ loaded session gets no replay, so history is never doubled.
 
 ### Reply Delivery (Client Adapter)
 
-Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close. The decision lives in `turn_replied_in_room()` (`room_emitter.py`), which reads the collected tool-call stream — the ACP adapter can't flip an in-process flag like the siblings, because its tools may execute out-of-process (remote band-mcp), so it matches `tool_call` title + `completed` status. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` (also what band-mcp 1.3.2+ advertises, since its registrar reuses the SDK tool definitions) plus the legacy `create_agent_chat_message` spelling from band-mcp ≤1.3.1. This suppression is about the text fallback only — the call's own `tool_call`/`tool_result` narration (below) is never suppressed.
+Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close.
+
+Every adapter asks the same question of the same object — "did this turn already post to the room?" — and no adapter keeps its own flag. The backend wraps each turn's tools in an `ObservingTools` (`src/band/core/backends/observing.py`), which mints a `DeliveryReceipt` on the first successful room post, whether it came from a room-posting tool call or from the adapter calling `send_message` itself (a Copilot `ask_user` question). `delivered(tools)` reads it — `copilot_sdk`, `codex`, `opencode` (whose band tools resolve, via its own MCP server, to these very tools) and ACP all gate the text fallback on it. Because the proxy is per turn, a call orphaned by a turn timeout records against its own turn and can never mark a later one as having replied — no identity guard needed.
+
+`delivered()` walks the tools proxy chain, so **every** wrapper in it must be a `ToolsWrapper` (`src/band/core/wrapping.py`) — a wrapper that isn't ends the walk short of the observer and makes a delivered turn look silent (`DedupingAgentTools` is one for exactly this reason).
+
+ACP posts a second kind of evidence into that same receipt: its Band tools may execute **out-of-process** (a remote band-mcp the SDK never sees call anything), and the session-update stream is the only trace of those. `RoomTurnEmitter` derives a receipt from the collected chunks (`receipt_from_acp_chunks`, matching `tool_call` title + `completed` status) and folds it in with `record_delivery()`, so ACP still asks `delivered()` once — and `RunResult.delivery` stays honest for a remote-tool turn.
+
+A room post that is **not** the turn's reply — an approval ask, a policy notice, a timeout notice — goes through `send_non_reply_message()`, which posts beneath the observer so it mints nothing. Otherwise the plumbing's own chatter would count as the answer and silence the model's real reply. A slash-command *response* is the turn's reply and posts normally.
+
+Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` (also what band-mcp 1.3.2+ advertises, since its registrar reuses the SDK tool definitions) plus the legacy `create_agent_chat_message` spelling from band-mcp ≤1.3.1. A **failed** post mints nothing — suppressing on it would make the turn silent. This suppression is about the text fallback only — the call's own `tool_call`/`tool_result` narration (below) is never suppressed.
 
 ### Tool narration (Client Adapter)
 
@@ -404,15 +454,61 @@ await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 src/band/
 ├── adapters/       # Framework adapters (langgraph, anthropic, crewai, a2a, etc.)
 ├── converters/     # History converters per framework
-├── core/           # Protocols, types, base classes
+├── core/           # The contracts every adapter and backend is written against
+│   ├── contracts/  # RunResult, ModelRequest/Response, TurnEvents
+│   ├── backends/   # AgentBackend implementations, history policies, ObservingTools
+│   ├── run/        # One turn's machinery: event sink, cancellation, AgentStream
+│   ├── gateways.py # GatewayBase: exclusive agent ownership + lifecycle
+│   ├── serving.py  # EmbeddedServer: one uvicorn lifecycle for every transport
+│   └── tools.py    # FunctionTool / @tool: portable custom tools
+├── providers/      # ModelProvider implementations (anthropic, gemini)
 ├── runtime/        # Execution context, tools, formatters
 ├── platform/       # WebSocket/REST transport, events
 ├── preprocessing/  # Event filtering before adapter
 ├── client/         # Low-level API clients
-├── integrations/   # Deep framework integrations (a2a, acp, anthropic, claude_sdk, langgraph, parlant, pydantic_ai)
+├── integrations/   # Deep framework integrations (a2a, acp, anthropic, claude_sdk, langgraph, parlant, pydantic_ai, slack, desktop_app)
 ├── config/         # Configuration management, YAML loading, env parsing
+├── cli/            # Console-script entry points
+├── docker/         # Container kit + sandbox launcher
 ├── testing/        # Testing utilities (fake tools, test helpers)
+├── logging_config.py  # LogSettings / configure_logging
 └── agent.py        # Main entry point
+```
+
+### How a turn runs
+
+`Agent` owns transport and hands each inbound message to an `AgentBackend`.
+Two implementations matter:
+
+- `SimpleAdapterBackend` wraps a framework adapter — the adapter calls its own
+  framework, and Band only supplies tools and records what was delivered.
+- `NativeToolLoopBackend` runs the tool loop itself against a `ModelProvider`,
+  and is what `AnthropicAdapter` / `GeminiAdapter` are built on.
+
+`AgentBackend.run` takes the turn's `AgentInput` and a `RunContext` (tools,
+event sink, cancellation) and returns a `RunResult`. `NativeToolLoopBackend`
+is deliberately *not* an `AgentBackend`: it owns its own session, so it takes
+what it primes a turn with (`session_id`, `message`, the two context strings)
+rather than an input whose history it would ignore. The two provider adapters
+supply the `AgentBackend` shape around it. Turn events land on the sink, which
+is what `AgentStream.observe` reads.
+
+### Gateways
+
+A gateway owns an agent's lifecycle plus one inbound transport, so nothing
+else has to start or stop it: `SlackGateway`, `ACPGateway`, `A2AGateway`, each
+a `GatewayBase[TheirAdapter]`. Construct the `Agent` but do not start it —
+the gateway claims it, and a second gateway claiming the same agent raises
+`LifecycleError`.
+
+```python fixture:slack_agent
+from band import SlackGateway
+
+async with SlackGateway(agent=slack_agent) as gateway:
+    assert gateway.state == "started"
+    await gateway.serve()
+
+assert gateway.state == "stopped"
 ```
 
 ## Testing Structure
@@ -537,7 +633,7 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 ### Phase 1: Scaffold Source Files
 
 1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters.parsing import parse_tool_call, parse_tool_result`.
-2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
+2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `instructions`, `features`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`. (`custom_section=` was removed in v2 — see MIGRATING-v2.0.md.)
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
 ### Phase 2: Register with Conformance Infrastructure
@@ -643,12 +739,31 @@ Fence conventions (the language tag after the opening ```` ``` ````):
   pseudo-code, placeholder names (`MyframeworkAdapter`, `MYPROVIDER`), or snippets
   that genuinely need a live platform/LLM.
 - ` ```python fixture:<name> ` — executed with the named pytest fixture injected into
-  the block's namespace (precedent: `fixture:client`, `fixture:agent_config_path`).
-  The fixture is resolved from the nearest `conftest.py`.
+  the block's namespace. Several may be listed, space-separated
+  (` ```python fixture:turn_backend fixture:room_tools `). Fixtures live in
+  `tests/markdown_docs/fixtures.py`, registered globally via `pytest_plugins` in the
+  root `conftest.py` — so name a new one for its scope (`room_tools`, not `tools`)
+  or it shadows a test suite's own.
+
+**Top-level `await` works.** Fences are compiled with `PyCF_ALLOW_TOP_LEVEL_AWAIT`
+and run on pytest-asyncio's loop, so `async with` / `await` need no wrapper. Do
+**not** reach for `asyncio.run` — the markdown-docs conftest stubs it to a no-op
+(so quickstart snippets don't dial the platform), which would make an async snippet
+silently pass while executing nothing.
+
+**Imports are often unnecessary.** `pytest_markdown_docs_globals` (see
+`tests/markdown_docs/globals.py`) pre-binds common names — `AnthropicAdapter`,
+`Agent`, `Emit`, `AdapterFeatures`, `adapter`, … — so a partial snippet can omit
+setup. Add to that module on `NameError` rather than padding the snippet. A *wrong*
+explicit import is worse than none: it shadows the working global with an
+`ImportError`.
 
 **Prefer runnable over `notest`.** If a snippet only needs importable symbols (types,
 enums, helpers), drop `notest` and add a small `assert` so a rename breaks the doc.
 Reach for `fixture:` when it needs a constructed object (a client, a config path).
+Prose claims rot the same way code does — where a claim is checkable in-process
+(a removed parameter still raising, a union's members, a client's namespaces),
+assert it instead of asserting something trivial next to it.
 
 **Gotcha — snippets under `tests/e2e/**` skip in CI.** That tree's conftest skips
 every collected item (code fences included) unless `E2E_TESTS_ENABLED=true`, and the
@@ -732,13 +847,13 @@ from pydantic import ValidationError
 try:
     result = Model(**data)
 except ValidationError as e:
-    # Log full details for debugging
-    logger.error(f"Validation failed: {e}")
+    # Log full details for debugging (%s, per the logging standard above)
+    logger.error("Validation failed: %s", e)
     # Return concise message for LLM
     errors = "; ".join(f"{err['loc'][0]}: {err['msg']}" for err in e.errors())
     return f"Invalid arguments for {tool_name}: {errors}"
-except Exception as e:
-    logger.exception(f"Unexpected error: {e}")
+except Exception:
+    logger.exception("Unexpected error executing %s", tool_name)
     raise
 ```
 

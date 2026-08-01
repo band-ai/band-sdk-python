@@ -52,15 +52,13 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
+from band import LogSettings
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
-logging.basicConfig(
-    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
 
 
@@ -90,8 +88,8 @@ def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
     )
     return AnthropicAdapter(
         model=model,
-        api_key=anthropic_api_key,
-        prompt=system_prompt,
+        provider_key=anthropic_api_key,
+        instructions=system_prompt,
         features=AdapterFeatures(emit=emit),
     )
 

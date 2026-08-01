@@ -9,13 +9,12 @@ wire by the sandbox proxy and never enters this VM.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.core.types import AdapterFeatures, Capability, Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
@@ -67,15 +66,13 @@ def expose_llm_key() -> None:
 async def main() -> None:
     # INFO so the Band lifecycle trace (messages, tool calls, replies) shows in the
     # sandbox log the demo pane tails — without this, only WARNING+ would surface.
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    LogSettings().configure()
     expose_llm_key()
     identity = Identity()
     config = PMConfig()
     adapter = ClaudeSDKAdapter(
         model=config.model,
-        custom_section=build_persona(config.architect_name),
+        instructions=build_persona(config.architect_name),
         # Surface the meeting's mechanics live in the room: tool_call/tool_result
         # for every Band tool (the peer lookup + add-participant handoff), the
         # agent's reasoning, and memory tools so decisions can be recorded.

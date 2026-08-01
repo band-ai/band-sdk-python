@@ -102,7 +102,7 @@ async def main() -> None:
             (CalculatorInput, calculator),
             (WeatherInput, weather),
         ],
-        custom_section=(
+        instructions=(
             "You are a helpful assistant with access to a calculator and "
             "weather tool in addition to the platform tools."
         ),

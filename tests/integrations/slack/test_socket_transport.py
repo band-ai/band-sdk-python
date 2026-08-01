@@ -184,6 +184,31 @@ def test_unknown_transport_rejected():
         )
 
 
+def test_transport_accepts_enum_member():
+    from band.integrations.slack.types import SlackTransport
+
+    adapter = SlackAdapter(
+        inner=_SlackReplyBrain(),
+        apps=[_socket_app()],
+        api_key="k",
+        transport=SlackTransport.SOCKET,
+        rest_client=MagicMock(),
+        web_client_factory=lambda a: AsyncMock(),
+    )
+    assert adapter.transport is SlackTransport.SOCKET
+
+
+def test_invalid_port_rejected():
+    with pytest.raises(ValueError, match="port must be an int"):
+        SlackAdapter(
+            inner=_SlackReplyBrain(),
+            apps=[_http_app()],
+            api_key="k",
+            port=0,
+            rest_client=MagicMock(),
+        )
+
+
 def test_router_unavailable_in_socket_mode():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
@@ -324,7 +349,7 @@ async def test_on_started_connects_socket_listeners(monkeypatch):
     for fake in socket_clients.values():
         assert fake.connect.await_count == 1
     assert callable(captured["dispatcher"])
-    assert len(adapter._socket_listeners) == 1
+    assert len(adapter._socket_mode_listeners) == 1
 
 
 @pytest.mark.asyncio
@@ -335,12 +360,12 @@ async def test_close_disconnects_all_listeners():
     # Manually wire up listeners as if on_started had run.
     for slug, fake in socket_clients.items():
         app = next(a for a in adapter.apps if a.slug == slug)
-        adapter._socket_listeners.append(SlackSocketListener(app=app, client=fake))
+        adapter._socket_mode_listeners.append(SlackSocketListener(app=app, client=fake))
 
     await adapter.close()
     for fake in socket_clients.values():
         assert fake.disconnect.await_count == 1
-    assert adapter._socket_listeners == []
+    assert adapter._socket_mode_listeners == []
 
 
 @pytest.mark.asyncio
@@ -349,12 +374,12 @@ async def test_close_logs_but_does_not_raise_on_disconnect_failure(caplog):
     fake = next(iter(socket_clients.values()))
     fake.disconnect = AsyncMock(side_effect=RuntimeError("boom"))
     app = adapter.apps[0]
-    adapter._socket_listeners.append(SlackSocketListener(app=app, client=fake))
+    adapter._socket_mode_listeners.append(SlackSocketListener(app=app, client=fake))
 
     with caplog.at_level("ERROR"):
         await adapter.close()
     assert any("Failed to stop" in r.message for r in caplog.records)
-    assert adapter._socket_listeners == []
+    assert adapter._socket_mode_listeners == []
 
 
 @pytest.mark.asyncio

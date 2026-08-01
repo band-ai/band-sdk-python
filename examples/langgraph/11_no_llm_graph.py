@@ -32,7 +32,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.pregel import Pregel
 
 from setup_logging import setup_logging
-from band import Agent
+from band import AdapterFeatures, Agent, Emit
 from band.adapters import LangGraphAdapter
 
 setup_logging()
@@ -102,7 +102,8 @@ async def main() -> None:
         raise ValueError("BAND_REST_URL environment variable is required")
 
     adapter = LangGraphAdapter(
-        graph_factory=build_no_llm_graph_factory(), enable_execution_reporting=True
+        graph_factory=build_no_llm_graph_factory(),
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
     agent = Agent.from_config(

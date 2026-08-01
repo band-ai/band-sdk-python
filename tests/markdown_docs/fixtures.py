@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +15,7 @@ from tests.markdown_docs.globals import (
     MARKDOWN_API_KEY,
     MARKDOWN_RESEARCHER_AGENT_ID,
     MARKDOWN_REST_URL,
+    MARKDOWN_ROOM_ID,
 )
 
 
@@ -139,3 +140,212 @@ def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     monkeypatch.setattr(loader, "get_config_path", lambda: path)
     return path
+
+
+@pytest.fixture
+def room_tools():
+    """Back `fixture:room_tools` snippets with in-memory agent tools."""
+    from band.testing import FakeAgentTools
+
+    return FakeAgentTools(room_id=MARKDOWN_ROOM_ID)
+
+
+@pytest.fixture
+def turn_input():
+    """One turn's input, for snippets that drive a backend directly."""
+    from band.core.types import PlatformMessage
+    from band.testing import FakeAgentTools
+    from tests.core.adapterhelpers import make_agent_input
+
+    return make_agent_input(
+        tools=FakeAgentTools(room_id=MARKDOWN_ROOM_ID),
+        room_id=MARKDOWN_ROOM_ID,
+        msg=PlatformMessage(
+            id="msg-1",
+            room_id=MARKDOWN_ROOM_ID,
+            content="Say hello to the room.",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="Ana",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        ),
+    )
+
+
+@pytest.fixture
+def turn_backend():
+    """A backend whose model posts to the room, then answers.
+
+    Scripted rather than mocked at the transport: the tool round is what makes
+    a turn emit observable events, so a snippet about the observation stream
+    needs one to have anything to show.
+    """
+    from band.core.backends.native import NativeToolLoopBackend
+    from band.core.contracts import ModelResponse, ModelToolCall
+    from tests.core.contractsupport import NativeFacadeBackend
+
+    rounds = iter(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ModelToolCall(
+                        id="call-1",
+                        name="band_send_message",
+                        arguments={"content": "Hello @Ana", "mentions": ["user-1"]},
+                    )
+                ]
+            ),
+            ModelResponse(text="Said hello."),
+        ]
+    )
+
+    class ScriptedProvider:
+        """A ``ModelProvider`` that replays the rounds above."""
+
+        async def complete(self, request: object, *, context: object) -> object:
+            return next(rounds)
+
+        def default_history_policy(self):
+            from band.core.backends.history import DefaultHistoryPolicy
+
+            return DefaultHistoryPolicy()
+
+    return NativeFacadeBackend(NativeToolLoopBackend(provider=ScriptedProvider()))
+
+
+@pytest.fixture
+def scripted_anthropic_adapter():
+    """Build an `AnthropicAdapter` whose SDK client replays scripted replies.
+
+    Returns `(adapter, client)`; the client records every payload the provider
+    sent, which is what makes the snippet's assertion about the real request
+    shape possible.
+    """
+    from band.adapters.anthropic import AnthropicAdapter
+    from tests.modelclients import ScriptedAnthropicClient, anthropic_reply
+
+    def build(*texts: str):
+        adapter = AnthropicAdapter()
+        client = ScriptedAnthropicClient([anthropic_reply(text) for text in texts])
+        adapter.client = client
+        return adapter, client
+
+    return build
+
+
+@pytest.fixture
+def logging_sandbox():
+    """Let a snippet configure process logging, then put it back.
+
+    `configure_logging` applies its config with `dictConfig`, which replaces
+    the root logger's handlers — so a snippet that runs for real would leak
+    its setup into every test after it.
+    """
+    from tests.logsupport import restored_logging
+
+    with restored_logging():
+        yield
+
+
+def _mock_gateway_runtime() -> AsyncMock:
+    """Runtime that satisfies ``Agent.start`` / ``stop`` without dialing Band."""
+    runtime = AsyncMock()
+    runtime.agent_id = MARKDOWN_AGENT_ID
+    runtime.agent_name = "markdown-gateway"
+    runtime.agent_description = "markdown-docs gateway agent"
+    runtime.stop.return_value = True
+    runtime.claim_single_instance = MagicMock()
+    runtime.release_single_instance = MagicMock()
+    runtime.initialize = AsyncMock()
+    return runtime
+
+
+@pytest.fixture
+def a2a_agent(monkeypatch: pytest.MonkeyPatch):
+    """Mocked ``Agent`` + ``A2AGatewayAdapter``; HTTP ``serve()`` returns immediately.
+
+    Peer discovery is stubbed and ``GatewayServer`` is faked so a gateway-host
+    snippet can ``async with A2AGateway(...): await gateway.serve()`` offline.
+    """
+    from band.agent import Agent
+    from band.integrations.a2a.gateway import A2AGatewayAdapter
+
+    adapter = A2AGatewayAdapter(api_key=MARKDOWN_API_KEY, port=10000)
+    empty = MagicMock()
+    empty.data = []
+    adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(return_value=empty)
+
+    mock_server = MagicMock()
+    mock_server.start = AsyncMock()
+    mock_server.serve = AsyncMock()
+    mock_server.stop = AsyncMock()
+    monkeypatch.setattr(
+        "band.integrations.a2a.gateway.adapter.GatewayServer",
+        MagicMock(return_value=mock_server),
+    )
+
+    agent = Agent(runtime=_mock_gateway_runtime(), adapter=adapter)
+    yield agent
+
+
+@pytest.fixture
+def acp_agent(monkeypatch: pytest.MonkeyPatch):
+    """Mocked ``Agent`` + ``BandACPServerAdapter``; ``acp.run_agent`` is a no-op."""
+    from band.agent import Agent
+    from band.integrations.acp.server_adapter import BandACPServerAdapter
+
+    adapter = BandACPServerAdapter(rest_url=MARKDOWN_REST_URL, api_key=MARKDOWN_API_KEY)
+    adapter.close = AsyncMock()  # type: ignore[method-assign]
+    monkeypatch.setattr("acp.run_agent", AsyncMock())
+
+    agent = Agent(runtime=_mock_gateway_runtime(), adapter=adapter)
+    yield agent
+
+
+@pytest.fixture
+def acp_server(acp_agent):
+    """ACP protocol server wired to the mocked ``acp_agent`` adapter."""
+    from band.integrations.acp.server import ACPServer
+
+    return ACPServer(acp_agent.adapter)
+
+
+@pytest.fixture
+def slack_agent(monkeypatch: pytest.MonkeyPatch):
+    """Mocked ``Agent`` + ``SlackAdapter``; transport ``serve`` returns immediately.
+
+    Socket Mode's real serve waits on a stop signal; gateway-host snippets only
+    need the ``async with SlackGateway(...): await serve()`` spelling to run.
+    """
+    from band.agent import Agent
+    from band.core.simple_adapter import SimpleAdapter
+    from band.integrations.slack.adapter import SlackAdapter
+    from band.integrations.slack.host import SlackGateway
+    from band.integrations.slack.types import SlackApp
+
+    class _Brain(SimpleAdapter[object]):
+        async def on_message(self, *args: object, **kwargs: object) -> None:
+            return None
+
+    adapter = SlackAdapter(
+        inner=_Brain(),  # type: ignore[arg-type]
+        apps=[
+            SlackApp(
+                slug="markdown",
+                bot_token="xoxb-test",
+                signing_secret="",
+                app_token="xapp-test",
+            )
+        ],
+        api_key=MARKDOWN_API_KEY,
+        transport="socket",
+        rest_client=MagicMock(),
+    )
+    adapter.start_ingress = AsyncMock()  # type: ignore[method-assign]
+    adapter.close = AsyncMock()  # type: ignore[method-assign]
+    monkeypatch.setattr(SlackGateway, "_serve_transport", AsyncMock())
+
+    agent = Agent(runtime=_mock_gateway_runtime(), adapter=adapter)
+    yield agent

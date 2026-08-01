@@ -1,94 +1,172 @@
-"""HTTP server for the A2A Gateway adapter."""
+"""HTTP server for A2A Gateway adapter."""
 
 from __future__ import annotations
 
-import asyncio
+import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from a2a.server.agent_execution import AgentExecutor
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes.agent_card_routes import create_agent_card_routes
-from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
-from a2a.server.routes.rest_routes import create_rest_routes
-from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from a2a.compat.v0_3.conversions import to_compat_agent_card
-from a2a.utils.constants import PROTOCOL_VERSION_0_3, PROTOCOL_VERSION_CURRENT
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
+    Message as A2AMessage,
+    Task,
+    TaskStatusUpdateEvent,
+)
+from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import BaseRoute, Route
+from starlette.responses import JSONResponse, StreamingResponse
+from starlette.routing import Route
 
+from band.core.serving import EmbeddedServer
 from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 
-ExecutorFactory = Callable[[str], AgentExecutor]
-
-# The REST endpoints the gateway serves per peer: the messaging binding and
-# the compat card. The upstream factory also returns task read/cancel/list
-# and push-config routes — an unauthenticated window into past conversations.
-MESSAGING_REST_SUFFIXES = ("/message:send", "/message:stream", "/card")
-
-# The JSON-RPC methods the gateway serves (1.0 names and their v0.3-compat
-# spellings). Sends create work; the per-task operations are gated by the
-# unguessable task UUID the server minted for the caller. Everything else
-# stays closed: with no auth layer every caller shares one identity, so
-# enumeration (ListTasks) and the push-config/extended-card methods would
-# disclose or disrupt other callers' conversations.
-ALLOWED_JSONRPC_METHODS = frozenset(
-    {
-        "SendMessage",
-        "SendStreamingMessage",
-        "GetTask",
-        "CancelTask",
-        "SubscribeToTask",
-        "message/send",
-        "message/stream",
-        "tasks/get",
-        "tasks/cancel",
-        "tasks/resubscribe",
-    }
-)
+# Type alias for the on_request callback
+OnRequestCallback = Callable[[str, A2AMessage], AsyncIterator[TaskStatusUpdateEvent]]
 
 
 class GatewayServer:
-    """Expose each discovered Band peer through the official A2A server routes."""
+    """Starlette HTTP server exposing A2A endpoints for each peer.
+
+    Creates per-peer routes for AgentCard discovery and message streaming.
+    Routes are created at startup based on the discovered peers.
+
+    Peers are addressed by slug (e.g., "weather-agent") with UUID fallback.
+
+    Attributes:
+        peers: Dict mapping slug to Peer objects (primary lookup).
+        peers_by_uuid: Dict mapping UUID to Peer objects (fallback lookup).
+        gateway_url: Base URL for the gateway (used in AgentCard URLs).
+        port: Port to listen on.
+        on_request: Callback invoked when an A2A message is received.
+    """
 
     def __init__(
         self,
         peers: dict[str, Peer],
+        peers_by_uuid: dict[str, Peer],
         gateway_url: str,
         port: int,
-        executor_factory: ExecutorFactory,
+        on_request: OnRequestCallback,
     ) -> None:
-        self.peers = peers
-        self.gateway_url = gateway_url.rstrip("/")
-        self.port = port
-        self.executor_factory = executor_factory
-        self._app: Starlette | None = None
-        self._uvicorn: Any | None = None
-        self._server_task: asyncio.Task[Any] | None = None
+        """Initialize gateway server.
 
-    def _agent_card(self, slug: str, peer: Peer) -> AgentCard:
-        rpc_url = f"{self.gateway_url}/agents/{slug}"
-        return AgentCard(
+        Args:
+            peers: Dict of slug → Peer objects (primary lookup).
+            peers_by_uuid: Dict of UUID → Peer objects (fallback lookup).
+            gateway_url: Base URL for AgentCard URLs (e.g., "http://localhost:10000").
+            port: Port to listen on.
+            on_request: Async callback invoked with (peer_id, message) → events.
+        """
+        self.peers = peers
+        self.peers_by_uuid = peers_by_uuid
+        self.gateway_url = gateway_url
+        self.port = port
+        self.on_request = on_request
+        self._app: Starlette | None = None
+        self._http: EmbeddedServer | None = None
+
+    def _resolve_peer(self, peer_id: str) -> tuple[str, Peer] | None:
+        """Resolve peer by slug or UUID.
+
+        Args:
+            peer_id: Peer slug or UUID from URL path.
+
+        Returns:
+            Tuple of (slug, Peer) if found, None otherwise.
+        """
+        # Try slug first (primary)
+        if peer_id in self.peers:
+            return peer_id, self.peers[peer_id]
+        # Try UUID fallback
+        if peer_id in self.peers_by_uuid:
+            peer = self.peers_by_uuid[peer_id]
+            # Find the slug for this peer
+            for slug, p in self.peers.items():
+                if p.id == peer.id:
+                    return slug, peer
+        return None
+
+    def _build_app(self) -> Starlette:
+        """Build Starlette application with routes."""
+        routes = [
+            # List all available peers
+            Route(
+                "/peers",
+                self._handle_list_peers,
+                methods=["GET"],
+            ),
+            # Per-peer agent card discovery (support both naming conventions)
+            Route(
+                "/agents/{peer_id}/.well-known/agent.json",
+                self._handle_agent_card,
+                methods=["GET"],
+            ),
+            Route(
+                "/agents/{peer_id}/.well-known/agent-card.json",
+                self._handle_agent_card,
+                methods=["GET"],
+            ),
+            # Per-peer message streaming (legacy REST endpoint)
+            Route(
+                "/agents/{peer_id}/v1/message:stream",
+                self._handle_message_stream,
+                methods=["POST"],
+            ),
+            # JSON-RPC endpoint (A2A SDK posts here with method field)
+            Route(
+                "/agents/{peer_id}",
+                self._handle_jsonrpc,
+                methods=["POST"],
+            ),
+        ]
+        return Starlette(routes=routes)
+
+    async def _handle_list_peers(self, request: Request) -> JSONResponse:
+        """Return list of all available peers.
+
+        Args:
+            request: Starlette request.
+
+        Returns:
+            JSONResponse with list of peers (slug, id, name, description).
+        """
+        peers_list = [
+            {
+                "slug": slug,  # Primary identifier for URLs
+                "id": peer.id,  # UUID fallback
+                "name": peer.name,  # Display name
+                "description": peer.description or "",
+            }
+            for slug, peer in self.peers.items()
+        ]
+        return JSONResponse({"peers": peers_list, "count": len(peers_list)})
+
+    async def _handle_agent_card(self, request: Request) -> JSONResponse:
+        """Return AgentCard for the specified peer.
+
+        Args:
+            request: Starlette request with peer_id path parameter (slug or UUID).
+
+        Returns:
+            JSONResponse with AgentCard or 404 if peer not found.
+        """
+        peer_id = request.path_params["peer_id"]
+        resolved = self._resolve_peer(peer_id)
+        if not resolved:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+
+        slug, peer = resolved
+
+        card = AgentCard(
             name=peer.name,
             description=peer.description or "",
-            supported_interfaces=[
-                AgentInterface(
-                    protocol_binding="JSONRPC",
-                    protocol_version=PROTOCOL_VERSION_CURRENT,
-                    url=rpc_url,
-                ),
-                AgentInterface(
-                    protocol_binding="JSONRPC",
-                    protocol_version=PROTOCOL_VERSION_0_3,
-                    url=rpc_url,
-                ),
-            ],
+            url=f"{self.gateway_url}/agents/{slug}",  # Use slug in URL
             version="1.0.0",
             capabilities=AgentCapabilities(streaming=True),
             skills=[
@@ -102,160 +180,291 @@ class GatewayServer:
             default_input_modes=["text/plain"],
             default_output_modes=["text/plain"],
         )
+        return JSONResponse(card.model_dump(mode="json", by_alias=True))
 
-    def _build_app(self) -> Starlette:
-        routes: list[BaseRoute] = [
-            Route("/peers", self._handle_list_peers, methods=["GET"]),
-        ]
-        protocol_routes: list[BaseRoute] = []
-        rest_routes: list[BaseRoute] = []
+    async def _handle_message_stream(
+        self, request: Request
+    ) -> JSONResponse | StreamingResponse:
+        """Handle incoming A2A message and stream response events.
 
-        for slug, peer in self.peers.items():
-            # One handler — and one task store — per peer, shared by all its
-            # aliases, so a task started on the slug stays visible on the UUID.
-            handler = DefaultRequestHandler(
-                agent_executor=self.executor_factory(slug),
-                task_store=InMemoryTaskStore(),
-                agent_card=self._agent_card(slug, peer),
-            )
-            for alias in dict.fromkeys((slug, peer.id)):
-                card = self._agent_card(alias, peer)
-                protocol_routes.extend(
-                    create_agent_card_routes(
-                        card,
-                        card_url=f"/agents/{alias}/.well-known/agent-card.json",
-                    )
-                )
-                protocol_routes.append(
-                    Route(
-                        f"/agents/{alias}/.well-known/agent.json",
-                        self._legacy_agent_card(card),
-                        methods=["GET"],
-                    )
-                )
-                protocol_routes.extend(self._guarded_jsonrpc_routes(handler, alias))
-                rest_routes.extend(self._messaging_rest_routes(handler, alias))
+        Args:
+            request: Starlette request with peer_id path parameter (slug or UUID) and JSON body.
 
-        return Starlette(routes=routes + protocol_routes + rest_routes)
-
-    @staticmethod
-    def _guarded_jsonrpc_routes(
-        handler: DefaultRequestHandler, alias: str
-    ) -> list[BaseRoute]:
-        """The JSON-RPC binding, with non-messaging methods closed off.
-
-        The upstream dispatcher serves the full method set, and with no auth
-        layer every caller shares one task-store identity — see
-        ``ALLOWED_JSONRPC_METHODS`` for what stays open and why.
+        Returns:
+            StreamingResponse with SSE events.
         """
-        (route,) = create_jsonrpc_routes(
-            handler,
-            rpc_url=f"/agents/{alias}",
-            enable_v0_3_compat=True,
-        )
-        dispatch = route.endpoint
+        peer_id = request.path_params["peer_id"]
 
-        async def endpoint(request: Request) -> Any:
+        # Resolve peer by slug or UUID
+        resolved = self._resolve_peer(peer_id)
+        if not resolved:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+
+        slug, peer = resolved
+
+        body = await request.json()
+        try:
+            message = A2AMessage(**body)
+        except ValidationError as exc:
+            return JSONResponse(
+                {
+                    "error": "Invalid A2A message payload",
+                    "details": exc.errors(),
+                },
+                status_code=400,
+            )
+
+        logger.debug(
+            "Received A2A message for peer %s (%s): %s",
+            peer.name,
+            slug,
+            message.message_id,
+        )
+
+        async def event_stream() -> AsyncIterator[str]:
+            """Generate SSE events from on_request callback."""
             try:
-                body = await request.json()
-            except Exception:
-                body = None
-            method = body.get("method") if isinstance(body, dict) else None
-            if method is not None and method not in ALLOWED_JSONRPC_METHODS:
-                request_id = body.get("id") if isinstance(body, dict) else None
-                if not isinstance(request_id, str | int):
-                    request_id = None
-                return JSONResponse(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "error": {"code": -32601, "message": "Method not found"},
-                    }
-                )
-            # The request body is cached on the Request, so the dispatcher
-            # can re-read it.
-            return await dispatch(request)
+                # Pass slug to callback (adapter resolves to peer)
+                async for event in self.on_request(slug, message):
+                    yield f"data: {event.model_dump_json()}\n\n"
+            except Exception as e:
+                logger.exception("Error in A2A request handler: %s", e)
+                # Send error event
+                yield f'data: {{"error": "{e!s}"}}\n\n'
 
-        return [Route(f"/agents/{alias}", endpoint, methods=["POST"])]
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-    @staticmethod
-    def _messaging_rest_routes(
-        handler: DefaultRequestHandler, alias: str
-    ) -> list[BaseRoute]:
-        """The REST binding, reduced to the endpoints this gateway serves.
+    async def _handle_jsonrpc(
+        self, request: Request
+    ) -> JSONResponse | StreamingResponse:
+        """Handle JSON-RPC requests from A2A SDK.
 
-        Beyond the unauthenticated task routes, the upstream factory ends with
-        a multi-tenant catch-all ``Mount("/{tenant}")``; peers here are
-        namespaced by path, and the first alias's mount would shadow every
-        later alias's flat routes.
+        The A2A SDK posts JSON-RPC requests to the base agent URL with
+        a method field to indicate the operation (message/send, message/stream, etc.).
+
+        Args:
+            request: Starlette request with peer_id path parameter and JSON-RPC body.
+
+        Returns:
+            JSONResponse for sync methods, StreamingResponse for streaming methods.
         """
-        return [
-            route
-            for route in create_rest_routes(
-                handler,
-                enable_v0_3_compat=True,
-                path_prefix=f"/agents/{alias}",
-            )
-            if isinstance(route, Route) and route.path.endswith(MESSAGING_REST_SUFFIXES)
-        ]
+        peer_id = request.path_params["peer_id"]
 
-    @staticmethod
-    def _legacy_agent_card(
-        card: AgentCard,
-    ) -> Callable[[Any], Awaitable[JSONResponse]]:
-        """Serve the SDK's v0.3 card representation for legacy discovery."""
-        legacy_card = to_compat_agent_card(card)
-        payload = legacy_card.model_dump(
-            by_alias=True,
-            mode="json",
-            exclude_none=True,
+        # Resolve peer by slug or UUID
+        resolved = self._resolve_peer(peer_id)
+        if not resolved:
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32001, "message": "Peer not found"},
+                    "id": None,
+                },
+                status_code=404,
+            )
+
+        slug, peer = resolved
+        body = await request.json()
+
+        # Extract JSON-RPC fields
+        method = body.get("method", "")
+        request_id = body.get("id")
+        params = body.get("params", {})
+
+        logger.debug(
+            "Received JSON-RPC %s for peer %s (%s), request_id=%s",
+            method,
+            peer.name,
+            slug,
+            request_id,
         )
 
-        async def response(_request: Any) -> JSONResponse:
-            return JSONResponse(payload)
+        # Route based on method
+        if method == "message/send":
+            return await self._handle_jsonrpc_send(slug, params, request_id)
+        elif method == "message/stream":
+            return await self._handle_jsonrpc_stream(slug, params, request_id)
+        else:
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32601, "message": f"Method not found: {method}"},
+                    "id": request_id,
+                },
+                status_code=400,
+            )
 
-        return response
+    async def _handle_jsonrpc_send(
+        self, slug: str, params: dict[str, Any], request_id: str | None
+    ) -> JSONResponse:
+        """Handle synchronous message/send JSON-RPC request.
 
-    async def _handle_list_peers(self, _request: Request) -> JSONResponse:
-        peers = [
-            {
-                "slug": slug,
-                "id": peer.id,
-                "name": peer.name,
-                "description": peer.description or "",
-            }
-            for slug, peer in self.peers.items()
-        ]
-        return JSONResponse({"peers": peers, "count": len(peers)})
+        Args:
+            slug: Peer slug.
+            params: JSON-RPC params containing message.
+            request_id: JSON-RPC request ID.
+
+        Returns:
+            JSONResponse with JSON-RPC result (Task).
+        """
+        # Extract message from params
+        message_data = params.get("message", {})
+        try:
+            message = A2AMessage(**message_data)
+        except ValidationError as exc:
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": "Invalid params",
+                        "data": exc.errors(),
+                    },
+                    "id": request_id,
+                },
+                status_code=400,
+            )
+
+        # Collect all events until final
+        final_event: TaskStatusUpdateEvent | None = None
+        try:
+            async for event in self.on_request(slug, message):
+                final_event = event
+                if event.final:
+                    break
+        except Exception as e:
+            logger.exception("Error in JSON-RPC send handler: %s", e)
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32000, "message": str(e)},
+                    "id": request_id,
+                },
+                status_code=500,
+            )
+
+        # Build Task result from final event
+        if final_event:
+            task = Task(
+                id=final_event.task_id,
+                context_id=final_event.context_id,
+                status=final_event.status,
+            )
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "result": task.model_dump(mode="json", by_alias=True),
+                    "id": request_id,
+                }
+            )
+        else:
+            # No events received - create empty task
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32000, "message": "No response from peer"},
+                    "id": request_id,
+                },
+                status_code=500,
+            )
+
+    async def _handle_jsonrpc_stream(
+        self, slug: str, params: dict[str, Any], request_id: str | None
+    ) -> StreamingResponse:
+        """Handle streaming message/stream JSON-RPC request.
+
+        Args:
+            slug: Peer slug.
+            params: JSON-RPC params containing message.
+            request_id: JSON-RPC request ID.
+
+        Returns:
+            StreamingResponse with SSE events in JSON-RPC format.
+        """
+        # Extract message from params
+        message_data = params.get("message", {})
+        try:
+            message = A2AMessage(**message_data)
+        except ValidationError as exc:
+            return StreamingResponse(
+                iter(
+                    [
+                        "data: "
+                        + json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "error": {
+                                    "code": -32602,
+                                    "message": "Invalid params",
+                                    "data": exc.errors(),
+                                },
+                                "id": request_id,
+                            }
+                        )
+                        + "\n\n"
+                    ]
+                ),
+                media_type="text/event-stream",
+                status_code=400,
+            )
+
+        async def event_stream() -> AsyncIterator[str]:
+            """Generate SSE events in JSON-RPC format."""
+            try:
+                async for event in self.on_request(slug, message):
+                    # Wrap event in JSON-RPC response
+                    jsonrpc_response = {
+                        "jsonrpc": "2.0",
+                        "result": event.model_dump(mode="json", by_alias=True),
+                        "id": request_id,
+                    }
+                    yield f"data: {json.dumps(jsonrpc_response)}\n\n"
+            except Exception as e:
+                logger.exception("Error in JSON-RPC stream handler: %s", e)
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32000, "message": str(e)},
+                    "id": request_id,
+                }
+                yield f"data: {json.dumps(error_response)}\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    def _embedded(self) -> EmbeddedServer:
+        if self._app is None:
+            self._app = self._build_app()
+        return EmbeddedServer(
+            self._app,
+            host="0.0.0.0",
+            port=self.port,
+            log_level="warning",
+        )
 
     async def start(self) -> None:
-        import uvicorn
-
-        self._app = self._build_app()
-        self._uvicorn = uvicorn.Server(
-            uvicorn.Config(
-                self._app, host="0.0.0.0", port=self.port, log_level="warning"
-            )
-        )
-        self._server_task = asyncio.create_task(self._uvicorn.serve())
+        """Start the HTTP server in a background task (legacy adapter path)."""
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
             self.port,
             len(self.peers),
         )
+        self._http = self._embedded()
+        await self._http.start()
+
+    async def serve(self) -> None:
+        """Run the HTTP server in the foreground until cancelled or stopped."""
+        if self._http is not None and self._http.running:
+            raise RuntimeError("GatewayServer is already running")
+
+        logger.info(
+            "Serving A2A Gateway on port %d with %d peers",
+            self.port,
+            len(self.peers),
+        )
+        self._http = self._embedded()
+        await self._http.serve()
 
     async def stop(self) -> None:
-        if self._uvicorn is None or self._server_task is None:
-            return
-        # Ask uvicorn to exit rather than cancelling serve(): cancellation
-        # skips its shutdown phase and leaks the listening socket.
-        self._uvicorn.should_exit = True
-        try:
-            await self._server_task
-        except asyncio.CancelledError:
-            raise
-        except BaseException:  # uvicorn raises SystemExit on startup failure
-            logger.exception("A2A Gateway server exited with error")
-        self._uvicorn = None
-        self._server_task = None
+        """Stop the HTTP server (background task or foreground serve)."""
+        if self._http is not None:
+            await self._http.stop()
+            self._http = None
         logger.info("A2A Gateway server stopped")

@@ -27,15 +27,13 @@ Run with:
 from __future__ import annotations
 
 import pytest
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from band.core.bases import BandSettings
 
 pytestmark = pytest.mark.requires_api
 
 
-class LettaLiveSettings(BaseSettings):
+class LettaLiveSettings(BandSettings):
     """Live-test knobs (field name == env var, see module docstring)."""
-
-    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     letta_base_url: str = "http://localhost:8283"
     letta_api_key: str = ""

@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import time as _time
-import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,7 +15,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.exceptions import BandConfigError
+from band.core.backends.observing import delivered, send_non_reply_message
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -49,7 +49,6 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools import is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -181,7 +180,6 @@ class _TurnResult:
     final_text: str = ""
     turn_status: str = "failed"
     turn_error: str = ""
-    saw_send_message_tool: bool = False
 
 
 @dataclass
@@ -213,9 +211,7 @@ class CodexAdapterConfig:
     custom_section: str = ""
     include_base_instructions: bool = True
     experimental_api: bool = True
-    enable_task_events: bool = True
     emit_turn_task_markers: bool = False
-    emit_thought_events: bool = False
     fallback_send_agent_text: bool = True
     approval_mode: ApprovalMode = "manual"
     approval_text_notifications: bool = True
@@ -228,7 +224,6 @@ class CodexAdapterConfig:
     codex_command: tuple[str, ...] | None = None
     codex_env: dict[str, str] | None = None
     codex_ws_url: str = "ws://127.0.0.1:8765"
-    enable_execution_reporting: bool = False
     enable_self_config_tools: bool = False
     additional_dynamic_tools: list[dict[str, Any]] = field(default_factory=list)
     inject_history_on_resume_failure: bool = True
@@ -304,39 +299,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     ) -> None:
         self._config = config or CodexAdapterConfig()
 
-        # --- Deprecation shim: boolean → features migration ---
-        # Only trigger for non-default booleans (enable_task_events defaults
-        # to True, so it doesn't count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_execution_reporting or self._config.emit_thought_events
-        )
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in CodexAdapterConfig "
-                "(enable_execution_reporting / emit_thought_events) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
         if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_execution_reporting and emit_thought_events in "
-                    "CodexAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(emit={Emit.EXECUTION, "
-                    "Emit.THOUGHTS}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.emit_thought_events:
-                emit = emit | frozenset({Emit.THOUGHTS})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=frozenset(), emit=emit)
+            features = AdapterFeatures(emit=frozenset({Emit.TASK_EVENTS}))
 
         super().__init__(
             history_converter=history_converter or CodexHistoryConverter(),
@@ -644,7 +608,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 turn_status=result.turn_status,
                 turn_error=result.turn_error,
                 final_text=result.final_text,
-                saw_send_message_tool=result.saw_send_message_tool,
                 duration_s=_turn_duration_s,
             )
 
@@ -671,14 +634,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 event = await self._client.recv_event(timeout_s=_remaining)
                 if event.kind == "request":
-                    used_send_message = await self._handle_server_request(
+                    await self._handle_server_request(
                         tools=tools,
                         msg=msg,
                         room_id=room_id,
                         event=event,
-                    )
-                    result.saw_send_message_tool = (
-                        result.saw_send_message_tool or used_send_message
                     )
                     continue
 
@@ -964,36 +924,46 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._sandbox_overrides.pop(room_id, None)
             if self._room_threads:
                 return
+            await self._close_client()
+
+    async def cleanup_all(self) -> None:
+        """Close the shared Codex client when the owning agent stops."""
+        async with self._rpc_lock:
+            for room_id in tuple(self._pending_approvals):
+                self._clear_pending_approvals_for_room(room_id)
+            self._room_threads.clear()
+            self._prompt_injected_rooms.clear()
+            self._raw_history_by_room.clear()
+            self._needs_history_injection.clear()
+            await self._close_client()
+
+    async def _close_client(self) -> None:
+        try:
             if self._client is None:
                 return
-            try:
-                close_coro = self._client.close()
-                timeout = self.config.client_close_timeout_s
-                if timeout is not None:
-                    try:
-                        await asyncio.wait_for(close_coro, timeout=timeout)
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "Codex client.close() exceeded %ss timeout; "
-                            "dropping client reference",
-                            timeout,
-                        )
-                else:
-                    await close_coro
-            finally:
-                self._client = None
-                self._initialized = False
-                self._selected_model = None
-                self._task_titles_by_id.clear()
-                # Defensive: wipe all pending approvals globally on last-room
-                # teardown.  Per-room cleanup already resolves futures to
-                # "decline" via _clear_pending_approvals_for_room, so this
-                # catches any leaked entries from rooms whose cleanup failed.
-                self._pending_approvals.clear()
-                self._token_usage.clear()
-                self._approval_audit.clear()
-                self._session_approved.clear()
-                self._sandbox_overrides.clear()
+            close_coro = self._client.close()
+            timeout = self.config.client_close_timeout_s
+            if timeout is not None:
+                try:
+                    await asyncio.wait_for(close_coro, timeout=timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Codex client.close() exceeded %ss timeout; "
+                        "dropping client reference",
+                        timeout,
+                    )
+            else:
+                await close_coro
+        finally:
+            self._client = None
+            self._initialized = False
+            self._selected_model = None
+            self._task_titles_by_id.clear()
+            self._pending_approvals.clear()
+            self._token_usage.clear()
+            self._approval_audit.clear()
+            self._session_approved.clear()
+            self._sandbox_overrides.clear()
 
     async def _ensure_client_ready(self) -> None:
         if self._client is None:
@@ -1267,7 +1237,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         msg: PlatformMessage,
         room_id: str,
         event: RpcEvent,
-    ) -> bool:
+    ) -> None:
         """Dispatch a server-initiated request (tool call, approval).
 
         Concurrency model: this coroutine mutates adapter state
@@ -1284,7 +1254,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
         if event.id is None:
-            return False
+            return
 
         params = event.params if isinstance(event.params, dict) else {}
 
@@ -1294,7 +1264,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if not isinstance(arguments, dict):
                 arguments = {}
             call_id = str(params.get("callId") or "")
-            tool_call_succeeded = False
 
             # Don't emit reporting for codex-local slash commands — they already
             # surface their outcome in the room themselves.
@@ -1305,8 +1274,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
             if should_report:
                 await tools.send_event(
-                    content=json.dumps(
-                        {"name": tool_name, "args": arguments, "tool_call_id": call_id}
+                    content=tool_call_content(
+                        tool_name, args=arguments, tool_call_id=call_id
                     ),
                     message_type="tool_call",
                 )
@@ -1337,15 +1306,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "success": success,
                     },
                 )
-                tool_call_succeeded = success
                 if should_report:
                     await tools.send_event(
-                        content=json.dumps(
-                            {
-                                "name": tool_name,
-                                "output": text_result,
-                                "tool_call_id": call_id,
-                            }
+                        content=tool_result_content(
+                            tool_name, output=text_result, tool_call_id=call_id
                         ),
                         message_type="tool_result",
                     )
@@ -1362,12 +1326,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 if should_report:
                     await tools.send_event(
-                        content=json.dumps(
-                            {
-                                "name": tool_name,
-                                "output": error_text,
-                                "tool_call_id": call_id,
-                            }
+                        content=tool_result_content(
+                            tool_name, output=error_text, tool_call_id=call_id
                         ),
                         message_type="tool_result",
                     )
@@ -1383,17 +1343,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 if should_report:
                     await tools.send_event(
-                        content=json.dumps(
-                            {
-                                "name": tool_name,
-                                "output": error_text,
-                                "tool_call_id": call_id,
-                            }
+                        content=tool_result_content(
+                            tool_name, output=error_text, tool_call_id=call_id
                         ),
                         message_type="tool_result",
                     )
 
-            return is_room_posting_tool(tool_name) and tool_call_succeeded
+            return
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(
@@ -1403,14 +1359,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 event=event,
                 params=params,
             )
-            return False
+            return
 
         await self._client.respond_error(
             event.id,
             code=-32601,
             message=f"Unhandled server request: {event.method}",
         )
-        return False
 
     async def _handle_approval_request(
         self,
@@ -1492,7 +1447,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 }
             ]
             try:
-                await tools.send_message(
+                await send_non_reply_message(
+                    tools,
                     f"Approval requested ({summary}). Policy decision: {decision}.",
                     mentions=mention,
                 )
@@ -1556,7 +1512,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         turn_status: str,
         turn_error: str,
         final_text: str,
-        saw_send_message_tool: bool,
         duration_s: float = 0.0,
     ) -> None:
         # Look up token usage once for both marker and lifecycle events.
@@ -1638,10 +1593,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
         if turn_status == "completed":
+            # The turn's own room post, if it made one, is the reply; sending
+            # the model's closing text on top of it would duplicate it.
             if (
                 self.config.fallback_send_agent_text
                 and final_text.strip()
-                and not saw_send_message_tool
+                and delivered(tools) is None
             ):
                 await tools.send_message(final_text.strip(), mentions=mention)
             return
@@ -1726,16 +1683,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 return
             name, args, output = self._extract_tool_item(item_type, item)
             await tools.send_event(
-                content=json.dumps(
-                    {"name": name, "args": args, "tool_call_id": item_id}
-                ),
+                content=tool_call_content(name, args=args, tool_call_id=item_id),
                 message_type="tool_call",
                 metadata=metadata,
             )
             await tools.send_event(
-                content=json.dumps(
-                    {"name": name, "output": output, "tool_call_id": item_id}
-                ),
+                content=tool_result_content(name, output=output, tool_call_id=item_id),
                 message_type="tool_result",
                 metadata=metadata,
             )
@@ -2010,7 +1963,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "Failed to emit approval request task event",
                         exc_info=True,
                     )
-            await tools.send_message(approval_msg, mentions=mention)
+            await send_non_reply_message(tools, approval_msg, mentions=mention)
             decision_raw = await asyncio.wait_for(
                 pending.future,
                 timeout=self.config.approval_wait_timeout_s,
@@ -2021,7 +1974,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         except asyncio.TimeoutError:
             timeout_decision = self.config.approval_timeout_decision
             try:
-                await tools.send_message(
+                await send_non_reply_message(
+                    tools,
                     f"Approval `{token}` timed out. Applied `{timeout_decision}`.",
                     mentions=mention,
                 )

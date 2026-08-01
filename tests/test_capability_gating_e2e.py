@@ -234,7 +234,7 @@ class TestCapabilityGatingEndToEnd:
         from band.adapters.anthropic import AnthropicAdapter
 
         adapter = AnthropicAdapter(
-            prompt="Focus on Python.",
+            instructions="Focus on Python.",
             include_base_instructions=False,
         )
         await adapter.on_started("test-agent", "A test agent")
@@ -269,7 +269,7 @@ class TestCapabilityGatingEndToEnd:
         from band.adapters.gemini import GeminiAdapter
 
         adapter = GeminiAdapter(
-            prompt="Focus on Python.",
+            instructions="Focus on Python.",
             include_base_instructions=False,
         )
         await adapter.on_started("test-agent", "A test agent")

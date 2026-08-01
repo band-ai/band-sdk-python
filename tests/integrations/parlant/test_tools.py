@@ -106,33 +106,6 @@ class TestMessageSentFlag:
         assert result is False
 
 
-class TestDeprecatedFunctions:
-    """Tests for deprecated compatibility functions."""
-
-    def test_set_current_tools_emits_deprecation_warning(self):
-        """Should emit deprecation warning."""
-        from band.integrations.parlant.tools import set_current_tools
-
-        with pytest.warns(DeprecationWarning, match="set_current_tools is deprecated"):
-            set_current_tools(MagicMock())
-
-    def test_get_current_tools_emits_deprecation_warning(self):
-        """Should emit deprecation warning."""
-        from band.integrations.parlant.tools import get_current_tools
-
-        with pytest.warns(DeprecationWarning, match="get_current_tools is deprecated"):
-            get_current_tools()
-
-    def test_get_current_tools_returns_none(self):
-        """Should return None (tools now accessed via session_id)."""
-        from band.integrations.parlant.tools import get_current_tools
-
-        with pytest.warns(DeprecationWarning):
-            result = get_current_tools()
-
-        assert result is None
-
-
 class TestCreateParlantTools:
     """Tests for create_parlant_tools() function."""
 

@@ -71,41 +71,37 @@ async def test_rooms_keep_isolated_context(
 
     # Phase 1: state a different note in each room.
     async with reply_capture(room_a) as cap_a:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_a,
+            agent,
             REMEMBER.format(note=note_a),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await cap_a.wait_for_processed(mid, agent.id)
     async with reply_capture(room_b) as cap_b:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_b,
+            agent,
             REMEMBER.format(note=note_b),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await cap_b.wait_for_processed(mid, agent.id)
 
     # Phase 2: each room recalls only its own note, never the other's. A fresh
     # capture per room scopes the assertion to the recall reply alone.
     async with reply_capture(room_a) as cap_a:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_a,
+            agent,
             RECALL,
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await cap_a.wait_for_reply(mid, agent.id)
         replies.assert_contains_any([note_a])
         replies.assert_contains_none([note_b])
 
     async with reply_capture(room_b) as cap_b:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_b,
+            agent,
             RECALL,
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await cap_b.wait_for_reply(mid, agent.id)
         replies.assert_contains_any([note_b])

@@ -48,7 +48,7 @@ async def main() -> None:
     # Requires GEMINI_API_KEY environment variable or pass provider_key explicitly
     adapter = GeminiAdapter(
         model="gemini-2.5-flash",
-        prompt="You are a helpful assistant. Be concise and friendly.",
+        instructions="You are a helpful assistant. Be concise and friendly.",
     )
 
     # Create and start agent

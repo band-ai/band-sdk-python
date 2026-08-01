@@ -41,25 +41,76 @@ Example (Framework-light pattern):
 """
 
 import logging
-from importlib.metadata import version as _get_version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _get_version
 
 # Composition layer (new pattern)
 from .agent import Agent
+from .config.logs import LogSettings, configure_logging_from_env
+from .core.exceptions import (
+    BandConfigError,
+    BandConnectionError,
+    BandError,
+    BandToolError,
+    DuplicateToolError,
+    LifecycleError,
+    MissingDependencyError,
+    RunFailed,
+    StreamError,
+    UnsupportedOptionError,
+)
+from .core.deprecation import BandDeprecationWarning, warn_deprecated
+from .core.protocols import (
+    AgentBackend,
+    CancellationToken,
+    EventSink,
+    Gateway,
+    ModelContext,
+    ModelProvider,
+    RunContext,
+)
+from .core.contracts import (
+    BackendContext,
+    DeliveryReceipt,
+    ModelRequest,
+    ModelResponse,
+    ModelSamplingOptions,
+    RunResult,
+)
+from .core.backends.adapter import SimpleAdapterBackend
+from .core.backends.native import NativeToolLoopBackend
+from .core.run.stream import AgentStream
+from .core.options import UNSET, resolve_sampling
+from .core.tools import (
+    FunctionTool,
+    ToolContext,
+    ToolSpec,
+    normalize_additional_tools,
+    tool,
+    tool_spec_to_anthropic_schema,
+    tool_spec_to_openai_schema,
+)
+from .core.instructions import (
+    Instruction,
+    InstructionMode,
+    InstructionPolicy,
+    normalize_instructions,
+)
+
 
 # Core types (v0.3.0)
 from .core.types import AdapterFeatures, Capability, Emit
-from .core.exceptions import (
-    BandError,
-    BandConfigError,
-    BandConnectionError,
-    BandToolError,
-)
 from .logging_config import (
-    LogLevel,
+    CHATTY_LOGGERS,
+    STANDARD_FORMAT,
+    FileStyle,
+    FormatStyle,
     LoggingConfig,
     LoggingStyle,
+    LogLevel,
     LogStream,
     build_logging_config,
+    chatty_logger_levels,
     configure_logging,
 )
 
@@ -68,34 +119,34 @@ from .platform import BandLink, PlatformEvent
 
 # Runtime layer
 from .runtime import (
-    AgentRuntime,
-    RoomPresence,
-    Execution,
-    ExecutionContext,
-    ExecutionHandler,
-    AgentTools,
-    PlatformMessage,
-    AgentConfig,
-    SessionConfig,
-    ConversationContext,
-    render_system_prompt,
-    TOOL_MODELS,
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     CONTACT_TOOL_NAMES,
-    MEMORY_TOOL_NAMES,
     MCP_TOOL_PREFIX,
-    mcp_tool_names,
-    # Formatters
-    format_message_for_llm,
-    format_history_for_llm,
-    build_participants_message,
-    # Trackers
-    ParticipantTracker,
-    MessageRetryTracker,
+    MEMORY_TOOL_NAMES,
+    TOOL_MODELS,
+    AgentConfig,
+    AgentRuntime,
+    AgentTools,
+    ConversationContext,
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
     # Shutdown
     GracefulShutdown,
+    MessageRetryTracker,
+    # Trackers
+    ParticipantTracker,
+    PlatformMessage,
+    RoomPresence,
+    SessionConfig,
+    build_participants_message,
+    format_history_for_llm,
+    # Formatters
+    format_message_for_llm,
+    mcp_tool_names,
+    render_system_prompt,
     run_with_graceful_shutdown,
 )
 
@@ -105,17 +156,66 @@ __all__ = [
     # Core types (v0.3.0)
     "AdapterFeatures",
     "Capability",
+    "FunctionTool",
+    "ToolContext",
+    "ToolSpec",
+    "normalize_additional_tools",
+    "tool",
+    "tool_spec_to_anthropic_schema",
+    "tool_spec_to_openai_schema",
     "Emit",
+    "Instruction",
+    "InstructionMode",
+    "InstructionPolicy",
+    "normalize_instructions",
     "BandError",
     "BandConfigError",
     "BandConnectionError",
     "BandToolError",
+    "MissingDependencyError",
+    "UnsupportedOptionError",
+    "DuplicateToolError",
+    "LifecycleError",
+    "StreamError",
+    "AgentStream",
+    "RunFailed",
+    "BandDeprecationWarning",
+    "warn_deprecated",
+    "AgentBackend",
+    "ModelProvider",
+    "ModelSamplingOptions",
+    "NativeToolLoopBackend",
+    "UNSET",
+    "resolve_sampling",
+    "AnthropicProvider",
+    "GeminiProvider",
+    "ModelContext",
+    "Gateway",
+    "A2AGateway",
+    "ACPGateway",
+    "SlackGateway",
+    "EventSink",
+    "CancellationToken",
+    "RunContext",
+    "RunResult",
+    "DeliveryReceipt",
+    "BackendContext",
+    "ModelRequest",
+    "ModelResponse",
+    "SimpleAdapterBackend",
+    "FileStyle",
+    "FormatStyle",
+    "CHATTY_LOGGERS",
     "LogLevel",
+    "LogSettings",
     "LoggingConfig",
     "LoggingStyle",
     "LogStream",
+    "STANDARD_FORMAT",
     "build_logging_config",
+    "chatty_logger_levels",
     "configure_logging",
+    "configure_logging_from_env",
     # Platform
     "BandLink",
     "PlatformEvent",
@@ -164,3 +264,28 @@ try:
     __version__ = _get_version("band-sdk")
 except PackageNotFoundError:
     __version__ = "0.1.0"  # Fallback for editable installs
+
+
+def __getattr__(name: str) -> object:
+    """Lazy exports for optional extras."""
+    if name == "AnthropicProvider":
+        from band.providers.anthropic import AnthropicProvider
+
+        return AnthropicProvider
+    if name == "GeminiProvider":
+        from band.providers.gemini import GeminiProvider
+
+        return GeminiProvider
+    if name == "A2AGateway":
+        from band.integrations.a2a.gateway.host import A2AGateway
+
+        return A2AGateway
+    if name == "ACPGateway":
+        from band.integrations.acp.host import ACPGateway
+
+        return ACPGateway
+    if name == "SlackGateway":
+        from band.integrations.slack.host import SlackGateway
+
+        return SlackGateway
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

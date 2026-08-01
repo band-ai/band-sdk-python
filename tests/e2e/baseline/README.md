@@ -256,13 +256,16 @@ fixture-closure / platform-touching cases under `guards/`.
 
 ## Fixtures (from `conftest.py`)
 
-`baseline_settings`, `user_ops`, `resource_manager`, `reply_capture`, `judge`,
-`agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
+`baseline_settings`, `user_ops`, `resource_manager`, `agent_room`,
+`reply_capture`, `judge`, `agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
 
 - `reply_capture` and `judge` pre-bind their plumbing (the WS observer; the judge
   model + key), so tests pass only the test-specific arguments.
 - `agent` is the single running `ProvisionedAgent` — sourced from `@per_adapter`
   (the current cell) **or** `@with_adapters(OneAdapter)`. Its id is `agent.adapter_id`.
+- `agent_room` is a fresh single-agent room for `agent`; use
+  `resource_manager.provision_room` directly for peer, multi-agent, or `cell.run_as`
+  topologies.
 - `agents` is the running group declared by `@with_adapters(A, B, …)`, in declared
   order; each carries its own `.adapter_id`.
 - `cell` is the `@per_adapter` cell's `AdapterCell` — request it (instead of `agent`)
@@ -385,8 +388,9 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Run the same scenario across every adapter | `@per_adapter()` → `agent` (id via `agent.adapter_id`) |
 | Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
 | Drive the agent lifecycle myself (build-only / reboot / rehydration) | `@per_adapter()` → `cell` (`cell.build()` / `cell.provision()` / `cell.run_as()` — see **AdapterCell**) |
+| Create a normal single-agent room | use the `agent_room` fixture with `agent` |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
-| Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
+| Drive the platform as a user | the `user_ops` fixture (`await user_ops.mention(room_id, agent, "...")` for ordinary user-to-agent turns; `send_message` for explicit ids/names) |
 | List who the user could invite to a room | `await user_ops.lookup_peers(not_in_room=room_id)` → `list[Peer]` (the invitable roster; `peer_type="Agent"` narrows) |
 | Drive a peer agent (e.g. the `Echo` bounce) | `await resource_manager.peer(peer).send_message(room_id, "ECHO: ...", mention_id=agent.id, mention_name=agent.name)` — posts as that agent, returns the message id to barrier on (needs the peer already in the room) |
 | Observe replies without a race | `async with reply_capture(room_id) as capture:` then send |

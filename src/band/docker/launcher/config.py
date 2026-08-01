@@ -26,7 +26,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from band.core.bases import BandSettings
 
 from band.docker.launcher.errors import LaunchError
 from band.docker.repo_init import is_https_url, is_ssh_url
@@ -168,15 +168,13 @@ class WorkspaceConfig(BaseModel):
     runtime: RuntimeSection
 
 
-class LauncherEnv(BaseSettings):
+class LauncherEnv(BandSettings):
     """Supported environment overrides plus runtime-provided values.
 
     Field name == env var name (case-insensitive); everything else in the
     process environment is ignored here and passed through to the customer
     process untouched.
     """
-
-    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     # Identity / endpoints / credentials overrides.
     band_agent_id: str = ""

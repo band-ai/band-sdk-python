@@ -44,14 +44,13 @@ if TYPE_CHECKING:
         CrewAIFlowAdapter as CrewAIFlowAdapter,
     )
     from band.adapters.a2a import A2AAdapter as A2AAdapter
+    from band.adapters.a2a_gateway import A2AGateway as A2AGateway
     from band.adapters.a2a_gateway import A2AGatewayAdapter as A2AGatewayAdapter
-    from band.adapters.a2a_gateway import (
-        A2AGatewayAdapterConfig as A2AGatewayAdapterConfig,
-    )
     from band.adapters.codex import CodexAdapter as CodexAdapter
     from band.adapters.codex import CodexAdapterConfig as CodexAdapterConfig
     from band.adapters.acp import (
         ACPClientAdapter as ACPClientAdapter,
+        ACPGateway as ACPGateway,
         ACPServer as ACPServer,
         BandACPServerAdapter as BandACPServerAdapter,
     )
@@ -64,39 +63,8 @@ if TYPE_CHECKING:
     from band.adapters.letta import LettaAdapterConfig as LettaAdapterConfig
     from band.adapters.slack import SlackAdapter as SlackAdapter
     from band.adapters.slack import SlackApp as SlackApp
+    from band.adapters.slack import SlackGateway as SlackGateway
     from band.adapters.slack import SlackSessionState as SlackSessionState
-
-__all__ = [
-    "LangGraphAdapter",
-    "AnthropicAdapter",
-    "PydanticAIAdapter",
-    "ClaudeSDKAdapter",
-    "CopilotSDKAdapter",
-    "CopilotSDKAdapterConfig",
-    "CopilotACPAdapter",
-    "CopilotACPAdapterConfig",
-    "ParlantAdapter",
-    "CrewAIAdapter",
-    "CrewAIFlowAdapter",
-    "A2AAdapter",
-    "A2AGatewayAdapter",
-    "A2AGatewayAdapterConfig",
-    "CodexAdapter",
-    "CodexAdapterConfig",
-    "ACPClientAdapter",
-    "ACPServer",
-    "BandACPServerAdapter",
-    "AgnoAdapter",
-    "GeminiAdapter",
-    "GoogleADKAdapter",
-    "OpencodeAdapter",
-    "OpencodeAdapterConfig",
-    "LettaAdapter",
-    "LettaAdapterConfig",
-    "SlackAdapter",
-    "SlackApp",
-    "SlackSessionState",
-]
 
 
 # Submodule (under band.adapters) providing each lazily imported name.
@@ -113,11 +81,12 @@ _LAZY_IMPORTS: dict[str, str] = {
     "CrewAIAdapter": "crewai",
     "CrewAIFlowAdapter": "crewai_flow",
     "A2AAdapter": "a2a",
+    "A2AGateway": "a2a_gateway",
     "A2AGatewayAdapter": "a2a_gateway",
-    "A2AGatewayAdapterConfig": "a2a_gateway",
     "CodexAdapter": "codex",
     "CodexAdapterConfig": "codex",
     "ACPClientAdapter": "acp",
+    "ACPGateway": "acp",
     "ACPServer": "acp",
     "BandACPServerAdapter": "acp",
     "AgnoAdapter": "agno",
@@ -129,8 +98,11 @@ _LAZY_IMPORTS: dict[str, str] = {
     "LettaAdapterConfig": "letta",
     "SlackAdapter": "slack",
     "SlackApp": "slack",
+    "SlackGateway": "slack",
     "SlackSessionState": "slack",
 }
+
+__all__ = list(_LAZY_IMPORTS)
 
 
 def __getattr__(name: str) -> type:

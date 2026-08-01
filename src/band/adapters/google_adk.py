@@ -13,13 +13,14 @@ import json
 import logging
 import re
 import uuid
-import warnings
 from typing import ClassVar, TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import MissingDependencyError
+from band.core.instructions import Instruction, InstructionPolicy
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -36,7 +37,6 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     find_custom_tool,
 )
-from band.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
@@ -91,7 +91,7 @@ def _require_adk() -> tuple[type, type, type, Any]:
         from google.adk.tools import BaseTool
         from google.genai import types
     except ImportError as exc:
-        raise ImportError(
+        raise MissingDependencyError(
             "google-adk is required for GoogleADKAdapter. "
             "Install with: uv add band-sdk[google_adk]"
         ) from exc
@@ -280,7 +280,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     Example:
         adapter = GoogleADKAdapter(
             model="gemini-2.5-flash",
-            custom_section="You are a helpful assistant.",
+            instructions="You are a helpful assistant.",
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
@@ -294,10 +294,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     def __init__(
         self,
         model: str = "gemini-2.5-flash",
-        system_prompt: str | None = None,
-        custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
+        *,
+        instructions: str | Instruction | None = None,
         history_converter: GoogleADKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         max_history_messages: int = _DEFAULT_MAX_HISTORY_MESSAGES,
@@ -307,31 +305,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # Validate google-adk is installed early (cached, so cheap on repeat).
         _require_adk()
 
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
+        self._instructions = instructions
 
         super().__init__(
             history_converter=history_converter or GoogleADKHistoryConverter(),
@@ -339,8 +313,6 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         )
 
         self.model = model
-        self._system_prompt_override = system_prompt
-        self.custom_section = custom_section
         self.max_history_messages = max_history_messages
         self.max_transcript_chars = max_transcript_chars
 
@@ -362,22 +334,15 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         self._room_sessions: dict[str, str] = {}
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Render system prompt and create ADK agent after metadata is fetched.
-
-        Prompt precedence (matches Anthropic/Gemini):
-          1. If ``system_prompt`` was provided at construction time, it wins —
-             ``custom_section`` and ``features``-based capability sections are
-             ignored. The override is passed through verbatim.
-          2. Otherwise, ``render_system_prompt`` renders the SDK base prompt
-             plus ``custom_section``, with capability sections gated on
-             ``features.capabilities``.
-        """
+        """Render system prompt after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
-        self._system_prompt = self._system_prompt_override or render_system_prompt(
+        self._system_prompt = InstructionPolicy(
+            include_base_instructions=True,
+            features=self.features,
+        ).render(
             agent_name=agent_name,
             agent_description=agent_description,
-            custom_section=self.custom_section or "",
-            features=self.features,
+            instructions=self._instructions,
         )
 
         logger.info("Google ADK adapter started for agent: %s", agent_name)
@@ -687,12 +652,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     except (TypeError, ValueError):
                         args = {"raw": str(fc.args)} if fc.args else {}
                     await tools.send_event(
-                        content=json.dumps(
-                            {
-                                "name": getattr(fc, "name", "unknown"),
-                                "args": args,
-                                "tool_call_id": getattr(fc, "id", ""),
-                            }
+                        content=tool_call_content(
+                            getattr(fc, "name", "unknown"),
+                            args=args,
+                            tool_call_id=getattr(fc, "id", ""),
                         ),
                         message_type="tool_call",
                     )
@@ -704,14 +667,12 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             for fr in function_responses:
                 try:
                     await tools.send_event(
-                        content=json.dumps(
-                            {
-                                "name": getattr(fr, "name", "unknown"),
-                                "output": str(fr.response)
-                                if getattr(fr, "response", None)
-                                else "",
-                                "tool_call_id": getattr(fr, "id", ""),
-                            }
+                        content=tool_result_content(
+                            getattr(fr, "name", "unknown"),
+                            output=str(fr.response)
+                            if getattr(fr, "response", None)
+                            else "",
+                            tool_call_id=getattr(fr, "id", ""),
                         ),
                         message_type="tool_result",
                     )

@@ -92,6 +92,9 @@ class OneShotInvoker:
     ) -> None:
         self._link = link
         self._adapter = adapter
+        from band.core.backends.adapter import SimpleAdapterBackend
+
+        self._backend = SimpleAdapterBackend(adapter)
         self._agent_id = agent_id
         self._drain_cap = drain_cap
         self._agent_name: str = ""
@@ -126,7 +129,14 @@ class OneShotInvoker:
         # Parity with Agent.start(): some adapters read this via getattr at
         # runtime to inject identity into the system prompt.
         setattr(self._adapter, "_band_agent_id", self._agent_id)
-        await self._adapter.on_started(self._agent_name, self._agent_description)
+        from band.core.contracts import BackendContext
+
+        await self._backend.start(
+            BackendContext(
+                agent_name=self._agent_name,
+                agent_description=self._agent_description,
+            )
+        )
         self._started = True
         logger.info(
             "OneShotInvoker ready: agent_id=%s name=%s",
@@ -172,7 +182,7 @@ class OneShotInvoker:
             room_id = body.get("room_id") or (body.get("payload") or {}).get("id")
             if room_id:
                 try:
-                    await self._adapter.on_cleanup(room_id)
+                    await self._backend.close_session(room_id)
                 except Exception:
                     logger.warning(
                         "Adapter on_cleanup failed for room %s",
@@ -296,7 +306,9 @@ class OneShotInvoker:
                 room_id=room_id,
             )
 
-            await self._adapter.on_event(inp)
+            from band.core.backends.oneshot import run_oneshot_turn
+
+            await run_oneshot_turn(self._backend, inp)
 
             # 5. Mark the triggering message processed.
             await self._link.mark_processed(room_id, msg_id)

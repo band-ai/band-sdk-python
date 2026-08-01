@@ -42,6 +42,8 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from band.core.wrapping import ToolsWrapper
+
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
 
@@ -80,12 +82,16 @@ def _normalize_mentions(
     return frozenset(k for k in keys if k)
 
 
-class DedupingAgentTools:
+class DedupingAgentTools(ToolsWrapper):
     """Wrap an ``AgentToolsProtocol`` to dedupe identical ``send_message`` calls.
 
     The wrapper is transparent for every method except ``send_message`` and
     keeps no state of its own beyond the dedup cache, so the underlying
     tools object (and its ``participants`` view) remain authoritative.
+
+    A ``ToolsWrapper`` so the chain stays walkable: the turn's delivery
+    observer sits *inside* this wrapper, and ``delivered()`` must be able to
+    reach it through here.
 
     Not declared as ``AgentToolsProtocol`` subclass: Protocol classes define
     real method slots that would shadow ``__getattr__`` and break the
@@ -141,9 +147,12 @@ class DedupingAgentTools:
         MCP tool invocations resolve by room id and do not include the
         inbound platform message id, so the cache key intentionally stays
         scoped to this room wrapper plus the outgoing payload.
+
+        The lock is why this exists next to ``ToolsWrapper.replace_inner``:
+        the swap must not race a send that is reading ``self._inner``.
         """
         async with self._lock:
-            self._inner = inner
+            self.replace_inner(inner)
 
     async def send_message(
         self,

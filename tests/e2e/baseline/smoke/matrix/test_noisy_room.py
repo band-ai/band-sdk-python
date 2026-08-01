@@ -75,11 +75,10 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
 
     async with reply_capture(room_id) as capture:
         # Phase 1: seed the needle (addressed to our agent).
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             f"Please note for later — the project id is {needle}. Just acknowledge.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
 
@@ -93,11 +92,10 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
                 mention_id=bystander.id,
                 mention_name=bystander.name,
             )
-        probe = await user_ops.send_message(
+        probe = await user_ops.mention(
             room_id,
+            agent,
             liveness_probe(live),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         # Wait for the probe's own reply. Per-room FIFO means the probe is answered
         # only after every earlier (decoy) message, so once the probe's reply frame is
@@ -115,11 +113,10 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
 
         # Phase 3: recall the buried needle (addressed to our agent).
         recall_mark = capture.messages.snapshot()
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "What is the project id? Reply with just it.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         recall = await capture.wait_for_reply(mid, agent.id, since=recall_mark)
         recall.assert_contains_any([needle])

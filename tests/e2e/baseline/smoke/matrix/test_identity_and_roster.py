@@ -61,8 +61,10 @@ async def test_reports_identity_and_roster(
 
     async with reply_capture(room_id) as capture:
         mark = capture.messages.snapshot()
-        mid = await user_ops.send_message(
-            room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
+        mid = await user_ops.mention(
+            room_id,
+            agent,
+            ROSTER_PROBE,
         )
         replies = await capture.wait_for_reply(mid, agent.id, since=mark)
 

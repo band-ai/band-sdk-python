@@ -110,7 +110,7 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `custom_section` | `str \| None` | `None` | Custom instructions appended to the generated Band system prompt. |
+| `instructions` | `str \| Instruction \| None` | `None` | Custom instructions appended to the generated Band system prompt (bare `str` appends; use `InstructionMode.REPLACE` to replace). |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. They are converted to MCP tools internally. |
 | `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
 | `history_converter` | `ClaudeSDKHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |

@@ -62,11 +62,10 @@ async def test_memory_stored(
         title="e2e-memory", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             store_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         # One read, both layers (call layer from room events, store layer from
@@ -107,11 +106,10 @@ async def test_memory_subject_scope(
         title="e2e-memory-subject", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             store_subject_memory_instruction(marker, subject_id=agent.id),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
@@ -160,11 +158,10 @@ async def test_memory_subject_scope_inferred(
         title="e2e-memory-subject-inferred", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             store_subject_memory_inferred_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
@@ -198,11 +195,10 @@ async def test_memory_excluded_from_general_tool_view(
         title="e2e-memory-filter", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             store_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         general = await capture.tool_calls(sender_id=agent.id)
@@ -236,11 +232,10 @@ async def test_memory_lifecycle_supersede(
         title="e2e-memory-life", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             supersede_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         # status=ALL so the now-superseded record is still returned.
@@ -273,11 +268,10 @@ async def test_memory_lifecycle_archive(
         title="e2e-memory-archive", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             archive_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
@@ -307,11 +301,10 @@ async def test_memory_recall(
         title="e2e-memory-recall", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             recall_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
@@ -339,11 +332,10 @@ async def test_memory_store_layer_filtering(
         title="e2e-memory-filtering", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             store_two_memories_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(

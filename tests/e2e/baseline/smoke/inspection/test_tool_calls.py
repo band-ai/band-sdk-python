@@ -51,11 +51,10 @@ async def test_tool_fired_with_args(
         title="e2e-tool-fired", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'alpha'",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
@@ -78,11 +77,10 @@ async def test_capture_exposes_replies_and_tool_calls(
         title="e2e-replies-and-tools", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'beta' and tell me the code",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
@@ -113,11 +111,10 @@ async def test_multiple_tools_in_one_turn(
         title="e2e-multi-tool", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'alpha' and get the weather for Zorath",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
@@ -141,11 +138,10 @@ async def test_with_args_tolerant_match(
         title="e2e-tolerant-args", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             "look up the access code for key 'Alpha', note 'urgent'",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)

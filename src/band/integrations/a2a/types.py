@@ -52,9 +52,7 @@ class A2ASessionState:
     Attributes:
         context_id: A2A context ID for conversation continuity.
         task_id: Last known task ID (for resumption).
-        task_state: Last known task state name (e.g., "TASK_STATE_INPUT_REQUIRED";
-            history from the pre-protobuf adapter holds 0.x values like
-            "input-required").
+        task_state: Last known task state as string (e.g., "input_required").
     """
 
     context_id: str | None = None

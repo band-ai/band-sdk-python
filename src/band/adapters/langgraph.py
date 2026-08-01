@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import inspect
-import json
 import logging
-import warnings
 from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
 from langgraph.pregel import Pregel
 
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -54,7 +52,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         adapter = LangGraphAdapter(graph_factory=graph_factory)
 
     System prompt:
-        The adapter renders a system prompt from ``prompt_template`` /
+        The adapter renders a system prompt from
         ``custom_section`` / agent metadata in :meth:`on_started`. In the
         simple ``llm=`` pattern, it prepends that prompt as the first
         ``("system", ...)`` message on session bootstrap and the LangGraph
@@ -92,40 +90,13 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         graph_factory: Callable[[list[Any]], Pregel] | None = None,
         graph: Pregel | None = None,
         # Common options
-        prompt_template: str = "default",
         custom_section: str = "",
         additional_tools: list[Any] | None = None,
-        enable_memory_tools: bool = False,
-        enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
         features: AdapterFeatures | None = None,
         inject_system_prompt: bool | None = None,
     ):
-        # --- Deprecation shim: boolean → features migration ---
-        if (enable_memory_tools or enable_execution_reporting) and features is not None:
-            raise BandConfigError(
-                "Cannot pass both 'features' and legacy boolean params "
-                "(enable_memory_tools, enable_execution_reporting)."
-            )
-
-        if enable_memory_tools or enable_execution_reporting:
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated. "
-                "Use features=AdapterFeatures(...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capabilities = (
-                frozenset({Capability.MEMORY}) if enable_memory_tools else frozenset()
-            )
-            emit = (
-                frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset()
-            )
-            features = AdapterFeatures(capabilities=capabilities, emit=emit)
-
         # Use default LangChain converter if not provided
         super().__init__(
             history_converter=history_converter or LangChainHistoryConverter(),
@@ -189,7 +160,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         self.graph_factory = graph_factory
         self._static_graph = graph
-        self.prompt_template = prompt_template
         self.custom_section = custom_section
         self.additional_tools = additional_tools or []
         self.recursion_limit = recursion_limit
@@ -210,7 +180,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         """Render system prompt after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
         self._system_prompt = render_system_prompt(
-            template=self.prompt_template,
             agent_name=agent_name,
             agent_description=agent_description,
             custom_section=self.custom_section,
@@ -405,15 +374,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            payload = {
-                "name": tool_name,
-                "args": data.get("input", {}),
-                "tool_call_id": event.get("run_id", "unknown"),
-            }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
             try:
                 await tools.send_event(
-                    content=json.dumps(payload, default=str),
+                    content=tool_call_content(
+                        tool_name,
+                        args=data.get("input", {}),
+                        tool_call_id=event.get("run_id", "unknown"),
+                    ),
                     message_type="tool_call",
                 )
             except Exception as e:
@@ -426,16 +394,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             is_error = event_type == "on_tool_error" or bool(data.get("error"))
-            payload = {
-                "name": tool_name,
-                "output": data.get("error") or data.get("output", ""),
-                "tool_call_id": event.get("run_id", "unknown"),
-                "is_error": is_error,
-            }
             logger.info("[STREAM] %s: %s", event_type, tool_name)
             try:
                 await tools.send_event(
-                    content=json.dumps(payload, default=str),
+                    content=tool_result_content(
+                        tool_name,
+                        output=data.get("error") or data.get("output", ""),
+                        tool_call_id=event.get("run_id", "unknown"),
+                        is_error=is_error,
+                    ),
                     message_type="tool_result",
                 )
             except Exception as e:

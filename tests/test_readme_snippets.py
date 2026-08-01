@@ -339,7 +339,7 @@ class TestEmitOptionsSnippets:
 
 
 class TestCustomInstructionsSnippets:
-    """README shows custom_section and prompt params."""
+    """README shows canonical custom instruction parameters."""
 
     def test_langgraph_custom_section(self) -> None:
         from band.adapters import LangGraphAdapter
@@ -358,12 +358,12 @@ class TestCustomInstructionsSnippets:
 
         assert "support triage" in adapter.custom_section
 
-    def test_anthropic_prompt(self) -> None:
+    def test_anthropic_instructions(self) -> None:
         from band.adapters import AnthropicAdapter
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
-            prompt="You are a concise technical reviewer. Focus on risks and next steps.",
+            instructions="You are a concise technical reviewer. Focus on risks and next steps.",
         )
 
         assert adapter is not None
@@ -379,6 +379,7 @@ class TestCustomToolsSnippets:
 
     def test_anthropic_custom_tools(self) -> None:
         from band.adapters import AnthropicAdapter
+        from band import FunctionTool
 
         class WeatherInput(BaseModel):
             """Get current weather for a city."""
@@ -390,7 +391,9 @@ class TestCustomToolsSnippets:
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
-            additional_tools=[(WeatherInput, get_weather)],
+            additional_tools=[
+                FunctionTool.from_custom_tool_def((WeatherInput, get_weather))
+            ],
         )
 
         assert adapter is not None

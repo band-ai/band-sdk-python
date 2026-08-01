@@ -1,21 +1,131 @@
 """Core protocols and types for composition-based architecture."""
 
+from __future__ import annotations
+
+from typing import Any
+
+from band.core.contracts import (
+    BackendContext,
+    DeliveryReceipt,
+    EnvelopedTurnEvent,
+    ModelMessage,
+    ModelMessageRole,
+    ModelRequest,
+    ModelResponse,
+    ModelSamplingOptions,
+    ModelToolCall,
+    RunResult,
+    ToolStatus,
+    TurnEvent,
+    TurnEventKind,
+)
+from band.core.deprecation import BandDeprecationWarning, warn_deprecated
+from band.core.instructions import (
+    Instruction,
+    InstructionMode,
+    InstructionPolicy,
+    normalize_instructions,
+)
+from band.core.options import UNSET, resolve_sampling
+from band.core.exceptions import (
+    BandConfigError,
+    BandConnectionError,
+    BandError,
+    BandToolError,
+    DuplicateToolError,
+    LifecycleError,
+    MissingDependencyError,
+    RunFailed,
+    StreamError,
+    UnsupportedOptionError,
+)
 from band.core.protocols import (
+    AgentBackend,
     AgentToolsProtocol,
+    CancellationToken,
+    EventSink,
     FrameworkAdapter,
+    Gateway,
     HistoryConverter,
+    ModelContext,
+    ModelProvider,
     Preprocessor,
+    RunContext,
 )
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tools import (
+    FunctionTool,
+    ToolContext,
+    ToolSpec,
+    normalize_additional_tools,
+    tool,
+    tool_spec_to_anthropic_schema,
+    tool_spec_to_openai_schema,
+)
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 
 __all__ = [
+    "AgentBackend",
     "AgentInput",
     "AgentToolsProtocol",
+    "BackendContext",
+    "BandConfigError",
+    "BandConnectionError",
+    "BandDeprecationWarning",
+    "BandError",
+    "BandToolError",
+    "CancellationToken",
+    "DeliveryReceipt",
+    "DuplicateToolError",
+    "EnvelopedTurnEvent",
+    "EventSink",
     "FrameworkAdapter",
+    "Gateway",
     "HistoryConverter",
     "HistoryProvider",
+    "Instruction",
+    "InstructionMode",
+    "InstructionPolicy",
+    "LifecycleError",
+    "MissingDependencyError",
+    "ModelContext",
+    "normalize_instructions",
+    "ModelMessage",
+    "ModelMessageRole",
+    "ModelProvider",
+    "ModelRequest",
+    "ModelResponse",
+    "ModelSamplingOptions",
+    "ModelToolCall",
     "PlatformMessage",
     "Preprocessor",
+    "RunContext",
+    "RunResult",
+    "FunctionTool",
+    "ToolContext",
+    "ToolSpec",
+    "normalize_additional_tools",
+    "tool",
+    "tool_spec_to_anthropic_schema",
+    "tool_spec_to_openai_schema",
     "SimpleAdapter",
+    "SimpleAdapterBackend",
+    "RunFailed",
+    "StreamError",
+    "ToolStatus",
+    "TurnEvent",
+    "TurnEventKind",
+    "UnsupportedOptionError",
+    "UNSET",
+    "resolve_sampling",
+    "warn_deprecated",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy exports that would otherwise create import cycles + rename aliases."""
+    if name == "SimpleAdapterBackend":
+        from band.core.backends.adapter import SimpleAdapterBackend
+
+        return SimpleAdapterBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

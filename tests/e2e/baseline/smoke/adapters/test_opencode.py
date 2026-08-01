@@ -125,12 +125,11 @@ async def test_manual_bash_permission_approved_from_a_mentioned_reply(
         )
         async with reply_capture(room_id) as capture:
             # Turn 1: compel a shell tool use -> gated to `ask` -> approval prompt.
-            await user_ops.send_message(
+            await user_ops.mention(
                 room_id,
+                agent,
                 "Use your bash/shell tool to run exactly `echo ok`. You must "
                 "execute it with the shell tool, not answer from memory.",
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             asked = await capture.wait_until(
                 lambda msgs: _asked_id(msgs) is not None,
@@ -142,11 +141,10 @@ async def test_manual_bash_permission_approved_from_a_mentioned_reply(
             # Turn 2: the mentioned `approve <id>` reply must be RECOGNIZED. The
             # adapter's `handled with once` confirmation echoing the parsed id is
             # the guard -- pre-fix the mention block hid the command entirely.
-            await user_ops.send_message(
+            await user_ops.mention(
                 room_id,
+                agent,
                 f"approve {request_id}",
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             await capture.wait_until(
                 lambda msgs: _handled(msgs, request_id),

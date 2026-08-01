@@ -58,7 +58,7 @@ async def main() -> None:
         raise ValueError("BAND_REST_URL environment variable is required")
 
     adapter = ClaudeSDKAdapter(
-        custom_section=generate_tom_prompt("Tom"),
+        instructions=generate_tom_prompt("Tom"),
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.core.exceptions import MissingDependencyError
+
 import json
 import logging
 import warnings
@@ -11,6 +13,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -37,7 +40,7 @@ try:
     from agno.tools.function import Function
     from agno.utils.callables import ainvoke_callable_factory, is_callable_factory
 except ImportError as e:
-    raise ImportError(
+    raise MissingDependencyError(
         "agno is required for the Agno adapter.\n"
         "Install with: pip install 'band-sdk[agno]'"
     ) from e
@@ -729,11 +732,12 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             await cls._emit_tool_event(
                 tools,
                 "tool_call",
-                {
-                    "name": ex.tool_name or "",
-                    "args": ex.tool_args or {},
-                    "tool_call_id": ex.tool_call_id or "",
-                },
+                ex.tool_name or "",
+                tool_call_content(
+                    ex.tool_name or "",
+                    args=ex.tool_args or {},
+                    tool_call_id=ex.tool_call_id or "",
+                ),
                 room_id=room_id,
                 msg_id=msg_id,
             )
@@ -741,12 +745,13 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             await cls._emit_tool_event(
                 tools,
                 "tool_result",
-                {
-                    "name": ex.tool_name or "",
-                    "output": str(ex.result or ""),
-                    "tool_call_id": ex.tool_call_id or "",
-                    "is_error": bool(ex.tool_call_error),
-                },
+                ex.tool_name or "",
+                tool_result_content(
+                    ex.tool_name or "",
+                    output=str(ex.result or ""),
+                    tool_call_id=ex.tool_call_id or "",
+                    is_error=bool(ex.tool_call_error),
+                ),
                 room_id=room_id,
                 msg_id=msg_id,
             )
@@ -755,23 +760,22 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     async def _emit_tool_event(
         tools: AgentToolsProtocol,
         message_type: str,
-        payload: dict[str, Any],
+        tool_name: str,
+        content: str,
         *,
         room_id: str,
         msg_id: str,
     ) -> None:
         """Send one tool event, logging (never raising) on failure."""
-        logger.debug("Room %s msg %s: %s %s", room_id, msg_id, message_type, payload)
+        logger.debug("Room %s msg %s: %s %s", room_id, msg_id, message_type, content)
         try:
-            await tools.send_event(
-                content=json.dumps(payload), message_type=message_type
-            )
+            await tools.send_event(content=content, message_type=message_type)
         except Exception as e:
             logger.warning(
                 "Room %s msg %s: failed to report %s %s: %s",
                 room_id,
                 msg_id,
                 message_type,
-                payload.get("name"),
+                tool_name,
                 e,
             )

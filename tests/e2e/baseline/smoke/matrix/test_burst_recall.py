@@ -36,7 +36,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 # Enough turns that an early fact tests genuine span, not just a recent window.
@@ -59,26 +59,23 @@ BURST_SIZE = 6
 @pytest.mark.asyncio(loop_scope="session")
 async def test_burst_handled_then_spanning_recall(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
     baseline_settings: BaselineSettings,
 ) -> None:
     """No burst turn is dropped, and an early/mid/recent fact all survive to recall."""
     facts = [unique_marker(f"fact{index}") for index in range(BURST_SIZE)]
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-burst-recall-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
 
     async with reply_capture(room_id) as capture:
         # Burst: sequential sends (no processing wait between them) so receipt-order is
         # deterministic and the last-message barrier proves every earlier turn handled.
         mids = [
-            await user_ops.send_message(
+            await user_ops.mention(
                 room_id,
+                agent,
                 remember_fact_instruction(fact),
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             for fact in facts
         ]
@@ -96,8 +93,10 @@ async def test_burst_handled_then_spanning_recall(
 
         # Spanning recall: one probe, then an early / mid / recent fact each separately.
         mark = capture.messages.snapshot()
-        recall_mid = await user_ops.send_message(
-            room_id, RECALL_ALL_FACTS, mention_id=agent.id, mention_name=agent.name
+        recall_mid = await user_ops.mention(
+            room_id,
+            agent,
+            RECALL_ALL_FACTS,
         )
         recall = await capture.wait_for_reply(recall_mid, agent.id, since=mark)
 

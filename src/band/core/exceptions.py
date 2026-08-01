@@ -24,7 +24,7 @@ class BandConfigError(BandError):
         valid_names: Iterable[str],
         *,
         max_distance: int = 2,
-    ) -> "BandConfigError":
+    ) -> BandConfigError:
         """Build an error message with a typo suggestion if one is close enough.
 
         Args:
@@ -40,12 +40,63 @@ class BandConfigError(BandError):
         return cls(message)
 
 
+class MissingDependencyError(BandConfigError, ImportError):
+    """Optional package missing. Also an ``ImportError`` for legacy ``except`` clauses."""
+
+
+class UnsupportedOptionError(BandConfigError):
+    """Caller passed an option the backend/provider does not support."""
+
+
+class DuplicateToolError(BandConfigError):
+    """Two tools registered under the same name."""
+
+
 class BandConnectionError(BandError):
     """Transport failures (WebSocket, REST). Actionable by ops."""
 
 
 class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
+
+
+class LifecycleError(BandError):
+    """Invalid gateway/backend lifecycle transition."""
+
+
+class MaxToolRoundsExceeded(BandError, RuntimeError):
+    """A turn asked for tools on every round without producing a final answer.
+
+    Also a ``RuntimeError`` so callers that only knew the old untyped raise
+    keep working.
+    """
+
+
+class RunFailed(BandError):
+    """Model or execution failure surfaced on an ``AgentStream``.
+
+    Yielded as a ``RunFailedEvent`` on the observation stream (does not abort
+    iteration by itself). Transport failures raise ``StreamError`` instead.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        partial_text: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.partial_text = partial_text
+
+
+class StreamError(BandError):
+    """Transport failure while consuming an ``AgentStream``.
+
+    Distinct from ``RunFailed``: model/exec failures are yielded as events;
+    transport failures abort iteration by raising.
+    """
 
 
 def _levenshtein(a: str, b: str) -> int:

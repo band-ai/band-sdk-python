@@ -33,7 +33,7 @@ from band.client.streaming import DeliveryStatus
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
@@ -47,13 +47,11 @@ ROUNDS = 4
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-barrier-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     mention = {"mention_id": agent.id, "mention_name": agent.name}
 
     async with reply_capture(room_id) as capture:

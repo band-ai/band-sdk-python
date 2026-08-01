@@ -189,16 +189,3 @@ class TestStreamEventHandling:
         await adapter._handle_stream_event(event, "room-123", mock_tools)
 
         mock_tools.send_event.assert_not_awaited()
-
-    def test_enable_execution_reporting_shim_enables_execution_emit(
-        self, mock_llm, mock_checkpointer
-    ):
-        """Legacy execution-reporting flag maps to Emit.EXECUTION."""
-        with pytest.warns(DeprecationWarning):
-            adapter = LangGraphAdapter(
-                llm=mock_llm,
-                checkpointer=mock_checkpointer,
-                enable_execution_reporting=True,
-            )
-
-        assert Emit.EXECUTION in adapter.features.emit

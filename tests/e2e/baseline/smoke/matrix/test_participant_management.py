@@ -40,23 +40,21 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 async def test_invites_messages_and_removes_a_peer(
     agent: ProvisionedAgent,
     resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """Invite a peer (present), direct a marker message to it, then remove it (absent)."""
     marker = unique_marker("directed")
     echo = await resource_manager.provision_agent("echo")
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-participant-mgmt-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
 
     async with reply_capture(room_id) as capture:
         # Turn 1: invite Echo, then send it one directed message carrying the marker.
-        invite_mid = await user_ops.send_message(
+        invite_mid = await user_ops.mention(
             room_id,
+            agent,
             invite_and_message_instruction(echo.name, echo.id, marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(invite_mid, agent.id)
 
@@ -69,11 +67,10 @@ async def test_invites_messages_and_removes_a_peer(
         replies.mentioning(echo.id).assert_contains_any([marker])
 
         # Turn 2: remove Echo.
-        remove_mid = await user_ops.send_message(
+        remove_mid = await user_ops.mention(
             room_id,
+            agent,
             remove_participant_instruction(echo.name, echo.id),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(remove_mid, agent.id)
 

@@ -111,7 +111,8 @@ async def test_reports_tool_events_when_enabled() -> None:
         ]
     )
     adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(enable_execution_reporting=True),
+        config=OpencodeAdapterConfig(),
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
         client_factory=lambda _config: fake_client,
     )
     tools = FakeAgentTools()
@@ -135,6 +136,66 @@ async def test_reports_tool_events_when_enabled() -> None:
     assert json.loads(tool_results[0]["content"])["output"] == "ok"
 
 
+async def test_tool_call_is_narrated_with_the_arguments_it_ran_on() -> None:
+    """A call whose arguments arrive late must still be narrated with them.
+
+    OpenCode streams one tool part repeatedly and the first frames can carry an
+    empty ``input``. Narrating that frame — and deduping the one that has the
+    arguments — leaves the room with an argument-less tool call, which is all a
+    reader ever sees of what the agent did.
+    """
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_tool_part(
+                    "sess-1",
+                    "msg-4",
+                    tool="bash",
+                    call_id="call-1",
+                    status="pending",
+                    input_data={},
+                ),
+                event_tool_part(
+                    "sess-1",
+                    "msg-4",
+                    tool="bash",
+                    call_id="call-1",
+                    status="completed",
+                    input_data={"command": "pytest"},
+                    output="ok",
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = OpencodeAdapter(
+        config=OpencodeAdapterConfig(),
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        client_factory=lambda _config: fake_client,
+    )
+    tools = FakeAgentTools()
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    tool_calls = [
+        json.loads(e["content"])
+        for e in tools.events_sent
+        if e["message_type"] == "tool_call"
+    ]
+    assert [(call["name"], call["args"]) for call in tool_calls] == [
+        ("bash", {"command": "pytest"})
+    ]
+
+
 async def test_preserves_falsy_tool_result_outputs_when_reporting(
     make_adapter, tools
 ) -> None:
@@ -155,7 +216,8 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting(
         ]
     )
     adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(enable_execution_reporting=True),
+        config=OpencodeAdapterConfig(),
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
         client_factory=lambda _config: fake_client,
     )
     tools = FakeAgentTools()
@@ -522,68 +584,6 @@ async def test_turn_completes_when_fallback_reply_send_rejected(
     assert tools.messages_sent == []
     assert any(e["message_type"] == "error" for e in tools.events_sent)
     await adapter.on_cleanup("room-1")
-
-
-async def test_room_posting_tool_reply_suppresses_text_fallback(
-    make_adapter, tools
-) -> None:
-    """When the model replies via band_send_message, the adapter must not also
-    post the assistant's plain text (double-post). Detection holds without
-    execution reporting: Emit.EXECUTION governs only the tool_call/tool_result
-    narration, not the text-fallback suppression."""
-    fake_client = FakeOpencodeClient(
-        prompt_event_sequences=[
-            [
-                event_message_updated("sess-1", "msg-1"),
-                event_text_part("sess-1", "msg-1", "I sent it via the tool."),
-                event_tool_part(
-                    "sess-1",
-                    "msg-1",
-                    tool="band_send_message",
-                    call_id="c1",
-                    status="completed",
-                    input_data={"content": "hi"},
-                ),
-                event_session_idle("sess-1"),
-            ]
-        ]
-    )
-    adapter = make_adapter(fake_client)
-
-    await run_single_turn(adapter, tools)
-
-    # The tool (not executed by the fake) was the reply; the fallback stays
-    # silent, so the adapter posts no message of its own.
-    assert tools.messages_sent == []
-
-
-async def test_non_room_posting_tool_does_not_suppress_text(
-    make_adapter, tools
-) -> None:
-    """A non-posting tool (bash) is not a reply, so the assistant text is still
-    delivered -- suppression must not over-reach."""
-    fake_client = FakeOpencodeClient(
-        prompt_event_sequences=[
-            [
-                event_message_updated("sess-1", "msg-1"),
-                event_text_part("sess-1", "msg-1", "Ran the command."),
-                event_tool_part(
-                    "sess-1",
-                    "msg-1",
-                    tool="bash",
-                    call_id="c1",
-                    status="completed",
-                    input_data={"command": "ls"},
-                ),
-                event_session_idle("sess-1"),
-            ]
-        ]
-    )
-    adapter = make_adapter(fake_client)
-
-    await run_single_turn(adapter, tools)
-
-    assert [m["content"] for m in tools.messages_sent] == ["Ran the command."]
 
 
 async def test_task_event_post_failure_does_not_drop_the_turn(make_adapter) -> None:

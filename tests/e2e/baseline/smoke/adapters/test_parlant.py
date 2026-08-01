@@ -100,11 +100,10 @@ async def test_parlant_replies(
             title="e2e-parlant-reply", participants=[agent.id]
         )
         async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
+            mid = await user_ops.mention(
                 room_id,
+                agent,
                 "Please say hello.",
-                mention_id=agent.id,
-                mention_name=agent.name,
             )
             # Parlant's first turn runs a multi-LLM-call pipeline on a cold
             # in-process server, so give the barrier more than one per-turn budget.

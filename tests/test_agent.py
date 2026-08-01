@@ -6,7 +6,6 @@ import pytest
 
 from band.agent import Agent, DEFAULT_SHUTDOWN_TIMEOUT
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AgentInput
 from band.runtime.types import AgentConfig, SessionConfig
 from band.preprocessing.default import DefaultPreprocessor
 
@@ -222,13 +221,13 @@ class TestStart:
 
     @pytest.mark.asyncio
     async def test_passes_on_cleanup_to_runtime(self, mock_runtime, mock_adapter):
-        """Should pass adapter.on_cleanup to runtime.start()."""
+        """Should pass backend.close_session to runtime.start()."""
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
 
         await agent.start()
 
         call_kwargs = mock_runtime.start.call_args.kwargs
-        assert call_kwargs["on_cleanup"] == mock_adapter.on_cleanup
+        assert call_kwargs["on_cleanup"] == agent._backend.close_session
 
 
 class TestStop:
@@ -353,8 +352,10 @@ class TestOnExecute:
     async def test_calls_adapter_on_event(
         self, mock_runtime, mock_adapter, mock_preprocessor
     ):
-        """Should call adapter.on_event with AgentInput."""
-        mock_input = MagicMock(spec=AgentInput)
+        """Should drive the adapter through AgentBackend.run()."""
+        from tests.core.adapterhelpers import make_agent_input
+
+        mock_input = make_agent_input(content="hello")
         mock_preprocessor.process.return_value = mock_input
 
         agent = Agent(
@@ -368,7 +369,8 @@ class TestOnExecute:
 
         await agent._on_execute(mock_ctx, mock_event)
 
-        mock_adapter.on_event.assert_awaited_once_with(mock_input)
+        mock_adapter.on_event.assert_awaited_once()
+        assert mock_adapter.on_event.await_args.args[0].msg.content == "hello"
 
 
 class TestSimpleAdapterIntegration:

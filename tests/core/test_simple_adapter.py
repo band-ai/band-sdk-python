@@ -1,12 +1,12 @@
 """Tests for SimpleAdapter base class."""
 
-from datetime import datetime, timezone
 from typing import Any
 
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import HistoryProvider
 from band.testing import FakeAgentTools
+from tests.core.adapterhelpers import RecordingAdapter, make_agent_input
 
 
 class StringHistoryConverter(HistoryConverter[str]):
@@ -21,75 +21,6 @@ class ListHistoryConverter(HistoryConverter[list[str]]):
 
     def convert(self, raw: list[dict[str, Any]]) -> list[str]:
         return [h.get("content", "") for h in raw]
-
-
-class RecordingAdapter(SimpleAdapter[str]):
-    """Test adapter that records calls for verification."""
-
-    def __init__(self, *, history_converter: HistoryConverter[str] | None = None):
-        super().__init__(history_converter=history_converter)
-        self.calls: list[dict] = []
-        self.cleanup_calls: list[str] = []
-
-    async def on_message(
-        self,
-        msg: PlatformMessage,
-        tools,
-        history,
-        participants_msg: str | None,
-        contacts_msg: str | None,
-        *,
-        is_session_bootstrap: bool,
-        room_id: str,
-    ) -> None:
-        self.calls.append(
-            {
-                "msg": msg,
-                "tools": tools,
-                "history": history,
-                "participants_msg": participants_msg,
-                "contacts_msg": contacts_msg,
-                "is_session_bootstrap": is_session_bootstrap,
-                "room_id": room_id,
-            }
-        )
-
-    async def on_cleanup(self, room_id: str) -> None:
-        self.cleanup_calls.append(room_id)
-
-
-def make_platform_message(content: str = "Hello") -> PlatformMessage:
-    """Create a test PlatformMessage."""
-    return PlatformMessage(
-        id="msg-1",
-        room_id="room-1",
-        content=content,
-        sender_id="user-1",
-        sender_type="User",
-        sender_name="Alice",
-        message_type="text",
-        metadata={},
-        created_at=datetime.now(timezone.utc),
-    )
-
-
-def make_agent_input(
-    content: str = "Hello",
-    raw_history: list[dict[str, Any]] | None = None,
-    participants_msg: str | None = None,
-    contacts_msg: str | None = None,
-    is_session_bootstrap: bool = False,
-) -> AgentInput:
-    """Create a test AgentInput."""
-    return AgentInput(
-        msg=make_platform_message(content),
-        tools=FakeAgentTools(),
-        history=HistoryProvider(raw=raw_history or []),
-        participants_msg=participants_msg,
-        contacts_msg=contacts_msg,
-        is_session_bootstrap=is_session_bootstrap,
-        room_id="room-1",
-    )
 
 
 class TestFrameworkAdapterProtocol:

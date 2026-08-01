@@ -20,6 +20,7 @@ from band.adapters.letta import (
     _RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.types import AdapterFeatures, Emit
 from band.testing import FakeAgentTools
 from tests.adapters.lettakit import (
     default_enforcement,
@@ -45,13 +46,22 @@ class TestLettaAdapterInit:
     # dataclass definition, and the frozen-config conformance suite already
     # pins ``LettaAdapter().config == LettaAdapterConfig()``.
 
+    def test_default_features_include_task_events(self) -> None:
+        adapter = LettaAdapter()
+
+        assert adapter.features.emit == frozenset({Emit.TASK_EVENTS})
+
+    def test_explicit_empty_features_disable_task_events(self) -> None:
+        adapter = LettaAdapter(features=AdapterFeatures())
+
+        assert adapter.features.emit == frozenset()
+
     def test_custom_config_reaches_adapter(self) -> None:
         config = LettaAdapterConfig(
             base_url="http://custom:8283",
             provider_key="sk-test",
             mode="shared",
             mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
-            enable_execution_reporting=True,
         )
         adapter = LettaAdapter(config=config)
         assert adapter.config is config
@@ -579,8 +589,10 @@ class TestLettaAdapterSharedMode:
 class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_non_silent_tool_calls(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(
+            config=config, features=AdapterFeatures(emit={Emit.EXECUTION})
+        )
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -619,8 +631,10 @@ class TestExecutionReporting:
 
     @pytest.mark.asyncio
     async def test_silent_tools_not_reported(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(
+            config=config, features=AdapterFeatures(emit={Emit.EXECUTION})
+        )
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -881,8 +895,8 @@ class TestTaskEvents:
 
     @pytest.mark.asyncio
     async def test_task_events_disabled(self) -> None:
-        config = LettaAdapterConfig(enable_task_events=False)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, features=AdapterFeatures())
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"

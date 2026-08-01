@@ -70,7 +70,7 @@ async def main() -> None:
     adapter = ClaudeSDKAdapter(
         model="opus",
         fallback_model="sonnet",
-        custom_section="""You are a thoughtful AI assistant that excels at
+        instructions="""You are a thoughtful AI assistant that excels at
 complex problem-solving. When faced with challenging questions:
 1. Break down the problem into smaller parts
 2. Consider multiple approaches

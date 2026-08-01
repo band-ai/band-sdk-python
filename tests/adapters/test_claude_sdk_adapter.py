@@ -28,7 +28,7 @@ from band.adapters.claude_sdk import (
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.runtime.tools import ALL_TOOL_NAMES
-from band.core.types import PlatformMessage
+from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
@@ -76,11 +76,10 @@ class TestInitialization:
 
         assert Capability.MEMORY not in adapter.features.capabilities
 
-    def test_enable_memory_tools(self):
-        """Should accept enable_memory_tools parameter (deprecated)."""
-        adapter = ClaudeSDKAdapter(enable_memory_tools=True)
-
-        from band.core.types import Capability
+    def test_memory_capability(self):
+        adapter = ClaudeSDKAdapter(
+            features=AdapterFeatures(capabilities={Capability.MEMORY})
+        )
 
         assert Capability.MEMORY in adapter.features.capabilities
 
@@ -719,7 +718,7 @@ class TestCustomTools:
 
         adapter = ClaudeSDKAdapter(
             additional_tools=[(EchoInput, echo)],
-            enable_memory_tools=True,
+            features=AdapterFeatures(capabilities={Capability.MEMORY}),
         )
 
         mock_backend = MagicMock()
@@ -766,6 +765,54 @@ class TestCustomTools:
 
         name = get_custom_tool_name(CalculatorInput)
         assert name == "calculator"
+
+
+class TestToolNarration:
+    """Tool calls and their results, as the room reads them back."""
+
+    @pytest.mark.asyncio
+    async def test_tool_result_from_the_user_turn_is_narrated(self, mock_tools):
+        """A tool result must reach the room, named like every other adapter's.
+
+        The SDK delivers ``ToolResultBlock`` on the *user* turn that answers the
+        call, not on the assistant message that made it — so a reader looking
+        only at assistant content never sees a result at all.
+        """
+        import json
+
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+
+        adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+        call = ToolUseBlock(
+            id="call-1", name="mcp__band__band_send_message", input={"content": "hi"}
+        )
+        result = ToolResultBlock(tool_use_id="call-1", content="posted", is_error=False)
+
+        async def receive():
+            yield AssistantMessage(content=[call], model="claude-sonnet-4-6")
+            yield UserMessage(content=[result])
+
+        client = MagicMock()
+        client.receive_response = receive
+
+        await adapter._process_response(client, "room-123", mock_tools)
+
+        narrated = {
+            call_args.kwargs["message_type"]: json.loads(call_args.kwargs["content"])
+            for call_args in mock_tools.send_event.call_args_list
+        }
+        assert narrated["tool_call"]["name"] == "band_send_message"
+        assert narrated["tool_result"] == {
+            "name": "band_send_message",
+            "output": "posted",
+            "tool_call_id": "call-1",
+            "is_error": False,
+        }
 
 
 class TestSessionPersistence:

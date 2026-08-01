@@ -33,6 +33,22 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 logger = logging.getLogger(__name__)
 
 
+def _narrated_output(event: ChatMessage) -> str:
+    """The tool's own output, unwrapped from the narration body.
+
+    Every adapter posts a ``tool_call`` / ``tool_result`` through
+    ``band.runtime.narration``, so the payload sits under ``output``. An event
+    that is not narration (or predates it) reads as its raw content.
+    """
+    try:
+        body = json.loads(event.content)
+    except (json.JSONDecodeError, TypeError):
+        return event.content
+    if isinstance(body, dict) and "output" in body:
+        return str(body["output"])
+    return event.content
+
+
 class Events(ContentAssertions, list[ChatMessage]):
     """An agent's emitted events of one ``MessageType`` for a turn: a
     ``list[ChatMessage]`` with fluent, tolerant assertions.
@@ -115,23 +131,33 @@ class Events(ContentAssertions, list[ChatMessage]):
         if not self:
             raise AssertionError(f"expected {label}, but none were emitted")
 
-    def assert_json_content(self) -> None:
-        """Assert every captured event's content is one well-formed JSON document.
+    def outputs_containing(self, text: str) -> Events:
+        """Subset whose narrated ``output`` contains ``text`` (exact substring).
+
+        A ``tool_call`` / ``tool_result`` event carries the tool's own payload
+        inside the narration body (``{"name", "output", ...}``), so scoping to
+        one tool's results means looking at that field, not the whole event.
+        """
+        return type(self)(event for event in self if text in _narrated_output(event))
+
+    def assert_json_output(self) -> None:
+        """Assert every event's narrated output is one well-formed JSON document.
 
         For a tool whose output is JSON (e.g. a Band platform tool's response),
         the emitted event must carry that payload exactly once -- a duplicated
         echo (the same payload concatenated twice, in any encoding) fails
         ``json.loads`` with "Extra data" and is reported with the offending
-        content. Passes vacuously on an empty collection, so pair with a
+        payload. Passes vacuously on an empty collection, so pair with a
         presence check (``assert_present`` / ``assert_at_least``).
         """
         for event in self:
+            output = _narrated_output(event)
             try:
-                json.loads(event.content)
+                json.loads(output)
             except json.JSONDecodeError as error:
                 raise AssertionError(
-                    f"expected event content to be a single well-formed JSON "
-                    f"document, but parsing failed ({error}):\n{event.content}"
+                    f"expected the tool's output to be a single well-formed JSON "
+                    f"document, but parsing failed ({error}):\n{output}"
                 ) from error
 
 

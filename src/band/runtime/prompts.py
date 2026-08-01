@@ -29,7 +29,7 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
     enum_values,
 )
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import AdapterFeatures
 
 
 # Base instructions appended to user's custom prompt
@@ -136,24 +136,11 @@ to see your contacts, `band_add_contact` to send contact requests,
 and `band_respond_contact_request` to handle incoming requests.
 """
 
-# Backward-compatible template dict — DEPRECATED.
-# This static template does NOT include capability-gated sections (MEMORY_SECTION,
-# CONTACT_SECTION) that render_system_prompt() now produces dynamically.
-# Prefer calling render_system_prompt() directly.
-TEMPLATES: dict[str, str] = {
-    "default": (
-        "You are {agent_name}, {agent_description}.\n\n"
-        + BASE_INSTRUCTIONS.strip()
-        + "\n\n## Developer Instructions\n\n{custom_section}"
-    ),
-}
-
 
 def render_system_prompt(
     agent_name: str = "Agent",
     agent_description: str = "An AI assistant",
     custom_section: str = "",
-    template: str = "default",
     include_base_instructions: bool = True,
     features: AdapterFeatures | None = None,
     extra_sections: Sequence[str] = (),
@@ -165,7 +152,6 @@ def render_system_prompt(
         agent_name: Agent's name
         agent_description: Agent's description
         custom_section: User's custom instructions
-        template: Template name (default: "default")
         include_base_instructions: Whether to include SDK's BASE_INSTRUCTIONS.
                                    Set False if providing fully custom behavior.
         features: AdapterFeatures controlling which capability sections to include.
@@ -177,29 +163,14 @@ def render_system_prompt(
     Returns:
         Rendered system prompt
     """
-    identity = f"You are {agent_name}, {agent_description}."
+    from band.core.instructions import InstructionPolicy
 
-    if not include_base_instructions:
-        # Minimal prompt: identity + adapter sections + custom section only
-        parts = [identity, *(s.strip() for s in extra_sections)]
-        if custom_section:
-            parts.append(custom_section)
-        return "\n\n".join(parts)
-
-    parts = [identity]
-    parts.append(BASE_INSTRUCTIONS.strip())
-
-    # Capability-gated sections
-    if features:
-        if Capability.MEMORY in features.capabilities:
-            parts.append(MEMORY_SECTION.strip())
-        if Capability.CONTACTS in features.capabilities:
-            parts.append(CONTACT_SECTION.strip())
-
-    parts.extend(s.strip() for s in extra_sections)
-
-    # Developer instructions at the end
-    if custom_section:
-        parts.append(f"## Developer Instructions\n\n{custom_section}")
-
-    return "\n\n".join(parts)
+    return InstructionPolicy(
+        include_base_instructions=include_base_instructions,
+        features=features,
+        extra_sections=tuple(extra_sections),
+    ).render(
+        agent_name=agent_name,
+        agent_description=agent_description,
+        instructions=custom_section or None,
+    )

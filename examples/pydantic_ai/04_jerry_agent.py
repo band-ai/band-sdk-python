@@ -53,7 +53,7 @@ async def main() -> None:
     # Create adapter with Jerry's character prompt
     adapter = PydanticAIAdapter(
         model="openai:gpt-5.4-mini",
-        custom_section=generate_jerry_prompt("Jerry"),
+        instructions=generate_jerry_prompt("Jerry"),
     )
 
     # Create and start agent

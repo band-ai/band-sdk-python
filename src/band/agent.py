@@ -10,7 +10,11 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
+from band.core.backends.adapter import SimpleAdapterBackend
+from band.core.backends.oneshot import run_oneshot_turn
+from band.core.contracts import BackendContext
 from band.core.protocols import FrameworkAdapter, Preprocessor
+from band.core.run.cancellation import ExecutionCancellation
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import (
@@ -98,6 +102,7 @@ class Agent:
     ):
         self._runtime = runtime
         self._adapter = adapter
+        self._backend = SimpleAdapterBackend(adapter)
         self._preprocessor = preprocessor or DefaultPreprocessor()
         self._started = False
         # Tracks shutdown_timeout from run() for use in __aexit__
@@ -200,6 +205,11 @@ class Agent:
         return self._runtime
 
     @property
+    def adapter(self) -> FrameworkAdapter | SimpleAdapter:
+        """Framework adapter bound to this agent."""
+        return self._adapter
+
+    @property
     def agent_name(self) -> str:
         return self._runtime.agent_name
 
@@ -238,16 +248,18 @@ class Agent:
 
             # 2. Initialize adapter with agent metadata BEFORE message processing
             setattr(self._adapter, "_band_agent_id", self._runtime.agent_id)
-            await self._adapter.on_started(
-                self._runtime.agent_name,
-                self._runtime.agent_description,
+            await self._backend.start(
+                BackendContext(
+                    agent_name=self._runtime.agent_name,
+                    agent_description=self._runtime.agent_description,
+                )
             )
 
             # 3. NOW start message processing (connects WebSocket)
             try:
                 await self._runtime.start(
                     on_execute=self._on_execute,
-                    on_cleanup=self._adapter.on_cleanup,
+                    on_cleanup=self._backend.close_session,
                 )
             except BaseException:
                 # on_started may have acquired resources (e.g. a CLI runtime
@@ -301,12 +313,10 @@ class Agent:
 
     async def _cleanup_adapter(self) -> None:
         """Release adapter-wide resources, best-effort."""
-        cleanup_all = getattr(self._adapter, "cleanup_all", None)
-        if cleanup_all is not None:
-            try:
-                await cleanup_all()
-            except Exception:
-                logger.exception("Adapter cleanup_all failed")
+        try:
+            await self._backend.aclose()
+        except Exception:
+            logger.exception("Adapter backend aclose failed")
 
     async def run(
         self, shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT
@@ -395,4 +405,8 @@ class Agent:
         if inp is None:
             return
 
-        await self._adapter.on_event(inp)
+        await run_oneshot_turn(
+            self._backend,
+            inp,
+            cancellation=ExecutionCancellation(ctx),
+        )

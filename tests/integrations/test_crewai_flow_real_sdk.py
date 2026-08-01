@@ -13,7 +13,7 @@ from band.adapters.crewai_flow import (
     get_current_flow_runtime,
 )
 from band.core.types import PlatformMessage
-from band.testing.fake_tools import FakeAgentTools
+from band.testing.fake_tools import FakeAgentTools, RecordedMessage
 
 try:
     from crewai.flow.flow import Flow, start  # noqa: F401
@@ -81,9 +81,9 @@ async def test_real_crewai_flow_can_call_adapter_registered_custom_tool() -> Non
 
     assert calls == ["emails", "emails"]
     assert tools.messages_sent == [
-        {
-            "id": "msg-0",
-            "content": "real crewai flow inbox text",
-            "mentions": ["user-real"],
-        }
+        RecordedMessage(
+            id="msg-0",
+            content="real crewai flow inbox text",
+            mentions=["user-real"],
+        )
     ]

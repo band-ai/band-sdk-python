@@ -8,7 +8,6 @@ LangChain's StructuredTool format for use with LangGraph.
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Any
 
 from langchain_core.tools import StructuredTool
@@ -36,8 +35,6 @@ def agent_tools_to_langchain(
     tools: AgentToolsProtocol,
     *,
     features: AdapterFeatures | None = None,
-    include_memory_tools: bool | None = None,
-    include_contacts: bool | None = None,
 ) -> list[Any]:
     """
     Convert AgentTools to LangChain StructuredTool instances.
@@ -46,12 +43,6 @@ def agent_tools_to_langchain(
         tools: AgentTools instance bound to a room.
         features: Adapter feature config. This is the primary path for capability
             gates and framework-facing tool filters.
-        include_memory_tools: Deprecated compatibility override. Use
-            ``features=AdapterFeatures(capabilities={Capability.MEMORY})``.
-        include_contacts: Deprecated compatibility override. Use
-            ``features=AdapterFeatures(capabilities={Capability.CONTACTS})``.
-            Hub-room tools still force contacts on because the hub-room prompt can
-            ask for contact management regardless of the adapter's normal gate.
 
     Returns:
         List of LangChain StructuredTool instances.
@@ -60,22 +51,6 @@ def agent_tools_to_langchain(
 
     include_memory = Capability.MEMORY in features.capabilities
     include_contact_tools = Capability.CONTACTS in features.capabilities
-
-    if include_memory_tools is not None:
-        warnings.warn(
-            "include_memory_tools is deprecated. Use features=AdapterFeatures(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        include_memory = include_memory_tools
-
-    if include_contacts is not None:
-        warnings.warn(
-            "include_contacts is deprecated. Use features=AdapterFeatures(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        include_contact_tools = include_contacts
 
     effective_include_contacts = include_contact_tools or (
         getattr(tools, "is_hub_room", False) is True

@@ -8,29 +8,22 @@ message history management, tool execution, custom tools, and error handling.
 """
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
+from band.core.tools import FunctionTool
 from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
+from band.runtime.tools import ToolCallOutcome
 from tests.adapters.usage_events import sent_usage_payloads
-
-
-def make_usage(inp: int, out: int) -> SimpleNamespace:
-    """Anthropic-shaped usage stub (cache fields zeroed).
-
-    One home for the provider's usage field spelling so a rename is a
-    single edit.
-    """
-    return SimpleNamespace(
-        input_tokens=inp,
-        output_tokens=out,
-        cache_read_input_tokens=0,
-        cache_creation_input_tokens=0,
-    )
+from tests.modelclients import (
+    ScriptedAnthropicClient,
+    anthropic_reply,
+    anthropic_usage,
+)
 
 
 @pytest.fixture
@@ -50,26 +43,67 @@ def sample_message():
 
 
 @pytest.fixture
+def scripted():
+    """Build an adapter whose Anthropic client replays scripted replies.
+
+    Injection at the SDK client keeps the provider's real request projection
+    and response mapping inside every turn these tests drive, and the returned
+    client records the payloads that reached the wire.
+    """
+
+    def build(*replies, **kwargs) -> AnthropicAdapter:
+        adapter = AnthropicAdapter(**kwargs)
+        adapter.client = ScriptedAnthropicClient(list(replies))
+        return adapter
+
+    return build
+
+
+async def deliver(adapter, msg, tools, **overrides) -> None:
+    """Deliver one platform message with the turn's usual defaults."""
+    await adapter.on_message(
+        msg=msg,
+        tools=tools,
+        history=overrides.pop("history", []),
+        participants_msg=overrides.pop("participants_msg", None),
+        contacts_msg=overrides.pop("contacts_msg", None),
+        is_session_bootstrap=overrides.pop("is_session_bootstrap", True),
+        room_id=overrides.pop("room_id", "room-123"),
+        **overrides,
+    )
+
+
+@pytest.fixture
 def mock_tools():
     """Create mock AgentToolsProtocol (MagicMock base, AsyncMock methods)."""
     tools = MagicMock()
     tools.get_tool_schemas = MagicMock(return_value=[])
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
-    tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
+    tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value={"status": "success"}, ok=True)
+    )
     return tools
 
 
 class TestInitialization:
     """Tests for adapter initialization."""
 
-    def test_system_prompt_override(self):
-        """Should use custom system_prompt if provided."""
+    def test_replace_instructions(self):
+        """Should preserve explicit REPLACE instructions."""
+        from band.core.instructions import Instruction, InstructionMode
+
         adapter = AnthropicAdapter(
-            system_prompt="You are a custom assistant.",
+            instructions=Instruction(
+                text="You are a custom assistant.",
+                mode=InstructionMode.REPLACE,
+            ),
         )
 
-        assert adapter.system_prompt == "You are a custom assistant."
+        assert adapter._instructions == Instruction(
+            text="You are a custom assistant.",
+            mode=InstructionMode.REPLACE,
+        )
 
 
 class TestOnStarted:
@@ -86,9 +120,16 @@ class TestOnStarted:
         assert "TestBot" in adapter._system_prompt
 
     @pytest.mark.asyncio
-    async def test_uses_custom_system_prompt_when_provided(self):
-        """Should use custom system_prompt instead of rendered one."""
-        adapter = AnthropicAdapter(system_prompt="Custom prompt here.")
+    async def test_uses_replace_instructions_when_provided(self):
+        """Should replace rendered instructions when explicitly requested."""
+        from band.core.instructions import Instruction, InstructionMode
+
+        adapter = AnthropicAdapter(
+            instructions=Instruction(
+                text="Custom prompt here.",
+                mode=InstructionMode.REPLACE,
+            )
+        )
 
         await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
 
@@ -99,35 +140,22 @@ class TestOnMessage:
     """Tests for on_message() method."""
 
     @pytest.mark.asyncio
-    async def test_initializes_history_on_bootstrap(self, sample_message, mock_tools):
+    async def test_initializes_history_on_bootstrap(
+        self, sample_message, mock_tools, scripted
+    ):
         """Should initialize room history on first message."""
-        adapter = AnthropicAdapter()
+        adapter = scripted(anthropic_reply("Hi there"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(adapter, "_call_anthropic") as mock_call:
-            # Create a mock response that ends the conversation
-            mock_response = MagicMock()
-            mock_response.stop_reason = "end_turn"
-            mock_response.content = []
-            mock_call.return_value = mock_response
+        await deliver(adapter, sample_message, mock_tools)
 
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-            assert "room-123" in adapter._message_history
-            assert len(adapter._message_history["room-123"]) >= 1
+        assert adapter.session_history("room-123")
+        assert len(adapter.session_history("room-123")) >= 1
 
     @pytest.mark.asyncio
-    async def test_loads_existing_history(self, sample_message, mock_tools):
-        """Should load historical messages on bootstrap."""
-        adapter = AnthropicAdapter()
+    async def test_loads_existing_history(self, sample_message, mock_tools, scripted):
+        """Bootstrap history is seeded into the session and reaches the model."""
+        adapter = scripted(anthropic_reply("Hi there"))
         await adapter.on_started("TestBot", "Test bot")
 
         existing_history = [
@@ -135,53 +163,54 @@ class TestOnMessage:
             {"role": "assistant", "content": "Previous response"},
         ]
 
-        with patch.object(adapter, "_call_anthropic") as mock_call:
-            mock_response = MagicMock()
-            mock_response.stop_reason = "end_turn"
-            mock_response.content = []
-            mock_call.return_value = mock_response
+        await deliver(adapter, sample_message, mock_tools, history=existing_history)
 
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=existing_history,
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-            # Should have existing 2 + current message
-            assert len(adapter._message_history["room-123"]) >= 3
+        # Existing 2 + the current message.
+        assert len(adapter.session_history("room-123")) >= 3
+        sent = [m["content"] for m in adapter.client.last_payload["messages"]]
+        assert "[Bob]: Previous message" in sent, (
+            f"bootstrap history never reached the model: {sent}"
+        )
 
     @pytest.mark.asyncio
-    async def test_injects_participants_message(self, sample_message, mock_tools):
+    async def test_injects_participants_message(
+        self, sample_message, mock_tools, scripted
+    ):
         """Should inject participants update when provided."""
-        adapter = AnthropicAdapter()
+        adapter = scripted(anthropic_reply("Hi there"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(adapter, "_call_anthropic") as mock_call:
-            mock_response = MagicMock()
-            mock_response.stop_reason = "end_turn"
-            mock_response.content = []
-            mock_call.return_value = mock_response
+        await deliver(
+            adapter,
+            sample_message,
+            mock_tools,
+            participants_msg="Alice joined the room",
+        )
 
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg="Alice joined the room",
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        found = any(
+            "[System]: Alice joined" in str(m.get("content", ""))
+            for m in adapter.session_history("room-123")
+        )
+        assert found
 
-            # Find the participants message in history
-            found = any(
-                "[System]: Alice joined" in str(m.get("content", ""))
-                for m in adapter._message_history["room-123"]
-            )
-            assert found
+    @pytest.mark.asyncio
+    async def test_system_prompt_and_tools_reach_the_wire(
+        self, sample_message, mock_tools, scripted
+    ):
+        """The rendered instructions and the room's tool schemas are what the
+        provider actually sends — nothing between the adapter and the SDK drops
+        them."""
+        adapter = scripted(anthropic_reply("Hi there"))
+        mock_tools.get_anthropic_tool_schemas = MagicMock(
+            return_value=[{"name": "band_send_message", "description": "Send"}]
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        await deliver(adapter, sample_message, mock_tools)
+
+        payload = adapter.client.last_payload
+        assert payload["system"] == adapter._system_prompt
+        assert [tool["name"] for tool in payload["tools"]] == ["band_send_message"]
 
 
 class TestOnCleanup:
@@ -194,176 +223,16 @@ class TestOnCleanup:
         await adapter.on_started("TestBot", "Test bot")
 
         # First add some history
-        adapter._message_history["room-123"] = [{"role": "user", "content": "test"}]
-        assert "room-123" in adapter._message_history
+        adapter._backend.bind_session("room-123", [])
+        assert adapter._backend.has_session("room-123")
 
         await adapter.on_cleanup("room-123")
 
-        assert "room-123" not in adapter._message_history
-
-
-class TestHelperMethods:
-    """Tests for internal helper methods."""
-
-    def test_extract_text_content(self):
-        """Should extract text from TextBlock content."""
-        from anthropic.types import TextBlock
-
-        adapter = AnthropicAdapter()
-
-        content = [
-            TextBlock(type="text", text="Hello"),
-            TextBlock(type="text", text="World"),
-        ]
-
-        result = adapter._extract_text_content(content)
-
-        assert result == "Hello World"
-
-    def test_extract_text_content_empty(self):
-        """Should return empty string for empty content."""
-        adapter = AnthropicAdapter()
-
-        result = adapter._extract_text_content([])
-
-        assert result == ""
-
-    def test_serialize_content_blocks(self):
-        """Should serialize ToolUseBlock and TextBlock."""
-        from anthropic.types import TextBlock, ToolUseBlock
-
-        adapter = AnthropicAdapter()
-
-        content = [
-            TextBlock(type="text", text="Some text"),
-            ToolUseBlock(
-                type="tool_use", id="tool-1", name="search", input={"q": "test"}
-            ),
-        ]
-
-        result = adapter._serialize_content_blocks(content)
-
-        assert len(result) == 2
-        assert result[0]["type"] == "text"
-        assert result[0]["text"] == "Some text"
-        assert result[1]["type"] == "tool_use"
-        assert result[1]["name"] == "search"
+        assert not adapter._backend.has_session("room-123")
 
 
 class TestToolExecution:
     """Tests for tool execution."""
-
-    @pytest.mark.asyncio
-    async def test_reports_tool_calls_when_enabled(self, mock_tools):
-        """Should send events when execution reporting is enabled."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(enable_execution_reporting=True)
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="band_send_message",
-                input={"content": "Hello"},
-            )
-        ]
-
-        mock_tools.execute_tool_call.return_value = {"status": "success"}
-
-        await adapter._process_tool_calls(mock_response, mock_tools)
-
-        # Should have sent tool_call and tool_result events
-        assert mock_tools.send_event.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_send_event_403_does_not_crash_tool_execution(self, mock_tools):
-        """send_event 403 should not prevent tool from executing."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(enable_execution_reporting=True)
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="band_send_message",
-                input={"content": "Hello"},
-            )
-        ]
-
-        # Simulate 403 on event reporting
-        mock_tools.send_event.side_effect = Exception("403 Forbidden")
-        mock_tools.execute_tool_call.return_value = {"status": "sent"}
-
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
-
-        # Tool should still have executed successfully
-        assert len(results) == 1
-        assert results[0]["is_error"] is False
-        assert "sent" in results[0]["content"]
-        mock_tools.execute_tool_call.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_send_event_failure_logs_warning(self, mock_tools, caplog):
-        """send_event failures should be logged as warnings."""
-        import logging
-
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(enable_execution_reporting=True)
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="band_send_message",
-                input={"content": "Hello"},
-            )
-        ]
-
-        mock_tools.send_event.side_effect = Exception("403 Forbidden")
-        mock_tools.execute_tool_call.return_value = {"status": "sent"}
-
-        with caplog.at_level(logging.WARNING):
-            await adapter._process_tool_calls(mock_response, mock_tools)
-
-        assert "Failed to send tool_call event: 403 Forbidden" in caplog.text
-        assert "Failed to send tool_result event: 403 Forbidden" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_usage_from_response_maps_and_sums(self):
-        """`_usage_from_response` maps Anthropic usage raw; TurnUsage `+` sums a loop.
-
-        Raw per the convention: Anthropic's input_tokens excludes cache (reported
-        separately), so it's passed through, not folded.
-        """
-        first = MagicMock()
-        first.usage = MagicMock(
-            input_tokens=100,
-            output_tokens=20,
-            cache_read_input_tokens=5,
-            cache_creation_input_tokens=3,
-        )
-        second = MagicMock()
-        second.usage = MagicMock(
-            input_tokens=130,
-            output_tokens=8,
-            cache_read_input_tokens=0,
-            cache_creation_input_tokens=0,
-        )
-        total = AnthropicAdapter._usage_from_response(
-            first
-        ) + AnthropicAdapter._usage_from_response(second)
-        assert total == TurnUsage(
-            input_tokens=230,
-            output_tokens=28,
-            cache_read_tokens=5,
-            cache_write_tokens=3,
-        )
 
     @pytest.mark.asyncio
     async def test_emits_usage_event_when_enabled(self, mock_tools):
@@ -437,7 +306,7 @@ class TestToolExecution:
 
     @pytest.mark.asyncio
     async def test_emits_summed_usage_across_tool_loop(
-        self, sample_message, mock_tools
+        self, sample_message, mock_tools, scripted
     ):
         """A multi-call tool loop emits ONE usage event carrying the SUM.
 
@@ -447,44 +316,19 @@ class TestToolExecution:
         is the deterministic summing proof the live smoke can't give (it never
         sees the per-call intermediates).
         """
-        from anthropic.types import TextBlock, ToolUseBlock
-
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
-
-        # Call 1: a tool_use round (continues the loop). Call 2: the final answer.
-        resp1 = SimpleNamespace(
-            stop_reason="tool_use",
-            content=[
-                ToolUseBlock(
-                    type="tool_use",
-                    id="tool-1",
-                    name="band_send_message",
-                    input={"content": "hi"},
-                )
-            ],
-            usage=make_usage(100, 20),
+        adapter = scripted(
+            # Call 1: a tool_use round (continues the loop). Call 2: the answer.
+            anthropic_reply(
+                tool_calls=[("band_send_message", {"content": "hi"})],
+                usage=anthropic_usage(100, 20),
+            ),
+            anthropic_reply("Hello!", usage=anthropic_usage(130, 8)),
+            features=AdapterFeatures(emit={Emit.USAGE}),
         )
-        resp2 = SimpleNamespace(
-            stop_reason="end_turn",
-            content=[TextBlock(type="text", text="Hello!")],
-            usage=make_usage(130, 8),
-        )
-
-        mock_tools.execute_tool_call.return_value = {"status": "success"}
-        call_anthropic = AsyncMock(side_effect=[resp1, resp2])
-        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
+        await deliver(adapter, sample_message, mock_tools)
 
         # Exactly two model calls were made (the loop ran twice).
-        assert call_anthropic.call_count == 2
+        assert adapter.client.call_count == 2
         # Find the single usage event and assert it carries the SUM (230/28),
         # not just the first (100/20) or last (130/8) call.
         usage_payloads = sent_usage_payloads(mock_tools)
@@ -499,41 +343,21 @@ class TestToolExecution:
 
     @pytest.mark.asyncio
     async def test_emits_accumulated_usage_when_loop_fails_midway(
-        self, sample_message, mock_tools
+        self, sample_message, mock_tools, scripted
     ):
         """A tool loop that raises after a successful call still emits that
         call's usage: tokens spent before the failure were still spent. The
         exception still propagates (the turn is marked failed)."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
-
-        resp1 = SimpleNamespace(
-            stop_reason="tool_use",
-            content=[
-                ToolUseBlock(
-                    type="tool_use",
-                    id="tool-1",
-                    name="band_send_message",
-                    input={"content": "hi"},
-                )
-            ],
-            usage=make_usage(100, 20),
+        adapter = scripted(
+            anthropic_reply(
+                tool_calls=[("band_send_message", {"content": "hi"})],
+                usage=anthropic_usage(100, 20),
+            ),
+            RuntimeError("boom"),
+            features=AdapterFeatures(emit={Emit.USAGE}),
         )
-
-        mock_tools.execute_tool_call.return_value = {"status": "success"}
-        call_anthropic = AsyncMock(side_effect=[resp1, RuntimeError("boom")])
-        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
-            with pytest.raises(RuntimeError, match="boom"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+        with pytest.raises(RuntimeError, match="boom"):
+            await deliver(adapter, sample_message, mock_tools)
 
         usage_payloads = sent_usage_payloads(mock_tools)
         assert usage_payloads == [
@@ -546,56 +370,148 @@ class TestToolExecution:
         ], f"expected the first call's usage to be emitted, got {usage_payloads}"
 
     @pytest.mark.asyncio
-    async def test_handles_tool_error(self, mock_tools):
-        """Should handle tool execution errors gracefully."""
-        from anthropic.types import ToolUseBlock
+    async def test_a_failed_turn_reports_its_own_rooms_usage(
+        self, sample_message, mock_tools, scripted
+    ):
+        """One adapter serves every room, and their turns interleave.
 
-        adapter = AnthropicAdapter()
+        A failing turn reports its error to the room before its usage is
+        emitted, and a second room's turn can start during that await — so
+        usage read from a single "most recent turn" tally is whichever room
+        called the model last, not this one's.
+        """
+        import asyncio
 
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="failing_tool",
-                input={},
+        other_room_ran = asyncio.Event()
+
+        async def report_error(tools, message):  # noqa: ARG001
+            other_room_ran.set()
+            await asyncio.sleep(0)  # let the other room's turn take the backend
+
+        adapter = scripted(
+            # The failing room's call, then the busy room's.
+            RuntimeError("boom"),
+            anthropic_reply(usage=anthropic_usage(7, 3)),
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+
+        with patch.object(adapter, "_report_error", new=report_error):
+            failing = asyncio.create_task(
+                deliver(adapter, sample_message, mock_tools, room_id="room-failing")
             )
-        ]
+            await other_room_ran.wait()
+            await deliver(adapter, sample_message, mock_tools, room_id="room-busy")
+            with pytest.raises(RuntimeError, match="boom"):
+                await failing
 
-        mock_tools.execute_tool_call.side_effect = Exception("Tool failed!")
+        assert sent_usage_payloads(mock_tools) == [
+            {
+                "input_tokens": 7,
+                "output_tokens": 3,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], "only the busy room spent tokens; the failing room must report none"
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+    @pytest.mark.asyncio
+    async def test_interrupted_turn_surfaces_as_cancelled(
+        self, sample_message, mock_tools, scripted
+    ):
+        """Interrupting a turn must reach the runtime as ``CancelledError``.
 
-        assert len(results) == 1
-        assert results[0]["is_error"] is True
-        assert "Tool failed!" in results[0]["content"]
+        ``ExecutionContext._run_cycle`` tells an interrupt apart from a handler
+        error by catching ``CancelledError``; anything else raised out of the
+        adapter's teardown makes a stop look like a crash, so the attempt is
+        never un-charged. The turn's teardown must also still run to completion
+        — history stays in sync — while doing no usage I/O on the way out.
+        """
+        import asyncio
+
+        parked = asyncio.Event()
+
+        async def park(**_payload):
+            parked.set()
+            await asyncio.sleep(30)  # interrupted here
+
+        adapter = scripted(
+            anthropic_reply(
+                tool_calls=[("band_send_message", {"content": "hi"})],
+                usage=anthropic_usage(100, 20),
+            ),
+            park,
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+        turn = asyncio.create_task(deliver(adapter, sample_message, mock_tools))
+        await parked.wait()
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await turn
+
+        assert adapter.session_history("room-123"), (
+            "teardown must finish syncing history before the cancel propagates"
+        )
+        assert sent_usage_payloads(mock_tools) == [], (
+            "a cancelled turn must not start usage I/O on the way out"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cooperative_cancel_stops_the_tool_loop(
+        self, sample_message, mock_tools, scripted
+    ):
+        """A flipped cancellation token must end the loop at the next round.
+
+        ``AgentStream.aclose`` and a room interrupt both flip the turn's token
+        first and only hard-cancel the task afterwards, so a façade that runs
+        its own tool loop has to read that token — otherwise the loop keeps
+        calling the model until something tears the task down.
+        """
+        import asyncio
+
+        from band.core.backends.adapter import SimpleAdapterBackend
+        from band.core.run.cancellation import FlagCancellation
+        from band.core.run.context import SimpleRunContext
+        from tests.core.adapterhelpers import make_agent_input
+
+        cancellation = FlagCancellation()
+
+        async def cancel_mid_turn(*_args, **_kwargs):
+            cancellation.cancel()
+            return ToolCallOutcome(value={"status": "success"}, ok=True)
+
+        mock_tools.execute_tool_call_structured = AsyncMock(side_effect=cancel_mid_turn)
+        adapter = scripted(
+            anthropic_reply(tool_calls=[("band_send_message", {"content": "hi"})]),
+            anthropic_reply(tool_calls=[("band_send_message", {"content": "again"})]),
+        )
+        backend = SimpleAdapterBackend(adapter)
+        inp = make_agent_input(msg=sample_message, tools=mock_tools, room_id="room-123")
+
+        with pytest.raises(asyncio.CancelledError):
+            await backend.run(
+                inp,
+                context=SimpleRunContext(tools=mock_tools, cancellation=cancellation),
+            )
+
+        assert adapter.client.call_count == 1, (
+            "the loop must not start another round once the turn is cancelled"
+        )
 
 
 class TestErrorHandling:
     """Tests for error handling."""
 
     @pytest.mark.asyncio
-    async def test_reports_error_on_api_failure(self, sample_message, mock_tools):
+    async def test_reports_error_on_api_failure(
+        self, sample_message, mock_tools, scripted
+    ):
         """Should report error when Anthropic API fails."""
-        adapter = AnthropicAdapter()
+        adapter = scripted(RuntimeError("API Error"))
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(adapter, "_call_anthropic") as mock_call:
-            mock_call.side_effect = Exception("API Error")
+        with pytest.raises(RuntimeError, match="API Error"):
+            await deliver(adapter, sample_message, mock_tools)
 
-            with pytest.raises(Exception, match="API Error"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
-
-            # Should have tried to report error
-            mock_tools.send_event.assert_called()
+        mock_tools.send_event.assert_called()
 
 
 class EchoInput(BaseModel):
@@ -639,7 +555,9 @@ class TestCustomTools:
     def test_accepts_additional_tools_parameter(self):
         """Adapter should accept list of (Model, func) tuples."""
         adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, echo_message)],
+            additional_tools=[
+                FunctionTool.from_custom_tool_def((EchoInput, echo_message))
+            ],
         )
 
         assert len(adapter._custom_tools) == 1
@@ -649,222 +567,106 @@ class TestCustomTools:
         """Adapter should accept multiple custom tools."""
         adapter = AnthropicAdapter(
             additional_tools=[
-                (EchoInput, echo_message),
-                (CalculatorInput, calculate),
+                FunctionTool.from_custom_tool_def((EchoInput, echo_message)),
+                FunctionTool.from_custom_tool_def((CalculatorInput, calculate)),
             ],
         )
 
         assert len(adapter._custom_tools) == 2
 
     @pytest.mark.asyncio
-    async def test_merges_custom_tool_schemas(self, sample_message, mock_tools):
-        """Custom tools should appear in schema list alongside platform tools."""
-        adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, echo_message)],
+    async def test_merges_custom_tool_schemas(
+        self, sample_message, mock_tools, scripted
+    ):
+        """Custom tools should reach the model alongside platform tools."""
+        adapter = scripted(
+            anthropic_reply("Hi there"),
+            additional_tools=[
+                FunctionTool.from_custom_tool_def((EchoInput, echo_message))
+            ],
         )
         await adapter.on_started("TestBot", "Test bot")
-
-        # Mock platform tools returning some schemas
         mock_tools.get_anthropic_tool_schemas = MagicMock(
             return_value=[
                 {"name": "band_send_message", "description": "Send a message"}
             ]
         )
 
-        captured_tools = []
+        await deliver(adapter, sample_message, mock_tools)
 
-        with patch.object(adapter, "_call_anthropic") as mock_call:
-            # Capture the tools parameter
-            async def capture_call(messages, tools):
-                captured_tools.extend(tools)
-                mock_response = MagicMock()
-                mock_response.stop_reason = "end_turn"
-                mock_response.content = []
-                return mock_response
-
-            mock_call.side_effect = capture_call
-
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        # Should have both platform and custom tool
-        assert len(captured_tools) == 2
-        tool_names = [t["name"] for t in captured_tools]
-        assert "band_send_message" in tool_names
-        assert "echo" in tool_names
+        sent = [tool["name"] for tool in adapter.client.last_payload["tools"]]
+        assert sorted(sent) == ["band_send_message", "echo"]
 
     @pytest.mark.asyncio
-    async def test_routes_to_custom_tool(self, mock_tools):
-        """Tool call for custom tool should execute custom function."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, echo_message)],
-        )
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="echo",
-                input={"message": "Hello world"},
-            )
-        ]
-
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
-
-        # Should NOT have called platform execute_tool_call
-        mock_tools.execute_tool_call.assert_not_called()
-
-        # Should have result from custom tool
-        assert len(results) == 1
-        assert results[0]["is_error"] is False
-        assert "Echo: Hello world" in results[0]["content"]
-
-    @pytest.mark.asyncio
-    async def test_routes_to_platform_tool(self, mock_tools):
-        """Tool call for platform tool should use execute_tool_call."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, echo_message)],
-        )
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="band_send_message",
-                input={"content": "Hello", "mentions": ["User"]},
-            )
-        ]
-
-        mock_tools.execute_tool_call.return_value = {"status": "sent"}
-
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
-
-        # Should have called platform execute_tool_call
-        mock_tools.execute_tool_call.assert_called_once_with(
-            "band_send_message", {"content": "Hello", "mentions": ["User"]}
-        )
-
-        assert len(results) == 1
-        assert results[0]["is_error"] is False
-
-    @pytest.mark.asyncio
-    async def test_custom_tool_error_sets_is_error(self, mock_tools):
-        """Custom tool exception should result in is_error=True."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, failing_tool)],
-        )
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="echo",
-                input={"message": "test"},
-            )
-        ]
-
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
-
-        assert len(results) == 1
-        assert results[0]["is_error"] is True
-        assert "Service unavailable" in results[0]["content"]
-
-    @pytest.mark.asyncio
-    async def test_preserves_tool_use_id_on_error(self, mock_tools):
-        """tool_use_id should be preserved even when custom tool fails."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, failing_tool)],
-        )
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-abc-123",
-                name="echo",
-                input={"message": "test"},
-            )
-        ]
-
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
-
-        assert results[0]["tool_use_id"] == "tool-abc-123"
-
-    @pytest.mark.asyncio
-    async def test_multiple_custom_tools_execution(self, mock_tools):
-        """Multiple custom tools should be callable."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(
+    async def test_custom_tool_result_reaches_next_provider_request(
+        self, sample_message, mock_tools, scripted
+    ):
+        adapter = scripted(
+            anthropic_reply(tool_calls=[("echo", {"message": "hello"})]),
+            anthropic_reply(
+                tool_calls=[
+                    (
+                        "band_send_message",
+                        {"content": "Final answer", "mentions": [{"id": "user-456"}]},
+                    )
+                ]
+            ),
+            anthropic_reply("Done."),
             additional_tools=[
-                (EchoInput, echo_message),
-                (CalculatorInput, calculate),
+                FunctionTool.from_custom_tool_def((EchoInput, echo_message))
             ],
         )
+        await adapter.on_started("TestBot", "Test bot")
 
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="echo",
-                input={"message": "Hello"},
-            ),
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-2",
-                name="calculator",
-                input={"operation": "add", "left": 5, "right": 3},
-            ),
-        ]
+        await deliver(adapter, sample_message, mock_tools)
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
-
-        assert len(results) == 2
-        assert "Echo: Hello" in results[0]["content"]
-        assert "8.0" in results[1]["content"]
-
-    @pytest.mark.asyncio
-    async def test_custom_tool_validation_error(self, mock_tools):
-        """Invalid args should result in validation error."""
-        from anthropic.types import ToolUseBlock
-
-        adapter = AnthropicAdapter(
-            additional_tools=[(EchoInput, echo_message)],
+        assert adapter.client.call_count == 3
+        assert adapter.client.payloads[1]["messages"][-1] == {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call-1",
+                    "content": "Echo: hello",
+                    "is_error": False,
+                }
+            ],
+        }
+        mock_tools.execute_tool_call_structured.assert_awaited_once_with(
+            "band_send_message",
+            {"content": "Final answer", "mentions": [{"id": "user-456"}]},
         )
 
-        mock_response = MagicMock()
-        mock_response.content = [
-            ToolUseBlock(
-                type="tool_use",
-                id="tool-1",
-                name="echo",
-                input={},  # Missing required 'message' field
-            )
-        ]
 
-        results = await adapter._process_tool_calls(mock_response, mock_tools)
+class TestProviderOptions:
+    """Phase 2 sampling / provider façade."""
 
-        assert len(results) == 1
-        assert results[0]["is_error"] is True
-        assert (
-            "message" in results[0]["content"].lower()
-        )  # Error mentions missing field
+    def test_temperature_forwarded_to_provider(self) -> None:
+        adapter = AnthropicAdapter(temperature=0.4, max_output_tokens=512)
+        assert adapter._provider.sampling.temperature == 0.4
+        assert adapter._provider.sampling.max_output_tokens == 512
+
+
+class TestShutdown:
+    @pytest.mark.asyncio
+    async def test_stopping_the_agent_closes_the_provider_client(self):
+        """The provider owns an HTTP client that only this path can close.
+
+        Driven through the backend the agent actually stops, not through
+        `cleanup_all` directly: the leak was that nothing connected the two.
+        """
+        from band.core.backends.adapter import SimpleAdapterBackend
+
+        adapter = AnthropicAdapter(provider_key="test-key")
+        closed = False
+
+        class ClosingClient:
+            async def close(self) -> None:
+                nonlocal closed
+                closed = True
+
+        adapter.client = ClosingClient()
+
+        await SimpleAdapterBackend(adapter).aclose()
+
+        assert closed, "the provider's HTTP client outlived the agent"

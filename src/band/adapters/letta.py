@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import ClassVar, Any
 
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import MissingDependencyError
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -116,41 +115,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     ) -> None:
         self._config = config or LettaAdapterConfig()
 
-        # Detect non-default legacy booleans (enable_task_events defaults to
-        # True, so only enable_memory_tools and enable_execution_reporting
-        # count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_memory_tools or self._config.enable_execution_reporting
-        )
-
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in LettaAdapterConfig "
-                "(enable_memory_tools / enable_execution_reporting) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
         if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_memory_tools and enable_execution_reporting in "
-                    "LettaAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}, "
-                    "emit={Emit.EXECUTION}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
+            features = AdapterFeatures(emit=frozenset({Emit.TASK_EVENTS}))
 
         super().__init__(
             history_converter=history_converter or LettaHistoryConverter(),
@@ -205,7 +171,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         try:
             from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency
         except ImportError:
-            raise ImportError(
+            raise MissingDependencyError(
                 "letta-client is required for LettaAdapter. "
                 "Install with: pip install band-sdk[letta]"
             )
@@ -503,12 +469,12 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         tools,
                         "tool_call",
                         tool_name,
-                        {
-                            "name": tool_name,
-                            "args": getattr(tool_call, "arguments", "{}")
+                        tool_call_content(
+                            tool_name,
+                            args=getattr(tool_call, "arguments", "{}")
                             if tool_call
                             else "{}",
-                        },
+                        ),
                     )
                 case "tool_return_message":
                     tool_name = getattr(resp_msg, "tool_name", "unknown")
@@ -516,10 +482,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         tools,
                         "tool_result",
                         tool_name,
-                        {
-                            "name": tool_name,
-                            "output": getattr(resp_msg, "tool_return", ""),
-                        },
+                        tool_result_content(
+                            tool_name, output=getattr(resp_msg, "tool_return", "")
+                        ),
                     )
 
         # If the agent already sent via the MCP send tool, the message is on
@@ -565,7 +530,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         tools: AgentToolsProtocol,
         event_type: str,
         tool_name: str,
-        payload: dict[str, Any],
+        content: str,
     ) -> None:
         """Emit a tool_call/tool_result event when EXECUTION reporting is on.
 
@@ -576,7 +541,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             return
         if tool_name in self._mcp.silent_reporting_tools:
             return
-        await tools.send_event(content=json.dumps(payload), message_type=event_type)
+        await tools.send_event(content=content, message_type=event_type)
 
     # ------------------------------------------------------------------
     # Letta agent lifecycle

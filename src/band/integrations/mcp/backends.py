@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from typing_extensions import TypeAliasType
+from band.typingcompat import TypeAliasType
 
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.mcp_server import (

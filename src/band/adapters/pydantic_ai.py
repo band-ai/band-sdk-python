@@ -7,9 +7,7 @@ Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
 from __future__ import annotations
 
 import inspect
-import json
 import logging
-import warnings
 from collections.abc import Callable
 from typing import Any, ClassVar, get_origin, get_type_hints
 
@@ -19,6 +17,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstrumentationSettings,
     RunContext,
     UnexpectedModelBehavior,
     capture_run_messages,
@@ -34,8 +33,9 @@ from pydantic_ai.messages import (
 
 from band_rest.core.api_error import ApiError
 
-from band.core.exceptions import BandConfigError
+from band.core.instructions import Instruction, InstructionPolicy
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.narration import tool_call_content, tool_result_content
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -48,13 +48,13 @@ from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
 )
+from band.core.tools import FunctionTool, normalize_additional_tools
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
     invoke_validated_custom_tool,
     is_marked_terminal,
 )
-from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
     get_tool_description,
@@ -180,7 +180,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     Example:
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            custom_section="You are a helpful assistant.",
+            instructions="You are a helpful assistant.",
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
@@ -194,13 +194,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     def __init__(
         self,
         model: str,
-        system_prompt: str | None = None,
-        custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
+        *,
+        instructions: str | Instruction | None = None,
         history_converter: PydanticAIHistoryConverter | None = None,
-        additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
+        additional_tools: list[FunctionTool | Callable[..., Any]] | None = None,
         features: AdapterFeatures | None = None,
+        instrument: bool | InstrumentationSettings | None = None,
     ):
         """
         Initialize the Pydantic AI adapter.
@@ -210,10 +209,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 "anthropic:claude-3-5-sonnet-latest"). Since pydantic-ai 2.0 the bare
                 ``openai:`` prefix routes to OpenAI's Responses API; use
                 ``openai-chat:`` for Chat Completions.
-            system_prompt: Optional custom system prompt (overrides default)
-            custom_section: Optional custom section added to default system prompt
-            enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
-            enable_memory_tools: Deprecated. Use features=AdapterFeatures(capabilities={Capability.MEMORY}).
+            instructions: Instructions composed with the SDK base prompt.
             history_converter: Optional custom history converter
             additional_tools: Optional list of PydanticAI-compatible tool functions
                 and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
@@ -223,32 +219,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 context-free callable (no leading ``RunContext``) goes to
                 agent.tool_plain() instead — pydantic-ai rejects it on the other path.
             features: Shared adapter feature settings (capabilities, emit, tool filters).
+            instrument: OpenTelemetry instrumentation for the pydantic-ai agent.
+                ``None`` (default) inherits whatever ``Agent.instrument_all()`` the
+                host set, ``False`` opts this agent out of it, ``True`` enables
+                pydantic-ai's defaults, and an ``InstrumentationSettings`` customizes
+                them (for example a specific ``tracer_provider``). Band never creates
+                a provider or exporter — the host owns the telemetry pipeline; see
+                ``examples/opentelemetry/``.
         """
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
+        self._instructions = instructions
 
         super().__init__(
             history_converter=history_converter or PydanticAIHistoryConverter(),
@@ -256,8 +235,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
 
         self.model = model
-        self.system_prompt = system_prompt
-        self.custom_section = custom_section
+        self.instrument = instrument
         self._system_prompt: str | None = None
 
         self._agent: Agent[AgentToolsProtocol, str] | None = None
@@ -266,15 +244,34 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Custom tools: accept both native callables and the portable CustomToolDef
         # (InputModel, handler) form the other adapters take — tuples are converted to
         # native pydantic-ai callables; plain callables pass through unchanged.
-        self._custom_tools: list[Callable[..., Any]] = [
-            _custom_tool_def_to_callable(tool) if isinstance(tool, tuple) else tool
-            for tool in (additional_tools or [])
-        ]
+        normalized_tools = normalize_additional_tools(
+            additional_tools, framework_derives_schemas=True
+        )
+        self._function_tools: list[FunctionTool] = normalized_tools
+        self._custom_tools: list[Callable[..., Any]] = []
+        for function_tool in normalized_tools:
+            if function_tool.native_callable is not None:
+                self._custom_tools.append(function_tool.native_callable)
+            else:
+                native = _custom_tool_def_to_callable(
+                    function_tool.as_custom_tool_def()
+                )
+                native.__name__ = function_tool.name
+                native.__doc__ = function_tool.description or native.__doc__
+                if function_tool.terminal:
+                    native.band_terminal = True  # type: ignore[attr-defined]
+                self._custom_tools.append(native)
         # Custom tools that opt in as terminal actions (band_terminal=True on the
         # function). Only these let an empty final response be treated as benign;
         # an undeclared custom tool does not (fail-loud — see is_terminal_success).
         self._custom_terminal_names: frozenset[str] = frozenset(
-            fn.__name__ for fn in self._custom_tools if is_marked_terminal(fn)
+            function_tool.name
+            for function_tool in normalized_tools
+            if function_tool.terminal
+            or (
+                function_tool.native_callable is not None
+                and is_marked_terminal(function_tool.native_callable)
+            )
         )
 
     # --- Adapted from BandPydanticAgent._on_started ---
@@ -287,13 +284,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     # --- Copied from BandPydanticAgent._create_agent ---
     def _create_agent(self) -> Agent[AgentToolsProtocol, str]:
         """Create Pydantic AI Agent with platform tools."""
-        system = self.system_prompt or render_system_prompt(
+        self._system_prompt = InstructionPolicy(
+            include_base_instructions=True,
+            features=self.features,
+        ).render(
             agent_name=self.agent_name,
             agent_description=self.agent_description or "An AI assistant",
-            custom_section=self.custom_section or "",
-            features=self.features,
+            instructions=self._instructions,
         )
-        self._system_prompt = system
+        system = self._system_prompt
 
         # We respond via tools only, so the model output is unused — but it must
         # still be a type: pydantic-ai rejects `output_type=None` with
@@ -333,6 +332,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # ones the storage filter can't reach (see the function docstring).
             capabilities=[ProcessHistory(_drop_non_replayable_messages)],
         )
+
+        # Instrumentation is a property, not a constructor argument, so it is
+        # assigned rather than passed. Always assigned: the tri-state is meaningful
+        # end to end — None is pydantic-ai's own "inherit Agent.instrument_all()",
+        # which is exactly what a caller who passed nothing wants.
+        agent.instrument = self.instrument
 
         # Register platform tools dynamically from centralized definitions
         # All tools catch exceptions and return error strings so LLM can see failures
@@ -744,12 +749,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         if Emit.EXECUTION in self.features.emit:
                             try:
                                 await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            "name": event.part.tool_name,
-                                            "args": event.part.args,
-                                            "tool_call_id": event.part.tool_call_id,
-                                        }
+                                    content=tool_call_content(
+                                        event.part.tool_name,
+                                        args=event.part.args,
+                                        tool_call_id=event.part.tool_call_id,
                                     ),
                                     message_type="tool_call",
                                 )
@@ -771,12 +774,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         if Emit.EXECUTION in self.features.emit:
                             try:
                                 await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            "name": event.part.tool_name,
-                                            "output": str(event.part.content),
-                                            "tool_call_id": event.tool_call_id,
-                                        }
+                                    content=tool_result_content(
+                                        # A nameless result is unreadable; the
+                                        # framework leaves the name optional.
+                                        event.part.tool_name or "tool",
+                                        output=str(event.part.content),
+                                        tool_call_id=event.tool_call_id,
                                     ),
                                     message_type="tool_result",
                                 )

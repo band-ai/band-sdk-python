@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit, TurnUsage
 
 
 class TestCapabilityEnum:
@@ -53,6 +53,15 @@ class TestAdapterFeatures:
         assert isinstance(f.capabilities, frozenset)
         assert len(f.capabilities) == 2
 
+    def test_coerces_documented_enum_values(self) -> None:
+        features = AdapterFeatures(capabilities=["memory"], emit=["usage"])
+        assert features.capabilities == frozenset({Capability.MEMORY})
+        assert features.emit == frozenset({Emit.USAGE})
+
+    def test_rejects_unknown_enum_values(self) -> None:
+        with pytest.raises(ValueError, match="not-a-capability"):
+            AdapterFeatures(capabilities=["not-a-capability"])
+
     def test_include_tools_normalized_to_tuple(self) -> None:
         f = AdapterFeatures(include_tools=["band_send_message", "band_lookup_peers"])
         assert isinstance(f.include_tools, tuple)
@@ -82,3 +91,9 @@ class TestAdapterFeatures:
         f1 = AdapterFeatures(capabilities={Capability.MEMORY})
         f2 = AdapterFeatures(capabilities={Capability.CONTACTS})
         assert f1 != f2
+
+
+class TestTurnUsage:
+    def test_rejects_negative_counts(self) -> None:
+        with pytest.raises(ValueError, match="non-negative"):
+            TurnUsage(input_tokens=-1)

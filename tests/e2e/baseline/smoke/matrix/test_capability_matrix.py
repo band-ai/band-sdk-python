@@ -32,7 +32,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
@@ -41,7 +41,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @pytest.mark.asyncio(loop_scope="session")
 async def test_store_memory_across_memory_adapters(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
@@ -51,15 +51,12 @@ async def test_store_memory_across_memory_adapters(
     selected by the filter, not a list — each built with the memory tools enabled.
     """
     marker = unique_marker("xmem")
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-cap-memory-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             store_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
@@ -75,7 +72,7 @@ async def test_store_memory_across_memory_adapters(
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recall_memory_across_memory_adapters(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
@@ -89,15 +86,12 @@ async def test_recall_memory_across_memory_adapters(
     returns nothing, so the get hop is what proves an actual read-back.
     """
     marker = unique_marker("rmem")
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-cap-recall-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             recall_memory_instruction(marker),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
@@ -116,7 +110,7 @@ async def test_recall_memory_across_memory_adapters(
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reply_across_non_memory_adapters(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
@@ -125,15 +119,12 @@ async def test_reply_across_non_memory_adapters(
     Same filter mechanism, inverted: ``without={Capability.MEMORY}`` yields exactly
     the adapters the memory test does not, with no overlap and no hard-coded ids.
     """
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-cap-nomemory-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     async with reply_capture(room_id) as capture:
-        trigger = await user_ops.send_message(
+        trigger = await user_ops.mention(
             room_id,
+            agent,
             "Please reply with a short greeting.",
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(trigger, agent.id)
 

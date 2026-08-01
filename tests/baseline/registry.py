@@ -27,7 +27,7 @@ class AdapterSupport:
 
 
 SUPPORT: tuple[AdapterSupport, ...] = (
-    AdapterSupport(Adapter.ANTHROPIC, injection="AnthropicAdapter._call_anthropic"),
+    AdapterSupport(Adapter.ANTHROPIC, injection="AnthropicAdapter.client"),
     AdapterSupport(
         Adapter.CLAUDE_SDK, reason="requires a Claude SDK session injection seam"
     ),

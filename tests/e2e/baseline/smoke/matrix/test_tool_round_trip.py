@@ -34,7 +34,7 @@ from tests.e2e.baseline.smoke.samples.sample_tools import (
     lookup_code_instruction,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 KEY = "alpha"  # ACCESS_CODES["alpha"] -> a code the model cannot guess
@@ -53,20 +53,17 @@ KEY = "alpha"  # ACCESS_CODES["alpha"] -> a code the model cannot guess
 @pytest.mark.asyncio(loop_scope="session")
 async def test_custom_tool_round_trips(
     agent: ProvisionedAgent,
-    resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """The tool fires with the right arg AND its opaque result lands in the reply."""
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-tool-roundtrip-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
+        mid = await user_ops.mention(
             room_id,
+            agent,
             lookup_code_instruction(KEY),
-            mention_id=agent.id,
-            mention_name=agent.name,
         )
         replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)

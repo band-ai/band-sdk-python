@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tools import FunctionTool
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.custom_tools import CustomToolDef
 from tests.baseline.adapter import Adapter, NON_AGENT_ADAPTERS, discovered_agent_ids
@@ -163,8 +164,15 @@ def spec_for(name: Adapter) -> AdapterSpec:
 
 
 def _custom_tool_defs(tools: list[ToolSpec] | None) -> list[CustomToolDef] | None:
-    """ToolSpecs as band ``CustomToolDef``s for the tool-loop adapters (or None)."""
+    """ToolSpecs as band ``CustomToolDef``s for tuple-accepting adapters (or None)."""
     return [t.as_custom_tool_def() for t in tools] if tools else None
+
+
+def _function_tools(tools: list[ToolSpec] | None) -> list[FunctionTool] | None:
+    """ToolSpecs as ``FunctionTool``s for normalize_additional_tools adapters."""
+    if not tools:
+        return None
+    return [FunctionTool.from_custom_tool_def(t.as_custom_tool_def()) for t in tools]
 
 
 def _reject_tools(adapter_id: Adapter, tools: list[ToolSpec] | None) -> None:

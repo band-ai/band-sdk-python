@@ -36,18 +36,19 @@ CREATE_CHATROOM_TOOL = "band_create_chatroom"
 async def test_agent_creates_a_chatroom(
     agent: ProvisionedAgent,
     resource_manager: ResourceManager,
+    agent_room: str,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """band_create_chatroom fires AND a new room actually lands in the agent's chat list."""
-    room_id = await resource_manager.provision_room(
-        title=f"e2e-create-chatroom-{agent.adapter_id}", participants=[agent.id]
-    )
+    room_id = agent_room
     before = await resource_manager.agent_room_ids(agent)
 
     async with reply_capture(room_id) as capture:
-        mid = await user_ops.send_message(
-            room_id, CREATE_CHATROOM, mention_id=agent.id, mention_name=agent.name
+        mid = await user_ops.mention(
+            room_id,
+            agent,
+            CREATE_CHATROOM,
         )
         await capture.wait_for_processed(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
