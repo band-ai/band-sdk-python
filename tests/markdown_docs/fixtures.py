@@ -176,7 +176,7 @@ def turn_input():
 
 @pytest.fixture
 def turn_backend():
-    """A backend whose model posts to the room, then answers.
+    """An adapter whose model posts to the room, then answers.
 
     Scripted rather than mocked at the transport: the tool round is what makes
     a turn emit observable events, so a snippet about the observation stream
@@ -184,7 +184,7 @@ def turn_backend():
     """
     from band.core.backends.native import NativeToolLoopBackend
     from band.core.contracts import ModelResponse, ModelToolCall
-    from tests.core.contractsupport import NativeFacadeBackend
+    from tests.core.contractsupport import NativeLoopAdapter
 
     rounds = iter(
         [
@@ -212,7 +212,7 @@ def turn_backend():
 
             return DefaultHistoryPolicy()
 
-    return NativeFacadeBackend(NativeToolLoopBackend(provider=ScriptedProvider()))
+    return NativeLoopAdapter(NativeToolLoopBackend(provider=ScriptedProvider()))
 
 
 @pytest.fixture

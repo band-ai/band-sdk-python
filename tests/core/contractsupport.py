@@ -1,4 +1,4 @@
-"""Fixtures and helpers for AgentBackend contract tests."""
+"""Fixtures and helpers for core turn / native-loop contract tests."""
 
 from __future__ import annotations
 
@@ -9,10 +9,9 @@ from typing import Any, cast
 
 import pytest
 
-from band.core.backends.observing import ObservingTools
+from band.core.backends.observing import ObservingTools, turn_context
 from band.core.run.cancellation import FlagCancellation, NeverCancelled
 from band.core.contracts import (
-    BackendContext,
     ModelMessage,
     TurnEventKind,
     ModelMessageRole,
@@ -261,36 +260,48 @@ class PostingAdapter(SimpleAdapter[object]):
         )
 
 
-@dataclass
-class NativeFacadeBackend:
-    """Presents a tool loop as an ``AgentBackend``, the way a façade does.
+class NativeLoopAdapter(SimpleAdapter[list[dict[str, Any]]]):
+    """Test ``FrameworkAdapter`` over a bare ``NativeToolLoopBackend``.
 
-    ``NativeToolLoopBackend`` owns its own session, so it takes what it primes
-    a turn with rather than an ``AgentInput`` whose history it would ignore —
-    which means it is not an ``AgentBackend``. In production the two provider
-    adapters supply that shape; tests that need to observe a bare tool loop
-    (``AgentStream.observe``) use this stand-in AgentBackend stand-in for the same reason.
+    Production Anthropic/Gemini use ``NativeProviderAdapter`` for the same
+    shape. Stream / oneshot tests that need a tool loop without a real
+    provider adapter use this.
     """
 
-    loop: NativeToolLoopBackend
+    def __init__(self, loop: NativeToolLoopBackend) -> None:
+        super().__init__()
+        self._loop = loop
 
-    async def start(self, context: BackendContext) -> None:
-        await self.loop.start(context)
-
-    async def run(self, inp: AgentInput, *, context: RunContext) -> RunResult:
-        return await self.loop.run(
-            session_id=inp.room_id,
-            message=inp.msg,
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: list[dict[str, Any]],
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        turn = turn_context(tools)
+        context: RunContext = (
+            turn
+            if turn is not None
+            else SimpleRunContext(tools=tools, cancellation=NeverCancelled())
+        )
+        await self._loop.run(
+            session_id=room_id,
+            message=msg,
             context=context,
-            participants_context=inp.participants_msg,
-            contacts_context=inp.contacts_msg,
+            participants_context=participants_msg,
+            contacts_context=contacts_msg,
         )
 
-    async def close_session(self, session_id: str) -> None:
-        await self.loop.close_session(session_id)
+    async def on_cleanup(self, room_id: str) -> None:
+        await self._loop.close_session(room_id)
 
-    async def aclose(self) -> None:
-        await self.loop.aclose()
+    async def cleanup_all(self) -> None:
+        await self._loop.aclose()
 
 
 # --- turn context managers ---

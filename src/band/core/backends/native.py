@@ -1,4 +1,4 @@
-"""Tool-loop ``AgentBackend`` parameterized by a ``ModelProvider``."""
+"""Tool loop parameterized by a ``ModelProvider`` (used by native adapters)."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ class NativeToolLoopBackend:
     ) -> RunResult:
         """Run one turn of the tool loop against ``session_id``'s history.
 
-        This is not an ``AgentBackend``: the loop owns its own session, so it
+        This is not a ``FrameworkAdapter``: the loop owns its own session, so it
         takes what it primes a turn with rather than a whole turn request with
         a history it would ignore.
         """

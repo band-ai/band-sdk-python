@@ -1,13 +1,10 @@
-"""Static and runtime checks that published AgentBackend contracts hold."""
+"""Static and runtime checks that published turn contracts hold."""
 
 from __future__ import annotations
 
 import pytest
 
-from band import (
-    AgentBackend,
-    RunResult,
-)
+from band import RunResult
 from band.core.backends.native import NativeToolLoopBackend
 from band.core.backends.observing import ObservingTools
 from band.core.contracts import ModelRequest, ModelResponse

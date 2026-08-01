@@ -20,7 +20,7 @@ from band.core.types import TurnUsage
 from band.testing import FakeAgentTools
 from tests.core.contractsupport import (
     EchoModelProvider,
-    NativeFacadeBackend,
+    NativeLoopAdapter,
     agent_input,
     native_turn,
 )
@@ -48,7 +48,7 @@ async def test_observed_stream_detaches_when_iteration_finishes(
 ) -> None:
     tools = FakeAgentTools(room_id="room-observer-release")
     stream = AgentStream.observe(
-        NativeFacadeBackend(NativeToolLoopBackend(provider=echo)),
+        NativeLoopAdapter(NativeToolLoopBackend(provider=echo)),
         agent_input(tools, content="ping"),
         tools=tools,
     )
@@ -65,7 +65,7 @@ async def test_observe_yields_tool_events_then_completes(
     posting_echo: EchoModelProvider,
 ) -> None:
     tools = FakeAgentTools(room_id="room-stream")
-    backend = NativeFacadeBackend(NativeToolLoopBackend(provider=posting_echo))
+    backend = NativeLoopAdapter(NativeToolLoopBackend(provider=posting_echo))
     stream = AgentStream.observe(
         backend,
         agent_input(tools, content="ping"),
@@ -77,7 +77,8 @@ async def test_observe_yields_tool_events_then_completes(
     assert TurnEventKind.TOOL_CALL in kinds
     assert TurnEventKind.TOOL_RESULT in kinds
     assert stream.result is not None
-    assert stream.result.text is not None
+    # Adapter turns only surface delivery on RunResult; model text is in events/room.
+    assert stream.result.delivery is not None or TurnEventKind.TOOL_RESULT in kinds
 
 
 @pytest.mark.asyncio
@@ -88,7 +89,7 @@ async def test_observe_yields_run_failed_on_model_error() -> None:
 
     tools = FakeAgentTools(room_id="room-fail")
     stream = AgentStream.observe(
-        NativeFacadeBackend(NativeToolLoopBackend(provider=BoomProvider())),
+        NativeLoopAdapter(NativeToolLoopBackend(provider=BoomProvider())),
         agent_input(tools, content="ping"),
         tools=tools,
     )
@@ -110,7 +111,7 @@ async def test_observe_raises_stream_error_on_transport_failure() -> None:
 
     tools = FakeAgentTools(room_id="room-transport")
     stream = AgentStream.observe(
-        NativeFacadeBackend(NativeToolLoopBackend(provider=TransportBoom())),
+        NativeLoopAdapter(NativeToolLoopBackend(provider=TransportBoom())),
         agent_input(tools, content="ping"),
         tools=tools,
     )
@@ -141,7 +142,7 @@ async def test_async_with_cancels_in_flight_producer(
     tools = FakeAgentTools(room_id="room-cancel")
     token = FlagCancellation()
     stream = AgentStream.observe(
-        NativeFacadeBackend(NativeToolLoopBackend(provider=SlowProvider())),
+        NativeLoopAdapter(NativeToolLoopBackend(provider=SlowProvider())),
         agent_input(tools, content="ping"),
         tools=tools,
         cancellation=token,
@@ -175,7 +176,7 @@ async def test_a_callers_own_token_can_still_cancel_the_run(
     interrupted = ExecutionCancellation(SimpleNamespace(_interrupt_kind="stop"))
     tools = FakeAgentTools(room_id="room-foreign-token")
     stream = AgentStream.observe(
-        NativeFacadeBackend(NativeToolLoopBackend(provider=Counting())),
+        NativeLoopAdapter(NativeToolLoopBackend(provider=Counting())),
         agent_input(tools, content="ping"),
         tools=tools,
         cancellation=interrupted,

@@ -61,7 +61,6 @@ from .core.exceptions import (
 )
 from .core.deprecation import BandDeprecationWarning, warn_deprecated
 from .core.protocols import (
-    AgentBackend,
     CancellationToken,
     EventSink,
     Gateway,
@@ -180,7 +179,6 @@ __all__ = [
     "RunFailed",
     "BandDeprecationWarning",
     "warn_deprecated",
-    "AgentBackend",
     "ModelProvider",
     "ModelSamplingOptions",
     "NativeToolLoopBackend",

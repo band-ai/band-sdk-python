@@ -51,7 +51,10 @@ class GeminiAdapter(NativeProviderAdapter[GeminiMessages, list[types.Tool]]):
     """
     Gemini SDK adapter using SimpleAdapter pattern.
 
-    Uses the official google-genai Python SDK with explicit tool-loop control.
+    Native-kind ``SimpleAdapter``: owns a ``NativeToolLoopBackend`` +
+    ``GeminiProvider`` (google-genai). Shared turn body is a private helper
+    (``NativeProviderAdapter``); this class supplies Gemini schemas and
+    bootstrap projection only.
 
     Example:
         adapter = GeminiAdapter(

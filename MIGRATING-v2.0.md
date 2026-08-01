@@ -25,6 +25,8 @@ Gateways (`SlackGateway`, `ACPGateway`, `A2AGateway`) are **hosts** — they
 own agent lifecycle and an inbound transport. They are not a fourth adapter
 kind. `HistoryConverter`, `ObservingTools`, and `NativeToolLoopBackend` stay
 behind the Adapter; do not treat them as peer architecture layers.
+`NativeProviderAdapter` is a private helper shared by Anthropic/Gemini only —
+not a public base class and not a fourth kind.
 
 This guide accumulates old → new mappings as each redesign phase lands.
 v2.0 is a breaking release: removed constructor aliases raise `TypeError`
@@ -71,17 +73,16 @@ The following deprecated paths were removed in v2.0:
 - `InstructionPolicy.render(run_instructions=...)` was removed. No caller ever
   supplied it, so the run layer never rendered.
 - `RunRequest` was removed, along with the `AgentInput` ↔ `RunRequest`
-  mapping. `AgentBackend.run` now takes the turn's `AgentInput` directly —
-  `RunRequest` held the same fields under four different names, so every turn
-  converted an `AgentInput` into one and immediately back. `NativeToolLoopBackend`
-  is not an `AgentBackend`: it owns its session, so it takes `session_id=`,
-  `message=` and the two context strings rather than a request whose history it
-  would ignore. `SessionHistoryPolicy.prime_turn` takes the same three values.
+  mapping. Turns pass `AgentInput` straight into `FrameworkAdapter.handle_turn` —
+  the old `RunRequest` held the same fields under four different names.
+  `NativeToolLoopBackend` is an internal tool loop (not an adapter): it owns
+  its session, so it takes `session_id=`, `message=` and the two context
+  strings rather than an input whose history it would ignore. `SessionHistoryPolicy.prime_turn` takes the same three values.
 - `DeliveryReceipt.outcome` and `DeliveryReceipt.tool_call_id` were removed.
   `outcome` had exactly one legal value — its own validator rejected the rest
   — and nothing read the call id. A receipt is evidence that a room post
   succeeded; `tool_name` carries that.
-- `SimpleAdapterBackend` was removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter` directly (or an `AgentBackend` when a test drives a bare native loop). The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. The turn entrypoint on the contract is `handle_turn` (formerly `on_event` on the adapter protocol — not to be confused with platform `Execution.on_event`).
+- `SimpleAdapterBackend` and `AgentBackend` were removed. `Agent`, `run_oneshot_turn`, and `AgentStream.observe` take a `FrameworkAdapter` only. The ObservingTools wrap (delivery + turn sink) lives in `run_adapter_turn`. The turn entrypoint on the contract is `handle_turn` (formerly `on_event` on the adapter protocol — not to be confused with platform `Execution.on_event`). Native Anthropic/Gemini adapters compose a private `NativeToolLoopBackend`; tests that need a bare loop use a small `SimpleAdapter` stand-in (`NativeLoopAdapter` in the test helpers).
 
 
 ## Breaking: features-only

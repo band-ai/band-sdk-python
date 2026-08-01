@@ -39,7 +39,6 @@ from band.core.exceptions import (
     UnsupportedOptionError,
 )
 from band.core.protocols import (
-    AgentBackend,
     AgentToolsProtocol,
     CancellationToken,
     EventSink,
@@ -64,7 +63,6 @@ from band.core.tools import (
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 
 __all__ = [
-    "AgentBackend",
     "AgentInput",
     "AgentToolsProtocol",
     "BackendContext",

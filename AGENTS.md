@@ -519,6 +519,15 @@ the gateway claims it, and a second gateway claiming the same agent raises
 `LifecycleError`. Slack may wrap an inner framework/native/bridge adapter;
 that is composition, not a fourth kind.
 
+| Host | Owned adapter | Notes |
+|------|---------------|-------|
+| `SlackGateway` | `SlackAdapter` | Wraps an inner adapter (brain); not a fourth kind |
+| `ACPGateway` | `BandACPServerAdapter` | Editor → ACP → Band rooms |
+| `A2AGateway` | `A2AGatewayAdapter` | Remote A2A clients → Band peers |
+
+`NativeProviderAdapter` is a private helper for Anthropic/Gemini only — do not
+draw it as a peer of `SimpleAdapter` on architecture diagrams.
+
 ```python fixture:slack_agent
 from band import SlackGateway
 

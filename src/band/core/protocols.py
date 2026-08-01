@@ -15,10 +15,8 @@ if TYPE_CHECKING:
         ListAgentPeersResponse,
     )
     from band.core.contracts import (
-        BackendContext,
         ModelRequest,
         ModelResponse,
-        RunResult,
         TurnEvent,
     )
     from band.core.types import AgentInput
@@ -316,7 +314,7 @@ class Preprocessor(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# AgentBackend / ModelProvider / Gateway contracts
+# ModelProvider / Gateway contracts
 # ---------------------------------------------------------------------------
 
 
@@ -348,7 +346,7 @@ class CancellationToken(Protocol):
 
 @runtime_checkable
 class RunContext(Protocol):
-    """Per-run context for ``AgentBackend.run``."""
+    """Per-run context for one adapter turn."""
 
     @property
     def tools(self) -> AgentToolsProtocol: ...
@@ -359,24 +357,6 @@ class RunContext(Protocol):
     @property
     def cancellation(self) -> CancellationToken: ...
 
-
-@runtime_checkable
-class AgentBackend(Protocol):
-    """Test/internal turn runner with ``.run`` — not an adapter.
-
-    Production turns go through ``FrameworkAdapter.handle_turn``. This
-    protocol remains for helpers that drive a bare ``NativeToolLoopBackend``
-    under ``AgentStream.observe``. Lifecycle hooks mirror the adapter's
-    ``on_started`` / ``on_cleanup`` / ``cleanup_all``.
-    """
-
-    async def start(self, context: BackendContext) -> None: ...
-
-    async def run(self, inp: AgentInput, *, context: RunContext) -> RunResult: ...
-
-    async def close_session(self, session_id: str) -> None: ...
-
-    async def aclose(self) -> None: ...
 
 
 @runtime_checkable

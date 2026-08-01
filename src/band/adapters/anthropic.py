@@ -47,9 +47,10 @@ class AnthropicAdapter(NativeProviderAdapter[AnthropicMessages, list[ToolParam]]
     """
     Anthropic SDK adapter using SimpleAdapter pattern.
 
-    A façade over ``NativeToolLoopBackend`` + ``AnthropicProvider``: the backend
-    owns the tool loop and per-room session, and this keeps the adapter surface
-    (plus a mirror of each room's history in Anthropic wire shape).
+    Native-kind ``SimpleAdapter``: owns a ``NativeToolLoopBackend`` +
+    ``AnthropicProvider``. Shared turn body is a private helper
+    (``NativeProviderAdapter``); this class supplies Anthropic schemas and
+    bootstrap projection only.
 
     Example:
         adapter = AnthropicAdapter(

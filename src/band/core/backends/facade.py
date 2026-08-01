@@ -1,4 +1,9 @@
-"""Helpers for provider-adapter façades over ``NativeToolLoopBackend``."""
+"""Private helpers for Anthropic/Gemini over ``NativeToolLoopBackend``.
+
+Not an architecture tier. Native adapters are ordinary ``SimpleAdapter``s that
+own a tool loop + ``ModelProvider``; this module only deduplicates their turn
+body.
+"""
 
 from __future__ import annotations
 
@@ -241,15 +246,16 @@ TSchemas = TypeVar("TSchemas", bound=Sequence[Any])
 
 
 class NativeProviderAdapter(SimpleAdapter[H], Generic[H, TSchemas], ABC):
-    """Shared turn body for adapters that drive a ``NativeToolLoopBackend``.
+    """Private mixin for ``AnthropicAdapter`` / ``GeminiAdapter`` only.
 
-    Anthropic and Gemini differ in three places — the framework history type,
-    the provider-native tool schemas, and how a bootstrap transcript seeds a
-    session. Everything else about a turn is the same, so it lives here once.
+    Not a public adapter kind and not a fourth architecture tier. The Native
+    kind is "an adapter that owns a ``NativeToolLoopBackend`` +
+    ``ModelProvider``"; this ABC just shares their ``on_message`` body.
 
-    ``TSchemas`` is what keeps the two apart at the type level: the schemas a
-    subclass builds are the schemas its own provider is handed, so an
-    Anthropic ``ToolParam`` list cannot reach the Gemini provider.
+    The two subclasses differ in three places — history type, provider-native
+    tool schemas, and bootstrap seed projection. ``TSchemas`` keeps schemas
+    apart at the type level so an Anthropic ``ToolParam`` list cannot reach
+    the Gemini provider.
     """
 
     _backend: NativeToolLoopBackend

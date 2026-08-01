@@ -1,4 +1,4 @@
-"""Run one turn through an adapter (or an ``AgentBackend`` test runner).
+"""Run one turn through a ``FrameworkAdapter``.
 
 Claim/mark/drain stay in the invoker; this is only the turn boundary:
 ``AgentInput`` → ``RunResult``.
@@ -12,7 +12,6 @@ from typing import cast
 from band.core.backends.observing import ObservingTools
 from band.core.contracts import RunResult
 from band.core.protocols import (
-    AgentBackend,
     AgentToolsProtocol,
     CancellationToken,
     EventSink,
@@ -48,26 +47,14 @@ async def run_adapter_turn(
     )
 
 
-async def execute_turn(
-    target: FrameworkAdapter | AgentBackend,
-    inp: AgentInput,
-    *,
-    context: RunContext,
-) -> RunResult:
-    """Dispatch: adapters via ``handle_turn``, backends via ``.run``."""
-    if isinstance(target, FrameworkAdapter):
-        return await run_adapter_turn(target, inp, context=context)
-    return await target.run(inp, context=context)
-
-
 async def run_oneshot_turn(
-    target: FrameworkAdapter | AgentBackend,
+    adapter: FrameworkAdapter,
     inp: AgentInput,
     *,
     events: EventSink | None = None,
     cancellation: CancellationToken | None = None,
 ) -> RunResult:
-    """Build the turn's context and hand ``inp`` to the adapter (or backend)."""
+    """Build the turn's context and hand ``inp`` to the adapter."""
     tools: AgentToolsProtocol = inp.tools
     context = SimpleRunContext(
         tools=tools,
@@ -75,4 +62,4 @@ async def run_oneshot_turn(
     )
     if events is not None:
         context.events = events
-    return await execute_turn(target, inp, context=context)
+    return await run_adapter_turn(adapter, inp, context=context)

@@ -427,37 +427,60 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 ## Supported Adapters
 
-### Framework Adapters
+All adapters share one contract (`FrameworkAdapter` / usually `SimpleAdapter`).
+They differ by **where the model loop lives** — Framework, Native, or Bridge.
+Gateways are **hosts** (lifecycle + inbound transport), not a fourth kind.
+
+### Framework
+
+Their SDK runs inside `on_message`.
 
 | Integration      | Install Extra | Adapter                              | Guide | Example                                       |
 | ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
 | LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [docs](docs/adapters/langgraph.md) | [examples](examples/langgraph/)     |
 | Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
-| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
 | Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
-| Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
-| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
-| Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
 | Parlant          | `parlant`     | `ParlantAdapter`                     | | [examples](examples/parlant/)         |
 | Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
 | Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
-| Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
 
 > Install `crewai` in its own environment, apart from `parlant` and `pydantic-ai` — it carries the narrowest transitive pins of the three and the lockfile resolves it in a separate fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for the current pins.
 
-### Bridge Adapters
+### Native
 
-| Integration  | Install Extra | Adapter                              | Example                                       |
-| ------------ | ------------- | ------------------------------------ | --------------------------------------------- |
-| A2A bridge   | `a2a`         | `A2AAdapter`                         | [examples](examples/a2a_bridge/)              |
-| A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
-| ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
-| Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
+Band's tool loop + a `ModelProvider` (ordinary adapters that *compose* that machinery — not a separate inheritance tier).
+
+| Integration      | Install Extra | Adapter                              | Guide | Example                                       |
+| ---------------- | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
+| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
+| Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
+
+### Bridge
+
+A remote agent / CLI owns the model loop.
+
+| Integration        | Install Extra | Adapter                              | Guide | Example                                       |
+| ------------------ | ------------- | ------------------------------------ | ----- | --------------------------------------------- |
+| Claude Agent SDK   | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                  | | [examples](examples/copilot_sdk/) |
+| Codex              | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
+| OpenCode           | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
+| A2A (outbound)     | `a2a`         | `A2AAdapter`                         | | [examples](examples/a2a_bridge/)              |
+| ACP client         | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter` | | [examples](examples/acp/) |
+
+### Hosts (not an adapter kind)
+
+Own an `Agent` plus one inbound transport via `GatewayBase`. Construct the agent but do not start it — the gateway claims it.
+
+| Host | Extra | Owned adapter | Example |
+| ---- | ----- | ------------- | ------- |
+| `SlackGateway` | `slack` | `SlackAdapter` (wraps an inner framework/native/bridge adapter) | [examples](examples/slack/) |
+| `ACPGateway` | `acp` | `BandACPServerAdapter` (+ `ACPServer` protocol) | [examples](examples/acp/) |
+| `A2AGateway` | `a2a_gateway` | `A2AGatewayAdapter` | [examples](examples/a2a_gateway/) |
 
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
