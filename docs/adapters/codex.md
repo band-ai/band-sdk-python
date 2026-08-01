@@ -88,6 +88,8 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
+**Kind:** Bridge — the Codex CLI/process owns the model loop. Agent calls `adapter.handle_turn` once per inbound message; the adapter maps each Band room to a Codex thread. Room posts go through Band collaboration tools.
+
 Each Band room maps to one Codex thread. Through Band collaboration tools, Codex can send messages, look up peers, add participants, and create new chats. On startup, the adapter tries to resume the previous Codex thread from task-event metadata. If resume fails and `inject_history_on_resume_failure=True`, the adapter injects recent room history as text context.
 
 The adapter handles Codex approval requests in the room, persists thread metadata through task events, and sends optional telemetry such as tool calls, reasoning, diffs, token usage, and lifecycle events.

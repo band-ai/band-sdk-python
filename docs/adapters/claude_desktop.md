@@ -1,5 +1,7 @@
 # Claude Desktop
 
+**Kind:** Framework-adjacent host tooling — Desktop joins Band via `band-mcp` + `band-room-view` (not a `SimpleAdapter` subclass). See the architecture doc for the process layout.
+
 Claude Desktop can join a Band room as a Band agent. Two local stdio servers
 split the work:
 

@@ -1,11 +1,12 @@
 # Anthropic SDK Examples for Band
 
-Examples for creating Band agents using the Anthropic Python SDK with the composition-based pattern.
+Examples for creating Band agents with the Anthropic SDK (**Native** kind).
 
 ## Overview
 
-These examples demonstrate how to build agents using Claude via the Anthropic SDK,
-with full control over conversation history and tool loop management.
+Band owns the tool loop (`NativeToolLoopBackend` + `AnthropicProvider`) behind
+`AnthropicAdapter`. Agent calls `handle_turn` once per inbound message; room posts
+go through tools (`band_send_message`).
 
 ## Prerequisites
 
@@ -47,13 +48,17 @@ await agent.run()
 
 ## Architecture
 
-The `AnthropicAdapter` provides:
+```text
+Host / Agent → AnthropicAdapter.handle_turn → Native tool loop → AnthropicProvider
+```
 
-- **Per-room conversation history** - Maintains chat history per room (Anthropic SDK is stateless)
-- **Platform history hydration** - Loads existing messages when joining a room
-- **Participant tracking** - Updates LLM when participants change
-- **Tool calling** - Full Anthropic tool use loop with automatic execution
-- **Event reporting** - Optional visibility into tool calls and results
+The adapter provides:
+
+- **Per-room session** — owned by the private tool loop (Anthropic SDK is stateless)
+- **Platform history hydration** — loads existing messages when joining a room
+- **Participant / contact context** — injected per turn
+- **Tool calling** — Band runs the tool loop; Claude requests tools, the adapter executes
+- **Event reporting** — optional `Emit.EXECUTION` / `Emit.USAGE` via `AdapterFeatures`
 
 ---
 

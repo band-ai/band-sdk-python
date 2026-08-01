@@ -79,6 +79,8 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
+**Kind:** Bridge — Claude Code (a subprocess) owns the model loop. Agent calls `adapter.handle_turn` once per inbound message; the adapter forwards the turn to Claude Code over the Agent SDK. Room posts go through Band tools exposed as an in-process MCP server.
+
 Each Band room gets its own Claude Code session. On the first message in a room, the adapter gives Claude Code the conversation context and a system prompt with Band collaboration instructions. Then it gives Claude Code an in-process MCP server that exposes Band collaboration tools, optional memory/contact tools, and your custom tools.
 
 Claude Code responses are routed back to the Band room. Through Band tools, it can send messages, look up peers, add participants, and create new chats. If Claude Code asks for permission to edit files or run commands, you can let Claude Code handle that through `permission_mode`, or you can opt into Band chat-based approvals with `approval_mode`.

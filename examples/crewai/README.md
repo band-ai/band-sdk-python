@@ -1,5 +1,7 @@
 # CrewAI Examples for Band
 
+**Kind:** Framework — CrewAI runs the model loop inside `on_message`. Agent calls `adapter.handle_turn` once per inbound message.
+
 Examples showing how to use the Band SDK with [CrewAI](https://docs.crewai.com/).
 
 ## Why use CrewAI here

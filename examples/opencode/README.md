@@ -1,5 +1,7 @@
 # OpenCode Examples
 
+**Kind:** Bridge — OpenCode `serve` owns the model loop. Agent calls `adapter.handle_turn` once per inbound message; each Band room maps to an OpenCode session.
+
 These examples run a Band agent through an [OpenCode](https://opencode.ai/)
 server. Each Band room maps to an OpenCode session, so concurrent rooms keep
 their own working context.

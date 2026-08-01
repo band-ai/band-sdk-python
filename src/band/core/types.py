@@ -1,4 +1,4 @@
-"""Core types for composition-based agent architecture."""
+"""Core types for Agent / Adapter / Tools."""
 
 from __future__ import annotations
 

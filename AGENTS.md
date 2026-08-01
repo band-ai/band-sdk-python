@@ -371,7 +371,7 @@ loaded session gets no replay, so history is never doubled.
 
 Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close.
 
-Every adapter asks the same question of the same object — "did this turn already post to the room?" — and no adapter keeps its own flag. The backend wraps each turn's tools in an `ObservingTools` (`src/band/core/backends/observing.py`), which mints a `DeliveryReceipt` on the first successful room post, whether it came from a room-posting tool call or from the adapter calling `send_message` itself (a Copilot `ask_user` question). `delivered(tools)` reads it — `copilot_sdk`, `codex`, `opencode` (whose band tools resolve, via its own MCP server, to these very tools) and ACP all gate the text fallback on it. Because the proxy is per turn, a call orphaned by a turn timeout records against its own turn and can never mark a later one as having replied — no identity guard needed.
+Every adapter asks the same question of the same object — "did this turn already post to the room?" — and no adapter keeps its own flag. `run_adapter_turn` wraps each turn's tools in an `ObservingTools` (`src/band/core/backends/observing.py`), which mints a `DeliveryReceipt` on the first successful room post, whether it came from a room-posting tool call or from the adapter calling `send_message` itself (a Copilot `ask_user` question). `delivered(tools)` reads it — `copilot_sdk`, `codex`, `opencode` (whose band tools resolve, via its own MCP server, to these very tools) and ACP all gate the text fallback on it. Because the proxy is per turn, a call orphaned by a turn timeout records against its own turn and can never mark a later one as having replied — no identity guard needed.
 
 `delivered()` walks the tools proxy chain, so **every** wrapper in it must be a `ToolsWrapper` (`src/band/core/wrapping.py`) — a wrapper that isn't ends the walk short of the observer and makes a delivered turn look silent (`DedupingAgentTools` is one for exactly this reason).
 
@@ -660,7 +660,7 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 ### Phase 1: Scaffold Source Files
 
 1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters.parsing import parse_tool_call, parse_tool_result`.
-2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `instructions`, `features`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`. (`custom_section=` was removed in v2 — see MIGRATING-v2.0.md.)
+2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `instructions`, `features`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`. (`SimpleAdapter.handle_turn` converts history then calls `on_message` — do not reimplement the turn entrypoint unless you need a decorator.) (`custom_section=` was removed in v2 for Native/several Framework adapters — see MIGRATING-v2.0.md.)
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
 ### Phase 2: Register with Conformance Infrastructure
@@ -683,7 +683,7 @@ In `src/band/converters/<framework>.py`, implement `convert()`: text messages as
 
 ### Phase 5: Implement the Adapter
 
-In `src/band/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` converts history and invokes LLM, `on_cleanup` cleans per-room state safely.
+In `src/band/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` invokes the framework (Agent already called `handle_turn`), `on_cleanup` cleans per-room state safely.
 
 ### Phase 6: Write Framework-Specific Tests
 
@@ -767,7 +767,7 @@ Fence conventions (the language tag after the opening ```` ``` ````):
   that genuinely need a live platform/LLM.
 - ` ```python fixture:<name> ` — executed with the named pytest fixture injected into
   the block's namespace. Several may be listed, space-separated
-  (` ```python fixture:turn_backend fixture:room_tools `). Fixtures live in
+  (` ```python fixture:turn_adapter fixture:room_tools `). Fixtures live in
   `tests/markdown_docs/fixtures.py`, registered globally via `pytest_plugins` in the
   root `conftest.py` — so name a new one for its scope (`room_tools`, not `tools`)
   or it shadows a test suite's own.

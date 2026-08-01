@@ -76,6 +76,8 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
+**Kind:** Framework — LangGraph runs the model loop inside `on_message`. Agent calls `adapter.handle_turn` once per inbound message. Room posts go through tools (`band_send_message`).
+
 When a message arrives in a Band room, the adapter gives your graph the conversation context in LangChain message format and invokes it with `thread_id` set to the Band room ID. If your graph is compiled with a checkpointer, that thread ID lets the graph persist conversation state across messages in the room.
 
 The simple setup builds a LangChain 1.x `create_agent` graph for you. The adapter adds Band collaboration tools to that graph, including tools such as `band_send_message`, `band_lookup_peers`, `band_add_participant`, and `band_create_chatroom`. Your graph must call `band_send_message` to post a reply to the room; plain graph output is not automatically posted.

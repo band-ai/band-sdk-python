@@ -154,17 +154,21 @@ for removed in ("system_prompt", "prompt", "custom_section"):
 
 ## Phase 2 — Provider split & common options
 
-`AnthropicAdapter` / `GeminiAdapter` remain the public constructors. Each is a
-façade that composes an extracted provider (`AnthropicProvider` /
-`GeminiProvider`) with the shared tool-loop backend (`NativeToolLoopBackend`).
-LLM calls go through the provider; session history, tool rounds, and
-`TurnUsage` aggregation go through the backend.
+`AnthropicAdapter` / `GeminiAdapter` remain the public constructors (Native
+kind). Each is an ordinary `SimpleAdapter` that *composes* a provider
+(`AnthropicProvider` / `GeminiProvider`) with a private tool loop
+(`NativeToolLoopBackend`) — that loop is not an `AgentBackend` and not something
+`Agent` takes. LLM calls go through the provider; session history, tool rounds,
+and `TurnUsage` aggregation go through the loop. A private helper
+(`NativeProviderAdapter`) shares their `on_message` body; it is not a public
+architecture tier.
 
-The v1 `_call_anthropic` / `_call_gemini` methods are gone. The backend calls
+The v1 `_call_anthropic` / `_call_gemini` methods are gone. The loop calls
 `provider.complete()` directly, so a completion is projected once instead of
 round-tripping through the adapter's native message shape and back. To drive a
 turn deterministically, replace the SDK client the provider owns — the adapter
-exposes it as `.client`:
+exposes it as `.client`. The snippet below calls `on_message` directly (the
+subclass hook); production goes through `adapter.handle_turn(inp)`:
 
 ```python fixture:scripted_anthropic_adapter fixture:room_tools fixture:turn_input
 adapter, client = scripted_anthropic_adapter("Hello!")
@@ -237,19 +241,20 @@ assert UNSET is not None
    `GeminiHistoryPolicy`)
 3. ``DefaultHistoryPolicy``
 
-Adapters no longer pass ``history_policy=`` when constructing the backend — the
-provider owns that pairing. A custom ``ModelProvider`` should implement
-``default_history_policy()`` if it expects a non-default session shape.
+Adapters no longer pass ``history_policy=`` when constructing the private
+``NativeToolLoopBackend`` — the provider owns that pairing. A custom
+``ModelProvider`` should implement ``default_history_policy()`` if it expects a
+non-default session shape.
 
 ### Per-session turn usage
 
 | Old | New |
 |-----|-----|
-| ``backend.last_turn_usage`` (property) | ``backend.last_turn_usage(session_id)`` |
+| ``loop.last_turn_usage`` (property) | ``loop.last_turn_usage(session_id)`` |
 
-One backend serves every room the agent is in and their turns interleave, so a
-single "most recent turn" tally reported whichever room last called the model.
-The tally is keyed by session and cleared with it.
+One native tool loop serves every room the agent is in and their turns
+interleave, so a single "most recent turn" tally reported whichever room last
+called the model. The tally is keyed by session and cleared with it.
 
 
 ### One body for tool narration
@@ -287,10 +292,10 @@ assert "is_error" not in tool_result_content("band_send_message", output="ok")
 `async with` (or `await stream.aclose()`) for deterministic cancellation —
 bare `async for` is best-effort.
 
-```python fixture:turn_backend fixture:turn_input fixture:room_tools
+```python fixture:turn_adapter fixture:turn_input fixture:room_tools
 from band import AgentStream
 
-stream = AgentStream.observe(turn_backend, turn_input, tools=room_tools)
+stream = AgentStream.observe(turn_adapter, turn_input, tools=room_tools)
 async with stream:
     observed = [(envelope.sequence, envelope.event.kind) async for envelope in stream]
 

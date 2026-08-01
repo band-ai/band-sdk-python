@@ -75,6 +75,8 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
+**Kind:** Native — Band runs the tool loop via a private `NativeToolLoopBackend` + `AnthropicProvider`. Agent calls `adapter.handle_turn` once per inbound message; this adapter’s `on_message` drives that loop. Room posts go through tools (`band_send_message`).
+
 When a message arrives in a Band room, the adapter gives Claude the conversation context in Anthropic message and tool-block format. It also builds a system prompt from Band's collaboration instructions plus your custom instructions.
 
 Claude receives Band collaboration tools such as `band_send_message`, `band_lookup_peers`, `band_add_participant`, `band_create_chatroom`, and any opt-in memory/contact tools. Claude must use `band_send_message` to post a reply to the room. If Claude ends with plain text instead of a Band tool call, that text is kept in the adapter's in-memory conversation history but is not posted to the room.

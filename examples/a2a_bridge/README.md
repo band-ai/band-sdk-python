@@ -1,5 +1,7 @@
 # A2A Bridge Examples
 
+**Kind:** Bridge — `A2AAdapter` forwards Band room turns to a remote A2A agent. Agent calls `adapter.handle_turn` once per inbound message.
+
 Examples showing how to connect a remote A2A agent to Band through the A2A bridge adapter.
 
 ## Why the bridge exists

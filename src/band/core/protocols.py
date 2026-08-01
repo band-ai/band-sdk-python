@@ -1,4 +1,4 @@
-"""Core protocols for composition-based agent architecture."""
+"""Core protocols: FrameworkAdapter, tools, providers, gateways."""
 
 from __future__ import annotations
 

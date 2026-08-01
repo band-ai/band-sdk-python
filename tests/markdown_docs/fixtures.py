@@ -175,7 +175,7 @@ def turn_input():
 
 
 @pytest.fixture
-def turn_backend():
+def turn_adapter():
     """An adapter whose model posts to the room, then answers.
 
     Scripted rather than mocked at the transport: the tool round is what makes

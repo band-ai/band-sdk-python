@@ -2,7 +2,7 @@
 Pydantic AI integration for Band SDK.
 
 NOTE: The old BandPydanticAgent has been removed.
-Use the new composition-based pattern instead:
+Use the public adapter on `band.adapters` instead:
 
     from band import Agent
     from band.adapters import PydanticAIAdapter

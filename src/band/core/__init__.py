@@ -1,4 +1,4 @@
-"""Core protocols and types for composition-based architecture."""
+"""Core contracts and turn machinery (Adapter → Tools)."""
 
 from __future__ import annotations
 

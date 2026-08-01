@@ -15,7 +15,7 @@ posted back to the room.
 
 Note: Cursor IDE does NOT yet support connecting to remote ACP agents (i.e.,
 you cannot add Band as an agent inside Cursor's UI). This integration works
-the other direction — Band spawns Cursor's agent as a backend.
+the other direction — Band spawns Cursor's agent as a Bridge adapter.
 
 For the reverse direction (IDE connects to Band), see:
 - JetBrains: examples/acp/servers/jetbrains.py

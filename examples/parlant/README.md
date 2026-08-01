@@ -1,5 +1,7 @@
 # Parlant Examples for Band
 
+**Kind:** Framework — Parlant runs the model loop inside `on_message`. Agent calls `adapter.handle_turn` once per inbound message.
+
 Examples showing how to use the Band SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
 
 ## Why Parlant?

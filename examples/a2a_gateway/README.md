@@ -1,5 +1,7 @@
 # A2A Gateway Examples
 
+**Host:** `A2AGateway` owns the agent lifecycle and inbound A2A transport (not a fourth adapter kind). The owned adapter is `A2AGatewayAdapter`.
+
 Examples showing how to expose Band peers as inbound A2A endpoints.
 
 ## Why the gateway exists
@@ -13,11 +15,14 @@ A remote A2A client can call the gateway, discover Band peers through AgentCard 
 
 ## Architecture
 
+`A2AGateway` is a **host** (`GatewayBase`): construct the `Agent` but do not
+start it — the gateway claims it.
+
 ```text
 Remote A2A Client
         |
         v
-   A2A Gateway
+   A2AGateway (host) → A2AGatewayAdapter.handle_turn
         |
         v
  Band Platform

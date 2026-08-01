@@ -1,5 +1,7 @@
 # Multi-Agent Docker Compose
 
+Both agents are **Bridge** adapters (`ClaudeSDKAdapter`, `CodexAdapter`). Agent calls `handle_turn` once per inbound room message.
+
 Run a 2-agent team (Claude SDK planner + Codex reviewer) sharing a workspace, connected to the Band platform.
 
 ## Architecture
