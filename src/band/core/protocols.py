@@ -241,31 +241,21 @@ class AgentToolsProtocol(Protocol):
 
 @runtime_checkable
 class FrameworkAdapter(Protocol):
-    """
-    Handles message processing for a specific LLM framework.
+    """Adapter contract: one turn entrypoint.
 
-    CRITICAL: This adapter processes MESSAGES ONLY.
+    ``Agent`` (and ``run_adapter_turn``) call ``handle_turn`` once per
+    inbound message. Implement this protocol directly, or extend
+    ``SimpleAdapter`` and override ``on_message`` (history conversion stays
+    in the base).
 
-    The Preprocessor filters platform events:
-    - MessageEvent → AgentInput → on_event()
-    - RoomAddedEvent, ParticipantAdded, etc → FILTERED OUT (None)
-
-    Participant changes are passed via `inp.participants_msg` (formatted string
-    describing who joined/left). Adapters inject this into the LLM context.
-
-    SDK users implement this for custom frameworks.
-    SDK ships built-in adapters for LangGraph, Anthropic, etc.
+    CRITICAL: processes MESSAGES ONLY. The preprocessor filters platform
+    events — ``MessageEvent`` becomes ``AgentInput``; room/participant
+    lifecycle events do not reach the adapter. Participant changes arrive
+    as ``inp.participants_msg`` for the LLM context.
     """
 
-    async def on_event(self, inp: "AgentInput") -> None:
-        """
-        Process a user/system message.
-
-        Args:
-            inp: AgentInput with message, tools, history, participants_msg
-
-        GUARANTEED: inp.msg is never from room lifecycle or presence events.
-        """
+    async def handle_turn(self, inp: "AgentInput") -> None:
+        """Run one turn for ``inp`` (never a room-lifecycle event)."""
         ...
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -372,11 +362,12 @@ class RunContext(Protocol):
 
 @runtime_checkable
 class AgentBackend(Protocol):
-    """Orchestrates one session turn (not a ``ModelProvider``).
+    """Test/internal turn runner with ``.run`` — not an adapter.
 
-    Lifecycle: ``start``/``close_session``/``aclose`` map to
-    ``on_started``/``on_cleanup``/``cleanup_all``. Same-session runs are
-    serialized by ``ExecutionContext``; interrupt/stop use its ``interrupt()``.
+    Production turns go through ``FrameworkAdapter.handle_turn``. This
+    protocol remains for helpers that drive a bare ``NativeToolLoopBackend``
+    under ``AgentStream.observe``. Lifecycle hooks mirror the adapter's
+    ``on_started`` / ``on_cleanup`` / ``cleanup_all``.
     """
 
     async def start(self, context: BackendContext) -> None: ...

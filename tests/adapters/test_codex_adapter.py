@@ -2891,7 +2891,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         turn_start = next(
             params for method, params in fake_client.requests if method == "turn/start"
@@ -2959,7 +2959,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         turn_start = next(
             params for method, params in fake_client.requests if method == "turn/start"
@@ -3015,7 +3015,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         turn_start = next(
             params for method, params in fake_client.requests if method == "turn/start"
@@ -3095,7 +3095,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         turn_start = next(
             params for method, params in fake_client.requests if method == "turn/start"
@@ -3168,7 +3168,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         turn_start = next(
             params for method, params in fake_client.requests if method == "turn/start"
@@ -3231,7 +3231,7 @@ class TestHistoryInjection:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         # After injection, stashed data should be cleaned up
         assert "room-1" not in adapter._raw_history_by_room

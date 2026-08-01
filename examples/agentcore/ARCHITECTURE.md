@@ -64,7 +64,7 @@ Two cooperating pieces:
   it calls `await invoker.handle_event(forwarded_body)`, and `OneShotInvoker`:
   1. Reconstructs a typed `PlatformMessage` from the forwarded JSON.
   2. Fetches participants and recent room history from Band REST.
-  3. Builds `AgentInput` and calls `adapter.on_event(...)` (default
+  3. Builds `AgentInput` and calls `adapter.handle_turn(...)` (default
      adapter: `AnthropicAdapter`).
   4. Adapter runs the LLM tool loop; tools call back to Band REST
      (`send_message`, `add_participant`, `lookup_peers`, …).

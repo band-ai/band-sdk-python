@@ -61,7 +61,7 @@ class SimpleAdapter(Generic[H], ABC):
     Simple base class for framework adapters.
 
     Generic over H (history type) for full type safety.
-    Users extend this and override on_message().
+    Users extend this and override ``on_message``; Agent calls ``handle_turn``.
 
     Subclasses should declare SUPPORTED_EMIT and SUPPORTED_CAPABILITIES
     as class-level sets to document what they actually implement.
@@ -232,13 +232,12 @@ class SimpleAdapter(Generic[H], ABC):
         if self.history_converter and hasattr(self.history_converter, "set_agent_name"):
             self.history_converter.set_agent_name(agent_name)
 
-    # --- FrameworkAdapter protocol implementation ---
+    # --- FrameworkAdapter: single turn entrypoint ---
 
-    async def on_event(self, inp: AgentInput) -> None:
-        """Implements FrameworkAdapter.on_event()."""
-        # Convert history if converter is set
+    async def handle_turn(self, inp: AgentInput) -> None:
+        """Convert history, then call ``on_message`` (subclass hook)."""
         if self.history_converter:
-            converted_history: Any = inp.history.convert(self.history_converter)
+            converted_history = inp.history.convert(self.history_converter)
         else:
             # No converter: pass raw HistoryProvider as H
             # Adapters without converters should type as SimpleAdapter[HistoryProvider]

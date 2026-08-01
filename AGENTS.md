@@ -486,12 +486,18 @@ Host / transport → Agent → Adapter → Tools (+ delivery)
 
 `Agent` owns the platform subscription and preprocessing. Each inbound
 message becomes an `AgentInput`; Agent attaches per-turn tools (including
-delivery observation) and calls the adapter once. The adapter thinks and
-acts; room posts go through tools. `HistoryConverter`, `ObservingTools`,
-and the native tool loop are **private machinery** behind that story — not
-a second public architecture tier.
+delivery observation) and calls **`adapter.handle_turn(inp)` once**. That
+is the only turn entrypoint on the `FrameworkAdapter` contract. Room posts
+go through tools. `HistoryConverter`, `ObservingTools`, and the native tool
+loop are **private machinery** behind that story — not a second public
+architecture tier.
 
-Adapters come in three kinds (same `SimpleAdapter` contract, different
+`SimpleAdapter` is the usual base class: it implements `handle_turn` by
+converting history, then calling the subclass's `on_message`. Subclasses
+override `on_message`, not `handle_turn` (unless they need a decorator, e.g.
+Slack).
+
+Adapters come in three kinds (same `FrameworkAdapter` contract, different
 where the model loop lives):
 
 | Kind | Who runs the model loop | Examples |

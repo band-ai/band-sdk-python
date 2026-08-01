@@ -649,7 +649,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         if inner_cleanup is not None:
             await inner_cleanup()
 
-    async def on_event(self, inp: AgentInput) -> None:
+    async def handle_turn(self, inp: AgentInput) -> None:
         """Rehydrate Slack binding on bootstrap, then delegate as normal.
 
         The wrapped inner adapter (Anthropic, LangGraph, ...) owns its own
@@ -657,12 +657,12 @@ class SlackAdapter(SimpleAdapter[Any]):
         thread mapping after a restart we run :class:`SlackHistoryConverter`
         over the same raw history first, fold any recovered binding into
         ``_thread_to_room`` + ``_room_to_binding``, then hand off to
-        ``SimpleAdapter.on_event`` so the inner converter still runs and
+        ``SimpleAdapter.handle_turn`` so the inner converter still runs and
         ``on_message`` sees the brain's native history type.
         """
         if inp.is_session_bootstrap:
             self._rehydrate_room(inp.room_id, inp.history.raw)
-        await super().on_event(inp)
+        await super().handle_turn(inp)
 
     def _rehydrate_room(self, room_id: str, raw_history: list[dict[str, Any]]) -> None:
         """Restore ``_thread_to_room`` and ``_room_to_binding`` for one room.

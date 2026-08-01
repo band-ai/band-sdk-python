@@ -106,7 +106,7 @@ container is *not* a long-lived process — it doesn't remember anything
 between invocations beyond what's already in the room.
 
 ```
-event → container invocation → adapter.on_event → LLM tool loop → return
+event → container invocation → adapter.handle_turn → LLM tool loop → return
 ```
 
 Each invocation:

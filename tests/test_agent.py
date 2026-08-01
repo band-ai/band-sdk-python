@@ -16,7 +16,7 @@ def mock_adapter():
     adapter = AsyncMock()
     adapter.on_started = AsyncMock()
     adapter.on_cleanup = AsyncMock()
-    adapter.on_event = AsyncMock()
+    adapter.handle_turn = AsyncMock()
     return adapter
 
 
@@ -346,7 +346,7 @@ class TestOnExecute:
 
         await agent._on_execute(mock_ctx, mock_event)
 
-        mock_adapter.on_event.assert_not_awaited()
+        mock_adapter.handle_turn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_calls_adapter_on_event(
@@ -369,8 +369,8 @@ class TestOnExecute:
 
         await agent._on_execute(mock_ctx, mock_event)
 
-        mock_adapter.on_event.assert_awaited_once()
-        assert mock_adapter.on_event.await_args.args[0].msg.content == "hello"
+        mock_adapter.handle_turn.assert_awaited_once()
+        assert mock_adapter.handle_turn.await_args.args[0].msg.content == "hello"
 
 
 class TestSimpleAdapterIntegration:
@@ -383,7 +383,7 @@ class TestSimpleAdapterIntegration:
         adapter = MagicMock(spec=SimpleAdapter)
         adapter.on_started = AsyncMock()
         adapter.on_cleanup = AsyncMock()
-        adapter.on_event = AsyncMock()
+        adapter.handle_turn = AsyncMock()
 
         agent = Agent(runtime=mock_runtime, adapter=adapter)
 
@@ -420,7 +420,7 @@ class TestDefaultPreprocessorIntegration:
         await agent._on_execute(mock_ctx, mock_event)
 
         # Should not call adapter (event was filtered)
-        mock_adapter.on_event.assert_not_awaited()
+        mock_adapter.handle_turn.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_default_preprocessor_filters_participant_events(
@@ -444,7 +444,7 @@ class TestDefaultPreprocessorIntegration:
 
         await agent._on_execute(mock_ctx, mock_event)
 
-        mock_adapter.on_event.assert_not_awaited()
+        mock_adapter.handle_turn.assert_not_awaited()
 
 
 class TestStartupRaceCondition:

@@ -30,7 +30,7 @@ async def run_adapter_turn(
     *,
     context: RunContext,
 ) -> RunResult:
-    """Wrap tools for delivery/sink, call ``adapter.on_event``, return receipt.
+    """Wrap tools for delivery/sink, call ``adapter.handle_turn``, return receipt.
 
     ``on_message`` takes neither the turn's sink nor its token, so the per-turn
     proxy carries the whole context: tool-first adapters (ACP RoomTurnEmitter)
@@ -41,7 +41,7 @@ async def run_adapter_turn(
     observing = ObservingTools(_inner=context.tools, turn=context)
     # __getattr__ forwarders are invisible to static analysis.
     inp = replace(inp, tools=cast(AgentToolsProtocol, observing))
-    await adapter.on_event(inp)
+    await adapter.handle_turn(inp)
     return RunResult(
         usage=None,
         delivery=observing.receipt,
@@ -54,7 +54,7 @@ async def execute_turn(
     *,
     context: RunContext,
 ) -> RunResult:
-    """Dispatch: adapters via ``on_event``, backends via ``.run``."""
+    """Dispatch: adapters via ``handle_turn``, backends via ``.run``."""
     if isinstance(target, FrameworkAdapter):
         return await run_adapter_turn(target, inp, context=context)
     return await target.run(inp, context=context)

@@ -1491,7 +1491,7 @@ async def test_on_event_rehydrates_room_binding_on_bootstrap():
         tools=AgentTools(room_id="room-resumed", rest=rest, participants=[]),
     )
 
-    await adapter.on_event(inp)
+    await adapter.handle_turn(inp)
 
     assert adapter._thread_to_room == {"dev:C42:999.5": "room-resumed"}
     assert adapter._room_to_binding["room-resumed"] == SlackRoomBinding(
@@ -1520,7 +1520,7 @@ async def test_on_event_does_not_rehydrate_when_not_bootstrap():
         tools=AgentTools(room_id="room-99", rest=rest, participants=[]),
     )
 
-    await adapter.on_event(inp)
+    await adapter.handle_turn(inp)
 
     assert "C99:9.0" not in adapter._thread_to_room
     assert "room-99" not in adapter._room_to_binding
@@ -1548,7 +1548,7 @@ async def test_on_event_rehydrate_is_noop_without_slack_context():
         tools=AgentTools(room_id="non-slack-room", rest=rest, participants=[]),
     )
 
-    await adapter.on_event(inp)
+    await adapter.handle_turn(inp)
 
     assert adapter._thread_to_room == {}
     assert "non-slack-room" not in adapter._room_to_binding
@@ -1581,7 +1581,7 @@ async def test_rehydration_then_slack_event_reuses_room_without_new_chat():
         bootstrap=True,
         tools=AgentTools(room_id="room-resumed", rest=rest, participants=[]),
     )
-    await adapter.on_event(bootstrap_inp)
+    await adapter.handle_turn(bootstrap_inp)
 
     # Reset Band REST mocks so we can assert no new chat is created.
     rest.agent_api_chats.create_agent_chat.reset_mock()
@@ -1640,7 +1640,7 @@ async def test_rehydrate_does_not_overwrite_existing_binding():
         bootstrap=True,
         tools=AgentTools(room_id="room-X", rest=rest, participants=[]),
     )
-    await adapter.on_event(inp)
+    await adapter.handle_turn(inp)
 
     assert adapter._room_to_binding["room-X"] == live
     assert "dev:C-stale:9.0" not in adapter._thread_to_room

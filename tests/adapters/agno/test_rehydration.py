@@ -53,7 +53,7 @@ class TestRehydrationPipeline:
         )
         adapter, agent = await make_started_adapter(RunOutput(content="ack"))
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
         )
 
@@ -90,7 +90,7 @@ class TestRehydrationPipeline:
         )
         adapter, agent = await make_started_adapter(RunOutput(content="ack"))
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
         )
 
@@ -110,7 +110,7 @@ class TestRehydrationPipeline:
         )
         adapter, agent = await make_started_adapter(RunOutput(content="ack"))
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
         )
 
@@ -123,7 +123,7 @@ class TestRehydrationPipeline:
     ):
         adapter, agent = await make_started_adapter(RunOutput(content="ok"))
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(
                 sample_platform_message,
                 [],
@@ -162,7 +162,7 @@ class TestUnansweredMessage:
             RunOutput(content="here is your answer")
         )
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(current, raw, is_session_bootstrap=True, tools=tools)
         )
 
@@ -187,7 +187,7 @@ class TestUnansweredMessage:
         )
         adapter, agent = await make_started_adapter(RunOutput(content="fresh answer"))
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(
                 sample_platform_message, raw, is_session_bootstrap=True, tools=tools
             )
@@ -211,7 +211,7 @@ class TestUnansweredMessage:
         )
         adapter, agent = await make_started_adapter(RunOutput(content="answering all"))
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(
                 sample_platform_message, raw, is_session_bootstrap=True, tools=tools
             )
@@ -241,10 +241,10 @@ class TestMultiTurnCarryover:
         )
         adapter, agent = await make_started_adapter(turn)
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
         )
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=False)
         )
 

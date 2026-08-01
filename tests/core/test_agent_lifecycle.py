@@ -85,7 +85,7 @@ class TestStopCleansUpAdapter:
         """Bare FrameworkAdapter implementations without the hook still stop."""
 
         class MinimalAdapter:
-            async def on_event(self, inp: object) -> None: ...
+            async def handle_turn(self, inp: object) -> None: ...
             async def on_cleanup(self, room_id: str) -> None: ...
             async def on_started(self, name: str, description: str) -> None: ...
 
@@ -96,7 +96,16 @@ class TestStopCleansUpAdapter:
 
 @pytest.mark.asyncio
 async def test_agent_execution_passes_the_runtime_cancellation_token() -> None:
+    """Agent wires the runtime interrupt into the turn's tools proxy."""
+    from band.core.backends.observing import turn_context
+
+    captured: dict[str, object] = {}
+
+    async def handle_turn(inp: object) -> None:
+        captured["cancellation"] = turn_context(inp.tools).cancellation  # type: ignore[attr-defined]
+
     adapter = AsyncMock()
+    adapter.handle_turn = handle_turn
     agent = make_agent(adapter)
     input_for_turn = agent_input(FakeAgentTools(room_id="room-execution"))
 
@@ -104,18 +113,10 @@ async def test_agent_execution_passes_the_runtime_cancellation_token() -> None:
         async def process(self, **_kwargs):
             return input_for_turn
 
-    class Backend:
-        context = None
-
-        async def run(self, _request, *, context):
-            self.context = context
-
-    backend = Backend()
     agent._preprocessor = Preprocessor()
-    agent._backend = backend  # type: ignore[assignment]
     context = SimpleNamespace(_interrupt_kind=None, _pending_interrupt=None)
 
     await agent._on_execute(context, object())
 
-    assert isinstance(backend.context.cancellation, ExecutionCancellation)
-    assert backend.context.cancellation._ctx is context
+    assert isinstance(captured["cancellation"], ExecutionCancellation)
+    assert captured["cancellation"]._ctx is context

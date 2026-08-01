@@ -82,7 +82,7 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
 
     # Turn 1 — Band supplies NO history (raw=[]); only the live message is sent.
     first = _platform_message("m1", "remember the code is 42")
-    await adapter.on_event(
+    await adapter.handle_turn(
         make_agent_input(first, [], is_session_bootstrap=True, tools=SchemaTools([]))
     )
     assert not any(m.from_history for m in _captured(adapter).captured_messages or [])
@@ -99,7 +99,7 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
         [platform_msg("hX", BAND_SENTINEL, sender_name="Ghost")],
         exclude_id=second.id,
     )
-    await adapter2.on_event(
+    await adapter2.handle_turn(
         make_agent_input(
             second, band_raw, is_session_bootstrap=True, tools=SchemaTools([])
         )

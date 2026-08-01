@@ -217,7 +217,7 @@ async def test_on_event_uses_converter_history_to_resume_thread() -> None:
             },
         }
     ]
-    await adapter.on_event(
+    await adapter.handle_turn(
         _agent_input(
             "continue work",
             tools,
@@ -267,7 +267,7 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
     await adapter.on_started("Codex Agent", "Integration test agent")
 
     first_turn = asyncio.create_task(
-        adapter.on_event(
+        adapter.handle_turn(
             _agent_input(
                 "run protected command",
                 tools,
@@ -285,7 +285,7 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
     else:
         pytest.fail("Approval notification not sent within timeout")
 
-    await adapter.on_event(
+    await adapter.handle_turn(
         _agent_input(
             "/approve ap-1",
             tools,
@@ -325,7 +325,7 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
         client_factory=lambda _cfg: fake_client_first,
     )
     await adapter_first.on_started("Codex Agent", "Integration test agent")
-    await adapter_first.on_event(
+    await adapter_first.handle_turn(
         _agent_input(
             "first turn",
             tools_first,
@@ -357,7 +357,7 @@ async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
         client_factory=lambda _cfg: fake_client_second,
     )
     await adapter_second.on_started("Codex Agent", "Integration test agent")
-    await adapter_second.on_event(
+    await adapter_second.handle_turn(
         _agent_input(
             "second turn after restart",
             tools_second,
@@ -398,7 +398,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
         client_factory=lambda _cfg: fake_client_first,
     )
     await adapter_first.on_started("Codex Agent", "Integration test agent")
-    await adapter_first.on_event(
+    await adapter_first.handle_turn(
         _agent_input(
             "refactor the auth module",
             tools_first,
@@ -447,7 +447,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
         client_factory=lambda _cfg: fake_client_second,
     )
     await adapter_second.on_started("Codex Agent", "Integration test agent")
-    await adapter_second.on_event(
+    await adapter_second.handle_turn(
         _agent_input(
             "now add rate limiting",
             tools_second,
@@ -548,7 +548,7 @@ async def test_item_completed_forwards_internal_operations() -> None:
         client_factory=lambda _cfg: fake_client,
     )
     await adapter.on_started("Codex Agent", "Integration test agent")
-    await adapter.on_event(
+    await adapter.handle_turn(
         _agent_input(
             "fix the failing test",
             tools,

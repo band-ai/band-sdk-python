@@ -437,14 +437,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self.config.structured_errors,
         )
 
-    async def on_event(self, inp: AgentInput) -> None:
+    async def handle_turn(self, inp: AgentInput) -> None:
         if (
             self.config.inject_history_on_resume_failure
             and inp.is_session_bootstrap
             and inp.history.raw
         ):
             self._raw_history_by_room[inp.room_id] = inp.history.raw
-        await super().on_event(inp)
+        await super().handle_turn(inp)
 
     async def on_message(
         self,

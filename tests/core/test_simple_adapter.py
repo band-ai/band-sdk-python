@@ -33,14 +33,14 @@ class TestFrameworkAdapterProtocol:
 
 
 class TestOnEvent:
-    """Tests for on_event() dispatch to on_message()."""
+    """Tests for handle_turn() dispatch to on_message()."""
 
     async def test_dispatches_to_on_message(self):
-        """on_event should dispatch to on_message."""
+        """handle_turn should dispatch to on_message."""
         adapter = RecordingAdapter()
         inp = make_agent_input(content="Test message")
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         assert len(adapter.calls) == 1
         call = adapter.calls[0]
@@ -48,7 +48,7 @@ class TestOnEvent:
         assert call["room_id"] == "room-1"
 
     async def test_passes_all_fields(self):
-        """on_event should pass all AgentInput fields to on_message."""
+        """handle_turn should pass all AgentInput fields to on_message."""
         adapter = RecordingAdapter()
         inp = make_agent_input(
             content="Hello",
@@ -56,7 +56,7 @@ class TestOnEvent:
             is_session_bootstrap=True,
         )
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         call = adapter.calls[0]
         assert call["participants_msg"] == "Alice joined"
@@ -79,7 +79,7 @@ class TestHistoryConversion:
             ]
         )
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         call = adapter.calls[0]
         assert call["history"] == "First | Second | Third"
@@ -91,7 +91,7 @@ class TestHistoryConversion:
             raw_history=[{"content": "Message 1"}, {"content": "Message 2"}]
         )
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         call = adapter.calls[0]
         assert isinstance(call["history"], HistoryProvider)
@@ -103,7 +103,7 @@ class TestHistoryConversion:
         adapter = RecordingAdapter(history_converter=converter)
         inp = make_agent_input(raw_history=[])
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         call = adapter.calls[0]
         assert call["history"] == ""
@@ -199,7 +199,7 @@ class TestAdapterSubclassing:
             raw_history=[{"content": "A"}, {"content": "B"}, {"content": "C"}]
         )
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         assert adapter.received_history == ["A", "B", "C"]
 
@@ -228,7 +228,7 @@ class TestAdapterSubclassing:
         raw = [{"content": "Test"}]
         inp = make_agent_input(raw_history=raw)
 
-        await adapter.on_event(inp)
+        await adapter.handle_turn(inp)
 
         assert isinstance(adapter.received_history, HistoryProvider)
         assert adapter.received_history.raw == raw
@@ -241,9 +241,9 @@ class TestMultipleEvents:
         """Should handle multiple sequential events."""
         adapter = RecordingAdapter()
 
-        await adapter.on_event(make_agent_input(content="First"))
-        await adapter.on_event(make_agent_input(content="Second"))
-        await adapter.on_event(make_agent_input(content="Third"))
+        await adapter.handle_turn(make_agent_input(content="First"))
+        await adapter.handle_turn(make_agent_input(content="Second"))
+        await adapter.handle_turn(make_agent_input(content="Third"))
 
         assert len(adapter.calls) == 3
         assert adapter.calls[0]["msg"].content == "First"

@@ -73,7 +73,7 @@ class TestRehydrationDisabled:
             RunOutput(content="ack"), add_history_to_context=True, db=object()
         )
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(
                 sample_platform_message,
                 raw,
@@ -103,10 +103,10 @@ class TestRehydrationDisabled:
             turn, add_history_to_context=True, db=object()
         )
 
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
         )
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=False)
         )
 
@@ -132,7 +132,7 @@ class TestStorePreserved:
         )
 
         room_id = sample_platform_message.room_id
-        await adapter.on_event(
+        await adapter.handle_turn(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
         )
 

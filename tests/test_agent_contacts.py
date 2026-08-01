@@ -16,7 +16,7 @@ def mock_adapter():
     adapter = MagicMock(spec=SimpleAdapter)
     adapter.on_started = AsyncMock()
     adapter.on_cleanup = AsyncMock()
-    adapter.on_event = AsyncMock()
+    adapter.handle_turn = AsyncMock()
     return adapter
 
 

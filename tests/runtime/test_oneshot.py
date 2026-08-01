@@ -133,7 +133,7 @@ def _make_link_mock(
 def _make_adapter_mock() -> MagicMock:
     adapter = MagicMock()
     adapter.on_started = AsyncMock()
-    adapter.on_event = AsyncMock()
+    adapter.handle_turn = AsyncMock()
     adapter.on_cleanup = AsyncMock()
     return adapter
 
@@ -318,7 +318,7 @@ class TestHandleEventRouting:
         )
         assert result["status"] == "ignored"
         assert result["event_type"] == "room_added"
-        adapter.on_event.assert_not_awaited()
+        adapter.handle_turn.assert_not_awaited()
         link.get_next_message.assert_not_awaited()
 
     async def test_room_removed_triggers_adapter_cleanup(self) -> None:
@@ -440,8 +440,8 @@ class TestProcessMessage:
         assert result["room_id"] == "room-1"
         assert result["message_id"] == "msg-1"
 
-        adapter.on_event.assert_awaited_once()
-        inp = adapter.on_event.call_args.args[0]
+        adapter.handle_turn.assert_awaited_once()
+        inp = adapter.handle_turn.call_args.args[0]
         assert inp.msg.id == "msg-1"
         assert inp.msg.sender_name == "Alice"
 
@@ -462,7 +462,7 @@ class TestProcessMessage:
 
         result = await invoker.handle_event(body)
         assert result["status"] == "skipped_self"
-        adapter.on_event.assert_not_awaited()
+        adapter.handle_turn.assert_not_awaited()
         link.get_next_message.assert_not_awaited()
         link.mark_processing.assert_not_awaited()
 
@@ -476,7 +476,7 @@ class TestProcessMessage:
 
         assert result["status"] == "no_pending"
         assert result["message_id"] == "msg-1"
-        adapter.on_event.assert_not_awaited()
+        adapter.handle_turn.assert_not_awaited()
         link.mark_processing.assert_not_awaited()
 
     async def test_skips_when_different_message_is_next(self) -> None:
@@ -489,7 +489,7 @@ class TestProcessMessage:
         assert result["status"] == "already_processed"
         assert result["message_id"] == "msg-1"
         assert result["next_open"] == "msg-other"
-        adapter.on_event.assert_not_awaited()
+        adapter.handle_turn.assert_not_awaited()
         link.mark_processing.assert_not_awaited()
 
     async def test_claim_propagates_get_next_message_failure(self) -> None:
@@ -507,12 +507,12 @@ class TestProcessMessage:
 
         # No claim attempted, no adapter run — caller can retry.
         link.mark_processing.assert_not_awaited()
-        adapter.on_event.assert_not_awaited()
+        adapter.handle_turn.assert_not_awaited()
 
     async def test_marks_failed_on_adapter_error(self) -> None:
         link = _make_link_mock(next_messages=[_platform_msg("msg-1")])
         adapter = _make_adapter_mock()
-        adapter.on_event = AsyncMock(side_effect=RuntimeError("LLM crashed"))
+        adapter.handle_turn = AsyncMock(side_effect=RuntimeError("LLM crashed"))
         invoker = await _make_invoker(link, adapter)
 
         with pytest.raises(RuntimeError, match="LLM crashed"):
@@ -549,7 +549,7 @@ class TestDrain:
 
         assert result["status"] == "done"
         assert result["drained"] == ["msg-2", "msg-3"]
-        adapter.on_event.assert_awaited_once()  # LLM ran exactly once
+        adapter.handle_turn.assert_awaited_once()  # LLM ran exactly once
         processed = [c.args for c in link.mark_processed.await_args_list]
         assert processed == [
             ("room-1", "msg-1"),
