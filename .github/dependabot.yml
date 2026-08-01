@@ -9,11 +9,6 @@ updates:
       day: "monday"
       time: "09:00"
     open-pull-requests-limit: 10
-    groups:
-      uv-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
     labels:
       - "dependencies"
       - "python"
