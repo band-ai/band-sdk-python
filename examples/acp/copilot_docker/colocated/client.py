@@ -14,7 +14,7 @@ running on the container's own loopback (127.0.0.1:3000/sse). Band tools are NOT
 injected via the SDK's localhost MCP server (`inject_band_tools=False`); the URL
 is resolved by Copilot inside its container.
 
-Run (after `docker run`):
+Run (after the container is up — see README):
     uv run examples/acp/copilot_docker/colocated/client.py
 """
 

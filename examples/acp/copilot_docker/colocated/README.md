@@ -28,19 +28,18 @@ simplest networking, one image, no cross-service DNS.
 - Docker.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
 - A configured Band agent named `copilot_acp_agent` in `agent_config.yaml` (host
-  `client.py` and in-container band-mcp share this one identity).
+  `client.py` and in-container band-mcp share this one identity — synced into
+  `.env` automatically by `--up` / `client.py`).
 
 ## Run
 
 ```bash
 cd examples/acp/copilot_docker/colocated
-cp .env.example .env         # fill in GITHUB_TOKEN
-# Inject BAND_AGENT_KEY from agent_config.yaml (copilot_acp_agent) — one identity.
-uv run ../sync-band-env.py
-docker build -t copilot-band-acp .
-docker run --rm --env-file .env -p 127.0.0.1:8080:8080 copilot-band-acp
+cp .env.example .env         # fill in GITHUB_TOKEN only
+# Syncs BAND_AGENT_KEY from agent_config.yaml, then builds and runs the container.
+uv run ../sync-band-env.py --up
 
-# in another shell, from the repo root:
+# in another shell, from the repo root (client.py re-syncs .env on startup):
 uv run examples/acp/copilot_docker/colocated/client.py
 ```
 
@@ -72,10 +71,9 @@ Then message the `copilot_acp_agent` from a Band room.
   allow-listed. `entrypoint.sh` sets `ALLOWED_HOSTS='["localhost:*","127.0.0.1:*"]'`
   for the in-container loopback caller.
 - **Auth model.** band-mcp holds one Band identity (its agent key); MCP clients
-  present no credentials. Use `../sync-band-env.py` so that key is the
-  `copilot_acp_agent` entry from `agent_config.yaml` — the same identity
-  `client.py` loads. A second fresh agent key makes ACP/text relay work but room
-  tools return 404. Colocation keeps band-mcp bound to loopback and never
+  present no credentials. `sync-band-env.py --up` and `client.py` both write that
+  key from `copilot_acp_agent` in `agent_config.yaml` into `.env` — do not invent
+  a second agent. Colocation keeps band-mcp bound to loopback and never
   published — it is unreachable from outside the container.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a stored `copilot login`. A container

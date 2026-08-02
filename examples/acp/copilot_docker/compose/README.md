@@ -29,19 +29,18 @@ process never resolves that name.
 - Docker + Docker Compose.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
 - A configured Band agent named `copilot_acp_agent` in `agent_config.yaml` (host
-  `client.py` and the band-mcp service share this one identity — see
-  `Agent.from_config` / `../sync-band-env.py`).
+  `client.py` and the band-mcp service share this one identity — synced into
+  `.env` automatically by `--up` / `client.py`).
 
 ## Run
 
 ```bash
 cd examples/acp/copilot_docker/compose
-cp .env.example .env      # fill in GITHUB_TOKEN
-# Inject BAND_AGENT_KEY from agent_config.yaml (copilot_acp_agent) — one identity.
-uv run ../sync-band-env.py
-docker compose up --build # starts copilot (:8080) + band-mcp (internal :3000)
+cp .env.example .env      # fill in GITHUB_TOKEN only
+# Syncs BAND_AGENT_KEY from agent_config.yaml, then starts copilot + band-mcp.
+uv run ../sync-band-env.py --up
 
-# in another shell, from the repo root:
+# in another shell, from the repo root (client.py re-syncs .env on startup):
 uv run examples/acp/copilot_docker/compose/client.py
 ```
 
@@ -80,11 +79,10 @@ and calls Band tools via band-mcp.
   own host there if you change the service name, or set
   `ENABLE_DNS_REBINDING_PROTECTION=false` for local experiments.
 - **Auth model.** band-mcp holds one Band identity (its agent key) and MCP clients
-  present **no** credentials. Use `../sync-band-env.py` so that key is the
-  `copilot_acp_agent` entry from `agent_config.yaml` — the same identity
-  `client.py` loads. A second fresh agent key makes ACP/text relay work but room
-  tools return 404. Treat band-mcp as a trusted sidecar — it is not published to
-  the host here. One container = one Band identity.
+  present **no** credentials. `sync-band-env.py --up` and `client.py` both write
+  that key from `copilot_acp_agent` in `agent_config.yaml` into `.env` — do not
+  invent a second agent. Treat band-mcp as a trusted sidecar — it is not
+  published to the host here. One container = one Band identity.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a
   stored `copilot login`. A container has no stored login, so set a token env
