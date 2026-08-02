@@ -71,13 +71,6 @@ on:
         required: false
         default: false
         type: boolean
-    secrets:
-      DOCKERHUB_USERNAME:
-        description: Docker Hub user that can push to bandhq (release env)
-        required: true
-      DOCKERHUB_TOKEN:
-        description: Docker Hub access token / OAT with image push (release env)
-        required: true
     outputs:
       image-digest:
         description: Digest of the pushed multi-arch image

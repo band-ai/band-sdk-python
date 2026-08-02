@@ -192,7 +192,9 @@ Docker-Sandbox-capable laptop:
 2. Release-environment secrets on `band-ai/band-sdk-python`:
    `DOCKERHUB_USERNAME` (Hub user with push to `bandhq`) and
    `DOCKERHUB_TOKEN` (access token / OAT with image push).
-3. Callers of `kit-publish.yml` pass those secrets into the reusable workflow.
+   `kit-publish.yml` jobs use `environment: release`, so they read these
+   directly (caller jobs that invoke the reusable workflow cannot set
+   `environment:` themselves).
 
 ## One-time GHCR setup
 
