@@ -57,6 +57,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     uses: ./.github/workflows/kit-publish.yml
+    secrets: inherit
     with:
       ref: ${{ inputs.ref }}
       version: ${{ inputs.version }}

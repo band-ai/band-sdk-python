@@ -267,6 +267,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     uses: ./.github/workflows/kit-publish.yml
+    secrets: inherit
     with:
       ref: ${{ needs.decide.outputs.tag }}
       version: ${{ needs.decide.outputs.rversion }}
