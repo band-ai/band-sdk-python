@@ -50,8 +50,9 @@ Building an agent for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)?
 The `band-python-kit` kit runs your agent in an isolated microVM — the Band
 SDK in a read-only virtual environment, automatic sandbox proxy-CA trust
 wiring, a default-deny egress allowlist, arm64 and x86_64. It is distributed
-on GHCR (`ghcr.io/band-ai/band-python-kit`), so adopting it is one
-`sbx create --kit …` from a clean machine — no repo checkout or local build.
+on Docker Hub (`docker.io/bandhq/band-python-kit`; also mirrored on GHCR), so
+adopting it is one `sbx create --kit …` from a clean machine — no repo
+checkout or local build.
 
 Choose the guide that matches what you need:
 
@@ -64,7 +65,8 @@ Choose the guide that matches what you need:
 - [Release engineering](docker/band_python_kit/RELEASING.md) — how the kit is
   published, tag policy, CVE-rebuild cadence, supply-chain quarantine.
 
-The declarative kit and published GHCR image are separate release deliverables.
+The declarative kit and published sandbox image are separate release
+deliverables (dual-published to Docker Hub and GHCR).
 
 #### Proxy-managed credentials
 
