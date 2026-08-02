@@ -41,13 +41,11 @@ async def main() -> None:
     ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
     rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
 
-    # Copilot's ACP server, published by the container.
     host = os.getenv("COPILOT_ACP_HOST", "localhost")
     port = int(os.getenv("COPILOT_ACP_PORT", "8080"))
-    # The TCP server runs in a container, so this must be a path it can access.
     cwd = os.getenv("COPILOT_ACP_CWD", "/")
 
-    # band-mcp's SSE endpoint as reachable BY COPILOT — the container's own loopback.
+    # band-mcp's SSE endpoint as reachable BY COPILOT (container loopback).
     band_mcp_sse_url = os.getenv("BAND_MCP_SSE_URL", "http://127.0.0.1:3000/sse")
 
     config = CopilotACPAdapterConfig(
@@ -70,9 +68,7 @@ async def main() -> None:
     )
 
     logger.info("Connecting to Copilot ACP server at %s:%s over TCP...", host, port)
-    logger.info(
-        "Copilot will call Band tools at %s (its own loopback)", band_mcp_sse_url
-    )
+    logger.info("Copilot will call Band tools at %s", band_mcp_sse_url)
     await agent.run()
 
 

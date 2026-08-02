@@ -14,7 +14,7 @@ SSE endpoint (band-mcp:3000/sse). Because Copilot is remote, Band tools are NOT
 injected via the SDK's localhost MCP server (`inject_band_tools=False`); the URL
 is resolved by Copilot inside the compose network, not by this host process.
 
-Run (after containers are up — see README):
+Run (after `docker compose up`):
     uv run examples/acp/copilot_docker/compose/client.py
 """
 
