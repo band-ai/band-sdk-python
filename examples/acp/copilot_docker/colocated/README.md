@@ -27,16 +27,16 @@ simplest networking, one image, no cross-service DNS.
 
 - Docker.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
-- A configured Band agent named `copilot_acp_agent` for the host client.
-- `BAND_AGENT_KEY` must be the API key of the **same** Band agent configured as
-  `copilot_acp_agent`. Room-scoped Band tools run as the band-mcp identity; a
-  second fresh agent key makes ACP/text relay work but room tools return 404.
+- A configured Band agent named `copilot_acp_agent` in `agent_config.yaml` (host
+  `client.py` and in-container band-mcp share this one identity).
 
 ## Run
 
 ```bash
 cd examples/acp/copilot_docker/colocated
-cp .env.example .env         # fill in GITHUB_TOKEN + BAND_AGENT_KEY
+cp .env.example .env         # fill in GITHUB_TOKEN
+# Inject BAND_AGENT_KEY from agent_config.yaml (copilot_acp_agent) — one identity.
+uv run ../sync-band-env.py
 docker build -t copilot-band-acp .
 docker run --rm --env-file .env -p 127.0.0.1:8080:8080 copilot-band-acp
 
@@ -72,9 +72,11 @@ Then message the `copilot_acp_agent` from a Band room.
   allow-listed. `entrypoint.sh` sets `ALLOWED_HOSTS='["localhost:*","127.0.0.1:*"]'`
   for the in-container loopback caller.
 - **Auth model.** band-mcp holds one Band identity (its agent key); MCP clients
-  present no credentials. That identity must be the same agent as the host
-  `copilot_acp_agent` (see Prerequisites). Colocation keeps band-mcp bound to
-  loopback and never published — it is unreachable from outside the container.
+  present no credentials. Use `../sync-band-env.py` so that key is the
+  `copilot_acp_agent` entry from `agent_config.yaml` — the same identity
+  `client.py` loads. A second fresh agent key makes ACP/text relay work but room
+  tools return 404. Colocation keeps band-mcp bound to loopback and never
+  published — it is unreachable from outside the container.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a stored `copilot login`. A container
   has no stored login, so set a token env (v2 fine-grained PAT with "Copilot
