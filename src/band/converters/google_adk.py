@@ -8,7 +8,11 @@ from typing import Any
 
 from band.core.protocols import HistoryConverter
 
-from .parsing import parse_tool_call, parse_tool_result
+from .parsing import (
+    INTERRUPTED_TOOL_TEXT,
+    parse_tool_call,
+    parse_tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +87,7 @@ def _patch_orphaned_tool_calls(messages: GoogleADKMessages) -> None:
                     "type": "function_response",
                     "tool_call_id": uid,
                     "name": call_names.get(uid, ""),
-                    "output": "Error: tool execution was interrupted",
+                    "output": INTERRUPTED_TOOL_TEXT,
                     "is_error": True,
                 }
                 for uid in sorted_ids

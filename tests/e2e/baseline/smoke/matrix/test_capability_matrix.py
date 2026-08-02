@@ -1,19 +1,12 @@
-"""Capability-filtered matrix smokes — demonstrate ``@per_adapter`` filtering.
+"""Grid tests for adapters that expose memory or contacts capabilities.
 
-Two complementary scenarios driven entirely by capability filters, with no
-hard-coded adapter lists:
-
-* ``supports={Capability.MEMORY}`` selects the memory-capable adapters and runs a
-  store-then-read-back memory scenario (``features=memory_features()`` exposes the
-  memory tools per cell);
-* ``without={Capability.MEMORY}`` selects the exact complement (the non-memory
-  adapters) and runs a basic reply turn.
-
-The two sets partition the matrix, so adding/removing an adapter or flipping its
-``supports`` in the registry re-balances both tests automatically — the point of
-the demonstration. Under fail-never-skip a cell whose backend/key is absent ERRORs
-with the reason (e.g. ``GOOGLE_API_KEY`` for gemini, ``OPENCODE_BASE_URL`` for
-opencode); that is the honest "not wired up" signal, not a regression.
+Every cell comes from a capability filter, never a hard-coded adapter list:
+``supports={Capability.MEMORY}`` selects the memory-capable adapters and
+``without={Capability.MEMORY}`` the exact complement, so flipping an adapter's
+``supports`` in the registry re-balances these tests automatically. Under
+fail-never-skip a cell whose backend or key is absent ERRORs with that reason
+(e.g. ``GOOGLE_API_KEY`` for gemini) — the honest "not wired up" signal, not a
+regression.
 """
 
 from __future__ import annotations
@@ -24,15 +17,23 @@ from tests.e2e.baseline.flaky import flaky_infra
 from band.core.memory_types import MemoryListScope
 from band.core.types import Capability
 
-from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
+    CONTACTS_AGENT,
     MEMORY_AGENT,
+    list_contacts_instruction,
     recall_memory_instruction,
+    retrieve_memory_instruction,
     store_memory_instruction,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.observations import ContactTool
+from tests.e2e.baseline.toolkit.provisioning import (
+    AdapterCell,
+    ProvisionedAgent,
+    ResourceManager,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
@@ -45,11 +46,7 @@ async def test_store_memory_across_memory_adapters(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Every memory-capable adapter can store a memory that lands in the store.
-
-    The matrix here is *exactly* the adapters advertising ``Capability.MEMORY`` —
-    selected by the filter, not a list — each built with the memory tools enabled.
-    """
+    """Store an organization-scoped memory through each memory-capable adapter."""
     marker = unique_marker("xmem")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-{agent.adapter_id}", participants=[agent.id]
@@ -79,14 +76,10 @@ async def test_recall_memory_across_memory_adapters(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Every memory-capable adapter can store a memory and read it back.
+    """Store, list, and fetch a memory through each memory-capable adapter.
 
-    The complement of ``test_store_memory_across_memory_adapters`` (which proves the
-    *store* lands): the same subgroup drives a store -> list -> get sequence in one
-    turn, so the assertion covers the memory tools' *read* path too. The record must
-    land AND the agent must both query (``assert_list_called``) and fetch it back by
-    id (``assert_get_called``) — list alone would pass on a mis-wired read that
-    returns nothing, so the get hop is what proves an actual read-back.
+    The fetch-by-id hop is what proves a real read-back: a list alone would also
+    pass on a mis-wired read that returns nothing.
     """
     marker = unique_marker("rmem")
     room_id = await resource_manager.provision_room(
@@ -104,11 +97,104 @@ async def test_recall_memory_across_memory_adapters(
             agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
         )
 
-    # Write side: the record landed in the store.
     mem.stored.assert_stored(content=marker)
-    # Read side: the agent queried its memory and fetched the record back by id.
     mem.calls.assert_list_called()
     mem.calls.assert_get_called()
+
+
+@per_adapter(
+    supports={Capability.MEMORY},
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI,
+            "the second, post-reboot retrieval turn returns an empty completion "
+            "('Invalid response from LLM call - None or empty'), so the turn never "
+            "finishes; reproduced on every attempt, not a transient",
+        )
+    ],
+    **MEMORY_AGENT,
+)
+@flaky_infra("only transient failures")
+@pytest.mark.timeout(extra=180)  # store, stop, fresh boot, list, get
+@pytest.mark.asyncio(loop_scope="session")
+async def test_memory_survives_adapter_rehydration(
+    cell: AdapterCell,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """A fresh adapter under one identity retrieves a memory from its prior run."""
+    marker = unique_marker("rehydratemem")
+    identity = await cell.provision(label=f"memory-rejoin-{cell.adapter_id}")
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-memory-rejoin-{cell.adapter_id}", participants=[identity.id]
+    )
+
+    async with cell.run_as(identity):
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                store_memory_instruction(marker),
+                mention_id=identity.id,
+                mention_name=identity.name,
+            )
+            await capture.wait_for_processed(mid, identity.id)
+
+    retrieval_room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-memory-retrieve-{cell.adapter_id}", participants=[identity.id]
+    )
+    async with cell.run_as(identity):
+        async with reply_capture(retrieval_room_id) as capture:
+            mid = await user_ops.send_message(
+                retrieval_room_id,
+                retrieve_memory_instruction(marker),
+                mention_id=identity.id,
+                mention_name=identity.name,
+            )
+            replies = await capture.wait_for_reply(mid, identity.id)
+            mem = await capture.memory(
+                identity,
+                scope=MemoryListScope.ORGANIZATION,
+                content_query=marker,
+            )
+
+    # Assert the *effect* of the rehydrated recall, not how an adapter narrated it:
+    # the marker coming back in the reply is what proves the fresh run reached the
+    # prior run's memory. Requiring a specific ``content_query`` argument in the
+    # narrated tool call instead made this hostage to per-adapter narration timing
+    # (opencode reports a tool call once, on the first frame it sees, which for a
+    # PENDING frame carries no arguments yet) and to whether the model chose to
+    # filter server-side rather than list and read.
+    replies.assert_contains_any([marker])
+    mem.calls.assert_list_called()
+    mem.calls.assert_get_called()
+    mem.stored.assert_stored(content=marker)
+
+
+@per_adapter(supports={Capability.CONTACTS}, **CONTACTS_AGENT)
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@pytest.mark.asyncio(loop_scope="session")
+async def test_list_contacts_across_contacts_adapters(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Every contacts-capable adapter can list contacts through the platform."""
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-contacts-{agent.adapter_id}", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            list_contacts_instruction(),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+
+    calls.assert_fired(ContactTool.LIST.value)
 
 
 @per_adapter(without={Capability.MEMORY})

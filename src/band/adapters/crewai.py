@@ -27,6 +27,7 @@ from band.integrations.crewai import (
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import missing_reply_error
 
 if TYPE_CHECKING:
     from crewai import Agent as CrewAIAgent
@@ -439,10 +440,13 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             if not (reply_tracker is not None and reply_tracker.replied):
                 await self._report_error(
                     tools,
-                    "CrewAI completed without sending a Band message. This usually "
-                    f"means repeated tool failures exhausted max_iter={self.max_iter} "
-                    "or the agent returned a final answer instead of using the "
-                    "band_send_message tool.",
+                    missing_reply_error(
+                        "CrewAI",
+                        detail=(
+                            "Repeated tool failures may also have exhausted "
+                            f"max_iter={self.max_iter}."
+                        ),
+                    ),
                 )
 
             logger.info(

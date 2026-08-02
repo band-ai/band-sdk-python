@@ -7,6 +7,10 @@ on:
   # against the queued merge result. Without this the queue would wait forever.
   merge_group:
 
+# Every job here only reads the repo; nothing uses GITHUB_TOKEN for writes.
+permissions:
+  contents: read
+
 jobs:
 
   lint:

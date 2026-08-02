@@ -27,6 +27,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
@@ -689,9 +690,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": getattr(fc, "name", "unknown"),
-                                "args": args,
-                                "tool_call_id": getattr(fc, "id", ""),
+                                ToolEventKey.NAME: getattr(fc, "name", "unknown"),
+                                ToolEventKey.ARGS: args,
+                                ToolEventKey.TOOL_CALL_ID: getattr(fc, "id", ""),
                             }
                         ),
                         message_type="tool_call",
@@ -706,11 +707,11 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": getattr(fr, "name", "unknown"),
-                                "output": str(fr.response)
+                                ToolEventKey.NAME: getattr(fr, "name", "unknown"),
+                                ToolEventKey.OUTPUT: str(fr.response)
                                 if getattr(fr, "response", None)
                                 else "",
-                                "tool_call_id": getattr(fr, "id", ""),
+                                ToolEventKey.TOOL_CALL_ID: getattr(fr, "id", ""),
                             }
                         ),
                         message_type="tool_result",
