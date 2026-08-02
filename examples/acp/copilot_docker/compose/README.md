@@ -20,7 +20,7 @@ process never resolves that name.
 |------|---------|
 | `docker-compose.yml` | Two services: `copilot` (ACP over TCP) + `band-mcp` (Band tools over SSE) |
 | `Dockerfile.copilot` | Copilot CLI + `socat` bridging `copilot --acp` (stdio) onto TCP `0.0.0.0:8080` |
-| `Dockerfile.band-mcp` | `pip install band-mcp`, run the `thenvoi-mcp` SSE server |
+| `Dockerfile.band-mcp` | `pip install band-mcp>=1.3.2`, run the `band-mcp` SSE server |
 | `client.py` | Host-side Band agent: TCP to Copilot, `inject_band_tools=False`, explicit MCP URL |
 | `.env.example` | Required secrets/endpoints |
 
@@ -69,6 +69,9 @@ and calls Band tools via band-mcp.
   reachable off-host. Widen it (behind your own auth) only for a remote SDK host.
 - **band-mcp uses SSE, not streamable HTTP.** The endpoint is `/sse`; the adapter's
   `mcp_servers` entry is `{"type": "sse", …}`.
+- **`mcp<2` pin.** `Dockerfile.band-mcp` installs `band-mcp>=1.3.2` with
+  `mcp>=1.23.0,<2` because band-mcp 1.3.2 imports `mcp.server.fastmcp`, which
+  mcp 2.0 removed.
 - **DNS-rebinding protection.** band-mcp rejects SSE requests with **HTTP 421**
   unless the caller's `Host` is allow-listed. `docker-compose.yml` sets
   `ALLOWED_HOSTS='["band-mcp:*"]'` (the compose-DNS name Copilot dials). Add your
@@ -91,8 +94,8 @@ and calls Band tools via band-mcp.
   call (scoped within that one identity). This differs from the SDK's in-process
   `inject_band_tools` path (which injects a `room_id` per tool) — expect the agent
   to reference `chat_id` when driven through band-mcp.
-- **Platform base URL.** band-mcp defaults to `https://app.thenvoi.com`; the
-  compose file points it at `BAND_REST_URL` (default `https://app.band.ai`).
+- **Platform base URL.** band-mcp (`BAND_BASE_URL`) defaults to `https://app.band.ai`;
+  the compose file points it at `BAND_REST_URL` (default `https://app.band.ai`).
 
 > This example is a deployment template — it needs Docker, live Band credentials,
 > and a Copilot-entitled token, so it is not run in CI.
