@@ -248,12 +248,13 @@ sbx create --name my-band-agent \
 ```
 
 The in-repo `spec.yaml` keeps `sandbox.image: band-python-kit:local` so this
-local flow works unchanged; the published kit's spec is stamped at release time
-to pin the GHCR image by digest (see [`RELEASING.md`](RELEASING.md)).
+local flow works unchanged; each published kit's spec is stamped at release
+time to pin **that registry's** image by digest (see
+[`RELEASING.md`](RELEASING.md)).
 
-Release engineering — how the GHCR image and kit artifact are published, the
-tag policy, the supply-chain quarantine gate, and the CVE-rebuild cadence — is
-documented in [`RELEASING.md`](RELEASING.md).
+Release engineering — how the image and kit artifact are dual-published to
+Docker Hub and GHCR, the tag policy, the supply-chain quarantine gate, and the
+CVE-rebuild cadence — is documented in [`RELEASING.md`](RELEASING.md).
 
 ## Image reference
 

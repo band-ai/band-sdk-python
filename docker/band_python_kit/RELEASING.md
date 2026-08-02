@@ -70,8 +70,9 @@ human owns triage of their failures and of the rebuild scan reports.
 | Manual publish/rehearsal | `kit-publish-manual.yml` via `workflow_dispatch` | Calls the same pipeline under the same publish lock. Rehearsals leave `move-floating` false; emergency recovery can opt in after review. |
 
 **How customers learn a new tag exists:** the floating tags move (documented
-semantics above), rebuild tags appear on the GHCR package pages, the catalog
-pins refresh per the upkeep policy below, and the rebuild workflow writes a run
+semantics above), rebuild tags appear on Hub (`bandhq/band-python-kit` and
+`bandhq/band-python-kit-image`) and the GHCR package pages, the catalog pins
+refresh per the upkeep policy below, and the rebuild workflow writes a run
 summary (base digest deltas, scan results, what was published and why).
 
 ## Supply-chain quarantine gate
@@ -158,33 +159,43 @@ path does not depend on it.
 ## Manual publish runbook (fallback)
 
 If both CI paths are unavailable, a maintainer can publish from a
-Docker-Sandbox-capable laptop:
+Docker-Sandbox-capable laptop. Prefer dual-tagging one build (Hub + GHCR) so
+the registries stay in lockstep — same pattern as CI:
 
 1. Check out the release tag: `git checkout band-sdk-vX.Y.Z`.
-2. Run the quarantine gate, then build and push the multi-arch image:
+2. Run the quarantine gate, then build and push the multi-arch image to both
+   registries:
    ```bash
    python3 scripts/check-lock-age.py --lock uv.lock --max-age-days 7
    docker buildx build \
      -f docker/band_python_kit/Dockerfile \
      --platform linux/amd64,linux/arm64 \
+     -t docker.io/bandhq/band-python-kit-image:X.Y.Z \
      -t ghcr.io/band-ai/band-python-kit/image:X.Y.Z \
      --push .
    ```
-3. Capture the pushed digest and stamp the distribution spec:
+3. Capture **each** registry's pushed digest and stamp a distribution spec per
+   registry (each kit must pin its own registry's image):
    ```bash
-   mkdir -p staging
+   mkdir -p staging/hub staging/ghcr
+   python scripts/stamp-kit-spec.py \
+     --spec docker/band_python_kit/spec.yaml \
+     --image-ref docker.io/bandhq/band-python-kit-image:X.Y.Z \
+     --digest sha256:<hub-digest> \
+     --output staging/hub/spec.yaml
    python scripts/stamp-kit-spec.py \
      --spec docker/band_python_kit/spec.yaml \
      --image-ref ghcr.io/band-ai/band-python-kit/image:X.Y.Z \
-     --digest sha256:<digest> \
-     --output staging/spec.yaml
+     --digest sha256:<ghcr-digest> \
+     --output staging/ghcr/spec.yaml
    ```
-4. Validate and push the immutable kit: `sbx kit validate staging` then
-   `sbx kit push staging ghcr.io/band-ai/band-python-kit:X.Y.Z`.
-5. Only after both immutable artifacts and provenance verification succeed,
-   move the kit's floating tags and retag the immutable image manifest. Keep
-   this ordering: the kit pins the immutable image digest, so an interrupted
-   final retag never points a kit at a missing image.
+4. Validate and push each immutable kit: `sbx kit validate staging/hub` then
+   `sbx kit push staging/hub docker.io/bandhq/band-python-kit:X.Y.Z` (and the
+   same for `staging/ghcr` → `ghcr.io/band-ai/band-python-kit:X.Y.Z`).
+5. Only after both registries' immutable artifacts (and GHCR provenance)
+   succeed, move floating tags and retag the immutable image manifests. Keep
+   this ordering: each kit pins its registry's immutable image digest, so an
+   interrupted final retag never points a kit at a missing image.
 
 ## One-time Docker Hub setup
 
@@ -213,8 +224,9 @@ there is no pre-merge rehearsal):
 4. Rehearsal: dispatch `kit-publish-manual` (Actions → kit-publish-manual →
    Run workflow) with a real git ref, a throwaway version like `0.0.0-rc1`, and
    `move-floating` left at its dispatch default of **false**
-   so `latest`/`<major>` are untouched. Verify repo linkage, attestations, and
-   both tag sets on the GHCR package pages. From a Docker-Sandbox machine,
+   so `latest`/`<major>` are untouched. Verify Hub tags on
+   `bandhq/band-python-kit` + `bandhq/band-python-kit-image`, and GHCR
+   package pages (repo linkage + attestations). From a Docker-Sandbox machine,
    consume the rehearsal kit —
    `sbx create --kit docker.io/bandhq/band-python-kit:0.0.0-rc1 band-python-kit
    <workspace>` — revalidating the already-proven ORAS end-to-end path against
@@ -223,8 +235,9 @@ there is no pre-merge rehearsal):
    immutable-tag guard — bump the rc number or delete the previous rehearsal
    tags first.
 5. First real release publishes for real.
-6. Flip both packages (`band-python-kit`, `band-python-kit/image`) to **public**
-   (one-way) once the layout is confirmed.
+6. Flip both **GHCR** packages (`band-python-kit`, `band-python-kit/image`) to
+   **public** (one-way) once the layout is confirmed. Hub repos are created
+   public up front (see Docker Hub setup above).
 
 ## Catalog upkeep
 
