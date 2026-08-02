@@ -137,7 +137,7 @@ agentcore_runtime = [
     "uvicorn>=0.29",
 ]
 google_adk = [
-    "google-adk>=1.0.0,<2",
+    "google-adk>=1.0.0,<3",
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
 ]
 agno = [
@@ -198,7 +198,7 @@ dev = [
     # Include Gemini SDK for testing
     "google-genai>=1.43.0",
     # Include google-adk for testing
-    "google-adk>=1.0.0,<2",
+    "google-adk>=1.0.0,<3",
     # Google ADK currently requires this pre-release transitively.
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
     # Include Agno for testing
