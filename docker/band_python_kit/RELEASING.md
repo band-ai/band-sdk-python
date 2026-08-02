@@ -189,12 +189,10 @@ Docker-Sandbox-capable laptop:
 ## One-time Docker Hub setup
 
 1. Org `bandhq` on Hub; public repos `band-python-kit` and `band-python-kit-image`.
-2. Release-environment secrets on `band-ai/band-sdk-python`:
-   `DOCKERHUB_USERNAME` (Hub user with push to `bandhq`) and
-   `DOCKERHUB_TOKEN` (access token / OAT with image push).
-   `kit-publish.yml` jobs use `environment: release`, so they read these
-   directly (caller jobs that invoke the reusable workflow cannot set
-   `environment:` themselves).
+2. Repository secrets on `band-ai/band-sdk-python` (also mirrored on the
+   `release` environment): `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+   Callers pass them with `secrets: inherit` — reusable-workflow caller jobs
+   cannot use `environment:`, so environment-only secrets never reach Hub login.
 
 ## One-time GHCR setup
 
