@@ -191,8 +191,10 @@ Docker-Sandbox-capable laptop:
 1. Org `bandhq` on Hub; public repos `band-python-kit` and `band-python-kit-image`.
 2. Repository secrets on `band-ai/band-sdk-python` (also mirrored on the
    `release` environment): `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
-   Callers pass them with `secrets: inherit` — reusable-workflow caller jobs
-   cannot use `environment:`, so environment-only secrets never reach Hub login.
+   For an organization access token (OAT), username must be the org name
+   (`bandhq`), not a personal Hub user. Callers pass them with
+   `secrets: inherit` — reusable-workflow caller jobs cannot use
+   `environment:`, so environment-only secrets never reach Hub login.
 
 ## One-time GHCR setup
 
@@ -214,12 +216,12 @@ there is no pre-merge rehearsal):
    so `latest`/`<major>` are untouched. Verify repo linkage, attestations, and
    both tag sets on the GHCR package pages. From a Docker-Sandbox machine,
    consume the rehearsal kit —
-   `sbx create --kit ghcr.io/band-ai/band-python-kit:0.0.0-rc1 band-python-kit
+   `sbx create --kit docker.io/bandhq/band-python-kit:0.0.0-rc1 band-python-kit
    <workspace>` — revalidating the already-proven ORAS end-to-end path against
-   the currently supported `sbx`. Then delete the rehearsal tags. Note:
-   re-dispatching the same
-   rehearsal version stops at the immutable-tag guard — bump the rc number or
-   delete the previous rehearsal tags first.
+   the currently supported `sbx`. Then delete the rehearsal tags on **both**
+   Hub and GHCR. Note: re-dispatching the same rehearsal version stops at the
+   immutable-tag guard — bump the rc number or delete the previous rehearsal
+   tags first.
 5. First real release publishes for real.
 6. Flip both packages (`band-python-kit`, `band-python-kit/image`) to **public**
    (one-way) once the layout is confirmed.
