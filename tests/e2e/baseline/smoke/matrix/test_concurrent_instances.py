@@ -77,16 +77,17 @@ async def test_concurrent_same_adapter_instances_each_reply(
             participants=[instance.id for instance in instances],
         )
         async with reply_capture(room_id) as capture:
+            markers = [unique_marker("hi") for _ in instances]
             # Gather the SENDS (independent REST calls)...
             mids = await asyncio.gather(
                 *(
                     user_ops.send_message(
                         room_id,
-                        liveness_probe(unique_marker("hi")),
+                        liveness_probe(marker),
                         mention_id=instance.id,
                         mention_name=instance.name,
                     )
-                    for instance in instances
+                    for instance, marker in zip(instances, markers, strict=True)
                 )
             )
             # ...but await the barriers SEQUENTIALLY (one nudge per capture). Each
@@ -104,7 +105,9 @@ async def test_concurrent_same_adapter_instances_each_reply(
             # marker's ``extra`` above all K, so a genuine stall reports the stalled
             # turn rather than a phase-less pytest-timeout kill. Fast adapters reply
             # well within this: it raises only the failure ceiling, never latency.
-            for instance, mid in zip(instances, mids):
-                await capture.wait_for_reply(
+            for instance, mid, marker in zip(instances, mids, markers, strict=True):
+                replies = await capture.wait_for_reply(
                     mid, instance.id, deadline_s=BUDGET.deadline_s
                 )
+                replies.assert_contains_any([marker])
+                replies.assert_contains_none(set(markers) - {marker})

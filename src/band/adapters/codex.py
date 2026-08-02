@@ -25,6 +25,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.integrations.codex import (
@@ -1306,7 +1307,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if should_report:
                 await tools.send_event(
                     content=json.dumps(
-                        {"name": tool_name, "args": arguments, "tool_call_id": call_id}
+                        {
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.ARGS: arguments,
+                            ToolEventKey.TOOL_CALL_ID: call_id,
+                        }
                     ),
                     message_type="tool_call",
                 )
@@ -1342,9 +1347,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "output": text_result,
-                                "tool_call_id": call_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: text_result,
+                                ToolEventKey.TOOL_CALL_ID: call_id,
                             }
                         ),
                         message_type="tool_result",
@@ -1364,9 +1369,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "output": error_text,
-                                "tool_call_id": call_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: error_text,
+                                ToolEventKey.TOOL_CALL_ID: call_id,
                             }
                         ),
                         message_type="tool_result",
@@ -1385,9 +1390,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "output": error_text,
-                                "tool_call_id": call_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: error_text,
+                                ToolEventKey.TOOL_CALL_ID: call_id,
                             }
                         ),
                         message_type="tool_result",
@@ -1727,14 +1732,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             name, args, output = self._extract_tool_item(item_type, item)
             await tools.send_event(
                 content=json.dumps(
-                    {"name": name, "args": args, "tool_call_id": item_id}
+                    {
+                        ToolEventKey.NAME: name,
+                        ToolEventKey.ARGS: args,
+                        ToolEventKey.TOOL_CALL_ID: item_id,
+                    }
                 ),
                 message_type="tool_call",
                 metadata=metadata,
             )
             await tools.send_event(
                 content=json.dumps(
-                    {"name": name, "output": output, "tool_call_id": item_id}
+                    {
+                        ToolEventKey.NAME: name,
+                        ToolEventKey.OUTPUT: output,
+                        ToolEventKey.TOOL_CALL_ID: item_id,
+                    }
                 ),
                 message_type="tool_result",
                 metadata=metadata,

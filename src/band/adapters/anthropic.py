@@ -22,6 +22,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
@@ -452,9 +453,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "args": tool_input,
-                                "tool_call_id": tool_use_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.ARGS: tool_input,
+                                ToolEventKey.TOOL_CALL_ID: tool_use_id,
                             }
                         ),
                         message_type="tool_call",
@@ -490,9 +491,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "output": result_str,
-                                "tool_call_id": tool_use_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: result_str,
+                                ToolEventKey.TOOL_CALL_ID: tool_use_id,
                             }
                         ),
                         message_type="tool_result",
