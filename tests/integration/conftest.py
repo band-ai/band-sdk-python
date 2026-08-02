@@ -53,6 +53,7 @@ from tests.conftest_integration import (
     wait_until,
 )
 from tests.integration.participants import (
+    Attempt,
     absent_from_room,
     ensure_in_room,
     ensure_not_in_room,
@@ -122,6 +123,7 @@ __all__ = [
     "send_user_mention",
     "wait_until",
     # Participant helpers
+    "Attempt",
     "absent_from_room",
     "ensure_in_room",
     "ensure_not_in_room",

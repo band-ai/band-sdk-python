@@ -27,6 +27,7 @@ from band_rest import AsyncRestClient
 
 from tests.integration.conftest import (
     AgentInfo,
+    Attempt,
     PeerInfo,
     absent_from_room,
     ensure_in_room,
@@ -79,7 +80,7 @@ class TestParticipantRemovalPermissions:
 
         result = await try_remove(session_api_client, chat_id, shared_agent2_info.id)
         logger.info("Owner removes member agent: %s", result)
-        assert result == "success", (
+        assert result == Attempt.OK, (
             f"Owner should be able to remove member agent, got: {result}"
         )
 
@@ -105,7 +106,7 @@ class TestParticipantRemovalPermissions:
 
         result = await try_remove(session_api_client, chat_id, shared_agent2_info.id)
         logger.info("Owner removes admin: %s", result)
-        assert result == "success", (
+        assert result == Attempt.OK, (
             f"Owner should be able to remove admin, got: {result}"
         )
 
@@ -132,7 +133,7 @@ class TestParticipantRemovalPermissions:
         chat_id = shared_multi_agent_room
         result = await try_remove(session_api_client, chat_id, shared_user_peer.id)
         logger.info("Owner removes user: %s", result)
-        assert result == "403", (
+        assert result == Attempt.FORBIDDEN, (
             f"Agent should NOT be able to remove user participant, got: {result}"
         )
 
@@ -155,7 +156,7 @@ class TestParticipantRemovalPermissions:
 
         result = await try_remove(session_api_client_2, chat_id, shared_agent1_info.id)
         logger.info("Member removes owner: %s", result)
-        assert result == "403", (
+        assert result == Attempt.FORBIDDEN, (
             f"Member should NOT be able to remove owner, got: {result}"
         )
 
@@ -191,7 +192,7 @@ class TestParticipantRemovalPermissions:
         # Admin (agent2) can remove self (leave as admin)
         result = await try_remove(session_api_client_2, chat_id, shared_agent2_info.id)
         logger.info("Admin removes self: %s", result)
-        assert result == "success", (
+        assert result == Attempt.OK, (
             f"Admin should be able to remove self (leave), got: {result}"
         )
 
@@ -219,7 +220,7 @@ class TestParticipantRemovalPermissions:
 
         result = await try_remove(session_api_client_2, chat_id, shared_agent1_info.id)
         logger.info("Admin removes owner: %s", result)
-        assert result == "403", (
+        assert result == Attempt.FORBIDDEN, (
             f"Admin should NOT be able to remove owner, got: {result}"
         )
 
@@ -251,7 +252,7 @@ class TestParticipantRemovalPermissions:
 
         result = await try_remove(session_api_client_2, chat_id, shared_agent1_info.id)
         logger.info("Member removes admin/owner: %s", result)
-        assert result == "403", (
+        assert result == Attempt.FORBIDDEN, (
             f"Member should NOT be able to remove admin/owner, got: {result}"
         )
 
@@ -273,7 +274,7 @@ class TestParticipantRemovalPermissions:
 
         result = await try_remove(session_api_client_2, chat_id, shared_agent2_info.id)
         logger.info("Member removes self: %s", result)
-        assert result == "success", (
+        assert result == Attempt.OK, (
             f"Member should be able to remove self (leave), got: {result}"
         )
 
@@ -342,7 +343,7 @@ class TestParticipantAddPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
         logger.info("Owner adds agent as member: %s", result)
-        assert result == "success", (
+        assert result == Attempt.OK, (
             f"Owner should be able to add agent as member, got: {result}"
         )
 
@@ -368,7 +369,7 @@ class TestParticipantAddPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
         logger.info("Owner adds agent as admin: %s", result)
-        assert result == "success", (
+        assert result == Attempt.OK, (
             f"Owner should be able to add agent as admin, got: {result}"
         )
 
@@ -440,14 +441,14 @@ class TestParticipantAddPermissions:
 
         # 2. Agent2 (admin) leaves the room
         result = await try_remove(session_api_client_2, chat_id, shared_agent2_info.id)
-        assert result == "success", f"Admin should be able to leave, got: {result}"
+        assert result == Attempt.OK, f"Admin should be able to leave, got: {result}"
 
         # 3. Agent2 tries to add itself back — room is invisible, expect 404
         result = await try_add(
             session_api_client_2, chat_id, shared_agent2_info.id, "member"
         )
         logger.info("Removed agent tries self-add: %s", result)
-        assert result == "404", (
+        assert result == Attempt.NOT_FOUND, (
             f"Removed agent should get 404 when trying to self-add, got: {result}"
         )
 
@@ -481,7 +482,7 @@ class TestParticipantAddPermissions:
             session_api_client_2, chat_id, shared_agent2_info.id, "admin"
         )
         logger.info("Member adds self as admin: %s", result)
-        assert result == "403", (
+        assert result == Attempt.FORBIDDEN, (
             f"Member should NOT be able to elevate to admin, got: {result}"
         )
 
@@ -508,7 +509,7 @@ class TestParticipantAddPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
         logger.info("Add duplicate participant: %s", result)
-        assert result == "409", (
+        assert result == Attempt.CONFLICT, (
             f"Adding duplicate participant should return 409, got: {result}"
         )
 
@@ -540,14 +541,13 @@ class TestRemoteMcpIdentityBoundary:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        result = await try_list_participants(session_api_client, chat_id)
-        assert result == "success", (
-            f"aligned identity should list participants, got: {result}"
+        assert await try_list_participants(session_api_client, chat_id) == Attempt.OK
+        assert (
+            await get_participant_role(
+                session_api_client, chat_id, shared_agent1_info.id
+            )
+            is not None
         )
-        role = await get_participant_role(
-            session_api_client, chat_id, shared_agent1_info.id
-        )
-        assert role is not None, "host agent must appear among participants"
 
     async def test_foreign_identity_cannot_list_host_room_participants(
         self,
@@ -566,15 +566,14 @@ class TestRemoteMcpIdentityBoundary:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
         async with absent_from_room(session_api_client, chat_id, shared_agent2_info.id):
-            result = await try_list_participants(session_api_client_2, chat_id)
-            assert result == "404", (
-                f"foreign MCP identity should get 404 listing host room, got: {result}"
+            assert (
+                await try_list_participants(session_api_client_2, chat_id)
+                == Attempt.NOT_FOUND
             )
 
-        # CM restored membership
-        role = await get_participant_role(
-            session_api_client, chat_id, shared_agent2_info.id
-        )
-        assert role == "member", (
-            f"absent_from_room must restore member role, got: {role}"
+        assert (
+            await get_participant_role(
+                session_api_client, chat_id, shared_agent2_info.id
+            )
+            == "member"
         )

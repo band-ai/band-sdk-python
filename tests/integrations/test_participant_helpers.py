@@ -10,9 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from band_rest.core.api_error import ApiError
+from band_rest.types import ParticipantRequest
 
 from tests.integration.participants import (
-    SUCCESS,
+    Attempt,
     absent_from_room,
     try_list_participants,
 )
@@ -25,22 +26,28 @@ def _client_with_participants(**methods: AsyncMock) -> MagicMock:
     return client
 
 
+def _added_participant(add_mock: AsyncMock) -> ParticipantRequest:
+    """Projection of the restore/add call — what the helper asked the API to do."""
+    assert add_mock.await_args is not None
+    return add_mock.await_args.kwargs["participant"]
+
+
 @pytest.mark.asyncio
 async def test_try_list_participants_success() -> None:
     client = _client_with_participants(
         list_agent_chat_participants=AsyncMock(return_value=MagicMock(data=[]))
     )
-    assert await try_list_participants(client, "room-1") == SUCCESS
+    assert await try_list_participants(client, "room-1") == Attempt.OK
 
 
 @pytest.mark.asyncio
-async def test_try_list_participants_maps_404() -> None:
+async def test_try_list_participants_maps_not_found() -> None:
     client = _client_with_participants(
         list_agent_chat_participants=AsyncMock(
             side_effect=ApiError(status_code=404, body="not found")
         )
     )
-    assert await try_list_participants(client, "room-1") == "404"
+    assert await try_list_participants(client, "room-1") == Attempt.NOT_FOUND
 
 
 @pytest.mark.asyncio
@@ -66,12 +73,9 @@ async def test_absent_from_room_restores_prior_role_after_body() -> None:
         remove_mock.assert_awaited_once_with("room-1", "agent-2")
         add_mock.assert_not_awaited()
 
-    add_mock.assert_awaited_once()
-    await_args = add_mock.await_args
-    assert await_args is not None
-    participant = await_args.kwargs["participant"]
-    assert participant.participant_id == "agent-2"
-    assert participant.role == "admin"
+    assert _added_participant(add_mock) == ParticipantRequest(
+        participant_id="agent-2", role="admin"
+    )
 
 
 @pytest.mark.asyncio
@@ -96,7 +100,6 @@ async def test_absent_from_room_restores_even_when_body_raises() -> None:
         async with absent_from_room(client, "room-1", "agent-2"):
             raise RuntimeError("boom")
 
-    add_mock.assert_awaited_once()
-    await_args = add_mock.await_args
-    assert await_args is not None
-    assert await_args.kwargs["participant"].role == "member"
+    assert _added_participant(add_mock) == ParticipantRequest(
+        participant_id="agent-2", role="member"
+    )

@@ -30,16 +30,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from dotenv import load_dotenv
 from band_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
 from band_rest.core.api_error import ApiError
 from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
 from band_rest.types import ChatMessageRequestMentionsItem, ParticipantRequest
+from dotenv import load_dotenv
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
 
+from tests.integration.participants import ensure_in_room
 from tests.paths import ENV_TEST_FILE
 
 if TYPE_CHECKING:
@@ -370,8 +371,6 @@ async def _ensure_participant(
     Delegates to :func:`tests.integration.participants.ensure_in_room` so fixture
     setup and permission tests share one membership mutator.
     """
-    from tests.integration.participants import ensure_in_room
-
     await ensure_in_room(api_client, chat_id, participant_id, role=role)
 
 

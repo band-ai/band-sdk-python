@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from enum import StrEnum
 
 from band_rest import AsyncRestClient
 from band_rest.core.api_error import ApiError
@@ -17,8 +18,14 @@ from band_rest.types import ParticipantRequest
 
 logger = logging.getLogger(__name__)
 
-# Status vocabulary returned by try_* helpers (string form of known ApiError codes).
-SUCCESS = "success"
+
+class Attempt(StrEnum):
+    """Outcome of a participant API call that may fail with a known status."""
+
+    OK = "success"
+    FORBIDDEN = "403"
+    NOT_FOUND = "404"
+    CONFLICT = "409"
 
 
 async def get_participant_role(
@@ -100,46 +107,53 @@ async def ensure_not_in_room(
         logger.info("Removed %s from room %s", participant_id, chat_id)
 
 
-def _status_or_raise(exc: ApiError) -> str:
-    if exc.status_code in (403, 404, 409):
-        return str(exc.status_code)
-    raise exc
+def _status_or_raise(exc: ApiError) -> Attempt:
+    match exc.status_code:
+        case 403:
+            return Attempt.FORBIDDEN
+        case 404:
+            return Attempt.NOT_FOUND
+        case 409:
+            return Attempt.CONFLICT
+        case _:
+            raise exc
 
 
-async def try_remove(client: AsyncRestClient, chat_id: str, target_id: str) -> str:
-    """Try to remove a participant; return ``success`` or a known status string."""
+async def try_remove(client: AsyncRestClient, chat_id: str, target_id: str) -> Attempt:
+    """Try to remove a participant; return :class:`Attempt` outcome."""
     try:
         await client.agent_api_participants.remove_agent_chat_participant(
             chat_id, target_id
         )
-        return SUCCESS
+        return Attempt.OK
     except ApiError as e:
         return _status_or_raise(e)
 
 
 async def try_add(
     client: AsyncRestClient, chat_id: str, target_id: str, role: str = "member"
-) -> str:
-    """Try to add a participant; return ``success`` or a known status string."""
+) -> Attempt:
+    """Try to add a participant; return :class:`Attempt` outcome."""
     try:
         await client.agent_api_participants.add_agent_chat_participant(
             chat_id,
             participant=ParticipantRequest(participant_id=target_id, role=role),
         )
-        return SUCCESS
+        return Attempt.OK
     except ApiError as e:
         return _status_or_raise(e)
 
 
-async def try_list_participants(client: AsyncRestClient, chat_id: str) -> str:
-    """Try to list participants; return ``success`` or a known status string.
+async def try_list_participants(client: AsyncRestClient, chat_id: str) -> Attempt:
+    """Try to list participants; return :class:`Attempt` outcome.
 
-    A non-participant caller typically sees ``404`` (room invisible) — the same
-    boundary remote band-mcp hits when its identity is not in the host room.
+    A non-participant caller typically sees :attr:`Attempt.NOT_FOUND` (room
+    invisible) — the same boundary remote band-mcp hits when its identity is
+    not in the host room.
     """
     try:
         await client.agent_api_participants.list_agent_chat_participants(chat_id)
-        return SUCCESS
+        return Attempt.OK
     except ApiError as e:
         return _status_or_raise(e)
 

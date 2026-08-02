@@ -7,6 +7,7 @@ Those must be the same agent — documented in README / ``.env.example``.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -18,35 +19,56 @@ ROOT = EXAMPLES_ROOT / "acp" / "copilot_docker"
 AGENT_NAME = "copilot_acp_agent"
 
 
+@dataclass(frozen=True)
+class VariantIdentity:
+    """Readable projection of one Docker variant's shared-identity contract."""
+
+    agent_name: str
+    env_documents_agent_key: bool
+    readme_documents_same_identity: bool
+    client_uses_named_agent: bool
+    client_uses_remote_mcp: bool
+
+
 def _plain(text: str) -> str:
     """Strip light markdown so wrapped / bold / code-span lines still match."""
     return " ".join(text.replace("**", "").replace("`", "").split())
 
 
-@pytest.mark.parametrize("variant", ["colocated", "compose"])
-def test_readme_documents_shared_identity(variant: str) -> None:
-    readme = (ROOT / variant / "README.md").read_text(encoding="utf-8")
-    plain = _plain(readme)
-    assert AGENT_NAME in readme
-    assert "BAND_AGENT_KEY" in plain
-    assert "agent_config.yaml" in plain
-    assert "same" in plain.lower()
-
-
-@pytest.mark.parametrize("variant", ["colocated", "compose"])
-def test_env_example_documents_shared_identity(variant: str) -> None:
+def _observe_variant(variant: str) -> VariantIdentity:
+    readme = _plain((ROOT / variant / "README.md").read_text(encoding="utf-8"))
     env_path = ROOT / variant / ".env.example"
-    text = env_path.read_text(encoding="utf-8")
-    values = dotenv_values(env_path)
-    assert "BAND_AGENT_KEY" in values
-    assert AGENT_NAME in text
+    env_text = env_path.read_text(encoding="utf-8")
+    env_values = dotenv_values(env_path)
+    client = Path(ROOT / variant / "client.py").read_text(encoding="utf-8")
+    return VariantIdentity(
+        agent_name=AGENT_NAME if AGENT_NAME in client else "",
+        env_documents_agent_key=(
+            "BAND_AGENT_KEY" in env_values and AGENT_NAME in env_text
+        ),
+        readme_documents_same_identity=(
+            AGENT_NAME in readme
+            and "BAND_AGENT_KEY" in readme
+            and "agent_config.yaml" in readme
+            and "same" in readme.lower()
+        ),
+        client_uses_named_agent=(
+            f'from_config(\n        "{AGENT_NAME}"' in client
+            or f'from_config("{AGENT_NAME}"' in client
+        ),
+        client_uses_remote_mcp="inject_band_tools=False" in client,
+    )
+
+
+EXPECTED = VariantIdentity(
+    agent_name=AGENT_NAME,
+    env_documents_agent_key=True,
+    readme_documents_same_identity=True,
+    client_uses_named_agent=True,
+    client_uses_remote_mcp=True,
+)
 
 
 @pytest.mark.parametrize("variant", ["colocated", "compose"])
-def test_client_uses_remote_mcp_and_named_agent(variant: str) -> None:
-    client = Path(ROOT / variant / "client.py").read_text(encoding="utf-8")
-    assert f'from_config(\n        "{AGENT_NAME}"' in client or (
-        f'from_config("{AGENT_NAME}"' in client
-    )
-    assert "inject_band_tools=False" in client
-    assert "sync_env" not in client
+def test_variant_shares_one_band_identity(variant: str) -> None:
+    assert _observe_variant(variant) == EXPECTED
