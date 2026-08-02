@@ -25,6 +25,8 @@ class VariantIdentity:
     env_documents_agent_key: bool
     readme_documents_same_identity: bool
     client_uses_named_agent: bool
+    client_rejects_mismatched_key: bool
+    client_uses_loaded_identity: bool
     client_uses_remote_mcp: bool
 
 
@@ -45,9 +47,10 @@ def _observe_variant(variant: str) -> VariantIdentity:
             and "agent_config.yaml" in readme
             and "same" in readme.lower()
         ),
-        client_uses_named_agent=(
-            f'from_config(\n        "{AGENT_NAME}"' in client
-            or f'from_config("{AGENT_NAME}"' in client
+        client_uses_named_agent=(f'load_agent_config("{AGENT_NAME}")' in client),
+        client_rejects_mismatched_key=("settings.band_agent_key != api_key" in client),
+        client_uses_loaded_identity=(
+            "agent_id=agent_id" in client and "api_key=api_key" in client
         ),
         client_uses_remote_mcp="inject_band_tools=False" in client,
     )
@@ -57,6 +60,8 @@ EXPECTED = VariantIdentity(
     env_documents_agent_key=True,
     readme_documents_same_identity=True,
     client_uses_named_agent=True,
+    client_rejects_mismatched_key=True,
+    client_uses_loaded_identity=True,
     client_uses_remote_mcp=True,
 )
 
