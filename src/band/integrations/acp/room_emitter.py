@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from band.core.protocols import AgentToolsProtocol
@@ -121,7 +120,7 @@ class RoomTurnEmitter:
     def _tool_event_content(self, chunk: CollectedChunk) -> str:
         """Serialize normalized tool activity for room persistence."""
         if isinstance(chunk.tool, (ACPToolCall, ACPToolResult)):
-            return json.dumps(chunk.tool.room_event())
+            return chunk.tool.room_event().model_dump_json()
         raise RuntimeError("ACP tool chunk is missing normalized tool activity")
 
     async def open_permission(
@@ -148,7 +147,7 @@ class RoomTurnEmitter:
         }
         call = ACPToolCall(tool_call_id=tool_call_id, name=tool_name, arguments={})
         await self._tools.send_event(
-            content=json.dumps(call.room_event()),
+            content=call.room_event().model_dump_json(),
             message_type="tool_call",
             metadata=metadata,
         )
@@ -158,7 +157,7 @@ class RoomTurnEmitter:
             status=ToolStatus.FAILED,
         )
         await self._tools.send_event(
-            content=json.dumps(result.room_event()),
+            content=result.room_event().model_dump_json(),
             message_type="tool_result",
             metadata={**metadata, "permission_outcome": outcome},
         )

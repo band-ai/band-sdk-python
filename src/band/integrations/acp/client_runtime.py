@@ -22,6 +22,7 @@ from band.integrations.acp.types import (
     ACPToolResult,
     ChunkType,
     CollectedChunk,
+    JsonValue,
     ToolStatus,
 )
 
@@ -329,7 +330,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         call = ACPToolCall(
             tool_call_id=str(tool_call_id),
             name=str(title),
-            arguments=raw_input if isinstance(raw_input, dict) else {},
+            arguments=cast(dict[str, JsonValue], raw_input)
+            if isinstance(raw_input, dict)
+            else {},
         )
         metadata = {
             "tool_call_id": call.tool_call_id,

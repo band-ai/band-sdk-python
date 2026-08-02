@@ -7,7 +7,28 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from band.core.types import ToolEventKey
+from pydantic import BaseModel, ConfigDict, JsonValue
+
+
+class ToolCallRoomEvent(BaseModel):
+    """Canonical room payload for a tool-call event."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    args: dict[str, JsonValue]
+    tool_call_id: str
+
+
+class ToolResultRoomEvent(BaseModel):
+    """Canonical room payload for a tool-result event."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    output: str
+    tool_call_id: str
+    is_error: bool
 
 
 class ChunkType(StrEnum):
@@ -46,15 +67,15 @@ class ACPToolCall:
 
     tool_call_id: str
     name: str
-    arguments: dict[str, Any]
+    arguments: dict[str, JsonValue]
 
-    def room_event(self) -> dict[ToolEventKey, object]:
+    def room_event(self) -> ToolCallRoomEvent:
         """Return the canonical Band tool-call payload."""
-        return {
-            ToolEventKey.NAME: self.name,
-            ToolEventKey.ARGS: self.arguments,
-            ToolEventKey.TOOL_CALL_ID: self.tool_call_id,
-        }
+        return ToolCallRoomEvent(
+            name=self.name,
+            args=self.arguments,
+            tool_call_id=self.tool_call_id,
+        )
 
 
 @dataclass
@@ -69,14 +90,14 @@ class ACPToolResult:
     def is_error(self) -> bool:
         return self.status == ToolStatus.FAILED
 
-    def room_event(self) -> dict[ToolEventKey, object]:
+    def room_event(self) -> ToolResultRoomEvent:
         """Return the canonical Band tool-result payload."""
-        return {
-            ToolEventKey.NAME: self.call.name,
-            ToolEventKey.OUTPUT: self.output,
-            ToolEventKey.TOOL_CALL_ID: self.call.tool_call_id,
-            ToolEventKey.IS_ERROR: self.is_error,
-        }
+        return ToolResultRoomEvent(
+            name=self.call.name,
+            output=self.output,
+            tool_call_id=self.call.tool_call_id,
+            is_error=self.is_error,
+        )
 
 
 @dataclass
