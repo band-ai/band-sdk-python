@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import pytest
 from dotenv import dotenv_values
+from yaml import safe_load
 
 from tests.paths import EXAMPLES_ROOT
 
@@ -69,3 +70,28 @@ EXPECTED = VariantIdentity(
 @pytest.mark.parametrize("variant", ["colocated", "compose"])
 def test_variant_shares_one_band_identity(variant: str) -> None:
     assert _observe_variant(variant) == EXPECTED
+
+
+def test_compose_passes_agent_key_to_band_mcp() -> None:
+    compose = safe_load(
+        (ROOT / "compose" / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+
+    assert (
+        compose["services"]["band-mcp"]["environment"]["BAND_AGENT_KEY"]
+        == "${BAND_AGENT_KEY:?set BAND_AGENT_KEY in .env}"
+    )
+
+
+def test_colocated_launch_passes_agent_key_to_entrypoint() -> None:
+    readme = " ".join(
+        (ROOT / "colocated" / "README.md")
+        .read_text(encoding="utf-8")
+        .replace("**", "")
+        .replace("`", "")
+        .split()
+    )
+    entrypoint = (ROOT / "colocated" / "entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "docker run --rm --env-file .env" in readme
+    assert ': "${BAND_AGENT_KEY:?' in entrypoint
