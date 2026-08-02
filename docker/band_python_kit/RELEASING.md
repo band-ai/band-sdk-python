@@ -118,12 +118,12 @@ packages — republish those with the override below.
 - **Wait it out (default).** Once the young package has aged past 7 days, use
   GitHub's **"Re-run failed jobs"** on the release run. The cutoff is recomputed
   as now − 7 days at re-run time, so the same release heals without a new version
-  number — no retag, no re-release. Always **re-run failed jobs only**: a full
-  re-run of a partially-successful publish stops at the immutable-tag guard for
-  whatever was already pushed (by design — that guard is what makes the tag
-  policy real). If an artifact is truly half-published (e.g. pushed but its
-  attestation failed), deleting that partial tag is a deliberate manual step
-  before re-running.
+  number — no retag, no re-release. The publisher checks each registry
+  independently, so a rerun reuses completed refs and pushes only the missing
+  image or kit ref. If an artifact is truly half-published (e.g. pushed but its
+  attestation failed), rerunning the failed job is safe; deleting an immutable
+  tag is reserved for deliberate recovery when the published bytes themselves
+  are invalid.
 - **Can't wait (justified override).** Dispatch `kit-publish-manual` with the
   release tag/version, `move-floating: true`, and a lowered
   `quarantine-max-age-days` input. The value used is recorded in the run's
@@ -200,12 +200,11 @@ the registries stay in lockstep — same pattern as CI:
 ## One-time Docker Hub setup
 
 1. Org `bandhq` on Hub; public repos `band-python-kit` and `band-python-kit-image`.
-2. Repository secrets on `band-ai/band-sdk-python` (also mirrored on the
-   `release` environment): `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
-   For an organization access token (OAT), username must be the org name
-   (`bandhq`), not a personal Hub user. Callers pass them with
-   `secrets: inherit` — reusable-workflow caller jobs cannot use
-   `environment:`, so environment-only secrets never reach Hub login.
+2. Secrets on the `release` environment: `DOCKERHUB_USERNAME` and
+   `DOCKERHUB_TOKEN`. For an organization access token (OAT), username must be
+   the org name (`bandhq`), not a personal Hub user. The called jobs in
+   `kit-publish.yml` declare `environment: release`, so callers do not pass
+   these secrets; keeping them environment-only avoids duplicate credentials.
 
 ## One-time GHCR setup
 

@@ -161,25 +161,24 @@ jobs:
         run: python3 scripts/check-lock-age.py --lock uv.lock --max-age-days "${{ inputs.quarantine-max-age-days }}"
 
       # X.Y.Z / X.Y.Z-rN tags are immutable by policy; the registry does not
-      # enforce that, so refuse here. Recovery from a partial publish re-runs
-      # only the FAILED jobs (the missing artifact); a full re-run or a
-      # mistaken dispatch of an existing version stops at this guard.
-      - name: Refuse to overwrite an immutable tag
+      # enforce that, so publish only refs that are still absent. This makes a
+      # rerun after a partial multi-registry push resume at the missing ref
+      # without ever overwriting a completed one.
+      - name: Check immutable image tags
+        id: image_state
         run: |
           set -euo pipefail
-          for ref in \
-            "${IMAGE_NAME}:${{ inputs.version }}" \
-            "${HUB_IMAGE_NAME}:${{ inputs.version }}"
-          do
+          for name in image hub_image; do
+            case "$name" in
+              image) ref="${IMAGE_NAME}:${{ inputs.version }}" ;;
+              hub_image) ref="${HUB_IMAGE_NAME}:${{ inputs.version }}" ;;
+            esac
             state="$(python3 scripts/registry-ref-state.py "$ref")"
-            if [ "$state" = "exists" ]; then
-              echo "::error::${ref} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md before deliberately deleting a partial tag"
-              exit 1
-            fi
+            echo "${name}_exists=$([ "$state" = exists ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           done
 
       - name: Build and push (multi-arch, attested)
-        id: build
+        if: ${{ steps.image_state.outputs.image_exists == 'false' && steps.image_state.outputs.hub_image_exists == 'false' }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -194,13 +193,39 @@ jobs:
           # plain release (the committed pins are the defaults).
           build-args: ${{ inputs.extra-build-args }}
 
+      - name: Complete a partial image publish
+        if: ${{ (steps.image_state.outputs.image_exists == 'true' && steps.image_state.outputs.hub_image_exists == 'false') || (steps.image_state.outputs.image_exists == 'false' && steps.image_state.outputs.hub_image_exists == 'true') }}
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ inputs.version }}
+          HUB_IMAGE_REF: ${{ env.HUB_IMAGE_NAME }}:${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.image_state.outputs.image_exists }}" = true ]; then
+            source_ref="$IMAGE_REF"
+            target_ref="$HUB_IMAGE_REF"
+          else
+            source_ref="$HUB_IMAGE_REF"
+            target_ref="$IMAGE_REF"
+          fi
+          docker buildx imagetools create --tag "$target_ref" "$source_ref"
+
+      - name: Resolve the published image digest
+        id: image_digest
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          digest="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{.Manifest.Digest}}')"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           # GitHub attestations attach to the GHCR package; Hub gets the same
           # multi-arch digest via the dual push above.
           subject-name: ${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.image_digest.outputs.digest }}
           push-to-registry: true
 
   kit:
@@ -256,6 +281,8 @@ jobs:
           grep 'image:' staging/ghcr/spec.yaml
           echo "── Hub stamped sandbox.image ──"
           grep 'image:' staging/hub/spec.yaml
+          grep -qF "${IMAGE_NAME}@${digest}" staging/ghcr/spec.yaml
+          grep -qF "${HUB_IMAGE_NAME}@${digest}" staging/hub/spec.yaml
 
       - name: Assemble the OCI v2 kit layers
         run: |
@@ -265,28 +292,18 @@ jobs:
           tar -czf staging/ghcr/empty-layer.tar.gz --files-from /dev/null
           cp staging/ghcr/empty-layer.tar.gz staging/hub/empty-layer.tar.gz
 
-      - name: Refuse to overwrite an immutable kit tag
-        run: |
-          set -euo pipefail
-          for ref in \
-            "${KIT_NAME}:${{ inputs.version }}" \
-            "${HUB_KIT_NAME}:${{ inputs.version }}"
-          do
-            state="$(python3 scripts/registry-ref-state.py "$ref")"
-            if [ "$state" = "exists" ]; then
-              echo "::error::${ref} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md"
-              exit 1
-            fi
-          done
-
       - name: Push the kit artifacts (GHCR + Hub)
         run: |
           # The source annotation is what links the kit package to this repo on
           # GHCR — the image gets linkage from its Dockerfile LABEL, but an
           # ORAS-assembled artifact carries no labels, only manifest
           # annotations. Hub accepts the same OCI artifact shape (ORAS).
-          push_kit() {
+          push_kit_if_missing() {
             local dir="$1" ref="$2"
+            if [ "$(python3 scripts/registry-ref-state.py "$ref")" = exists ]; then
+              echo "Skipping existing immutable ref: $ref"
+              return
+            fi
             (
               cd "$dir"
               oras push "$ref" \
@@ -296,8 +313,8 @@ jobs:
                 empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
             )
           }
-          push_kit staging/ghcr "${KIT_NAME}:${{ inputs.version }}"
-          push_kit staging/hub "${HUB_KIT_NAME}:${{ inputs.version }}"
+          push_kit_if_missing staging/ghcr "${KIT_NAME}:${{ inputs.version }}"
+          push_kit_if_missing staging/hub "${HUB_KIT_NAME}:${{ inputs.version }}"
 
   # Floating tags are the commit point: neither moves until both immutable
   # artifacts exist and the image's GitHub provenance attestation succeeded.
