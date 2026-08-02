@@ -98,7 +98,7 @@ jobs:
           path: dist/
 
       - name: Publish band-sdk to PyPI
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           # Idempotent recovery: a re-run after a partial upload must not
           # fail on the files that already made it to PyPI.
