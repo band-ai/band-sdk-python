@@ -18,8 +18,8 @@ services:
       # The MCP client (Copilot) sends no credentials, so keep this service off the
       # host network — it is a trusted sidecar reachable only within the compose net.
       BAND_AGENT_KEY: ${BAND_AGENT_KEY:?set BAND_AGENT_KEY in .env}
-      # Point band-mcp at your Band platform (its own default is app.thenvoi.com).
-      THENVOI_BASE_URL: ${BAND_REST_URL:-https://app.band.ai}
+      # Point band-mcp at your Band platform (its own default is https://app.band.ai).
+      BAND_BASE_URL: ${BAND_REST_URL:-https://app.band.ai}
       # Allow the compose-DNS host Copilot dials; without this every SSE request 421s.
       ALLOWED_HOSTS: '["band-mcp:*"]'
     expose:

@@ -15,7 +15,7 @@ environment:
   variables:
     ALLOWED_HOSTS: '["localhost:*","127.0.0.1:*"]'
     BAND_AGENT_KEY: proxy-managed
-    THENVOI_BASE_URL: https://app.band.ai
+    BAND_BASE_URL: https://app.band.ai
 
 commands:
   install:
@@ -24,7 +24,7 @@ commands:
       description: Install band-mcp
   startup:
     - command:
-        - /home/agent/.local/bin/thenvoi-mcp
+        - /home/agent/.local/bin/band-mcp
         - --transport
         - sse
         - --host
