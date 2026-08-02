@@ -17,7 +17,7 @@ from band.integrations.acp.client_types import (
     BandACPClient,
 )
 from band.integrations.acp.room_emitter import turn_replied_in_room
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
 from band.testing import FakeAgentTools
 
 from .conftest import make_platform_message
@@ -1142,7 +1142,23 @@ class TestTurnRepliedInRoom:
 
     @staticmethod
     def _chunk(chunk_type: str, content: str, **metadata: object) -> CollectedChunk:
-        return CollectedChunk(chunk_type=chunk_type, content=content, metadata=metadata)
+        tool_call_id = str(metadata.get("tool_call_id", ""))
+        call = ACPToolCall(
+            tool_call_id=tool_call_id,
+            name=content if chunk_type == "tool_call" else "unknown",
+            arguments={},
+        )
+        tool = (
+            call
+            if chunk_type == "tool_call"
+            else ACPToolResult(call=call, output=content, status=metadata.get("status"))
+        )
+        return CollectedChunk(
+            chunk_type=chunk_type,
+            content=content,
+            metadata=metadata,
+            tool=tool,
+        )
 
     def test_completed_posting_tool_call_counts_as_reply(self) -> None:
         chunks = [

@@ -5,9 +5,14 @@ from __future__ import annotations
 import json
 import logging
 
-from band.core.types import ToolEventKey
 from band.core.protocols import AgentToolsProtocol
-from band.integrations.acp.types import ChunkType, CollectedChunk, ToolStatus
+from band.integrations.acp.types import (
+    ACPToolCall,
+    ACPToolResult,
+    ChunkType,
+    CollectedChunk,
+    ToolStatus,
+)
 from band.runtime.tools import is_room_posting_tool
 
 logger = logging.getLogger(__name__)
@@ -28,9 +33,8 @@ def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
     posting_call_ids: set[str] = set()
     for chunk in chunks:
         metadata = chunk.metadata or {}
-        call_id = str(metadata.get("tool_call_id", ""))
-        if chunk.chunk_type == ChunkType.TOOL_CALL and is_room_posting_tool(
-            chunk.content
+        if isinstance(chunk.tool, ACPToolCall) and is_room_posting_tool(
+            chunk.tool.name
         ):
             if metadata.get("status") == ToolStatus.COMPLETED:
                 return True
@@ -38,11 +42,11 @@ def turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
             # missing tool_call_id) would match any other id-less result — e.g. a
             # non-posting tool's — and falsely suppress the text fallback,
             # silencing the turn.
-            if call_id:
-                posting_call_ids.add(call_id)
+            if chunk.tool.tool_call_id:
+                posting_call_ids.add(chunk.tool.tool_call_id)
         elif (
-            chunk.chunk_type == ChunkType.TOOL_RESULT
-            and call_id in posting_call_ids
+            isinstance(chunk.tool, ACPToolResult)
+            and chunk.tool.call.tool_call_id in posting_call_ids
             and metadata.get("status") == ToolStatus.COMPLETED
         ):
             return True
@@ -83,7 +87,6 @@ class RoomTurnEmitter:
         self._room_id = room_id
         self._chunks: list[CollectedChunk] = []
         self._pending_text: list[str] = []
-        self._tool_names: dict[str, str] = {}
 
     async def emit(self, chunk: CollectedChunk) -> None:
         self._chunks.append(chunk)
@@ -116,33 +119,10 @@ class RoomTurnEmitter:
                 )
 
     def _tool_event_content(self, chunk: CollectedChunk) -> str:
-        """Encode ACP tool chunks in the room's canonical event shape."""
-        metadata = chunk.metadata or {}
-        tool_call_id = str(metadata.get("tool_call_id", ""))
-
-        if chunk.chunk_type == ChunkType.TOOL_CALL:
-            if tool_call_id:
-                self._tool_names[tool_call_id] = chunk.content
-            raw_input = metadata.get("raw_input")
-            return json.dumps(
-                {
-                    ToolEventKey.NAME: chunk.content,
-                    ToolEventKey.ARGS: raw_input if isinstance(raw_input, dict) else {},
-                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
-                }
-            )
-
-        reported_name = metadata.get("tool_name")
-        fallback_name = reported_name if isinstance(reported_name, str) else "unknown"
-        tool_name = self._tool_names.get(tool_call_id, fallback_name)
-        return json.dumps(
-            {
-                ToolEventKey.NAME: tool_name,
-                ToolEventKey.OUTPUT: chunk.content,
-                ToolEventKey.TOOL_CALL_ID: tool_call_id,
-                ToolEventKey.IS_ERROR: metadata.get("status") == ToolStatus.FAILED,
-            }
-        )
+        """Serialize normalized tool activity for room persistence."""
+        if isinstance(chunk.tool, (ACPToolCall, ACPToolResult)):
+            return json.dumps(chunk.tool.room_event())
+        raise RuntimeError("ACP tool chunk is missing normalized tool activity")
 
     async def open_permission(
         self,
@@ -166,26 +146,19 @@ class RoomTurnEmitter:
             "acp_session_id": session_id,
             "auto_allowed": False,
         }
+        call = ACPToolCall(tool_call_id=tool_call_id, name=tool_name, arguments={})
         await self._tools.send_event(
-            content=json.dumps(
-                {
-                    ToolEventKey.NAME: tool_name,
-                    ToolEventKey.ARGS: {},
-                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
-                }
-            ),
+            content=json.dumps(call.room_event()),
             message_type="tool_call",
             metadata=metadata,
         )
+        result = ACPToolResult(
+            call=call,
+            output=f"Permission {outcome}",
+            status=ToolStatus.FAILED,
+        )
         await self._tools.send_event(
-            content=json.dumps(
-                {
-                    ToolEventKey.NAME: tool_name,
-                    ToolEventKey.OUTPUT: f"Permission {outcome}",
-                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
-                    ToolEventKey.IS_ERROR: True,
-                }
-            ),
+            content=json.dumps(result.room_event()),
             message_type="tool_result",
             metadata={**metadata, "permission_outcome": outcome},
         )

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from band.core.types import ToolEventKey
+
 
 class ChunkType(StrEnum):
     """The kind of a parsed ACP session-update chunk.
@@ -38,6 +40,45 @@ class ToolStatus(StrEnum):
     FAILED = "failed"
 
 
+@dataclass(frozen=True)
+class ACPToolCall:
+    """One ACP tool invocation, normalized for room persistence."""
+
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any]
+
+    def room_event(self) -> dict[ToolEventKey, object]:
+        """Return the canonical Band tool-call payload."""
+        return {
+            ToolEventKey.NAME: self.name,
+            ToolEventKey.ARGS: self.arguments,
+            ToolEventKey.TOOL_CALL_ID: self.tool_call_id,
+        }
+
+
+@dataclass
+class ACPToolResult:
+    """The finalized outcome of an :class:`ACPToolCall`."""
+
+    call: ACPToolCall
+    output: str
+    status: ToolStatus | str | None
+
+    @property
+    def is_error(self) -> bool:
+        return self.status == ToolStatus.FAILED
+
+    def room_event(self) -> dict[ToolEventKey, object]:
+        """Return the canonical Band tool-result payload."""
+        return {
+            ToolEventKey.NAME: self.call.name,
+            ToolEventKey.OUTPUT: self.output,
+            ToolEventKey.TOOL_CALL_ID: self.call.tool_call_id,
+            ToolEventKey.IS_ERROR: self.is_error,
+        }
+
+
 @dataclass
 class CollectedChunk:
     """A parsed chunk from an ACP session_update.
@@ -62,6 +103,9 @@ class CollectedChunk:
             that re-reports exactly that duplicate (see
             ``ACPCollectingClient._fold_result``) without guessing at
             encodings; ignored otherwise.
+        tool: The normalized tool call or result for tool chunks. This is the
+            authoritative lifecycle data used for room persistence; ``content``
+            remains the readable narration for ACP-local consumers.
     """
 
     chunk_type: str
@@ -69,6 +113,7 @@ class CollectedChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     from_raw: bool = False
     echo: dict[str, Any] | None = None
+    tool: ACPToolCall | ACPToolResult | None = None
 
 
 @dataclass
