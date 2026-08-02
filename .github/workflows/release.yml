@@ -108,12 +108,16 @@ jobs:
       group: kit-ghcr-publish
       cancel-in-progress: false
       queue: max
+    environment: release
     uses: ./.github/workflows/kit-publish.yml
     with:
       ref: ${{ needs.release.outputs.tag_name }}
       version: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
       major: ${{ needs.release.outputs.major }}
       move-floating: true
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   # After a successful kit publish, open an automated PR against band-ai/add-band
   # bumping the catalog bootstrap's pinned release tag. Uses the existing GitHub
@@ -204,7 +208,7 @@ jobs:
             echo ""
             echo "| Artifact | Outcome |"
             echo "|---|---|"
-            echo "| GHCR kit image + artifact | ${{ needs.publish-kit.result }} |"
+            echo "| GHCR + Docker Hub kit image/artifact | ${{ needs.publish-kit.result }} |"
             echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |"
             echo ""
             echo "PyPI publish runs in the release-triggered \`band-publish\` workflow."

@@ -1,8 +1,15 @@
 # Reusable pipeline that builds, attests, and publishes both band-python-kit
-# artifacts to GHCR: the multi-arch sandbox image and the OCI kit artifact whose
-# spec pins that image by digest. Shared (workflow_call) by release.yml (on a
-# band-sdk release) and kit-image-rebuild.yml (weekly CVE rebuild) so the two
-# never drift into separate copies.
+# artifacts to GHCR and Docker Hub: the multi-arch sandbox image and the OCI
+# kit artifact whose spec pins that image by digest. Shared (workflow_call) by
+# release.yml (on a band-sdk release) and kit-image-rebuild.yml (weekly CVE
+# rebuild) so the two never drift into separate copies.
+#
+# Hub refs are flat (Hub has no nested package path like GHCR's `/image`):
+#   image → docker.io/bandhq/band-python-kit-image
+#   kit   → docker.io/bandhq/band-python-kit
+# Auth: release-environment secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
+# (login-action@v4 / build-push-action@v7 multi-registry pattern — see
+# https://docs.docker.com/build/ci/github-actions/push-multi-registries/).
 #
 # The kit targets sbx v0.35.0 (kit-spec v2 credential injection); `sbx kit
 # validate` passes under it. The ORAS-assembled OCI v2 shape and the GHCR
@@ -64,6 +71,13 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      DOCKERHUB_USERNAME:
+        description: Docker Hub user that can push to bandhq (release env)
+        required: true
+      DOCKERHUB_TOKEN:
+        description: Docker Hub access token / OAT with image push (release env)
+        required: true
     outputs:
       image-digest:
         description: Digest of the pushed multi-arch image
@@ -71,6 +85,8 @@ on:
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
   KIT_NAME: ghcr.io/band-ai/band-python-kit
+  HUB_IMAGE_NAME: docker.io/bandhq/band-python-kit-image
+  HUB_KIT_NAME: docker.io/bandhq/band-python-kit
 
 jobs:
   image:
@@ -117,6 +133,12 @@ jobs:
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Log in to GHCR
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
         with:
@@ -128,7 +150,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          images: ${{ env.IMAGE_NAME }}
+          # One build, tags for both registries (Docker multi-registry docs).
+          images: |
+            ${{ env.IMAGE_NAME }}
+            ${{ env.HUB_IMAGE_NAME }}
           # The trigger is a push to main (not a tag event), so tags are
           # composed from the caller's version input, never derived from the
           # git ref.
@@ -149,11 +174,16 @@ jobs:
       - name: Refuse to overwrite an immutable tag
         run: |
           set -euo pipefail
-          state="$(python3 scripts/registry-ref-state.py "${IMAGE_NAME}:${{ inputs.version }}")"
-          if [ "$state" = "exists" ]; then
-            echo "::error::${IMAGE_NAME}:${{ inputs.version }} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md before deliberately deleting a partial tag"
-            exit 1
-          fi
+          for ref in \
+            "${IMAGE_NAME}:${{ inputs.version }}" \
+            "${HUB_IMAGE_NAME}:${{ inputs.version }}"
+          do
+            state="$(python3 scripts/registry-ref-state.py "$ref")"
+            if [ "$state" = "exists" ]; then
+              echo "::error::${ref} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md before deliberately deleting a partial tag"
+              exit 1
+            fi
+          done
 
       - name: Build and push (multi-arch, attested)
         id: build
@@ -174,6 +204,8 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
+          # GitHub attestations attach to the GHCR package; Hub gets the same
+          # multi-arch digest via the dual push above.
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
@@ -197,6 +229,12 @@ jobs:
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Log in to GHCR
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
         with:
@@ -204,48 +242,69 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Stamp the distribution spec (image -> digest-pinned ref)
+      - name: Stamp distribution specs (GHCR + Hub image digests)
         run: |
-          mkdir -p staging
+          mkdir -p staging/ghcr staging/hub
           # --no-project: the helper needs only pyyaml, not the SDK's whole
-          # locked environment.
+          # locked environment. Each kit pins its own registry's image by
+          # digest so a Hub consumer never needs a GHCR pull.
+          digest="${{ needs.image.outputs.digest }}"
           uv run --no-project --with pyyaml scripts/stamp-kit-spec.py \
             --spec docker/band_python_kit/spec.yaml \
             --image-ref "${IMAGE_NAME}:${{ inputs.version }}" \
-            --digest "${{ needs.image.outputs.digest }}" \
-            --output staging/spec.yaml
-          echo "── stamped sandbox.image ──"
-          grep 'image:' staging/spec.yaml
+            --digest "$digest" \
+            --output staging/ghcr/spec.yaml
+          uv run --no-project --with pyyaml scripts/stamp-kit-spec.py \
+            --spec docker/band_python_kit/spec.yaml \
+            --image-ref "${HUB_IMAGE_NAME}:${{ inputs.version }}" \
+            --digest "$digest" \
+            --output staging/hub/spec.yaml
+          echo "── GHCR stamped sandbox.image ──"
+          grep 'image:' staging/ghcr/spec.yaml
+          echo "── Hub stamped sandbox.image ──"
+          grep 'image:' staging/hub/spec.yaml
 
-      - name: Assemble the OCI v2 kit artifact
-        working-directory: staging
+      - name: Assemble the OCI v2 kit layers
         run: |
           # Our kit ships no files/ (behavioral mixin: network + startup only),
           # but the OCI v2 manifest still requires exactly one layer — an empty
           # tar+gzip, not zero layers.
-          tar -czf empty-layer.tar.gz --files-from /dev/null
+          tar -czf staging/ghcr/empty-layer.tar.gz --files-from /dev/null
+          cp staging/ghcr/empty-layer.tar.gz staging/hub/empty-layer.tar.gz
 
       - name: Refuse to overwrite an immutable kit tag
         run: |
           set -euo pipefail
-          state="$(python3 scripts/registry-ref-state.py "${KIT_NAME}:${{ inputs.version }}")"
-          if [ "$state" = "exists" ]; then
-            echo "::error::${KIT_NAME}:${{ inputs.version }} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md"
-            exit 1
-          fi
+          for ref in \
+            "${KIT_NAME}:${{ inputs.version }}" \
+            "${HUB_KIT_NAME}:${{ inputs.version }}"
+          do
+            state="$(python3 scripts/registry-ref-state.py "$ref")"
+            if [ "$state" = "exists" ]; then
+              echo "::error::${ref} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md"
+              exit 1
+            fi
+          done
 
-      - name: Push the kit artifact
-        working-directory: staging
+      - name: Push the kit artifacts (GHCR + Hub)
         run: |
           # The source annotation is what links the kit package to this repo on
           # GHCR — the image gets linkage from its Dockerfile LABEL, but an
           # ORAS-assembled artifact carries no labels, only manifest
-          # annotations.
-          oras push "${KIT_NAME}:${{ inputs.version }}" \
-            --artifact-type application/vnd.docker.sandbox.kit.v2 \
-            --annotation "org.opencontainers.image.source=https://github.com/band-ai/band-sdk-python" \
-            --config spec.yaml:application/vnd.docker.sandbox.kit.v2.spec+yaml \
-            empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
+          # annotations. Hub accepts the same OCI artifact shape (ORAS).
+          push_kit() {
+            local dir="$1" ref="$2"
+            (
+              cd "$dir"
+              oras push "$ref" \
+                --artifact-type application/vnd.docker.sandbox.kit.v2 \
+                --annotation "org.opencontainers.image.source=https://github.com/band-ai/band-sdk-python" \
+                --config spec.yaml:application/vnd.docker.sandbox.kit.v2.spec+yaml \
+                empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
+            )
+          }
+          push_kit staging/ghcr "${KIT_NAME}:${{ inputs.version }}"
+          push_kit staging/hub "${HUB_KIT_NAME}:${{ inputs.version }}"
 
   # Floating tags are the commit point: neither moves until both immutable
   # artifacts exist and the image's GitHub provenance attestation succeeded.
@@ -269,6 +328,12 @@ jobs:
 
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GHCR
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
@@ -300,18 +365,26 @@ jobs:
           set -euo pipefail
           image_ref="${IMAGE_NAME}:${{ inputs.version }}"
           kit_ref="${KIT_NAME}:${{ inputs.version }}"
+          hub_image_ref="${HUB_IMAGE_NAME}:${{ inputs.version }}"
+          hub_kit_ref="${HUB_KIT_NAME}:${{ inputs.version }}"
 
           # Re-verify both immutable sources at the commit point. The helper
           # fails closed on auth/network errors; an unexpected absence is also
           # fatal because the producing jobs already succeeded.
-          [ "$(python3 scripts/registry-ref-state.py "$image_ref")" = "exists" ]
-          [ "$(python3 scripts/registry-ref-state.py "$kit_ref")" = "exists" ]
+          for ref in "$image_ref" "$kit_ref" "$hub_image_ref" "$hub_kit_ref"; do
+            [ "$(python3 scripts/registry-ref-state.py "$ref")" = "exists" ]
+          done
 
           # Move the kit first. If the image retag then fails, kit consumers are
           # still safe because its spec pins the already-published image digest;
           # a re-run idempotently completes the image tags.
           oras tag "$kit_ref" "${{ inputs.major }}" latest
+          oras tag "$hub_kit_ref" "${{ inputs.major }}" latest
           docker buildx imagetools create \
             --tag "${IMAGE_NAME}:${{ inputs.major }}" \
             --tag "${IMAGE_NAME}:latest" \
             "$image_ref"
+          docker buildx imagetools create \
+            --tag "${HUB_IMAGE_NAME}:${{ inputs.major }}" \
+            --tag "${HUB_IMAGE_NAME}:latest" \
+            "$hub_image_ref"

@@ -1,23 +1,29 @@
 # Releasing the Band Python kit
 
 This is the release and patch process for the `band-python-kit` image and OCI
-kit artifact published to GHCR. It covers what gets published, the tag policy,
+kit artifact published to GHCR and Docker Hub. It covers what gets published, the tag policy,
 who owns the cadence, the supply-chain quarantine gate and how to recover from
 it, the supported `sbx` version, the manual-publish fallback, and how the
 downstream catalogs stay current.
 
 ## Artifact map
 
-Every band-sdk release publishes two artifacts to GHCR:
+Every band-sdk release publishes the same two artifacts to **both** GHCR and
+Docker Hub (one multi-arch build, dual-tagged — see Docker's
+[push to multiple registries](https://docs.docker.com/build/ci/github-actions/push-multi-registries/)
+guide):
 
-| Artifact | Reference | What it is | Pushed by |
+| Artifact | GHCR | Docker Hub | What it is |
 |---|---|---|---|
-| Sandbox image | `ghcr.io/band-ai/band-python-kit/image:<tag>` | The container image the sandbox VM pulls (`sandbox.image`). Multi-arch (amd64+arm64), provenance + SBOM attested. | `docker/build-push-action` in `kit-publish.yml` |
-| Kit (OCI artifact) | `ghcr.io/band-ai/band-python-kit:<tag>` | The `spec.yaml` packaged as an OCI v2 kit artifact, consumed via `sbx create --kit <ref>`. Its `sandbox.image` pins the image above **by digest**. | ORAS assembly in `kit-publish.yml` (see the `sbx`-version note below) |
+| Sandbox image | `ghcr.io/band-ai/band-python-kit/image:<tag>` | `docker.io/bandhq/band-python-kit-image:<tag>` | The container image the sandbox VM pulls (`sandbox.image`). Multi-arch (amd64+arm64); GHCR also gets provenance + SBOM attestation. |
+| Kit (OCI artifact) | `ghcr.io/band-ai/band-python-kit:<tag>` | `docker.io/bandhq/band-python-kit:<tag>` | The `spec.yaml` packaged as an OCI v2 kit artifact, consumed via `sbx create --kit <ref>`. Each kit pins **its own registry's** image **by digest**. |
 
-The two are separate GHCR packages. The kit artifact is behavioral only (network
-policy + startup command); it ships no `files/`, so its OCI manifest carries a
-single empty tar+gzip layer.
+Hub uses flat names (`…-image`) because it has no nested package path like
+GHCR's `/image`. The default `sbx` kit allowlist includes `docker.io/`, so Hub
+is the customer-facing ref; GHCR remains published for existing consumers.
+
+The kit artifact is behavioral only (network policy + startup command); it
+ships no `files/`, so its OCI manifest carries a single empty tar+gzip layer.
 
 Both tags always resolve to the same underlying release: the image bundles the
 SDK built from repo source at exactly that tag, and the kit tag pins the image
@@ -179,6 +185,14 @@ Docker-Sandbox-capable laptop:
    move the kit's floating tags and retag the immutable image manifest. Keep
    this ordering: the kit pins the immutable image digest, so an interrupted
    final retag never points a kit at a missing image.
+
+## One-time Docker Hub setup
+
+1. Org `bandhq` on Hub; public repos `band-python-kit` and `band-python-kit-image`.
+2. Release-environment secrets on `band-ai/band-sdk-python`:
+   `DOCKERHUB_USERNAME` (Hub user with push to `bandhq`) and
+   `DOCKERHUB_TOKEN` (access token / OAT with image push).
+3. Callers of `kit-publish.yml` pass those secrets into the reusable workflow.
 
 ## One-time GHCR setup
 

@@ -266,6 +266,7 @@ jobs:
       group: kit-ghcr-publish
       cancel-in-progress: false
       queue: max
+    environment: release
     uses: ./.github/workflows/kit-publish.yml
     with:
       ref: ${{ needs.decide.outputs.tag }}
@@ -277,6 +278,9 @@ jobs:
       extra-build-args: |
         PYTHON_BASE_IMAGE=${{ needs.decide.outputs.python_ref }}
         UV_IMAGE=${{ needs.decide.outputs.uv_ref }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   bump-pins:
     needs: [decide, rebuild]
