@@ -19,6 +19,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.integrations.letta.config import (
@@ -504,8 +505,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         "tool_call",
                         tool_name,
                         {
-                            "name": tool_name,
-                            "args": getattr(tool_call, "arguments", "{}")
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.ARGS: getattr(tool_call, "arguments", "{}")
                             if tool_call
                             else "{}",
                         },
@@ -517,8 +518,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         "tool_result",
                         tool_name,
                         {
-                            "name": tool_name,
-                            "output": getattr(resp_msg, "tool_return", ""),
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.OUTPUT: getattr(resp_msg, "tool_return", ""),
                         },
                     )
 

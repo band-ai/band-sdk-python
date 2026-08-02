@@ -487,9 +487,8 @@ class TestErrorHandling:
         mock_tools.send_event.assert_awaited_once()
         event_kwargs = mock_tools.send_event.await_args.kwargs
         assert event_kwargs["message_type"] == "error"
-        assert "completed without sending a Band message" in event_kwargs["content"]
-        assert "max_iter=20" in event_kwargs["content"]
         assert "band_send_message" in event_kwargs["content"]
+        assert "max_iter=20" in event_kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_reports_error_when_crewai_returns_none_without_reply(
@@ -515,7 +514,7 @@ class TestErrorHandling:
         mock_tools.send_event.assert_awaited_once()
         event_kwargs = mock_tools.send_event.await_args.kwargs
         assert event_kwargs["message_type"] == "error"
-        assert "completed without sending a Band message" in event_kwargs["content"]
+        assert "band_send_message" in event_kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_does_not_report_completion_error_after_reply(

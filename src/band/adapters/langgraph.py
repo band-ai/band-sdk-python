@@ -19,6 +19,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
@@ -406,9 +407,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             payload = {
-                "name": tool_name,
-                "args": data.get("input", {}),
-                "tool_call_id": event.get("run_id", "unknown"),
+                ToolEventKey.NAME: tool_name,
+                ToolEventKey.ARGS: data.get("input", {}),
+                ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
             }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
             try:
@@ -427,10 +428,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             is_error = event_type == "on_tool_error" or bool(data.get("error"))
             payload = {
-                "name": tool_name,
-                "output": data.get("error") or data.get("output", ""),
-                "tool_call_id": event.get("run_id", "unknown"),
-                "is_error": is_error,
+                ToolEventKey.NAME: tool_name,
+                ToolEventKey.OUTPUT: data.get("error") or data.get("output", ""),
+                ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
+                ToolEventKey.IS_ERROR: is_error,
             }
             logger.info("[STREAM] %s: %s", event_type, tool_name)
             try:

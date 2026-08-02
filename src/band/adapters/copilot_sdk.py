@@ -24,7 +24,7 @@ from band.converters.copilot_sdk import (
 from band.core.exceptions import BandConfigError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import Capability, Emit, MessageType, TurnUsage
+from band.core.types import Capability, Emit, MessageType, ToolEventKey, TurnUsage
 from band.integrations.copilot_sdk import CopilotSessionManager
 from band.integrations.copilot_sdk.prompts import TURN_COMPLETION_GUIDANCE
 from band.integrations.copilot_sdk.room_ask_user import (
@@ -772,9 +772,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             room_tools,
             json.dumps(
                 {
-                    "name": invocation.tool_name,
-                    "args": arguments,
-                    "tool_call_id": invocation.tool_call_id,
+                    ToolEventKey.NAME: invocation.tool_name,
+                    ToolEventKey.ARGS: arguments,
+                    ToolEventKey.TOOL_CALL_ID: invocation.tool_call_id,
                 }
             ),
             MessageType.TOOL_CALL,
@@ -790,9 +790,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             room_tools,
             json.dumps(
                 {
-                    "name": invocation.tool_name,
-                    "output": output,
-                    "tool_call_id": invocation.tool_call_id,
+                    ToolEventKey.NAME: invocation.tool_name,
+                    ToolEventKey.OUTPUT: output,
+                    ToolEventKey.TOOL_CALL_ID: invocation.tool_call_id,
                 }
             ),
             MessageType.TOOL_RESULT,

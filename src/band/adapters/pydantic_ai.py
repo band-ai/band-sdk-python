@@ -23,14 +23,16 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ThinkingPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 
 from band_rest.core.api_error import ApiError
 
@@ -42,6 +44,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.pydantic_ai import (
@@ -59,6 +62,7 @@ from band.runtime.tools import (
     band_tool_errored,
     get_tool_description,
     is_terminal_success,
+    missing_reply_error,
     serialize_tool_result,
 )
 
@@ -116,6 +120,30 @@ def _drop_non_replayable_messages(messages: list[ModelMessage]) -> list[ModelMes
     the within-run gap.
     """
     return [m for m in messages if _is_replayable_history_message(m)]
+
+
+def _drop_blank_text(
+    ctx: RunContext[AgentToolsProtocol],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+) -> ModelResponse:
+    """Treat blank text as what it is: no output at all.
+
+    An agent that answers through tools has nothing left to say once it has acted,
+    and providers render that as an empty text part rather than a partless response.
+    pydantic-ai recognizes only a partless (or thinking-only) response as "no
+    actionable output" — the ``None`` outcome ``output_type`` allows — so a blank
+    part would instead be met with a retry prompt, spend the refused output budget,
+    and fail the turn. Dropping it also keeps the blank part out of history, where
+    it replays as content:null.
+    """
+    response.parts = [
+        part
+        for part in response.parts
+        if not (isinstance(part, TextPart) and not part.content.strip())
+    ]
+    return response
 
 
 def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
@@ -260,7 +288,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self.custom_section = custom_section
         self._system_prompt: str | None = None
 
-        self._agent: Agent[AgentToolsProtocol, str] | None = None
+        self._agent: Agent[AgentToolsProtocol, str | None] | None = None
         # Conversation history per room (Pydantic AI is stateless, we maintain state)
         self._message_history: dict[str, list] = {}
         # Custom tools: accept both native callables and the portable CustomToolDef
@@ -285,7 +313,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
     # --- Copied from BandPydanticAgent._create_agent ---
-    def _create_agent(self) -> Agent[AgentToolsProtocol, str]:
+    def _create_agent(self) -> Agent[AgentToolsProtocol, str | None]:
         """Create Pydantic AI Agent with platform tools."""
         system = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
@@ -295,11 +323,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
         self._system_prompt = system
 
-        # We respond via tools only, so the model output is unused — but it must
-        # still be a type: pydantic-ai rejects `output_type=None` with
-        # `UserError("At least one output type must be provided other than
-        # `None`")`, so `str` stands in for "we don't care".
-        agent: Agent[AgentToolsProtocol, str] = Agent(
+        agent: Agent[AgentToolsProtocol, str | None] = Agent(
             self.model,
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
             # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
@@ -312,26 +336,33 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # re-sends `system=` on every call, so the contract stays in force.
             instructions=system,
             deps_type=AgentToolsProtocol,
-            output_type=str,
+            # `str | None`: this agent replies *through* tools, so once it has acted
+            # it has nothing left to say and answers with an empty (or thinking-only)
+            # response. Allowing `None` makes that a valid outcome — pydantic-ai ends
+            # the run instead of sending a retry prompt asking it to "return text or
+            # call a tool", which an agent told to answer only through tools obliges
+            # by calling one, re-posting the reply to the room once per attempt.
+            # (Plain `None` is rejected: at least one non-`None` output type is
+            # required.)
+            output_type=str | None,
             # Two budgets, deliberately different — a bare int would set both.
             #
             # tools=3: one retry is too tight for a small model, which occasionally
             # needs another attempt to emit a valid tool call (e.g.
             # band_create_chatroom) before pydantic-ai gives up.
             #
-            # output=0: this agent replies *through* tools, so the forced `str`
-            # output below is unsatisfiable by design and its budget can only ever
-            # be spent, never used. Spending it is not free: each attempt sends the
-            # model a retry prompt asking it to "return text or call a tool", and an
-            # agent told to answer only through tools obliges by calling one — so a
-            # budget of N re-posts the reply to the room N more times, at N+1× the
-            # model round trips. Refusing the retries keeps side effects at exactly
-            # one; the resulting UnexpectedModelBehavior is the benign empty-final
-            # case handled below.
+            # output=0: with `None` allowed the ordinary end-of-turn response no
+            # longer spends this budget, so what is left to retry is a response the
+            # model cannot fix by trying again — and every attempt risks the extra
+            # room post described above. The resulting UnexpectedModelBehavior is
+            # handled where the run is driven.
             retries={"tools": 3, "output": 0},
-            # Strip content:null responses on every request, including mid-run
-            # ones the storage filter can't reach (see the function docstring).
-            capabilities=[ProcessHistory(_drop_non_replayable_messages)],
+            capabilities=[
+                # Strip content:null responses on every request, including mid-run
+                # ones the storage filter can't reach (see the function docstring).
+                ProcessHistory(_drop_non_replayable_messages),
+                Hooks(after_model_request=_drop_blank_text),
+            ],
         )
 
         # Register platform tools dynamically from centralized definitions
@@ -746,9 +777,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": event.part.tool_name,
-                                            "args": event.part.args,
-                                            "tool_call_id": event.part.tool_call_id,
+                                            ToolEventKey.NAME: event.part.tool_name,
+                                            ToolEventKey.ARGS: event.part.args,
+                                            ToolEventKey.TOOL_CALL_ID: event.part.tool_call_id,
                                         }
                                     ),
                                     message_type="tool_call",
@@ -773,9 +804,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": event.part.tool_name,
-                                            "output": str(event.part.content),
-                                            "tool_call_id": event.tool_call_id,
+                                            ToolEventKey.NAME: event.part.tool_name,
+                                            ToolEventKey.OUTPUT: str(
+                                                event.part.content
+                                            ),
+                                            ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
                                         }
                                     ),
                                     message_type="tool_result",
@@ -804,15 +837,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 dropped,
                             )
         except UnexpectedModelBehavior as e:
-            # This is the ordinary way a productive turn ends, not a rare mishap.
-            # pydantic-ai forces a final str output (output_type=str), but the agent
-            # answers through tools — so once it has acted (a band_send_message
-            # reply, a band_store_memory, ...) it has nothing left to say and returns
-            # an empty final response. With output retries refused (see the budget
-            # above) that raises immediately. The work already went out, so the empty
-            # final answer is benign — mirror the crewai adapter and swallow it.
-            # Genuine no-response failures (no terminal tool ran — only read-only
-            # lookups or failed tools) still propagate.
+            # A turn that already did its work must not fail over the reply the model
+            # owes pydantic-ai. Allowing `None` — and normalizing blank text into it
+            # — ends the ordinary nothing-left-to-say response cleanly, but some
+            # other response the run cannot turn into output can still spend the
+            # refused output budget. Once a terminal tool has run (a
+            # band_send_message reply, a band_store_memory, ...) the work already went
+            # out, so that exhaustion is benign — mirror the crewai adapter and
+            # swallow it. Genuine no-response failures (no terminal tool ran — only
+            # read-only lookups or failed tools) still propagate.
             if tool_executed and _is_output_retries_exhausted(e):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted its output retries after "
@@ -848,16 +881,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     turn_usage = self._usage_from_messages(this_run)
                 await self.emit_usage(tools, turn_usage)
 
-        # A clean run with no terminal work means the model answered in plain text
-        # without calling band_send_message — a silently dropped reply. Surface it
-        # as an error (mirrors the crewai adapter) instead of letting it vanish.
+        # A clean run with no terminal work is a silently dropped reply: the model
+        # either answered in plain text or said nothing at all. Surface it as an
+        # error (mirrors the crewai adapter) instead of letting it vanish.
         if not tool_executed:
-            await self._report_error(
-                tools,
-                "Pydantic AI completed without sending a Band message. This "
-                "usually means the agent returned a final answer as plain text "
-                "instead of using the band_send_message tool.",
-            )
+            await self._report_error(tools, missing_reply_error("Pydantic AI"))
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

@@ -199,6 +199,19 @@ google_adk_agent:
   api_key: ""
 
 # =============================================================================
+# Strands Agents Examples
+# =============================================================================
+
+# 01_basic_agent.py, 02_custom_tools.py, 03_custom_instructions.py,
+# 04_native_tools.py, 05_bedrock_model.py
+strands_agent:
+  agent_id: ""
+  api_key: ""
+
+# 06_tom_agent.py - see tom_agent in Shared Agents section
+# 07_jerry_agent.py - see jerry_agent in Shared Agents section
+
+# =============================================================================
 # Letta Examples
 # =============================================================================
 
@@ -304,13 +317,13 @@ arena_guesser_3:
 # =============================================================================
 
 # Tom the cat character agent
-# Used by: langgraph/07, claude_sdk/03, anthropic/03, pydantic_ai/03, parlant/04, crewai/05, agno/03, codex/02, opencode/05
+# Used by: langgraph/07, claude_sdk/03, anthropic/03, pydantic_ai/03, parlant/04, crewai/05, agno/03, codex/02, opencode/05, strands/06
 tom_agent:
   agent_id: ""
   api_key: ""
 
 # Jerry the mouse character agent
-# Used by: langgraph/08, claude_sdk/04, anthropic/04, pydantic_ai/04, parlant/05, crewai/06, agno/04, codex/03, opencode/06
+# Used by: langgraph/08, claude_sdk/04, anthropic/04, pydantic_ai/04, parlant/05, crewai/06, agno/04, codex/03, opencode/06, strands/07
 jerry_agent:
   agent_id: ""
   api_key: ""
