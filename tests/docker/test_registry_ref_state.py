@@ -102,3 +102,18 @@ def test_publish_workflow_uses_the_fail_closed_probe_for_both_artifacts() -> Non
     assert len(invocations) >= 2
     assert any("$IMAGE_NAME" in run or "${IMAGE_NAME}" in run for run in invocations)
     assert any("$KIT_NAME" in run or "${KIT_NAME}" in run for run in invocations)
+
+
+def test_kit_push_probe_failure_cannot_be_hidden_by_an_if() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/kit-publish.yml").read_text(encoding="utf-8")
+    )
+    runs = [
+        step.get("run", "")
+        for step in workflow["jobs"]["kit"]["steps"]
+        if isinstance(step, dict)
+    ]
+    push_run = next(run for run in runs if "push_kit_if_missing" in run)
+    assert 'state="$(python3 scripts/registry-ref-state.py "$ref")"' in push_run
+    assert 'if [ "$state" = exists ]' in push_run
+    assert 'if [ "$(python3 scripts/registry-ref-state.py "$ref")"' not in push_run

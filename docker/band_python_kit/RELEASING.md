@@ -230,9 +230,10 @@ there is no pre-merge rehearsal):
    `sbx create --kit docker.io/bandhq/band-python-kit:0.0.0-rc1 band-python-kit
    <workspace>` — revalidating the already-proven ORAS end-to-end path against
    the currently supported `sbx`. Then delete the rehearsal tags on **both**
-   Hub and GHCR. Note: re-dispatching the same rehearsal version stops at the
-   immutable-tag guard — bump the rc number or delete the previous rehearsal
-   tags first.
+   Hub and GHCR. Re-dispatching the same rehearsal version is safe and
+   reuses completed immutable refs, pushing only any missing refs. Delete the
+   previous tags only when the published bytes are invalid and deliberate
+   recovery is required.
 5. First real release publishes for real.
 6. Flip both **GHCR** packages (`band-python-kit`, `band-python-kit/image`) to
    **public** (one-way) once the layout is confirmed. Hub repos are created
