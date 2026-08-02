@@ -91,7 +91,7 @@ jobs:
       attestations: write
       id-token: write
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.image_digest.outputs.digest }}
     steps:
       - name: Checkout the release ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
