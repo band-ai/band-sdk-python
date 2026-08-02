@@ -68,6 +68,8 @@ Then message the `copilot_acp_agent` from a Band room.
   so expose it off-host only behind your own auth.
 - **band-mcp uses SSE, not streamable HTTP** (`/sse`); the adapter's `mcp_servers`
   entry is `{"type": "sse", …}`.
+- **`mcp<2` pin.** The image installs `band-mcp>=1.3.2` with `mcp>=1.23.0,<2`
+  because band-mcp 1.3.2 imports `mcp.server.fastmcp`, which mcp 2.0 removed.
 - **DNS-rebinding protection.** band-mcp 421s SSE requests whose `Host` isn't
   allow-listed. `entrypoint.sh` sets `ALLOWED_HOSTS='["localhost:*","127.0.0.1:*"]'`
   for the in-container loopback caller.
