@@ -3,23 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from functools import partial
 import logging
 import re
+from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from typing import ClassVar
 from uuid import uuid4
 
-from a2a.types import (
-    Message as A2AMessage,
-    Part,
-    Role,
-    Task,
-    TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
-    TextPart,
-)
-from a2a.utils import get_message_text
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.types import Task, TaskState, TaskStatus
 
 from band.client.rest import (
     AsyncRestClient,
@@ -35,14 +30,36 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.integrations.a2a.gateway.server import GatewayServer
+from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
+from band.integrations.a2a.protocol import snapshot_task
 from band_rest import Peer
-from band_rest.agent_api_peers.types.list_agent_peers_response import (
-    ListAgentPeersResponse,
-)
-from band_rest.core.api_error import ApiError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GatewayRequest:
+    """Band routing and A2A state for one gateway request."""
+
+    peer: Peer
+    room_id: str
+    context_id: str
+    pending: PendingA2ATask
+
+
+class BandAgentExecutor(AgentExecutor):
+    """Adapt one official A2A handler execution to a Band peer."""
+
+    def __init__(self, adapter: A2AGatewayAdapter, peer_slug: str) -> None:
+        self.adapter = adapter
+        self.peer_slug = peer_slug
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await self.adapter._execute_a2a(self.peer_slug, context, event_queue)
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        await self.adapter._cancel_a2a(context, event_queue)
 
 
 def slugify(name: str) -> str:
@@ -101,6 +118,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         api_key: str = "",
         gateway_url: str = "http://localhost:10000",
         port: int = 10000,
+        config: A2AGatewayAdapterConfig | None = None,
         features: AdapterFeatures | None = None,
     ) -> None:
         """Initialize gateway adapter.
@@ -110,6 +128,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             api_key: API key for authentication (same as Agent.create()).
             gateway_url: Base URL for A2A endpoints exposed by this gateway.
             port: Port for HTTP server to listen on.
+            config: A2A Gateway runtime configuration.
         """
         super().__init__(
             history_converter=GatewayHistoryConverter(),
@@ -117,6 +136,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         )
         self.gateway_url = gateway_url
         self.port = port
+        self.config = config or A2AGatewayAdapterConfig()
 
         # Direct REST client for room/message operations
         self._rest = AsyncRestClient(base_url=rest_url, api_key=api_key)
@@ -132,13 +152,6 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
         # Request/response correlation
         self._pending_tasks: dict[str, PendingA2ATask] = {}  # room_id → task
-        self._peer_discovery_retry_delays_seconds: tuple[float, ...] = (
-            1.0,
-            2.0,
-            4.0,
-            8.0,
-            16.0,
-        )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Fetch peers via REST and start HTTP server.
@@ -150,7 +163,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         await super().on_started(agent_name, agent_description)
 
         # Fetch ALL peers at startup using REST client (with pagination)
-        all_peers = await self._fetch_all_peers_with_retry()
+        all_peers = await self._fetch_all_peers()
 
         # Build slug and UUID mappings
         for peer in all_peers:
@@ -163,62 +176,31 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         # Create and start HTTP server with peer routes
         self._server = GatewayServer(
             peers=self._peers,
-            peers_by_uuid=self._peers_by_uuid,
             gateway_url=self.gateway_url,
             port=self.port,
-            on_request=self._handle_a2a_request,
+            executor_factory=partial(BandAgentExecutor, self),
         )
         await self._server.start()
 
         logger.info("Gateway HTTP server started on port %d", self.port)
 
-    async def _fetch_all_peers_with_retry(self) -> list[Peer]:
-        """Fetch all peer pages, retrying if the platform rate-limits startup."""
+    async def _fetch_all_peers(self) -> list[Peer]:
+        """Fetch every peer page using the REST client's retry policy."""
         all_peers: list[Peer] = []
         page = 1
         page_size = 100
 
         while True:
-            response = await self._list_peers_page_with_retry(
+            response = await self._rest.agent_api_peers.list_agent_peers(
                 page=page,
                 page_size=page_size,
+                request_options=DEFAULT_REQUEST_OPTIONS,
             )
             all_peers.extend(response.data)
 
             if len(response.data) < page_size:
                 return all_peers
             page += 1
-
-    async def _list_peers_page_with_retry(
-        self, *, page: int, page_size: int
-    ) -> ListAgentPeersResponse:
-        """Fetch one peer page with explicit backoff for live 429s."""
-        attempts = len(self._peer_discovery_retry_delays_seconds) + 1
-        for attempt, delay in enumerate(
-            (0.0, *self._peer_discovery_retry_delays_seconds), start=1
-        ):
-            if delay > 0:
-                logger.warning(
-                    "Rate limited discovering peers for gateway; retrying page %s in %.1fs "
-                    "(attempt %s/%s)",
-                    page,
-                    delay,
-                    attempt,
-                    attempts,
-                )
-                await asyncio.sleep(delay)
-
-            try:
-                return await self._rest.agent_api_peers.list_agent_peers(
-                    page=page,
-                    page_size=page_size,
-                    request_options=DEFAULT_REQUEST_OPTIONS,
-                )
-            except ApiError as exc:
-                if exc.status_code != 429 or attempt == attempts:
-                    raise
-
-        raise RuntimeError("Peer discovery retry loop exited unexpectedly")
 
     async def on_message(
         self,
@@ -252,16 +234,20 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         if is_session_bootstrap and history:
             self._rehydrate(history)
 
-        # Find pending task for this room
+        # Find pending task for this room.
         pending = self._pending_tasks.get(room_id)
         if pending:
-            # Convert to A2A event and push to SSE queue
-            event = self._translate_to_a2a(msg, pending.task)
-            await pending.sse_queue.put(event)
-
-            # Clean up on terminal state
-            if event.final:
-                del self._pending_tasks[room_id]
+            logger.debug(
+                "A2A response received: room=%s task=%s type=%s",
+                room_id,
+                pending.task.id,
+                msg.message_type,
+            )
+            await self._publish_band_response(pending, msg)
+        else:
+            logger.debug(
+                "Ignoring Band message without pending A2A task: room=%s", room_id
+            )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up resources for a room.
@@ -269,12 +255,16 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         Args:
             room_id: The room identifier.
         """
-        # Clean up pending task if exists
-        self._pending_tasks.pop(room_id, None)
+        pending = self._pending_tasks.pop(room_id, None)
+        if pending:
+            await pending.fail("Band room closed before the A2A response completed")
         logger.debug("Cleaned up gateway resources for room %s", room_id)
 
-    async def stop(self) -> None:
-        """Stop the HTTP server and clean up resources."""
+    async def cleanup_all(self) -> None:
+        """Fail in-flight requests and stop the self-hosted HTTP server."""
+        for room_id in list(self._pending_tasks):
+            pending = self._pending_tasks.pop(room_id)
+            await pending.fail("Gateway shut down before the Band response completed")
         if self._server:
             await self._server.stop()
             self._server = None
@@ -295,75 +285,161 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         # Try UUID fallback
         return self._peers_by_uuid.get(peer_id)
 
-    async def _handle_a2a_request(
-        self, peer_id: str, message: A2AMessage
-    ) -> AsyncIterator[TaskStatusUpdateEvent]:
-        """Handle incoming A2A request from remote agent.
+    def _make_task(self, context: RequestContext) -> Task:
+        """Create the task event emitted before Band execution starts."""
+        return Task(
+            id=context.task_id,
+            context_id=context.context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+        )
 
-        Args:
-            peer_id: Target peer slug or UUID.
-            message: A2A message from remote agent.
+    async def _execute_a2a(
+        self, peer_id: str, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        """Bridge one official A2A execution to a Band room."""
+        try:
+            request = await self._establish_request(peer_id, context, event_queue)
+        except Exception:
+            logger.exception(
+                "A2A request setup failed: peer=%s context=%s",
+                peer_id,
+                context.context_id,
+            )
+            raise
+        logger.info(
+            "A2A request started: peer=%s room=%s context=%s task=%s",
+            peer_id,
+            request.room_id,
+            request.context_id,
+            request.pending.task.id,
+        )
+        try:
+            async with self.pending_task(request.room_id, request.pending):
+                await self._announce_request(request)
+                await self._send_to_band(request, context)
+                completed = await self._await_response(request)
+        except asyncio.CancelledError:
+            logger.debug(
+                "A2A request cancelled: room=%s task=%s",
+                request.room_id,
+                request.pending.task.id,
+            )
+            raise
+        except Exception:
+            logger.exception(
+                "A2A request failed: room=%s context=%s task=%s",
+                request.room_id,
+                request.context_id,
+                request.pending.task.id,
+            )
+            raise
+        else:
+            if completed:
+                logger.info(
+                    "A2A request completed: room=%s task=%s",
+                    request.room_id,
+                    request.pending.task.id,
+                )
 
-        Yields:
-            TaskStatusUpdateEvent for SSE streaming.
-        """
-        # Resolve peer from slug or UUID
+    async def _establish_request(
+        self, peer_id: str, context: RequestContext, event_queue: EventQueue
+    ) -> GatewayRequest:
+        """Resolve the peer and create its Band room and A2A task state."""
         peer = self._resolve_peer(peer_id)
         if not peer:
-            logger.error("Peer not found: %s", peer_id)
-            return
+            logger.warning("A2A request target not found: peer=%s", peer_id)
+            raise ValueError(f"Peer not found: {peer_id}")
 
-        # Use the peer's actual UUID for Band API calls
-        peer_uuid = peer.id
-
-        # Get or create room for context
         room_id, context_id = await self._get_or_create_room(
-            message.context_id, peer_uuid
+            context.context_id, peer.id
+        )
+        task = self._make_task(context)
+        return GatewayRequest(
+            peer=peer,
+            room_id=room_id,
+            context_id=context_id,
+            pending=PendingA2ATask(task=task, event_queue=event_queue),
         )
 
-        # Create A2A task
-        task = self._create_task(context_id)
-
-        # Register pending task with SSE queue
-        sse_queue: asyncio.Queue[TaskStatusUpdateEvent] = asyncio.Queue()
-        self._pending_tasks[room_id] = PendingA2ATask(
-            task=task,
-            sse_queue=sse_queue,
-            peer_id=peer_uuid,
+    async def _announce_request(self, request: GatewayRequest) -> None:
+        """Publish the initial working task and retain its Band context."""
+        await request.pending.event_queue.enqueue_event(
+            snapshot_task(request.pending.task)
         )
+        await self._emit_context_event(request.room_id, request.context_id)
 
-        # Emit task event to track context mapping in history
-        await self._emit_context_event(room_id, context_id)
-
-        # Send message to Band via REST client
-        content = get_message_text(message) or ""
-
-        # Use peer name for mention
-        peer_name = peer.name
-
+    async def _send_to_band(
+        self, request: GatewayRequest, context: RequestContext
+    ) -> None:
+        """Send the A2A request text to the selected Band peer."""
+        content = context.get_user_input()
         await self._rest.agent_api_messages.create_agent_chat_message(
-            chat_id=room_id,
+            chat_id=request.room_id,
             message=ChatMessageRequest(
-                content=f"@{peer_name} {content}",
-                mentions=[ChatMessageRequestMentionsItem(id=peer_uuid, name=peer_name)],
+                content=f"@{request.peer.name} {content}",
+                mentions=[
+                    ChatMessageRequestMentionsItem(
+                        id=request.peer.id, name=request.peer.name
+                    )
+                ],
             ),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
-
         logger.debug(
-            "Sent message to peer %s (%s) in room %s (context=%s)",
-            peer_name,
-            peer_uuid,
-            room_id,
-            context_id,
+            "A2A request sent to Band: room=%s task=%s",
+            request.room_id,
+            request.pending.task.id,
         )
 
-        # Stream events from queue (populated by on_message())
-        while True:
-            event = await sse_queue.get()
-            yield event
-            if event.final:
-                break
+    async def _await_response(self, request: GatewayRequest) -> bool:
+        """Wait for a terminal Band reply; False when it timed out instead."""
+        try:
+            if self.config.response_timeout_s is None:
+                await request.pending.done.wait()
+            else:
+                async with asyncio.timeout(self.config.response_timeout_s):
+                    await request.pending.done.wait()
+        except TimeoutError:
+            logger.warning(
+                "A2A response timed out: room=%s task=%s timeout=%ss",
+                request.room_id,
+                request.pending.task.id,
+                self.config.response_timeout_s,
+            )
+            await request.pending.fail("Timed out waiting for a Band response")
+            return False
+        return True
+
+    @asynccontextmanager
+    async def pending_task(
+        self, room_id: str, pending: PendingA2ATask
+    ) -> AsyncIterator[PendingA2ATask]:
+        """Register one pending request and always release its room slot."""
+        if room_id in self._pending_tasks:
+            # The message reaches the remote A2A client; keep the internal
+            # room id out of it.
+            logger.warning("Rejected concurrent A2A request: room=%s", room_id)
+            raise RuntimeError(
+                "The peer is still processing a previous request for this context"
+            )
+        self._pending_tasks[room_id] = pending
+        logger.debug(
+            "Registered pending A2A task: room=%s task=%s", room_id, pending.task.id
+        )
+        try:
+            yield pending
+        finally:
+            self._pending_tasks.pop(room_id, None)
+            logger.debug(
+                "Released pending A2A task: room=%s task=%s", room_id, pending.task.id
+            )
+
+    async def _cancel_a2a(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        """Publish the official terminal cancellation event."""
+        task = context.current_task or self._make_task(context)
+        await PendingA2ATask(task=task, event_queue=event_queue).cancel()
 
     async def _get_or_create_room(
         self, context_id: str | None, target_peer_id: str
@@ -452,63 +528,16 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             len(self._room_participants),
         )
 
-    def _create_task(self, context_id: str) -> Task:
-        """Create a new A2A Task for tracking.
-
-        Args:
-            context_id: A2A context ID.
-
-        Returns:
-            New Task instance.
-        """
-        return Task(
-            id=str(uuid4()),
-            context_id=context_id,
-            status=TaskStatus(state=TaskState.working),
-        )
-
-    def _translate_to_a2a(
-        self, msg: PlatformMessage, task: Task
-    ) -> TaskStatusUpdateEvent:
-        """Convert platform message to A2A TaskStatusUpdateEvent.
-
-        Args:
-            msg: Platform message from peer.
-            task: Associated A2A task.
-
-        Returns:
-            TaskStatusUpdateEvent for SSE streaming.
-        """
-        # Determine task state based on message type
-        message_type = getattr(msg, "message_type", "text")
-
-        if message_type == "error":
-            state = TaskState.failed
-            final = True
-        elif message_type in ("thought", "tool_call", "tool_result"):
-            state = TaskState.working
-            final = False
+    async def _publish_band_response(
+        self, pending: PendingA2ATask, msg: PlatformMessage
+    ) -> None:
+        """Translate Band's message category into an A2A task intent."""
+        if msg.message_type == "error":
+            await pending.fail(msg.content)
+        elif msg.message_type in ("thought", "tool_call", "tool_result"):
+            await pending.report_progress(msg.content)
         else:
-            # Regular text message = completed response
-            state = TaskState.completed
-            final = True
-
-        # Update task status
-        task.status = TaskStatus(
-            state=state,
-            message=A2AMessage(
-                role=Role.agent,
-                message_id=str(uuid4()),
-                parts=[Part(root=TextPart(text=msg.content))],
-            ),
-        )
-
-        return TaskStatusUpdateEvent(
-            task_id=task.id,
-            context_id=task.context_id,
-            status=task.status,
-            final=final,
-        )
+            await pending.complete_with_message(msg.content)
 
     async def _emit_context_event(self, room_id: str, context_id: str) -> None:
         """Emit a task event to persist context mapping in history.

@@ -45,6 +45,9 @@ if TYPE_CHECKING:
     )
     from band.adapters.a2a import A2AAdapter as A2AAdapter
     from band.adapters.a2a_gateway import A2AGatewayAdapter as A2AGatewayAdapter
+    from band.adapters.a2a_gateway import (
+        A2AGatewayAdapterConfig as A2AGatewayAdapterConfig,
+    )
     from band.adapters.codex import CodexAdapter as CodexAdapter
     from band.adapters.codex import CodexAdapterConfig as CodexAdapterConfig
     from band.adapters.acp import (
@@ -77,6 +80,7 @@ __all__ = [
     "CrewAIFlowAdapter",
     "A2AAdapter",
     "A2AGatewayAdapter",
+    "A2AGatewayAdapterConfig",
     "CodexAdapter",
     "CodexAdapterConfig",
     "ACPClientAdapter",
@@ -110,6 +114,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "CrewAIFlowAdapter": "crewai_flow",
     "A2AAdapter": "a2a",
     "A2AGatewayAdapter": "a2a_gateway",
+    "A2AGatewayAdapterConfig": "a2a_gateway",
     "CodexAdapter": "codex",
     "CodexAdapterConfig": "codex",
     "ACPClientAdapter": "acp",
