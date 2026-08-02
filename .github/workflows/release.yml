@@ -86,9 +86,9 @@ jobs:
   # event fire workflows). Keying it off the durable release means no failure
   # in this run can strand a tagged release unpublished on PyPI.
 
-  # Publish the kit image + OCI kit artifact to GHCR. Independent of the PyPI
-  # publish: a kit-publish failure (e.g. a quarantine-gate trip) must not
-  # block the PyPI release.
+  # Publish the kit image + OCI kit artifact to GHCR and Docker Hub. Independent
+  # of the PyPI publish: a kit-publish failure (e.g. a quarantine-gate trip)
+  # must not block the PyPI release.
   publish-kit:
     needs: [release]
     # !cancelled() overrides the implicit success() gate on `needs`: the
@@ -204,7 +204,7 @@ jobs:
             echo ""
             echo "| Artifact | Outcome |"
             echo "|---|---|"
-            echo "| GHCR kit image + artifact | ${{ needs.publish-kit.result }} |"
+            echo "| GHCR + Docker Hub kit image/artifact | ${{ needs.publish-kit.result }} |"
             echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |"
             echo ""
             echo "PyPI publish runs in the release-triggered \`band-publish\` workflow."
