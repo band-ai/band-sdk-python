@@ -52,6 +52,15 @@ from tests.conftest_integration import (
     send_user_mention,
     wait_until,
 )
+from tests.integration.participants import (
+    absent_from_room,
+    ensure_in_room,
+    ensure_not_in_room,
+    get_participant_role,
+    try_add,
+    try_list_participants,
+    try_remove,
+)
 
 # NOTE: pytestmark in conftest.py is NOT applied to collected tests.
 # The 120s timeout is applied via pytest_collection_modifyitems below.
@@ -112,4 +121,12 @@ __all__ = [
     "is_room_alive",
     "send_user_mention",
     "wait_until",
+    # Participant helpers
+    "absent_from_room",
+    "ensure_in_room",
+    "ensure_not_in_room",
+    "get_participant_role",
+    "try_add",
+    "try_list_participants",
+    "try_remove",
 ]

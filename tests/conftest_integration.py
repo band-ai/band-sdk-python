@@ -365,17 +365,14 @@ async def _ensure_participant(
     participant_id: str,
     role: str = "member",
 ) -> None:
-    """Add a participant to a room if not already present."""
-    response = await api_client.agent_api_participants.list_agent_chat_participants(
-        chat_id
-    )
-    existing_ids = {p.id for p in (response.data or [])}
-    if participant_id not in existing_ids:
-        await api_client.agent_api_participants.add_agent_chat_participant(
-            chat_id,
-            participant=ParticipantRequest(participant_id=participant_id, role=role),
-        )
-        logger.info("Added participant %s to room %s", participant_id, chat_id)
+    """Ensure a participant is in the room with the given role.
+
+    Delegates to :func:`tests.integration.participants.ensure_in_room` so fixture
+    setup and permission tests share one membership mutator.
+    """
+    from tests.integration.participants import ensure_in_room
+
+    await ensure_in_room(api_client, chat_id, participant_id, role=role)
 
 
 async def is_room_alive(api_client: AsyncRestClient, chat_id: str) -> bool:

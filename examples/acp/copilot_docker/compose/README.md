@@ -28,9 +28,12 @@ process never resolves that name.
 
 - Docker + Docker Compose.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
-- A Band **agent** API key (`BAND_AGENT_KEY`, `thnv_a_…` / `band_a_…`) for band-mcp.
 - A configured Band agent named `copilot_acp_agent` for the host client (see the
   SDK's `Agent.from_config` / `agent_config.yaml`).
+- `BAND_AGENT_KEY` must be the API key of the **same** Band agent configured as
+  `copilot_acp_agent` (`thnv_a_…` / `band_a_…`). Room-scoped Band tools run as
+  the band-mcp identity; a second fresh agent key makes ACP/text relay work but
+  room tools return 404.
 
 ## Run
 
@@ -78,8 +81,9 @@ and calls Band tools via band-mcp.
   own host there if you change the service name, or set
   `ENABLE_DNS_REBINDING_PROTECTION=false` for local experiments.
 - **Auth model.** band-mcp holds one Band identity (its agent key) and MCP clients
-  present **no** credentials. Treat band-mcp as a trusted sidecar — it is not
-  published to the host here. One container = one Band identity.
+  present **no** credentials. That identity must be the same agent as the host
+  `copilot_acp_agent` (see Prerequisites). Treat band-mcp as a trusted sidecar —
+  it is not published to the host here. One container = one Band identity.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a
   stored `copilot login`. A container has no stored login, so set a token env
