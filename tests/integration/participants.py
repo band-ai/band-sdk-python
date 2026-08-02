@@ -25,6 +25,23 @@ async def get_participant_role(
     return participant.role if participant else None
 
 
+async def ensure_participant(
+    client: AsyncRestClient,
+    chat_id: str,
+    participant_id: str,
+    role: str = "member",
+) -> None:
+    """Ensure a participant is present without changing an existing role."""
+    current_role = await get_participant_role(client, chat_id, participant_id)
+    if current_role is not None:
+        return
+    await client.agent_api_participants.add_agent_chat_participant(
+        chat_id,
+        participant=ParticipantRequest(participant_id=participant_id, role=role),
+    )
+    logger.info("Ensured participant %s in room %s", participant_id, chat_id)
+
+
 async def ensure_in_room(
     owner_client: AsyncRestClient,
     chat_id: str,

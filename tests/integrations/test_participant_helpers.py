@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from band_rest.types import ParticipantRequest
 
-from tests.integration.participants import absent_from_room
+from tests.integration.participants import absent_from_room, ensure_participant
 
 
 def _client_with_participants(**methods: AsyncMock) -> MagicMock:
@@ -25,6 +25,24 @@ def _added_participant(add_mock: AsyncMock) -> ParticipantRequest:
     """Projection of the restore/add call — what the helper asked the API to do."""
     assert add_mock.await_args is not None
     return add_mock.await_args.kwargs["participant"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_participant_preserves_existing_role() -> None:
+    participant = MagicMock(id="user-1", role="owner")
+    list_mock = AsyncMock(return_value=MagicMock(data=[participant]))
+    remove_mock = AsyncMock()
+    add_mock = AsyncMock()
+    client = _client_with_participants(
+        list_agent_chat_participants=list_mock,
+        remove_agent_chat_participant=remove_mock,
+        add_agent_chat_participant=add_mock,
+    )
+
+    await ensure_participant(client, "room-1", "user-1")
+
+    remove_mock.assert_not_awaited()
+    add_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -40,7 +40,7 @@ from dotenv import load_dotenv
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
 
-from tests.integration.participants import ensure_in_room
+from tests.integration.participants import ensure_in_room, ensure_participant
 from tests.paths import ENV_TEST_FILE
 
 if TYPE_CHECKING:
@@ -445,7 +445,7 @@ async def shared_room(
 
     # Ensure User peer is a participant
     if shared_user_peer is not None:
-        await ensure_in_room(session_api_client, chat_id, shared_user_peer.id)
+        await ensure_participant(session_api_client, chat_id, shared_user_peer.id)
 
     return chat_id
 
@@ -499,7 +499,7 @@ async def shared_multi_agent_room(
 
     # Ensure User peer is present
     if shared_user_peer is not None:
-        await ensure_in_room(session_api_client, chat_id, shared_user_peer.id)
+        await ensure_participant(session_api_client, chat_id, shared_user_peer.id)
 
     return chat_id
 
