@@ -8,7 +8,6 @@ Those must be the same agent — documented in README / ``.env.example``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
@@ -23,26 +22,20 @@ AGENT_NAME = "copilot_acp_agent"
 class VariantIdentity:
     """Readable projection of one Docker variant's shared-identity contract."""
 
-    agent_name: str
     env_documents_agent_key: bool
     readme_documents_same_identity: bool
     client_uses_named_agent: bool
     client_uses_remote_mcp: bool
 
 
-def _plain(text: str) -> str:
-    """Strip light markdown so wrapped / bold / code-span lines still match."""
-    return " ".join(text.replace("**", "").replace("`", "").split())
-
-
 def _observe_variant(variant: str) -> VariantIdentity:
-    readme = _plain((ROOT / variant / "README.md").read_text(encoding="utf-8"))
+    readme = (ROOT / variant / "README.md").read_text(encoding="utf-8")
+    readme = " ".join(readme.replace("**", "").replace("`", "").split())
     env_path = ROOT / variant / ".env.example"
     env_text = env_path.read_text(encoding="utf-8")
     env_values = dotenv_values(env_path)
-    client = Path(ROOT / variant / "client.py").read_text(encoding="utf-8")
+    client = (ROOT / variant / "client.py").read_text(encoding="utf-8")
     return VariantIdentity(
-        agent_name=AGENT_NAME if AGENT_NAME in client else "",
         env_documents_agent_key=(
             "BAND_AGENT_KEY" in env_values and AGENT_NAME in env_text
         ),
@@ -61,7 +54,6 @@ def _observe_variant(variant: str) -> VariantIdentity:
 
 
 EXPECTED = VariantIdentity(
-    agent_name=AGENT_NAME,
     env_documents_agent_key=True,
     readme_documents_same_identity=True,
     client_uses_named_agent=True,

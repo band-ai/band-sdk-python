@@ -360,20 +360,6 @@ async def shared_user_peer(
 # =============================================================================
 
 
-async def _ensure_participant(
-    api_client: AsyncRestClient,
-    chat_id: str,
-    participant_id: str,
-    role: str = "member",
-) -> None:
-    """Ensure a participant is in the room with the given role.
-
-    Delegates to :func:`tests.integration.participants.ensure_in_room` so fixture
-    setup and permission tests share one membership mutator.
-    """
-    await ensure_in_room(api_client, chat_id, participant_id, role=role)
-
-
 async def is_room_alive(api_client: AsyncRestClient, chat_id: str) -> bool:
     """Check whether a room is usable (not deleted) by fetching its details."""
     try:
@@ -459,7 +445,7 @@ async def shared_room(
 
     # Ensure User peer is a participant
     if shared_user_peer is not None:
-        await _ensure_participant(session_api_client, chat_id, shared_user_peer.id)
+        await ensure_in_room(session_api_client, chat_id, shared_user_peer.id)
 
     return chat_id
 
@@ -509,11 +495,11 @@ async def shared_multi_agent_room(
         )
         chat_id = create_response.data.id
         logger.info("Created new shared_multi_agent_room: %s", chat_id)
-        await _ensure_participant(session_api_client, chat_id, agent2_id)
+        await ensure_in_room(session_api_client, chat_id, agent2_id)
 
     # Ensure User peer is present
     if shared_user_peer is not None:
-        await _ensure_participant(session_api_client, chat_id, shared_user_peer.id)
+        await ensure_in_room(session_api_client, chat_id, shared_user_peer.id)
 
     return chat_id
 

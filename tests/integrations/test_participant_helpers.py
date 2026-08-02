@@ -9,14 +9,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from band_rest.core.api_error import ApiError
 from band_rest.types import ParticipantRequest
 
-from tests.integration.participants import (
-    Attempt,
-    absent_from_room,
-    try_list_participants,
-)
+from tests.integration.participants import absent_from_room
 
 
 def _client_with_participants(**methods: AsyncMock) -> MagicMock:
@@ -30,24 +25,6 @@ def _added_participant(add_mock: AsyncMock) -> ParticipantRequest:
     """Projection of the restore/add call — what the helper asked the API to do."""
     assert add_mock.await_args is not None
     return add_mock.await_args.kwargs["participant"]
-
-
-@pytest.mark.asyncio
-async def test_try_list_participants_success() -> None:
-    client = _client_with_participants(
-        list_agent_chat_participants=AsyncMock(return_value=MagicMock(data=[]))
-    )
-    assert await try_list_participants(client, "room-1") == Attempt.OK
-
-
-@pytest.mark.asyncio
-async def test_try_list_participants_maps_not_found() -> None:
-    client = _client_with_participants(
-        list_agent_chat_participants=AsyncMock(
-            side_effect=ApiError(status_code=404, body="not found")
-        )
-    )
-    assert await try_list_participants(client, "room-1") == Attempt.NOT_FOUND
 
 
 @pytest.mark.asyncio
@@ -68,8 +45,7 @@ async def test_absent_from_room_restores_prior_role_after_body() -> None:
         add_agent_chat_participant=add_mock,
     )
 
-    async with absent_from_room(client, "room-1", "agent-2") as prior:
-        assert prior == "admin"
+    async with absent_from_room(client, "room-1", "agent-2"):
         remove_mock.assert_awaited_once_with("room-1", "agent-2")
         add_mock.assert_not_awaited()
 

@@ -21,22 +21,23 @@ Run with: uv run pytest tests/integration/test_participant_permissions.py -v -s
 from __future__ import annotations
 
 import logging
+from http import HTTPStatus
 
 import pytest
 from band_rest import AsyncRestClient
+from band_rest.core.api_error import ApiError
+from band_rest.types import ParticipantRequest
 
 from tests.integration.conftest import (
     AgentInfo,
-    Attempt,
     PeerInfo,
+    requires_multi_agent,
+)
+from tests.integration.participants import (
     absent_from_room,
     ensure_in_room,
     ensure_not_in_room,
     get_participant_role,
-    requires_multi_agent,
-    try_add,
-    try_list_participants,
-    try_remove,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,10 +79,8 @@ class TestParticipantRemovalPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
-        result = await try_remove(session_api_client, chat_id, shared_agent2_info.id)
-        logger.info("Owner removes member agent: %s", result)
-        assert result == Attempt.OK, (
-            f"Owner should be able to remove member agent, got: {result}"
+        await session_api_client.agent_api_participants.remove_agent_chat_participant(
+            chat_id, shared_agent2_info.id
         )
 
         # Restore agent2 for subsequent tests
@@ -104,10 +103,8 @@ class TestParticipantRemovalPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
 
-        result = await try_remove(session_api_client, chat_id, shared_agent2_info.id)
-        logger.info("Owner removes admin: %s", result)
-        assert result == Attempt.OK, (
-            f"Owner should be able to remove admin, got: {result}"
+        await session_api_client.agent_api_participants.remove_agent_chat_participant(
+            chat_id, shared_agent2_info.id
         )
 
         # Restore agent2 for subsequent tests
@@ -131,11 +128,13 @@ class TestParticipantRemovalPermissions:
             pytest.skip("No User peer available")
 
         chat_id = shared_multi_agent_room
-        result = await try_remove(session_api_client, chat_id, shared_user_peer.id)
-        logger.info("Owner removes user: %s", result)
-        assert result == Attempt.FORBIDDEN, (
-            f"Agent should NOT be able to remove user participant, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await (
+                session_api_client.agent_api_participants.remove_agent_chat_participant(
+                    chat_id, shared_user_peer.id
+                )
+            )
+        assert exc_info.value.status_code == HTTPStatus.FORBIDDEN
 
     async def test_member_cannot_remove_owner(
         self,
@@ -154,11 +153,11 @@ class TestParticipantRemovalPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
-        result = await try_remove(session_api_client_2, chat_id, shared_agent1_info.id)
-        logger.info("Member removes owner: %s", result)
-        assert result == Attempt.FORBIDDEN, (
-            f"Member should NOT be able to remove owner, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await session_api_client_2.agent_api_participants.remove_agent_chat_participant(
+                chat_id, shared_agent1_info.id
+            )
+        assert exc_info.value.status_code == HTTPStatus.FORBIDDEN
 
     async def test_admin_can_remove_self(
         self,
@@ -190,10 +189,8 @@ class TestParticipantRemovalPermissions:
         assert role == "admin", f"Agent2 should be admin, got: {role}"
 
         # Admin (agent2) can remove self (leave as admin)
-        result = await try_remove(session_api_client_2, chat_id, shared_agent2_info.id)
-        logger.info("Admin removes self: %s", result)
-        assert result == Attempt.OK, (
-            f"Admin should be able to remove self (leave), got: {result}"
+        await session_api_client_2.agent_api_participants.remove_agent_chat_participant(
+            chat_id, shared_agent2_info.id
         )
 
         # Restore agent2 for subsequent tests
@@ -218,11 +215,11 @@ class TestParticipantRemovalPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "admin"
         )
 
-        result = await try_remove(session_api_client_2, chat_id, shared_agent1_info.id)
-        logger.info("Admin removes owner: %s", result)
-        assert result == Attempt.FORBIDDEN, (
-            f"Admin should NOT be able to remove owner, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await session_api_client_2.agent_api_participants.remove_agent_chat_participant(
+                chat_id, shared_agent1_info.id
+            )
+        assert exc_info.value.status_code == HTTPStatus.FORBIDDEN
 
         # Restore agent2 for subsequent tests
         await ensure_in_room(
@@ -250,11 +247,11 @@ class TestParticipantRemovalPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
-        result = await try_remove(session_api_client_2, chat_id, shared_agent1_info.id)
-        logger.info("Member removes admin/owner: %s", result)
-        assert result == Attempt.FORBIDDEN, (
-            f"Member should NOT be able to remove admin/owner, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await session_api_client_2.agent_api_participants.remove_agent_chat_participant(
+                chat_id, shared_agent1_info.id
+            )
+        assert exc_info.value.status_code == HTTPStatus.FORBIDDEN
 
     async def test_member_can_remove_self(
         self,
@@ -272,10 +269,8 @@ class TestParticipantRemovalPermissions:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
 
-        result = await try_remove(session_api_client_2, chat_id, shared_agent2_info.id)
-        logger.info("Member removes self: %s", result)
-        assert result == Attempt.OK, (
-            f"Member should be able to remove self (leave), got: {result}"
+        await session_api_client_2.agent_api_participants.remove_agent_chat_participant(
+            chat_id, shared_agent2_info.id
         )
 
         # Restore agent2 for subsequent tests
@@ -297,11 +292,16 @@ class TestParticipantRemovalPermissions:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        result = await try_remove(session_api_client, chat_id, shared_agent1_info.id)
-        logger.info("Owner removes self: %s", result)
-        assert result in ("403", "409"), (
-            f"Owner should NOT be able to remove self, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await (
+                session_api_client.agent_api_participants.remove_agent_chat_participant(
+                    chat_id, shared_agent1_info.id
+                )
+            )
+        assert exc_info.value.status_code in {
+            HTTPStatus.FORBIDDEN,
+            HTTPStatus.CONFLICT,
+        }
 
 
 # =============================================================================
@@ -339,12 +339,11 @@ class TestParticipantAddPermissions:
         chat_id = shared_multi_agent_room
         await ensure_not_in_room(session_api_client, chat_id, shared_agent2_info.id)
 
-        result = await try_add(
-            session_api_client, chat_id, shared_agent2_info.id, "member"
-        )
-        logger.info("Owner adds agent as member: %s", result)
-        assert result == Attempt.OK, (
-            f"Owner should be able to add agent as member, got: {result}"
+        await session_api_client.agent_api_participants.add_agent_chat_participant(
+            chat_id,
+            participant=ParticipantRequest(
+                participant_id=shared_agent2_info.id, role="member"
+            ),
         )
 
         role = await get_participant_role(
@@ -365,12 +364,11 @@ class TestParticipantAddPermissions:
         chat_id = shared_multi_agent_room
         await ensure_not_in_room(session_api_client, chat_id, shared_agent2_info.id)
 
-        result = await try_add(
-            session_api_client, chat_id, shared_agent2_info.id, "admin"
-        )
-        logger.info("Owner adds agent as admin: %s", result)
-        assert result == Attempt.OK, (
-            f"Owner should be able to add agent as admin, got: {result}"
+        await session_api_client.agent_api_participants.add_agent_chat_participant(
+            chat_id,
+            participant=ParticipantRequest(
+                participant_id=shared_agent2_info.id, role="admin"
+            ),
         )
 
         role = await get_participant_role(
@@ -440,17 +438,21 @@ class TestParticipantAddPermissions:
         assert role == "admin", f"Agent2 should be admin, got: {role}"
 
         # 2. Agent2 (admin) leaves the room
-        result = await try_remove(session_api_client_2, chat_id, shared_agent2_info.id)
-        assert result == Attempt.OK, f"Admin should be able to leave, got: {result}"
+        await session_api_client_2.agent_api_participants.remove_agent_chat_participant(
+            chat_id, shared_agent2_info.id
+        )
 
         # 3. Agent2 tries to add itself back — room is invisible, expect 404
-        result = await try_add(
-            session_api_client_2, chat_id, shared_agent2_info.id, "member"
-        )
-        logger.info("Removed agent tries self-add: %s", result)
-        assert result == Attempt.NOT_FOUND, (
-            f"Removed agent should get 404 when trying to self-add, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await (
+                session_api_client_2.agent_api_participants.add_agent_chat_participant(
+                    chat_id,
+                    participant=ParticipantRequest(
+                        participant_id=shared_agent2_info.id, role="member"
+                    ),
+                )
+            )
+        assert exc_info.value.status_code == HTTPStatus.NOT_FOUND
 
         # 4. Restore: owner adds agent2 back
         await ensure_in_room(
@@ -478,13 +480,16 @@ class TestParticipantAddPermissions:
         )
 
         # Agent2 (member) tries to add itself as admin
-        result = await try_add(
-            session_api_client_2, chat_id, shared_agent2_info.id, "admin"
-        )
-        logger.info("Member adds self as admin: %s", result)
-        assert result == Attempt.FORBIDDEN, (
-            f"Member should NOT be able to elevate to admin, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await (
+                session_api_client_2.agent_api_participants.add_agent_chat_participant(
+                    chat_id,
+                    participant=ParticipantRequest(
+                        participant_id=shared_agent2_info.id, role="admin"
+                    ),
+                )
+            )
+        assert exc_info.value.status_code == HTTPStatus.FORBIDDEN
 
     async def test_add_duplicate_participant_returns_409(
         self,
@@ -505,13 +510,14 @@ class TestParticipantAddPermissions:
         )
 
         # Try to add agent2 again (already a participant)
-        result = await try_add(
-            session_api_client, chat_id, shared_agent2_info.id, "member"
-        )
-        logger.info("Add duplicate participant: %s", result)
-        assert result == Attempt.CONFLICT, (
-            f"Adding duplicate participant should return 409, got: {result}"
-        )
+        with pytest.raises(ApiError) as exc_info:
+            await session_api_client.agent_api_participants.add_agent_chat_participant(
+                chat_id,
+                participant=ParticipantRequest(
+                    participant_id=shared_agent2_info.id, role="member"
+                ),
+            )
+        assert exc_info.value.status_code == HTTPStatus.CONFLICT
 
 
 # =============================================================================
@@ -541,7 +547,9 @@ class TestRemoteMcpIdentityBoundary:
             pytest.skip("shared_multi_agent_room not available")
 
         chat_id = shared_multi_agent_room
-        assert await try_list_participants(session_api_client, chat_id) == Attempt.OK
+        await session_api_client.agent_api_participants.list_agent_chat_participants(
+            chat_id
+        )
         assert (
             await get_participant_role(
                 session_api_client, chat_id, shared_agent1_info.id
@@ -566,10 +574,11 @@ class TestRemoteMcpIdentityBoundary:
             session_api_client, chat_id, shared_agent2_info.id, "member"
         )
         async with absent_from_room(session_api_client, chat_id, shared_agent2_info.id):
-            assert (
-                await try_list_participants(session_api_client_2, chat_id)
-                == Attempt.NOT_FOUND
-            )
+            with pytest.raises(ApiError) as exc_info:
+                await session_api_client_2.agent_api_participants.list_agent_chat_participants(
+                    chat_id
+                )
+            assert exc_info.value.status_code == HTTPStatus.NOT_FOUND
 
         assert (
             await get_participant_role(
