@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.helpers import update_agent_message_text
 
+from band.converters.parsing import parse_tool_result
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -803,7 +804,10 @@ class TestACPClientAdapterPermissionHandler:
         assert all(
             event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
         )
-        assert perm_events[1]["content"] == "Permission cancelled"
+        result = parse_tool_result(str(perm_events[1]["content"]))
+        assert result is not None
+        assert result.output == "Permission cancelled"
+        assert result.is_error
         assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio

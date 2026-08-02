@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
+from band.core.types import ToolEventKey
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.types import ChunkType, CollectedChunk, ToolStatus
 from band.runtime.tools import is_room_posting_tool
@@ -81,6 +83,7 @@ class RoomTurnEmitter:
         self._room_id = room_id
         self._chunks: list[CollectedChunk] = []
         self._pending_text: list[str] = []
+        self._tool_names: dict[str, str] = {}
 
     async def emit(self, chunk: CollectedChunk) -> None:
         self._chunks.append(chunk)
@@ -96,7 +99,7 @@ class RoomTurnEmitter:
                 )
             case ChunkType.TOOL_CALL | ChunkType.TOOL_RESULT:
                 await self._tools.send_event(
-                    content=chunk.content,
+                    content=self._tool_event_content(chunk),
                     message_type=chunk.chunk_type,
                     metadata=chunk.metadata,
                 )
@@ -111,6 +114,35 @@ class RoomTurnEmitter:
                     "Unhandled ACP chunk type %r; not posting to the room",
                     chunk.chunk_type,
                 )
+
+    def _tool_event_content(self, chunk: CollectedChunk) -> str:
+        """Encode ACP tool chunks in the room's canonical event shape."""
+        metadata = chunk.metadata or {}
+        tool_call_id = str(metadata.get("tool_call_id", ""))
+
+        if chunk.chunk_type == ChunkType.TOOL_CALL:
+            if tool_call_id:
+                self._tool_names[tool_call_id] = chunk.content
+            raw_input = metadata.get("raw_input")
+            return json.dumps(
+                {
+                    ToolEventKey.NAME: chunk.content,
+                    ToolEventKey.ARGS: raw_input if isinstance(raw_input, dict) else {},
+                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
+                }
+            )
+
+        reported_name = metadata.get("tool_name")
+        fallback_name = reported_name if isinstance(reported_name, str) else "unknown"
+        tool_name = self._tool_names.get(tool_call_id, fallback_name)
+        return json.dumps(
+            {
+                ToolEventKey.NAME: tool_name,
+                ToolEventKey.OUTPUT: chunk.content,
+                ToolEventKey.TOOL_CALL_ID: tool_call_id,
+                ToolEventKey.IS_ERROR: metadata.get("status") == ToolStatus.FAILED,
+            }
+        )
 
     async def open_permission(
         self,
@@ -135,12 +167,25 @@ class RoomTurnEmitter:
             "auto_allowed": False,
         }
         await self._tools.send_event(
-            content=f"Permission requested: {tool_name}",
+            content=json.dumps(
+                {
+                    ToolEventKey.NAME: tool_name,
+                    ToolEventKey.ARGS: {},
+                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
+                }
+            ),
             message_type="tool_call",
             metadata=metadata,
         )
         await self._tools.send_event(
-            content=f"Permission {outcome}",
+            content=json.dumps(
+                {
+                    ToolEventKey.NAME: tool_name,
+                    ToolEventKey.OUTPUT: f"Permission {outcome}",
+                    ToolEventKey.TOOL_CALL_ID: tool_call_id,
+                    ToolEventKey.IS_ERROR: True,
+                }
+            ),
             message_type="tool_result",
             metadata={**metadata, "permission_outcome": outcome},
         )
