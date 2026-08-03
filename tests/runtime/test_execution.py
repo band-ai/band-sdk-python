@@ -40,6 +40,15 @@ def mock_link():
     participant1.id = "user-1"
     participant1.name = "User One"
     participant1.type = "User"
+    participant1.handle = None
+    participant1.description = None
+    participant1.model_dump.return_value = {
+        "id": "user-1",
+        "name": "User One",
+        "type": "User",
+        "handle": None,
+        "description": None,
+    }
     link.rest.agent_api_participants = MagicMock()
     link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
         return_value=MagicMock(data=[participant1])
@@ -234,16 +243,20 @@ class TestExecutionContextParticipants:
         assert ctx.participants[0]["name"] == "Test User"
 
     def test_add_participant_deduplicates(self, mock_link, mock_handler):
-        """add_participant() should not add duplicates."""
+        """add_participant() should not add a duplicate id, but should refresh
+        its fields in place (e.g. a description learned after first tracking)."""
         ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        participant_id = "user-1"
+        updated_name = "User One Updated"
 
-        ctx.add_participant({"id": "user-1", "name": "User One", "type": "User"})
+        ctx.add_participant({"id": participant_id, "name": "User One", "type": "User"})
         result = ctx.add_participant(
-            {"id": "user-1", "name": "User One Updated", "type": "User"}
+            {"id": participant_id, "name": updated_name, "type": "User"}
         )
 
         assert result is False
         assert len(ctx.participants) == 1
+        assert ctx.participants[0]["name"] == updated_name
 
     def test_remove_participant(self, mock_link, mock_handler):
         """remove_participant() should remove from list."""

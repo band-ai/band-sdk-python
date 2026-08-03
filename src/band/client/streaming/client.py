@@ -154,6 +154,8 @@ class ParticipantAddedPayload(BaseModel):
     id: str
     name: str
     type: str
+    handle: str | None = None
+    description: str | None = None
     is_remote: bool | None = None
     is_external: bool | None = None  # Legacy alias for is_remote
 

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
+from band.runtime.participant_tracker import participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -1735,12 +1736,8 @@ class AgentTools(AgentToolsProtocol):
         # Update internal participant cache for immediate mention resolution
         # NOTE: WebSocket will eventually deliver participant_added event, but this
         # allows @mentions to work immediately after add_participant returns.
-        new_participant = {
-            "id": participant_id,
-            "name": participant_name,
-            "type": getattr(participant, "type", "Agent"),
-            "handle": getattr(participant, "handle", None),
-        }
+        new_participant = participant_snapshot(participant.model_dump())
+        new_participant["name"] = participant_name
         self._participants.append(new_participant)
         # Sync back to ExecutionContext so future turns see the update
         if self._ctx is not None:
@@ -1876,26 +1873,21 @@ class AgentTools(AgentToolsProtocol):
         # the LLM just discovered in this turn, even if they joined after
         # AgentTools was constructed. Without this, the LLM can call
         # get_participants, see a new participant, then fail to @mention them.
-        refreshed = [
-            {
-                "id": p.id,
-                "name": p.name,
-                "type": p.type,
-                "handle": getattr(p, "handle", None),
-            }
-            for p in response.data
-        ]
+        refreshed = [participant_snapshot(p.model_dump()) for p in response.data]
 
         # Sync diff back to ExecutionContext so the refresh survives turn
         # boundaries. Without this, a new AgentTools built via from_context()
         # on the next turn would revert to the old participant snapshot.
+        # Every refreshed participant is upserted, not just new ids, so a
+        # field learned after first tracking (e.g. a description that only
+        # shows up on a later REST fetch) reaches the roster too.
         if self._ctx is not None:
             old_ids = {p.get("id") for p in self._participants if p.get("id")}
             new_ids = {p["id"] for p in refreshed if p["id"]}
             for participant_id in old_ids - new_ids:
                 self._ctx.remove_participant(participant_id)
             for participant in refreshed:
-                if participant["id"] and participant["id"] not in old_ids:
+                if participant["id"]:
                     self._ctx.add_participant(participant)
 
         self._participants = refreshed

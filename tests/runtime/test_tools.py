@@ -61,6 +61,7 @@ def mock_rest_client():
     participant1.name = "User One"
     participant1.type = "User"
     participant1.handle = "user-one"
+    participant1.description = None
     participant1.model_dump.return_value = {
         "id": "user-1",
         "name": "User One",
@@ -78,6 +79,13 @@ def mock_rest_client():
     peer1.type = "Agent"
     peer1.handle = "agent-two"
     peer1.description = "Another agent"
+    peer1.model_dump.return_value = {
+        "id": "agent-2",
+        "name": "Agent Two",
+        "type": "Agent",
+        "handle": "agent-two",
+        "description": "Another agent",
+    }
     peers_response = MagicMock()
     peers_response.data = [peer1]
     peers_response.metadata = MagicMock()
@@ -326,6 +334,7 @@ class TestAgentToolsContextSyncBack:
         assert added["name"] == "Agent Two"
         assert added["type"] == "Agent"
         assert added["handle"] == "agent-two"
+        assert added["description"] == "Another agent"
 
     @pytest.mark.asyncio
     async def test_remove_participant_syncs_back_to_ctx(self, mock_rest_client):
@@ -351,6 +360,7 @@ class TestAgentToolsContextSyncBack:
         p_mock.name = "User One"
         p_mock.type = "User"
         p_mock.handle = "user-one"
+        p_mock.description = None
         p_mock.model_dump.return_value = participant
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[p_mock]))
@@ -426,6 +436,7 @@ class TestAgentToolsContextSyncBack:
         p_mock.name = "User One"
         p_mock.type = "User"
         p_mock.handle = "user-one"
+        p_mock.description = None
         p_mock.model_dump.return_value = participant
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[p_mock]))
@@ -820,6 +831,7 @@ class TestAgentToolsGetParticipants:
                 "name": "User One",
                 "type": "User",
                 "handle": "user-one",
+                "description": None,
             }
         ]
 
@@ -874,6 +886,14 @@ class TestAgentToolsGetParticipants:
         new_p.name = "User Two"
         new_p.type = "User"
         new_p.handle = "user-two"
+        new_p.description = None
+        new_p.model_dump.return_value = {
+            "id": "user-2",
+            "name": "User Two",
+            "type": "User",
+            "handle": "user-two",
+            "description": None,
+        }
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[new_p]))
         )

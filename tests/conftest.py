@@ -290,13 +290,7 @@ def make_participant_added_event(
     **kwargs,
 ) -> ParticipantAddedEvent:
     """Create a ParticipantAddedEvent using SDK-native types."""
-    payload = ParticipantAddedPayload(
-        id=participant_id,
-        name=name,
-        type=type,
-        is_remote=kwargs.get("is_remote"),
-        is_external=kwargs.get("is_external"),
-    )
+    payload = ParticipantAddedPayload(id=participant_id, name=name, type=type, **kwargs)
     return ParticipantAddedEvent(room_id=room_id, payload=payload)
 
 

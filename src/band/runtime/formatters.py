@@ -123,6 +123,22 @@ def format_history_for_llm(
     ]
 
 
+# A participant description is agent/user-authored, not platform-controlled, so
+# it lands in every other participant's system prompt unsanctioned. Collapsing
+# it to one line stops it from injecting fake extra roster entries or spoofing
+# the trailing "IMPORTANT:" instruction line below; the length cap keeps one
+# description from dominating the roster message.
+_MAX_PARTICIPANT_DESCRIPTION_LENGTH = 200
+
+
+def _sanitize_participant_description(description: str) -> str:
+    single_line = " ".join(description.split())
+    if len(single_line) > _MAX_PARTICIPANT_DESCRIPTION_LENGTH:
+        single_line = single_line[: _MAX_PARTICIPANT_DESCRIPTION_LENGTH - 1].rstrip()
+        single_line = f"{single_line}…"
+    return single_line
+
+
 def build_participants_message(participants: list[dict]) -> str:
     """
     Build participant list message for LLM context.
@@ -130,7 +146,9 @@ def build_participants_message(participants: list[dict]) -> str:
     Includes instruction to use band_send_message with handles or names.
 
     Args:
-        participants: List of participant dicts with id, name, type, handle
+        participants: List of participant dicts with id, name, type, handle,
+            and optional description (surfaced when present so the model can
+            route by role without a roster tool call).
 
     Returns:
         Formatted string for LLM system message
@@ -143,7 +161,11 @@ def build_participants_message(participants: list[dict]) -> str:
         p_type = p.get("type", "Unknown")
         p_name = p.get("name", "Unknown")
         p_handle = p.get("handle", "Unknown")
-        lines.append(f"- @{p_handle} — {p_name} ({p_type})")
+        line = f"- @{p_handle} — {p_name} ({p_type})"
+        description = p.get("description")
+        if description:
+            line = f"{line}: {_sanitize_participant_description(description)}"
+        lines.append(line)
 
     lines.append("")
     lines.append(

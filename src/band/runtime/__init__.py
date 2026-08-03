@@ -11,7 +11,6 @@ Components:
 Utilities:
     formatters: Pure functions for message formatting
     prompts: System prompt rendering
-    ParticipantTracker: Participant tracking with change detection
     MessageRetryTracker: Message retry tracking
 
 Shutdown:
@@ -56,7 +55,6 @@ from .formatters import (
     build_participants_message,
 )
 from .prompts import render_system_prompt, BASE_INSTRUCTIONS, TEMPLATES
-from .participant_tracker import ParticipantTracker
 from .retry_tracker import MessageRetryTracker
 from .shutdown import GracefulShutdown, run_with_graceful_shutdown
 
@@ -96,7 +94,6 @@ __all__ = [
     "BASE_INSTRUCTIONS",
     "TEMPLATES",
     # Trackers
-    "ParticipantTracker",
     "MessageRetryTracker",
     # Shutdown
     "GracefulShutdown",

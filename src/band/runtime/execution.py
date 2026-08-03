@@ -29,6 +29,7 @@ from typing import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.participant_tracker import participant_snapshot
 from band.client.streaming import DeliveryStatus
 from band.platform.event import (
     MessageEvent,
@@ -271,7 +272,7 @@ class ExecutionContext:
         self._context_cache: ConversationContext | None = None
         self._context_hydrated = False
 
-        # Participant tracking (simplified from ParticipantTracker)
+        # Participant tracking
         self._participants: list[dict[str, Any]] = []
         self._participants_loaded = False
         self._last_participants_sent: list[dict[str, Any]] | None = None
@@ -683,24 +684,25 @@ class ExecutionContext:
 
     # --- Participant management ---
 
-    def add_participant(self, participant: dict) -> bool:
+    def add_participant(self, participant: dict[str, Any]) -> bool:
         """
-        Add participant (from WebSocket event).
+        Add or refresh a participant (from a WebSocket event or a tool's
+        REST resync).
+
+        An existing id is updated in place rather than skipped, so a field
+        learned after the participant was first tracked (e.g. a description
+        that arrives via a later REST fetch) still reaches the roster.
 
         Returns:
-            True if added, False if duplicate
+            True if newly added, False if it already existed (and was refreshed)
         """
-        if any(p.get("id") == participant.get("id") for p in self._participants):
-            return False
+        snapshot = participant_snapshot(participant)
+        for index, existing in enumerate(self._participants):
+            if existing.get("id") == snapshot.get("id"):
+                self._participants[index] = snapshot
+                return False
 
-        self._participants.append(
-            {
-                "id": participant.get("id"),
-                "name": participant.get("name"),
-                "type": participant.get("type"),
-                "handle": participant.get("handle"),
-            }
-        )
+        self._participants.append(snapshot)
         logger.debug(
             "ExecutionContext %s: Added participant %s",
             self.room_id,
@@ -774,13 +776,7 @@ class ExecutionContext:
             )
             if response.data:
                 self._participants = [
-                    {
-                        "id": p.id,
-                        "name": p.name,
-                        "type": p.type,
-                        "handle": getattr(p, "handle", None),
-                    }
-                    for p in response.data
+                    participant_snapshot(p.model_dump()) for p in response.data
                 ]
             self._participants_loaded = True
         except Exception as e:
