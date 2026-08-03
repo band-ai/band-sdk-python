@@ -45,16 +45,19 @@ class CodexItemType(StrEnum):
 _MAX_ERROR_DETAIL_CHARS = 2048
 
 
-# Server-request methods that must never default to anything other than an
-# explicit ``decline`` when the adapter can't produce a real decision.
-# Shared between the adapter and the SDK bridge so a new approval method is
-# added in exactly one place.
-CODEX_APPROVAL_METHODS: frozenset[str] = frozenset(
-    {
-        "item/commandExecution/requestApproval",
-        "item/fileChange/requestApproval",
-    }
-)
+class CodexApprovalMethod(StrEnum):
+    """Server-request methods that must never default to anything other than
+    an explicit ``decline`` when the adapter can't produce a real decision.
+
+    Shared between the adapter and the SDK bridge so a new approval method is
+    added in exactly one place.
+    """
+
+    COMMAND_EXECUTION = "item/commandExecution/requestApproval"
+    FILE_CHANGE = "item/fileChange/requestApproval"
+
+
+CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApprovalMethod)
 
 
 @dataclass

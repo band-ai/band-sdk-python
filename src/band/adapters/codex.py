@@ -37,6 +37,7 @@ from band.integrations.codex import (
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
     ApprovalAuditEntry,
+    CodexApprovalMethod,
     CodexItemType,
     CodexSessionState,
     CodexTokenUsage,
@@ -1859,21 +1860,17 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mcp_args = item.get("arguments", {})
         if not isinstance(mcp_args, dict):
             mcp_args = {}
-        result = item.get("result")
-        error = item.get("error")
-        if result is not None:
-            output = json.dumps(result, default=str)
-        elif error is not None:
-            output = json.dumps(error, default=str)
-        else:
-            output = "completed"
+        output = CodexAdapter._stringify_tool_output(
+            item.get("result"), item.get("error"), default="completed"
+        )
         return CodexToolItem(name, mcp_args, output)
 
     @staticmethod
     def _extract_web_search(item: dict[str, Any]) -> CodexToolItem:
         query = item.get("query", "")
-        action = item.get("action")
-        output = json.dumps(action, default=str) if action else "completed"
+        output = CodexAdapter._stringify_tool_output(
+            item.get("action"), default="completed"
+        )
         return CodexToolItem("web_search", {"query": query}, output)
 
     @staticmethod
@@ -1894,8 +1891,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             collab_args["prompt"] = item["prompt"]
         if item.get("agents"):
             collab_args["agents"] = item["agents"]
-        result = item.get("result")
-        output = json.dumps(result, default=str) if result is not None else "completed"
+        output = CodexAdapter._stringify_tool_output(
+            item.get("result"), default="completed"
+        )
         return CodexToolItem(name, collab_args, output)
 
     @staticmethod
@@ -1952,20 +1950,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         list with nothing extractable is skipped so an empty summary does not
         become ``"[]"`` or a placeholder.
         """
+
+        def list_item_text(item: Any) -> str | None:
+            if isinstance(item, str):
+                return item
+            if isinstance(item, dict):
+                text = item.get("text")
+                return text if isinstance(text, str) else None
+            return None
+
         for value in values:
             if value is None:
                 continue
             if isinstance(value, str):
                 return value
             if isinstance(value, list):
-                text_parts: list[str] = []
-                for item in value:
-                    if isinstance(item, dict):
-                        text = item.get("text")
-                        if isinstance(text, str):
-                            text_parts.append(text)
-                    elif isinstance(item, str):
-                        text_parts.append(item)
+                text_parts = [
+                    text for item in value if (text := list_item_text(item)) is not None
+                ]
                 if text_parts:
                     return "\n".join(text_parts)
                 continue
@@ -3020,26 +3022,30 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
     @staticmethod
     def _approval_summary(method: str, params: dict[str, Any]) -> str:
-        if method == "item/commandExecution/requestApproval":
-            command = params.get("command")
-            if isinstance(command, str) and command:
-                return f"command: {command}"
-            return "command execution"
-        if method == "item/fileChange/requestApproval":
-            reason = params.get("reason")
-            if isinstance(reason, str) and reason:
-                return f"file changes: {reason}"
-            return "file changes"
-        return method
+        match method:
+            case CodexApprovalMethod.COMMAND_EXECUTION:
+                command = params.get("command")
+                if isinstance(command, str) and command:
+                    return f"command: {command}"
+                return "command execution"
+            case CodexApprovalMethod.FILE_CHANGE:
+                reason = params.get("reason")
+                if isinstance(reason, str) and reason:
+                    return f"file changes: {reason}"
+                return "file changes"
+            case _:
+                return method
 
     @staticmethod
     def _approval_type(method: str) -> str:
         """Return a short label for the approval request type."""
-        if method == "item/commandExecution/requestApproval":
-            return CodexItemType.COMMAND_EXECUTION.value
-        if method == "item/fileChange/requestApproval":
-            return CodexItemType.FILE_CHANGE.value
-        return method
+        match method:
+            case CodexApprovalMethod.COMMAND_EXECUTION:
+                return CodexItemType.COMMAND_EXECUTION.value
+            case CodexApprovalMethod.FILE_CHANGE:
+                return CodexItemType.FILE_CHANGE.value
+            case _:
+                return method
 
     def _session_approval_key(self, method: str, params: dict[str, Any]) -> str:
         """Build a key for session-level auto-approval matching.
@@ -3059,26 +3065,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         ``/approve-session`` into a blanket "approve every future file change"
         switch, which is a security footgun.
         """
-        if method == "item/commandExecution/requestApproval":
-            command = params.get("command")
-            if isinstance(command, str) and command.strip():
-                cmd = command.strip()
-                if self.config.session_approval_granularity == "binary":
-                    return f"commandExecution:{cmd.split()[0]}"
-                return f"commandExecution:{cmd}"
-            # No identifiable command — return empty so session-level approval
-            # is not possible (avoids a blanket wildcard match).
-            return ""
-
-        if method == "item/fileChange/requestApproval":
-            paths = self._extract_file_change_paths(params)
-            if not paths:
-                # No identifiable paths — refuse session-level approval so
-                # one /approve-session can't auto-approve every future file
-                # change in this room.
+        match method:
+            case CodexApprovalMethod.COMMAND_EXECUTION:
+                command = params.get("command")
+                if isinstance(command, str) and command.strip():
+                    cmd = command.strip()
+                    if self.config.session_approval_granularity == "binary":
+                        return f"commandExecution:{cmd.split()[0]}"
+                    return f"commandExecution:{cmd}"
+                # No identifiable command — return empty so session-level
+                # approval is not possible (avoids a blanket wildcard match).
                 return ""
-            # Sort for a stable key regardless of change order.
-            return "fileChange:" + "|".join(sorted(paths))
+
+            case CodexApprovalMethod.FILE_CHANGE:
+                paths = self._extract_file_change_paths(params)
+                if not paths:
+                    # No identifiable paths — refuse session-level approval so
+                    # one /approve-session can't auto-approve every future
+                    # file change in this room.
+                    return ""
+                # Sort for a stable key regardless of change order.
+                return "fileChange:" + "|".join(sorted(paths))
 
         # Unknown method — refuse session-level approval rather than key on
         # the bare method string (which would collapse all future requests
