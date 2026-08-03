@@ -13,7 +13,7 @@ class ParlantLogSettings(LogSettings):
 
 
 def setup_logging(level: LogLevel | None = None) -> None:
-    """Configure logging to show only band logs, hiding noisy dependencies.
+    """Configure logging to show band + band_parlant_agent logs, hiding other noisy dependencies.
 
     Args:
         level: Log level for band namespace (default INFO via BAND_LOG_LEVEL)

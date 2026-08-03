@@ -445,7 +445,9 @@ def configure_logging(
         file_style=file_style,
         file_level=file_level,
     )
-    resolved_log_file = Path(log_file).expanduser().resolve() if log_file else None
+    resolved_log_file = (
+        Path(log_file).expanduser().resolve() if log_file is not None else None
+    )
     if resolved_log_file is not None:
         # Band logs message content at DEBUG in several places (prompt text,
         # tool payloads), so a log file can hold room content — lock the
