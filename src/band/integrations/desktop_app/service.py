@@ -365,8 +365,8 @@ class RoomTranscriptService:
                 or (message.at == after and message.id in seen_at_cursor)
             ):
                 continue
-            message.truncate(self.tuning.band_max_message_chars)
             message.addressed_to_viewer = message.addresses(viewer)
+            message.truncate(self.tuning.band_max_message_chars)
             message.render_mentions(roster)
             messages.append(message)
         messages.sort(key=lambda message: (message.at, message.id))

@@ -10,6 +10,7 @@ from band.integrations.desktop_app.service import AgentTranscriptTools
 from band.integrations.desktop_app.settings import RoomViewTuning
 from tests.integrations.desktop_app.conftest import (
     ROOM_ID,
+    TOM,
     ids,
     mentioned_message,
     message,
@@ -88,6 +89,21 @@ class TestReading:
         result = await room([oversized]).read()
 
         assert result.messages[0].content.endswith("… [truncated]")
+
+    async def test_a_mention_past_the_size_limit_still_addresses_the_agent(
+        self, room: Any
+    ) -> None:
+        live = room([])
+        addressed = mentioned_message("m-1", "2026-01-01T00:00:01Z")
+        addressed["metadata"] = {}
+        addressed["content"] = (
+            "x" * (live.tuning.band_max_message_chars + 1) + f" @[[{TOM['id']}]]"
+        )
+
+        result = await room([addressed]).read()
+
+        assert result.messages[0].addressed_to_viewer
+        assert ids(result.pending_requests) == ["m-1"]
 
     async def test_the_roster_is_cached_until_an_event_refreshes_it(
         self, room: Any

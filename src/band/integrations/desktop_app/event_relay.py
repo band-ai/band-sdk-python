@@ -211,11 +211,19 @@ class DesktopRoomEventRelay:
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        """Start role election without making live events a launch requirement."""
         self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._task = asyncio.create_task(self._supervise())
         try:
             async with asyncio.timeout(RELAY_TUNING.band_relay_start_timeout_s):
                 await self._ready.wait()
+        except TimeoutError:
+            logger.warning(
+                "relay has no role after %.0fs (%s); serving room reads by REST "
+                "while it keeps retrying",
+                RELAY_TUNING.band_relay_start_timeout_s,
+                self.status.last_error or "reason unknown",
+            )
         except BaseException:
             await self.stop()
             raise
