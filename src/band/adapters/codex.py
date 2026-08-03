@@ -1861,7 +1861,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if not isinstance(mcp_args, dict):
             mcp_args = {}
         output = CodexAdapter._stringify_tool_output(
-            item.get("result"), item.get("error"), default="completed"
+            item.get("result"),
+            item.get("error"),
+            default="completed",
+            raw_fallback=True,
         )
         return CodexToolItem(name, mcp_args, output)
 
@@ -1869,7 +1872,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _extract_web_search(item: dict[str, Any]) -> CodexToolItem:
         query = item.get("query", "")
         output = CodexAdapter._stringify_tool_output(
-            item.get("action"), default="completed"
+            item.get("action"), default="completed", raw_fallback=True
         )
         return CodexToolItem("web_search", {"query": query}, output)
 
@@ -1892,7 +1895,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if item.get("agents"):
             collab_args["agents"] = item["agents"]
         output = CodexAdapter._stringify_tool_output(
-            item.get("result"), default="completed"
+            item.get("result"), default="completed", raw_fallback=True
         )
         return CodexToolItem(name, collab_args, output)
 
@@ -1942,13 +1945,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return {"input": value}
 
     @staticmethod
-    def _stringify_tool_output(*values: Any, default: str) -> str:
+    def _stringify_tool_output(
+        *values: Any, default: str, raw_fallback: bool = False
+    ) -> str:
         """Return the first present value as displayable text.
 
         Shared by tool-result narration and thought extraction: strings pass
-        through; lists contribute joined ``str`` / ``dict["text"]`` entries; a
-        list with nothing extractable is skipped so an empty summary does not
-        become ``"[]"`` or a placeholder.
+        through; lists contribute joined ``str`` / ``dict["text"]`` entries.
+
+        A list with nothing extractable has two different honest readings
+        depending on the caller:
+
+        - Thought extraction (``raw_fallback=False``, the default): the list is
+          treated as carrying no information, so it is skipped in favor of the
+          next candidate value (or ``default``) rather than becoming a
+          placeholder like ``"[]"``.
+        - Real tool output (``raw_fallback=True``): a non-text list (e.g. an
+          MCP image/resource content block) is still real data, so it is
+          dumped as JSON instead of being discarded.
         """
 
         def list_item_text(item: Any) -> str | None:
@@ -1970,6 +1984,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 ]
                 if text_parts:
                     return "\n".join(text_parts)
+                if raw_fallback:
+                    return json.dumps(value, default=str)
                 continue
             return json.dumps(value, default=str)
         return default
