@@ -8,6 +8,7 @@ Those must be the same agent — documented in README / ``.env.example``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
@@ -17,6 +18,12 @@ from tests.paths import EXAMPLES_ROOT
 
 ROOT = EXAMPLES_ROOT / "acp" / "copilot_docker"
 AGENT_NAME = "copilot_acp_agent"
+
+
+def flattened_markdown(path: Path) -> str:
+    """File text as one space-joined line without emphasis/backtick markup."""
+    text = path.read_text(encoding="utf-8")
+    return " ".join(text.replace("**", "").replace("`", "").split())
 
 
 @dataclass(frozen=True)
@@ -32,8 +39,7 @@ class VariantIdentity:
 
 
 def _observe_variant(variant: str) -> VariantIdentity:
-    readme = (ROOT / variant / "README.md").read_text(encoding="utf-8")
-    readme = " ".join(readme.replace("**", "").replace("`", "").split())
+    readme = flattened_markdown(ROOT / variant / "README.md")
     env_path = ROOT / variant / ".env.example"
     env_text = env_path.read_text(encoding="utf-8")
     env_values = dotenv_values(env_path)
@@ -49,7 +55,9 @@ def _observe_variant(variant: str) -> VariantIdentity:
             and "same" in readme.lower()
         ),
         client_uses_named_agent=(f'load_agent_config("{AGENT_NAME}")' in client),
-        client_rejects_mismatched_key=("settings.band_agent_key != api_key" in client),
+        # Spelling differs per variant: colocated compares the .env file's key
+        # (what --env-file gave the container), compose the resolved env value.
+        client_rejects_mismatched_key=("!= api_key" in client),
         client_uses_loaded_identity=(
             "agent_id=agent_id" in client and "api_key=api_key" in client
         ),
@@ -84,13 +92,7 @@ def test_compose_passes_agent_key_to_band_mcp() -> None:
 
 
 def test_colocated_launch_passes_agent_key_to_entrypoint() -> None:
-    readme = " ".join(
-        (ROOT / "colocated" / "README.md")
-        .read_text(encoding="utf-8")
-        .replace("**", "")
-        .replace("`", "")
-        .split()
-    )
+    readme = flattened_markdown(ROOT / "colocated" / "README.md")
     entrypoint = (ROOT / "colocated" / "entrypoint.sh").read_text(encoding="utf-8")
 
     assert "docker run --rm --env-file .env" in readme

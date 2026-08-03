@@ -117,14 +117,33 @@ async def absent_from_room(
 ) -> AsyncIterator[None]:
     """Temporarily remove a participant; restore their prior role on exit.
 
-    Always restores in ``finally`` when a prior role existed.
+    Always restores when a prior role existed. If the body raised, a failing
+    restore is logged instead of raised so it never displaces the body's
+    exception as the reported test failure.
     """
     previous_role = await get_participant_role(owner_client, chat_id, participant_id)
-    await ensure_not_in_room(owner_client, chat_id, participant_id)
-    try:
-        yield
-    finally:
+    if previous_role is not None:
+        await owner_client.agent_api_participants.remove_agent_chat_participant(
+            chat_id, participant_id
+        )
+        logger.info("Removed %s from room %s", participant_id, chat_id)
+
+    async def restore() -> None:
         if previous_role is not None:
             await ensure_in_room(
                 owner_client, chat_id, participant_id, role=previous_role
             )
+
+    try:
+        yield
+    except BaseException:
+        try:
+            await restore()
+        except ApiError:
+            logger.exception(
+                "Restore of %s in room %s failed after body error",
+                participant_id,
+                chat_id,
+            )
+        raise
+    await restore()

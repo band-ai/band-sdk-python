@@ -44,7 +44,9 @@ class Settings(BaseSettings):
     """Host client + band-mcp shared settings (field name == env var)."""
 
     model_config = SettingsConfigDict(
-        env_file=_ENV_FILE,
+        # Layered like the old load_dotenv() walk-up: a cwd .env (e.g. repo
+        # root) applies first, the example's own .env wins on conflicts.
+        env_file=(".env", _ENV_FILE),
         env_ignore_empty=True,
         extra="ignore",
         case_sensitive=False,
@@ -53,6 +55,8 @@ class Settings(BaseSettings):
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
     # Same api_key as copilot_acp_agent — band-mcp authenticates with this.
+    # Resolved as process env over .env, matching how compose interpolates
+    # ${BAND_AGENT_KEY} for the band-mcp service, so both see one value.
     band_agent_key: str
     copilot_acp_host: str = "localhost"
     copilot_acp_port: int = 8080

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]", "pydantic-settings"]
+# dependencies = ["band-sdk[acp]", "pydantic-settings", "python-dotenv"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
@@ -24,6 +24,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
@@ -41,10 +42,12 @@ _ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
 class Settings(BaseSettings):
-    """Host client + band-mcp shared settings (field name == env var)."""
+    """Host client settings (field name == env var)."""
 
     model_config = SettingsConfigDict(
-        env_file=_ENV_FILE,
+        # Layered like the old load_dotenv() walk-up: a cwd .env (e.g. repo
+        # root) applies first, the example's own .env wins on conflicts.
+        env_file=(".env", _ENV_FILE),
         env_ignore_empty=True,
         extra="ignore",
         case_sensitive=False,
@@ -52,8 +55,6 @@ class Settings(BaseSettings):
 
     band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
     band_rest_url: str = "https://app.band.ai"
-    # Same api_key as copilot_acp_agent — band-mcp authenticates with this.
-    band_agent_key: str
     copilot_acp_host: str = "localhost"
     copilot_acp_port: int = 8080
     # Path inside the Copilot container (not on the host).
@@ -65,9 +66,13 @@ class Settings(BaseSettings):
 async def main() -> None:
     settings = Settings()
     agent_id, api_key = load_agent_config("copilot_acp_agent")
-    if settings.band_agent_key != api_key:
+    # Check the .env file itself: `docker run --env-file .env` gave band-mcp
+    # exactly that file, so a shell-exported BAND_AGENT_KEY must not satisfy
+    # the shared-identity check on the container's behalf.
+    container_key = dotenv_values(_ENV_FILE).get("BAND_AGENT_KEY")
+    if container_key != api_key:
         raise ValueError(
-            "BAND_AGENT_KEY must match copilot_acp_agent in agent_config.yaml"
+            "BAND_AGENT_KEY in .env must match copilot_acp_agent in agent_config.yaml"
         )
 
     config = CopilotACPAdapterConfig(
