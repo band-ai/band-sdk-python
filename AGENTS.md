@@ -708,6 +708,21 @@ test, where the markdown-docs run actually executes it.
 
 ## Pre-Commit Checklist
 
+Before running the commands below, re-read your own diff once against the
+Coding Standards above — including code you just wrote this session, not only
+code you started from. The two rules that get skipped under time pressure:
+
+- **Single source of truth**: a literal, magic string, or multi-line block
+  re-typed in more than one place (a second copy you just wrote counts) instead
+  of one `StrEnum` / constant / small helper every site references.
+- **Intent-oriented code**: a raw comprehension or dict-poke standing in for a
+  small, intent-named helper — e.g. `[e for e in tools.events_sent if
+  e["message_type"] == "x"]` repeated at each call site instead of one
+  `events_of_type(tools, "x")`.
+
+Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
+these, so this step is the only gate for them.
+
 ```bash
 uv run ruff check .
 uv run ruff format .
@@ -837,10 +852,7 @@ Examples:
 
 ### Pre-Commit Checklist
 
-- Run tests before committing
-- Run linting and formatting
-- Ensure type checking passes
-- Review changes with `git diff`
+See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.
 
 ### Code Review
 
