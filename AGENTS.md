@@ -502,6 +502,14 @@ resolves each in a separate fork.
 
 ## Environment Variables
 
+When running examples, live probes, integration checks, or provisioning
+against a real Band platform, load these from the repo-root `.env.test` —
+not ad-hoc `.env` copies, shell leftovers, or invented values — and never
+print secret values from it. Example-local `.env` files (e.g.
+`examples/**/.env`) may still hold Docker/`GITHUB_TOKEN` config, but Band
+agent keys and platform URLs should stay aligned with `.env.test` /
+`agent_config.yaml` rather than a second source of truth.
+
 - `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
 - `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
 - `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages (the only Band key the baseline toolkit needs — it provisions its own agents)
