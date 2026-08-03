@@ -252,18 +252,6 @@ class LoggingRequest(BaseModel):
             )
         return self
 
-    @model_validator(mode="after")
-    def _fmt_only_with_standard(self) -> LoggingRequest:
-        if self.fmt is not None and self.style != LoggingStyle.STANDARD:
-            raise ValueError("fmt is only supported with style='standard'")
-        if (
-            self.fmt is not None
-            and self.log_file is not None
-            and (self.file_style or LoggingStyle.STANDARD) != LoggingStyle.STANDARD
-        ):
-            raise ValueError("fmt is only supported with file_style='standard'")
-        return self
-
     @property
     def resolved_file_style(self) -> FileStyle | None:
         if self.log_file is None:
@@ -312,7 +300,12 @@ def build_logging_config(
 
     This function touches nothing: applying the result yourself with
     ``log_file`` set means creating the file's parent directory first, which
-    :func:`configure_logging` does for you.
+    :func:`configure_logging` does for you. Applying it yourself with
+    ``dictConfig`` also means ``band`` and any ``extra_loggers`` name gets its
+    existing handlers cleared — ``dictConfig``'s ``loggers`` section is always
+    non-incremental, and this function must list those names to express their
+    level. Use :func:`configure_logging` if a named logger's own handlers need
+    to survive.
 
     Args:
         level: Logging level for the ``band`` logger (and the console handler
@@ -344,9 +337,12 @@ def build_logging_config(
         file_style: File formatter style: ``"standard"`` or ``"json"``.
             Defaults to ``"standard"`` when ``log_file`` is set.
         file_level: Level for the file handler. Defaults to ``level``. When
-            more verbose than ``level``, the ``band`` logger is lowered so
-            records reach the file while the console handler stays at
-            ``level``.
+            more verbose than ``level``, only the ``band`` logger is lowered so
+            its records reach the file while the console handler stays at
+            ``level`` — this is not a sink-wide DEBUG capture. Every other
+            logger stays at ``root_level`` unless named in ``extra_loggers``,
+            which keeps whatever level you give it there regardless of
+            ``file_level``.
 
     Examples:
         ``build_logging_config()``
@@ -411,8 +407,17 @@ def configure_logging(
 ) -> LoggingConfig:
     """Build and apply Band's logging configuration.
 
-    Returns the applied ``dictConfig`` dictionary so callers can inspect the
-    exact configuration.
+    Returns the same declarative dictionary :func:`build_logging_config` would
+    (callers can inspect it), but does not hand ``loggers`` to ``dictConfig``
+    directly: ``dictConfig`` is non-incremental and would unconditionally clear
+    any handlers already attached to ``band`` or an ``extra_loggers`` name (a
+    host-owned shipper, an OTEL ``LoggingHandler``). Instead it applies the
+    root/handlers/formatters section, then sets each named logger's level with
+    :meth:`logging.Logger.setLevel`, which leaves existing handlers and
+    propagation on those loggers untouched. A direct :func:`build_logging_config`
+    consumer who calls ``dictConfig`` on the raw dict does not get this
+    protection — use :func:`configure_logging` when a named logger's own
+    handlers must survive.
 
     Common forms:
         ``configure_logging()``
@@ -440,9 +445,19 @@ def configure_logging(
         file_style=file_style,
         file_level=file_level,
     )
-    if log_file is not None:
-        Path(log_file).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-    logging.config.dictConfig(config)
+    resolved_log_file = Path(log_file).expanduser().resolve() if log_file else None
+    if resolved_log_file is not None:
+        # Band logs message content at DEBUG in several places (prompt text,
+        # tool payloads), so a log file can hold room content — lock the
+        # directory and file down rather than inherit the umask default
+        # (typically 0o755/0o644, world-readable).
+        resolved_log_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        resolved_log_file.parent.chmod(0o700)
+    logging.config.dictConfig({**config, "loggers": {}})
+    if resolved_log_file is not None:
+        resolved_log_file.chmod(0o600)
+    for logger_name, logger_config in config["loggers"].items():
+        logging.getLogger(logger_name).setLevel(logger_config["level"])
     return config
 
 
@@ -517,19 +532,15 @@ def _build_logger_configs(
 ) -> dict[str, LoggingConfig]:
     # Band logs are opt-in at INFO by default; unrelated dependencies stay at
     # the root level unless callers explicitly list them in extra_loggers.
-    loggers: dict[str, LoggingConfig] = {
-        "band": {
-            "level": level,
-            "propagate": True,
-        }
-    }
+    #
+    # No "propagate" key: dictConfig's DictConfigurator.configure_logger only
+    # assigns logger.propagate when the key is present, so omitting it sets a
+    # level without reversing a host's own propagate=False on that logger.
+    loggers: dict[str, LoggingConfig] = {"band": {"level": level}}
     if not extra_loggers:
         return loggers
     for logger_name, logger_level in extra_loggers.items():
-        loggers[logger_name] = {
-            "level": logger_level,
-            "propagate": True,
-        }
+        loggers[logger_name] = {"level": logger_level}
     return loggers
 
 

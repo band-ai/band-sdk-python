@@ -237,6 +237,11 @@ LogSettings().for_application().configure()
 LogSettings.create(log_level=None).for_application().configure()
 ```
 
+The `examples/` scripts read `BAND_LOG_LEVEL` only; the old, informal `LOG_LEVEL`
+var some of them used to read is no longer honored there. `band-bridge` is a
+separate deployable with its own env surface (`BAND_AGENT_ID`, `AGENT_MAPPING`,
+...) — its `LOG_LEVEL` is unrelated and unaffected by this rename.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `BAND_LOG_LEVEL` | `INFO` | Level for the `band` logger (and console when a file sink differs) |
@@ -249,6 +254,11 @@ LogSettings.create(log_level=None).for_application().configure()
 | `BAND_LOG_FILE_STYLE` | `standard` | `standard` or `json` |
 | `BAND_LOG_STREAM` | `stderr` | `stderr` or `stdout` |
 | `BAND_LOG_OVERRIDES` | `{}` | JSON map of logger name → level |
+
+`BAND_LOG_FILE`'s directory and file are created `0700`/`0600` so the log stays
+readable only by the process owner — worth knowing because Band logs message
+content at `DEBUG` (prompt text, tool payloads), so `BAND_LOG_LEVEL=DEBUG` with
+a file sink can persist room content to disk.
 
 `configure_logging()` does not demote dependency loggers by itself. When a
 process needs that, pass `extra_loggers=chatty_logger_levels()` (covers

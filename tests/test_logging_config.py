@@ -54,11 +54,8 @@ def test_build_logging_config_returns_fresh_normalized_dict(monkeypatch) -> None
     assert config["disable_existing_loggers"] is False
     assert config["handlers"]["console"]["stream"] == "ext://sys.stdout"
     assert config["root"] == {"level": logging.WARNING, "handlers": ["console"]}
-    assert config["loggers"]["band"] == {"level": logging.INFO, "propagate": True}
-    assert config["loggers"]["band_parlant_agent"] == {
-        "level": "DEBUG",
-        "propagate": True,
-    }
+    assert config["loggers"]["band"] == {"level": logging.INFO}
+    assert config["loggers"]["band_parlant_agent"] == {"level": "DEBUG"}
 
     formatter = config["formatters"]["console"]
     assert formatter["()"] == "pythonjsonlogger.json.JsonFormatter"
@@ -315,6 +312,37 @@ def test_invalid_file_style_is_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_fmt_is_ignored_by_non_standard_console_style() -> None:
+    """fmt only feeds the standard formatter; rich/json never accept it.
+
+    Rejecting fmt+style="json" used to fire on a combination that was already
+    inert, since the rich/json console builders don't take a fmt argument at
+    all — there was nothing to reject.
+    """
+    config = build_logging_config(style=LoggingStyle.JSON, fmt="%(message)s")
+
+    assert (
+        config["formatters"]["console"]["()"] == "pythonjsonlogger.json.JsonFormatter"
+    )
+
+
+def test_fmt_configures_cleanly_with_a_json_file_sink(tmp_path: Path) -> None:
+    """The file-style arm of the same trap: an author's fmt vs. an env-driven file_style.
+
+    fmt is chosen by the code author; file_style is usually environment-driven
+    (BAND_LOG_FILE_STYLE). The console keeps the custom format while the file
+    sink is JSON, independently.
+    """
+    config = build_logging_config(
+        fmt="%(message)s",
+        log_file=tmp_path / "agent.log",
+        file_style=LoggingStyle.JSON,
+    )
+
+    assert config["formatters"]["console"]["format"] == "%(message)s"
+    assert config["formatters"]["file"]["()"] == "pythonjsonlogger.json.JsonFormatter"
+
+
 def test_configure_logging_creates_parent_directory(tmp_path: Path) -> None:
     log_file = tmp_path / "nested" / "agent.log"
 
@@ -324,6 +352,21 @@ def test_configure_logging_creates_parent_directory(tmp_path: Path) -> None:
 
     assert log_file.exists()
     assert "written to file" in log_file.read_text()
+
+
+def test_configure_logging_locks_down_log_file_permissions(tmp_path: Path) -> None:
+    """Band logs message content at DEBUG, so a log file must not be world-readable.
+
+    The umask default (typically 0o755/0o644) would otherwise leave both the
+    directory and the file readable by anyone on the box.
+    """
+    log_file = tmp_path / "nested" / "dir" / "agent.log"
+
+    with restored_logging():
+        configure_logging(log_file=log_file)
+
+    assert (log_file.parent.stat().st_mode & 0o777) == 0o700
+    assert (log_file.stat().st_mode & 0o777) == 0o600
 
 
 def test_configure_logging_twice_does_not_duplicate_output(

@@ -156,7 +156,7 @@ def configure_logging(*, log_file: Path | None = None) -> None:
     unlike band-acp and band-trigger, whose stdout carries JSON-RPC frames and
     command output, there is no protocol here to protect from a log line.
     """
-    settings = LogSettings(
+    settings = LogSettings.create(
         log_file=log_file,
         log_console_style=LoggingStyle.STANDARD,
         log_file_style=LoggingStyle.STANDARD,

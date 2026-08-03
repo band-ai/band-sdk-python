@@ -36,7 +36,8 @@ class DesktopLogSettings(LogSettings):
 
 def configure() -> None:
     """Route the process's diagnostics to stderr and the rotating file."""
-    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # configure_logging() already creates STATE_DIR as the log file's parent
+    # and chmods it 0o700, so this call doesn't need to do it itself.
     settings = DesktopLogSettings(log_file=LOG_FILE, log_stream=LogStream.STDERR)
     # The room view process is diagnostics-first: raise root to the configured
     # application level so our own loggers are not gated by WARNING, then demote

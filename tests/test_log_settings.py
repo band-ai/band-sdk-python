@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +15,7 @@ from band import (
     LogStream,
     configure_logging_from_env,
 )
+from band.agent import Agent
 from tests.logsupport import (
     RecordingHandler,
     band_log_env,
@@ -150,6 +152,63 @@ def test_host_telemetry_handler_must_be_attached_after_band_configures(
 
     assert attached_after.messages == ["telemetry record"]
     assert attached_before.messages == []
+
+
+def test_host_handler_on_band_logger_survives_configure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlike root, a handler already attached to the named `band` logger must survive.
+
+    dictConfig's non-incremental contract would otherwise clear it silently —
+    breaking the natural "attach my shipper to band, leave root alone" pattern.
+    """
+    shipper = RecordingHandler()
+
+    with restored_logging(), band_log_env(monkeypatch, LEVEL="INFO", FILE=None):
+        logging.getLogger("band").addHandler(shipper)
+        LogSettings().configure()
+        logging.getLogger("band.runtime").info("shipped record")
+        assert shipper in logging.getLogger("band").handlers
+
+    assert shipper.messages == ["shipped record"]
+
+
+def test_configure_does_not_reverse_a_hosts_propagate_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setting a logger's level must not silently re-enable propagation the host disabled.
+
+    Every ``extra_loggers``/``band`` entry used to force ``propagate=True``
+    regardless of what the host had deliberately set.
+    """
+    with (
+        restored_logging("httpx"),
+        band_log_env(monkeypatch, LEVEL="INFO", FILE=None),
+    ):
+        logging.getLogger("httpx").propagate = False
+        logging.getLogger("band").propagate = False
+
+        LogSettings().configure(extra_loggers={"httpx": "WARNING"})
+
+        assert logging.getLogger("httpx").propagate is False
+        assert logging.getLogger("band").propagate is False
+
+
+def test_constructing_an_agent_does_not_touch_root_logging() -> None:
+    """No library code path may configure logging on its own.
+
+    Only band-acp, band-trigger, the desktop server, and the docker launcher
+    call configure_logging today. A future call from inside Agent.create (or
+    similar) would silently hijack every host's logging with no failing test
+    anywhere -- this pins that nothing in the plain Agent construction path
+    does so.
+    """
+    root = logging.getLogger()
+    handlers_before = list(root.handlers)
+
+    Agent(runtime=MagicMock(), adapter=MagicMock())
+
+    assert root.handlers == handlers_before
 
 
 def test_application_configuration_honors_explicit_root_level(

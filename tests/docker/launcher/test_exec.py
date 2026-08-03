@@ -129,6 +129,27 @@ def test_launcher_logging_preserves_iso_format(
     assert re.search(pattern, log_file.read_text(), re.MULTILINE)
 
 
+def test_configure_logging_honors_band_log_file_with_no_explicit_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The no-args call (before the launch path is resolved) must still read BAND_LOG_FILE.
+
+    LogSettings(log_file=None, ...) would beat the environment with an explicit
+    None; LogSettings.create() omits it so BAND_LOG_FILE still applies.
+    """
+    log_file = tmp_path / "early.log"
+
+    with (
+        restored_logging("launcher.early"),
+        band_log_env(monkeypatch, LEVEL="INFO", FILE=str(log_file)),
+    ):
+        launcher_run.configure_logging()
+        logging.getLogger("launcher.early").info("early boot")
+
+    assert "early boot" in log_file.read_text()
+
+
 def test_main_exits_nonzero_on_launch_error(
     workspace: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
