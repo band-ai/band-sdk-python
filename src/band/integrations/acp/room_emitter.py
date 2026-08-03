@@ -126,8 +126,7 @@ class RoomTurnEmitter:
     async def open_permission(
         self,
         *,
-        tool_name: str,
-        tool_call_id: str,
+        call: ACPToolCall,
         session_id: str,
         outcome: str,
     ) -> None:
@@ -140,12 +139,11 @@ class RoomTurnEmitter:
         """
         metadata: dict[str, object] = {
             "permission_request": True,
-            "tool_name": tool_name,
-            "tool_call_id": tool_call_id,
+            "tool_name": call.name,
+            "tool_call_id": call.tool_call_id,
             "acp_session_id": session_id,
             "auto_allowed": False,
         }
-        call = ACPToolCall(tool_call_id=tool_call_id, name=tool_name, arguments={})
         await self._tools.send_event(
             content=call.room_event().model_dump_json(),
             message_type="tool_call",

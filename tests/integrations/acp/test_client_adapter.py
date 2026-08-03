@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.helpers import update_agent_message_text
 
-from band.converters.parsing import parse_tool_result
+from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -776,6 +776,7 @@ class TestACPClientAdapterPermissionHandler:
             tool_call = MagicMock()
             tool_call.title = "rm_rf"
             tool_call.tool_call_id = "tc-danger"
+            tool_call.raw_input = {"path": "/tmp/important"}
 
             result = await adapter_with_mocks._runtime._client.request_permission(
                 options=[
@@ -804,6 +805,9 @@ class TestACPClientAdapterPermissionHandler:
         assert all(
             event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
         )
+        call = parse_tool_call(str(perm_events[0]["content"]))
+        assert call is not None
+        assert call.args == {"path": "/tmp/important"}
         result = parse_tool_result(str(perm_events[1]["content"]))
         assert result is not None
         assert result.output == "Permission cancelled"

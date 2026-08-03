@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
@@ -68,6 +68,23 @@ class ACPToolCall:
     tool_call_id: str
     name: str
     arguments: dict[str, JsonValue]
+
+    @classmethod
+    def from_acp(cls, tool_call: object) -> ACPToolCall:
+        """Normalize an ACP tool-call model into the room lifecycle shape."""
+        name = getattr(tool_call, "title", None) or getattr(
+            tool_call, "name", "unknown"
+        )
+        raw_input = getattr(tool_call, "raw_input", None)
+        return cls(
+            tool_call_id=str(getattr(tool_call, "tool_call_id", "")),
+            name=str(name),
+            arguments=(
+                cast(dict[str, JsonValue], raw_input)
+                if isinstance(raw_input, dict)
+                else {}
+            ),
+        )
 
     def room_event(self) -> ToolCallRoomEvent:
         """Return the canonical Band tool-call payload."""

@@ -22,7 +22,6 @@ from band.integrations.acp.types import (
     ACPToolResult,
     ChunkType,
     CollectedChunk,
-    JsonValue,
     ToolStatus,
 )
 
@@ -324,16 +323,8 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         )
 
     def _tool_call_chunk(self, update: object) -> CollectedChunk:
-        tool_call_id = getattr(update, "tool_call_id", "")
-        title = getattr(update, "title", "")
         raw_input = getattr(update, "raw_input", None)
-        call = ACPToolCall(
-            tool_call_id=str(tool_call_id),
-            name=str(title),
-            arguments=cast(dict[str, JsonValue], raw_input)
-            if isinstance(raw_input, dict)
-            else {},
-        )
+        call = ACPToolCall.from_acp(update)
         metadata = {
             "tool_call_id": call.tool_call_id,
             "raw_input": raw_input,
