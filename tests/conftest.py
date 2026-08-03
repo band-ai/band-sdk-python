@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -280,6 +280,33 @@ def make_room_deleted_event(room_id: str = "room-123") -> RoomDeletedEvent:
     """Create a RoomDeletedEvent using SDK-native types."""
     payload = RoomDeletedPayload(id=room_id)
     return RoomDeletedEvent(room_id=room_id, payload=payload)
+
+
+def make_participant_mock(
+    participant_id: str,
+    name: str,
+    type: str,
+    handle: str | None = None,
+    description: str | None = None,
+) -> MagicMock:
+    """A mock REST participant/peer model: attribute access + ``model_dump()``.
+
+    One field list drives both access styles, so the mock cannot drift into a
+    shape a real Fern model never has. ``mock.name`` must be assigned after
+    construction — passing ``name=`` to ``MagicMock()`` sets the mock's
+    identity, not its ``.name`` attribute.
+    """
+    fields = {
+        "id": participant_id,
+        "name": name,
+        "type": type,
+        "handle": handle,
+        "description": description,
+    }
+    mock = MagicMock(**{k: v for k, v in fields.items() if k != "name"})
+    mock.name = name
+    mock.model_dump.return_value = dict(fields)
+    return mock
 
 
 def make_participant_added_event(

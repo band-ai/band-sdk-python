@@ -22,6 +22,7 @@ from band.runtime.types import ConversationContext, SessionConfig
 from tests.conftest import (
     make_message_event,
     make_participant_added_event,
+    make_participant_mock,
     make_participant_removed_event,
 )
 
@@ -36,19 +37,7 @@ def mock_link():
     link.rest = MagicMock()
 
     # Mock list_agent_chat_participants
-    participant1 = MagicMock()
-    participant1.id = "user-1"
-    participant1.name = "User One"
-    participant1.type = "User"
-    participant1.handle = None
-    participant1.description = None
-    participant1.model_dump.return_value = {
-        "id": "user-1",
-        "name": "User One",
-        "type": "User",
-        "handle": None,
-        "description": None,
-    }
+    participant1 = make_participant_mock("user-1", "User One", "User")
     link.rest.agent_api_participants = MagicMock()
     link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
         return_value=MagicMock(data=[participant1])
@@ -258,6 +247,52 @@ class TestExecutionContextParticipants:
         assert len(ctx.participants) == 1
         assert ctx.participants[0]["name"] == updated_name
 
+    def test_add_participant_merges_sparse_refresh(self, mock_link, mock_handler):
+        """A sparser source (e.g. a WS payload without description/handle) must
+        not erase fields an earlier, richer source already learned."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.add_participant(
+            {
+                "id": "agent-1",
+                "name": "Role Bot",
+                "type": "Agent",
+                "handle": "org/role",
+                "description": "Handles billing",
+            }
+        )
+
+        ctx.add_participant({"id": "agent-1", "name": "Role Bot", "type": "Agent"})
+
+        assert ctx.participants[0]["handle"] == "org/role"
+        assert ctx.participants[0]["description"] == "Handles billing"
+
+    def test_set_participants_replaces_membership_and_merges_fields(
+        self, mock_link, mock_handler
+    ):
+        """set_participants() follows the snapshot's membership exactly, but a
+        field the snapshot omits (the list endpoint has no description) keeps
+        its previously learned value."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.add_participant(
+            {
+                "id": "agent-1",
+                "name": "Role Bot",
+                "type": "Agent",
+                "description": "Handles billing",
+            }
+        )
+        ctx.add_participant({"id": "user-9", "name": "Departed", "type": "User"})
+
+        ctx.set_participants(
+            [
+                {"id": "agent-1", "name": "Role Bot", "type": "Agent"},
+                {"id": "user-2", "name": "New User", "type": "User"},
+            ]
+        )
+
+        assert [p["id"] for p in ctx.participants] == ["agent-1", "user-2"]
+        assert ctx.participants[0]["description"] == "Handles billing"
+
     def test_remove_participant(self, mock_link, mock_handler):
         """remove_participant() should remove from list."""
         ctx = ExecutionContext("room-123", mock_link, mock_handler)
@@ -296,6 +331,15 @@ class TestExecutionContextParticipants:
         ctx.add_participant({"id": "user-1", "name": "User 1", "type": "User"})
         ctx.mark_participants_sent()
         ctx.add_participant({"id": "user-2", "name": "User 2", "type": "User"})
+
+        assert ctx.participants_changed() is True
+
+    def test_participants_changed_true_after_remove(self, mock_link, mock_handler):
+        """participants_changed() should return True after a removal."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.add_participant({"id": "user-1", "name": "User 1", "type": "User"})
+        ctx.mark_participants_sent()
+        ctx.remove_participant("user-1")
 
         assert ctx.participants_changed() is True
 

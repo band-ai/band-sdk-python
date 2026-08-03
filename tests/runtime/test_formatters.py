@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from band.runtime.formatters import (
+    _MAX_PARTICIPANT_DESCRIPTION_LENGTH,
     format_message_for_llm,
     format_history_for_llm,
     build_participants_message,
@@ -204,8 +205,10 @@ class TestBuildParticipantsMessage:
             }
         ]
         result = build_participants_message(participants)
-        assert "@org/role — Role Bot (Agent)" in result
-        assert ":" not in result.split("Role Bot (Agent)", 1)[1].split("\n", 1)[0]
+        roster_line = next(
+            line for line in result.splitlines() if line.startswith("- @")
+        )
+        assert roster_line == "- @org/role — Role Bot (Agent)"
 
     def test_collapses_newlines_in_description(self):
         """A description can't inject fake extra roster lines or spoof the
@@ -246,7 +249,9 @@ class TestBuildParticipantsMessage:
             line for line in result.splitlines() if line.startswith("- @")
         )
         description_part = roster_line.split(": ", 1)[1]
-        assert description_part == ("x" * 199) + "…"
+        limit = _MAX_PARTICIPANT_DESCRIPTION_LENGTH
+        assert description_part == ("x" * (limit - 1)) + "…"
+        assert len(description_part) == limit
 
 
 class TestReplaceUuidMentions:

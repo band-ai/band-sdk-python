@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.runtime.participant_tracker import participant_snapshot
+from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage

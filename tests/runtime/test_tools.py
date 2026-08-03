@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     TOOL_MODELS,
     AgentTools,
@@ -56,36 +57,17 @@ def mock_rest_client():
     )
 
     # Mock list_agent_chat_participants
-    participant1 = MagicMock()
-    participant1.id = "user-1"
-    participant1.name = "User One"
-    participant1.type = "User"
-    participant1.handle = "user-one"
-    participant1.description = None
-    participant1.model_dump.return_value = {
-        "id": "user-1",
-        "name": "User One",
-        "type": "User",
-        "handle": "user-one",
-    }
+    participant1 = make_participant_mock(
+        "user-1", "User One", "User", handle="user-one"
+    )
     client.agent_api_participants.list_agent_chat_participants = AsyncMock(
         return_value=MagicMock(data=[participant1])
     )
 
     # Mock list_agent_peers
-    peer1 = MagicMock()
-    peer1.id = "agent-2"
-    peer1.name = "Agent Two"
-    peer1.type = "Agent"
-    peer1.handle = "agent-two"
-    peer1.description = "Another agent"
-    peer1.model_dump.return_value = {
-        "id": "agent-2",
-        "name": "Agent Two",
-        "type": "Agent",
-        "handle": "agent-two",
-        "description": "Another agent",
-    }
+    peer1 = make_participant_mock(
+        "agent-2", "Agent Two", "Agent", handle="agent-two", description="Another agent"
+    )
     peers_response = MagicMock()
     peers_response.data = [peer1]
     peers_response.metadata = MagicMock()
@@ -355,13 +337,7 @@ class TestAgentToolsContextSyncBack:
         mock_ctx.remove_participant = MagicMock()
 
         # Return same participant from REST so snapshot matches
-        p_mock = MagicMock()
-        p_mock.id = "user-1"
-        p_mock.name = "User One"
-        p_mock.type = "User"
-        p_mock.handle = "user-one"
-        p_mock.description = None
-        p_mock.model_dump.return_value = participant
+        p_mock = make_participant_mock("user-1", "User One", "User", handle="user-one")
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[p_mock]))
         )
@@ -431,13 +407,7 @@ class TestAgentToolsContextSyncBack:
         ctx._participants = [participant]
 
         # REST snapshot must match ctx._participants
-        p_mock = MagicMock()
-        p_mock.id = "user-1"
-        p_mock.name = "User One"
-        p_mock.type = "User"
-        p_mock.handle = "user-one"
-        p_mock.description = None
-        p_mock.model_dump.return_value = participant
+        p_mock = make_participant_mock("user-1", "User One", "User", handle="user-one")
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[p_mock]))
         )
@@ -866,46 +836,35 @@ class TestAgentToolsGetParticipants:
 
         assert tools._participants == []
 
-    async def test_get_participants_syncs_diff_to_ctx(self, mock_rest_client):
-        """get_participants() should sync additions/removals to ExecutionContext
-        so the refreshed cache survives turn boundaries."""
-        old = {"id": "user-1", "name": "User One", "type": "User", "handle": "user-one"}
+    async def test_get_participants_syncs_roster_to_ctx(self, mock_rest_client):
+        """get_participants() must make the ctx roster follow the REST list —
+        stale entries drop (even ctx-only ones this AgentTools never saw) and
+        new ones appear — so the refresh survives turn boundaries."""
+        from band.runtime.execution import ExecutionContext
 
-        mock_ctx = MagicMock()
-        mock_ctx.room_id = "room-123"
-        mock_ctx.link = MagicMock()
-        mock_ctx.link.rest = mock_rest_client
-        mock_ctx.participants = [old]
-        mock_ctx.hub_room_id = None
-        mock_ctx.add_participant = MagicMock()
-        mock_ctx.remove_participant = MagicMock()
+        ctx = ExecutionContext(
+            room_id="room-123",
+            link=MagicMock(rest=mock_rest_client),
+            on_execute=AsyncMock(),
+        )
+        ctx.add_participant(
+            {"id": "user-1", "name": "User One", "type": "User", "handle": "user-one"}
+        )
+        tools = AgentTools.from_context(ctx)
+        # A ctx-only participant that joined after tools were built, then left
+        # before the refresh — it must not survive as a ghost.
+        ctx.add_participant({"id": "user-3", "name": "User Three", "type": "User"})
 
-        # Server returns only a *new* participant — user-1 is gone, user-2 is new.
-        new_p = MagicMock()
-        new_p.id = "user-2"
-        new_p.name = "User Two"
-        new_p.type = "User"
-        new_p.handle = "user-two"
-        new_p.description = None
-        new_p.model_dump.return_value = {
-            "id": "user-2",
-            "name": "User Two",
-            "type": "User",
-            "handle": "user-two",
-            "description": None,
-        }
+        # Server returns only a *new* participant — user-1 and user-3 are gone.
+        new_p = make_participant_mock("user-2", "User Two", "User", handle="user-two")
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[new_p]))
         )
 
-        tools = AgentTools.from_context(mock_ctx)
         await tools.get_participants()
 
-        mock_ctx.remove_participant.assert_called_once_with("user-1")
-        mock_ctx.add_participant.assert_called_once()
-        added = mock_ctx.add_participant.call_args.args[0]
-        assert added["id"] == "user-2"
-        assert added["handle"] == "user-two"
+        assert [p["id"] for p in ctx.participants] == ["user-2"]
+        assert ctx.participants[0]["handle"] == "user-two"
 
     async def test_send_message_mentions_newly_discovered_participant(
         self, mock_rest_client

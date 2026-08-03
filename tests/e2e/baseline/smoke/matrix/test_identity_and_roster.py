@@ -8,8 +8,8 @@ Two complementary probes:
   can't drift (agent name, in-room peer name, out-of-room invitable name).
 * ``test_reports_peer_description_from_passive_roster`` — the agent must answer
   from the always-injected participants list alone (no roster tools), including
-  each peer's ``description``. Red until the passive roster surfaces descriptions
-  that today are dropped at load/tracker.
+  each peer's ``description``. Guards the passive roster's description
+  surfacing end to end (REST load -> participant cache -> roster message).
 
 Three *separate* tolerant assertions over one scoped reply collection in the
 tool-driven smoke (an any-of over all three would green on just one). The room
@@ -17,6 +17,8 @@ UUID and the user's display name stay out under the floors-only policy.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 from tests.e2e.baseline.flaky import flaky_model
@@ -29,13 +31,9 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
 )
 from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.observations.tool_calls import RosterTool
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
-# Roster tools that return ChatParticipantDetails / Peer with description — the
-# cheat path this passive-roster smoke must not take (see CLAUDE.md chat tools).
-GET_PARTICIPANTS_TOOL = "band_get_participants"
-LOOKUP_PEERS_TOOL = "band_lookup_peers"
 
 
 @per_adapter(runs_tool_loop=True)
@@ -49,8 +47,10 @@ async def test_reports_identity_and_roster(
     reply_capture: CaptureFactory,
 ) -> None:
     """The agent names itself, a room member, and an invitable out-of-room peer."""
-    member = await resource_manager.provision_agent("member")
-    invitable = await resource_manager.provision_agent("invitable")
+    member, invitable = await asyncio.gather(
+        resource_manager.provision_agent("member"),
+        resource_manager.provision_agent("invitable"),
+    )
     room_id = await resource_manager.provision_room(
         title=f"e2e-identity-roster-{agent.adapter_id}",
         participants=[agent.id, member.id],
@@ -94,16 +94,19 @@ async def test_reports_peer_description_from_passive_roster(
 
     Two in-room peers get distinct high-entropy descriptions that never appear in
     the user prompt. Quoting both without ``band_get_participants`` /
-    ``band_lookup_peers`` is only possible if the always-injected participants
-    list carried those descriptions — the field the SDK currently drops.
+    ``band_lookup_peers`` (the roster tools whose responses carry description —
+    the cheat path) is only possible if the always-injected participants list
+    carried those descriptions.
     """
-    role = await resource_manager.provision_agent(
-        "role",
-        description=f"Handles exclusively {unique_marker('descrole')} inquiries.",
-    )
-    decoy = await resource_manager.provision_agent(
-        "decoy",
-        description=f"Handles exclusively {unique_marker('descdecoy')} inquiries.",
+    role, decoy = await asyncio.gather(
+        resource_manager.provision_agent(
+            "role",
+            description=f"Handles exclusively {unique_marker('descrole')} inquiries.",
+        ),
+        resource_manager.provision_agent(
+            "decoy",
+            description=f"Handles exclusively {unique_marker('descdecoy')} inquiries.",
+        ),
     )
     room_id = await resource_manager.provision_room(
         title=f"e2e-passive-roster-desc-{agent.adapter_id}",
@@ -125,11 +128,11 @@ async def test_reports_peer_description_from_passive_roster(
 
     # Tools first: if the model cheated via roster tools, fail for that reason
     # before the description floor (otherwise a missing description masks it).
-    assert not calls.fired(GET_PARTICIPANTS_TOOL), (
+    assert not calls.fired(RosterTool.GET_PARTICIPANTS), (
         "band_get_participants fired — description must come from the passive roster, "
         f"not a tool; calls={[c.name for c in calls]}"
     )
-    assert not calls.fired(LOOKUP_PEERS_TOOL), (
+    assert not calls.fired(RosterTool.LOOKUP_PEERS), (
         "band_lookup_peers fired — description must come from the passive roster, "
         f"not a tool; calls={[c.name for c in calls]}"
     )

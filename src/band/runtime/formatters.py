@@ -158,9 +158,11 @@ def build_participants_message(participants: list[dict]) -> str:
 
     lines = ["## Current Participants"]
     for p in participants:
-        p_type = p.get("type", "Unknown")
-        p_name = p.get("name", "Unknown")
-        p_handle = p.get("handle", "Unknown")
+        # `or` fallbacks, not get() defaults: snapshot dicts always carry the
+        # keys, with None when a source didn't know the field.
+        p_type = p.get("type") or "Unknown"
+        p_name = p.get("name") or "Unknown"
+        p_handle = p.get("handle") or "Unknown"
         line = f"- @{p_handle} — {p_name} ({p_type})"
         description = p.get("description")
         if description:

@@ -29,7 +29,7 @@ from typing import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.runtime.participant_tracker import participant_snapshot
+from band.runtime.participants import merge_participant, participant_snapshot
 from band.client.streaming import DeliveryStatus
 from band.platform.event import (
     MessageEvent,
@@ -689,9 +689,11 @@ class ExecutionContext:
         Add or refresh a participant (from a WebSocket event or a tool's
         REST resync).
 
-        An existing id is updated in place rather than skipped, so a field
-        learned after the participant was first tracked (e.g. a description
-        that arrives via a later REST fetch) still reaches the roster.
+        An existing id is merged field-by-field rather than skipped or
+        replaced: a field learned after the participant was first tracked
+        (e.g. a description that arrives via a later REST fetch) reaches the
+        roster, while a sparser source (e.g. a WS payload without description)
+        cannot erase what an earlier source already knew.
 
         Returns:
             True if newly added, False if it already existed (and was refreshed)
@@ -699,7 +701,7 @@ class ExecutionContext:
         snapshot = participant_snapshot(participant)
         for index, existing in enumerate(self._participants):
             if existing.get("id") == snapshot.get("id"):
-                self._participants[index] = snapshot
+                self._participants[index] = merge_participant(existing, snapshot)
                 return False
 
         self._participants.append(snapshot)
@@ -722,6 +724,20 @@ class ExecutionContext:
             p for p in self._participants if p.get("id") != participant_id
         ]
         return len(self._participants) < before
+
+    def set_participants(self, participants: list[dict[str, Any]]) -> None:
+        """Replace the roster from an authoritative snapshot (a REST list).
+
+        Membership follows the snapshot exactly — stale entries drop out —
+        while fields merge per id, so a source that omits a field (e.g. the
+        participants list endpoint carries no description) cannot erase one
+        learned elsewhere.
+        """
+        existing_by_id = {p.get("id"): p for p in self._participants}
+        self._participants = [
+            merge_participant(existing_by_id.get(snapshot.get("id"), {}), snapshot)
+            for snapshot in (participant_snapshot(p) for p in participants)
+        ]
 
     def participants_changed(self) -> bool:
         """Check if membership or any tracked field changed since the last
@@ -778,9 +794,7 @@ class ExecutionContext:
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             if response.data:
-                self._participants = [
-                    participant_snapshot(p.model_dump()) for p in response.data
-                ]
+                self.set_participants([p.model_dump() for p in response.data])
             self._participants_loaded = True
         except Exception as e:
             logger.warning(
