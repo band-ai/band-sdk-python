@@ -299,6 +299,26 @@ class TestExecutionContextParticipants:
 
         assert ctx.participants_changed() is True
 
+    def test_participants_changed_true_after_field_refresh(
+        self, mock_link, mock_handler
+    ):
+        """A same-membership refresh (e.g. a description learned later) must
+        still count as changed, or the LLM never sees the new field."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.add_participant({"id": "user-1", "name": "User 1", "type": "User"})
+        ctx.mark_participants_sent()
+
+        ctx.add_participant(
+            {
+                "id": "user-1",
+                "name": "User 1",
+                "type": "User",
+                "description": "Handles billing",
+            }
+        )
+
+        assert ctx.participants_changed() is True
+
 
 class TestExecutionContextHydration:
     """Test context hydration."""

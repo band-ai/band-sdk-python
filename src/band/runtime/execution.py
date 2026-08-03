@@ -724,13 +724,16 @@ class ExecutionContext:
         return len(self._participants) < before
 
     def participants_changed(self) -> bool:
-        """Check if participants changed since last mark_participants_sent()."""
+        """Check if membership or any tracked field changed since the last
+        mark_participants_sent() — an id-only diff would miss a participant
+        refreshed in place (e.g. a description learned after it first joined)."""
         if self._last_participants_sent is None:
             return True
 
-        last_ids = {p.get("id") for p in self._last_participants_sent}
-        current_ids = {p.get("id") for p in self._participants}
-        return last_ids != current_ids
+        def by_id(participants: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
+            return {p.get("id"): p for p in participants}
+
+        return by_id(self._last_participants_sent) != by_id(self._participants)
 
     def mark_participants_sent(self) -> None:
         """Mark current participants as sent to LLM."""
