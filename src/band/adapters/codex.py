@@ -10,7 +10,7 @@ import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import ClassVar, Any, Callable, Literal, Protocol
+from typing import ClassVar, Any, Callable, Literal, NamedTuple, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -37,6 +37,7 @@ from band.integrations.codex import (
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
     ApprovalAuditEntry,
+    CodexItemType,
     CodexSessionState,
     CodexTokenUsage,
     build_structured_error_metadata,
@@ -97,6 +98,40 @@ _MAX_TASK_TITLES = 500
 # size uniformly regardless of whether the diff contains ASCII or heavy
 # multi-byte content (emoji, CJK).
 _MAX_DIFF_METADATA_BYTES = 64 * 1024
+
+# item/completed "type" values gated on Emit.EXECUTION; dispatched in
+# _extract_tool_item.
+_TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {
+        CodexItemType.COMMAND_EXECUTION,
+        CodexItemType.FILE_CHANGE,
+        CodexItemType.MCP_TOOL_CALL,
+        CodexItemType.WEB_SEARCH,
+        CodexItemType.IMAGE_VIEW,
+        CodexItemType.COLLAB_AGENT_TOOL_CALL,
+        CodexItemType.DYNAMIC_TOOL_CALL,
+    }
+)
+
+# item/completed "type" values gated on Emit.THOUGHTS; dispatched in
+# _extract_thought_text.
+_THOUGHT_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
+    {
+        CodexItemType.REASONING,
+        CodexItemType.PLAN,
+        CodexItemType.CONTEXT_COMPACTION,
+        CodexItemType.ENTERED_REVIEW_MODE,
+        CodexItemType.EXITED_REVIEW_MODE,
+    }
+)
+
+
+class CodexToolItem(NamedTuple):
+    """(name, args, output) for one tool-like item/completed entry."""
+
+    name: str
+    args: dict[str, Any]
+    output: str
 
 
 # ---------------------------------------------------------------------------
@@ -866,7 +901,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     item = params.get("item") if isinstance(params, dict) else {}
                     if isinstance(item, dict):
                         item_type = item.get("type")
-                        if item_type == "agentMessage":
+                        if item_type == CodexItemType.AGENT_MESSAGE:
                             text = item.get("text")
                             if isinstance(text, str) and text:
                                 result.final_text = text
@@ -1718,15 +1753,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     ) -> None:
         """Inner dispatch for item events — may raise on API errors."""
         # Tool-like items gated on Emit.EXECUTION
-        if item_type in {
-            "commandExecution",
-            "fileChange",
-            "mcpToolCall",
-            "webSearch",
-            "imageView",
-            "collabAgentToolCall",
-            "dynamicToolCall",
-        }:
+        if item_type in _TOOL_ITEM_TYPES:
             if Emit.EXECUTION not in self.features.emit:
                 return
             name, args, output = self._extract_tool_item(item_type, item)
@@ -1755,13 +1782,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return
 
         # Thought-like items gated on Emit.THOUGHTS
-        if item_type in {
-            "reasoning",
-            "plan",
-            "contextCompaction",
-            "enteredReviewMode",
-            "exitedReviewMode",
-        }:
+        if item_type in _THOUGHT_ITEM_TYPES:
             if Emit.THOUGHTS not in self.features.emit:
                 return
             text = self._extract_thought_text(item_type, item)
@@ -1777,110 +1798,133 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return
 
         # Skip known non-actionable types
-        if item_type in {"userMessage", "agentMessage"}:
+        if item_type in {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}:
             return
 
         logger.debug("Unhandled item/completed type: %s", item_type)
 
     @staticmethod
-    def _extract_tool_item(
-        item_type: str, item: dict[str, Any]
-    ) -> tuple[str, dict[str, Any], str]:
+    def _extract_tool_item(item_type: str, item: dict[str, Any]) -> CodexToolItem:
         """Extract (name, args, output) for a tool-like item."""
-        if item_type == "commandExecution":
-            command = item.get("command", "")
-            cwd = item.get("cwd", "")
-            args: dict[str, Any] = {"command": command, "cwd": cwd}
-            output_parts: list[str] = []
-            if item.get("aggregated_output"):
-                output_parts.append(str(item["aggregated_output"]))
-            exit_code = item.get("exitCode")
-            if exit_code is not None:
-                output_parts.append(f"exit_code={exit_code}")
-            status = item.get("status", "")
-            output = "\n".join(output_parts) if output_parts else str(status)
-            return "exec", args, output
+        match item_type:
+            case CodexItemType.COMMAND_EXECUTION:
+                return CodexAdapter._extract_command_execution(item)
+            case CodexItemType.FILE_CHANGE:
+                return CodexAdapter._extract_file_change(item)
+            case CodexItemType.MCP_TOOL_CALL:
+                return CodexAdapter._extract_mcp_tool_call(item)
+            case CodexItemType.WEB_SEARCH:
+                return CodexAdapter._extract_web_search(item)
+            case CodexItemType.IMAGE_VIEW:
+                return CodexAdapter._extract_image_view(item)
+            case CodexItemType.COLLAB_AGENT_TOOL_CALL:
+                return CodexAdapter._extract_collab_agent_tool_call(item)
+            case CodexItemType.DYNAMIC_TOOL_CALL:
+                return CodexAdapter._extract_dynamic_tool_call(item)
+            case _:
+                return CodexToolItem(item_type, {}, "completed")
 
-        if item_type == "fileChange":
-            changes = item.get("changes", [])
-            if not isinstance(changes, list):
-                changes = []
-            file_paths = [c.get("path", "") for c in changes if isinstance(c, dict)]
-            return (
-                "file_edit",
-                {"files": file_paths},
-                str(item.get("status", "applied")),
-            )
+    @staticmethod
+    def _extract_command_execution(item: dict[str, Any]) -> CodexToolItem:
+        command = item.get("command", "")
+        cwd = item.get("cwd", "")
+        args: dict[str, Any] = {"command": command, "cwd": cwd}
+        output_parts: list[str] = []
+        if item.get("aggregated_output"):
+            output_parts.append(str(item["aggregated_output"]))
+        exit_code = item.get("exitCode")
+        if exit_code is not None:
+            output_parts.append(f"exit_code={exit_code}")
+        status = item.get("status", "")
+        output = "\n".join(output_parts) if output_parts else str(status)
+        return CodexToolItem("exec", args, output)
 
-        if item_type == "mcpToolCall":
-            server = item.get("server", "")
-            tool = item.get("tool", "")
-            name = f"mcp:{server}/{tool}"
-            mcp_args = item.get("arguments", {})
-            if not isinstance(mcp_args, dict):
-                mcp_args = {}
-            result = item.get("result")
-            error = item.get("error")
-            if result is not None:
-                output = json.dumps(result, default=str)
-            elif error is not None:
-                output = json.dumps(error, default=str)
-            else:
-                output = "completed"
-            return name, mcp_args, output
+    @staticmethod
+    def _extract_file_change(item: dict[str, Any]) -> CodexToolItem:
+        changes = item.get("changes", [])
+        if not isinstance(changes, list):
+            changes = []
+        file_paths = [c.get("path", "") for c in changes if isinstance(c, dict)]
+        return CodexToolItem(
+            "file_edit",
+            {"files": file_paths},
+            str(item.get("status", "applied")),
+        )
 
-        if item_type == "webSearch":
-            query = item.get("query", "")
-            action = item.get("action")
-            output = json.dumps(action, default=str) if action else "completed"
-            return "web_search", {"query": query}, output
+    @staticmethod
+    def _extract_mcp_tool_call(item: dict[str, Any]) -> CodexToolItem:
+        server = item.get("server", "")
+        tool = item.get("tool", "")
+        name = f"mcp:{server}/{tool}"
+        mcp_args = item.get("arguments", {})
+        if not isinstance(mcp_args, dict):
+            mcp_args = {}
+        result = item.get("result")
+        error = item.get("error")
+        if result is not None:
+            output = json.dumps(result, default=str)
+        elif error is not None:
+            output = json.dumps(error, default=str)
+        else:
+            output = "completed"
+        return CodexToolItem(name, mcp_args, output)
 
-        if item_type == "imageView":
-            path = item.get("path", "")
-            return "view_image", {"path": path}, str(item.get("status", "viewed"))
+    @staticmethod
+    def _extract_web_search(item: dict[str, Any]) -> CodexToolItem:
+        query = item.get("query", "")
+        action = item.get("action")
+        output = json.dumps(action, default=str) if action else "completed"
+        return CodexToolItem("web_search", {"query": query}, output)
 
-        if item_type == "collabAgentToolCall":
-            collab_tool = item.get("tool", "")
-            name = f"collab:{collab_tool}"
-            collab_args: dict[str, Any] = {}
-            if item.get("prompt"):
-                collab_args["prompt"] = item["prompt"]
-            if item.get("agents"):
-                collab_args["agents"] = item["agents"]
-            result = item.get("result")
-            output = (
-                json.dumps(result, default=str) if result is not None else "completed"
-            )
-            return name, collab_args, output
+    @staticmethod
+    def _extract_image_view(item: dict[str, Any]) -> CodexToolItem:
+        path = item.get("path", "")
+        return CodexToolItem(
+            "view_image",
+            {"path": path},
+            str(item.get("status", "viewed")),
+        )
 
-        if item_type == "dynamicToolCall":
-            tool = item.get("tool") or item.get("name") or item.get("toolName")
-            if isinstance(tool, dict):
-                tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
-            name = str(tool or "dynamic_tool")
+    @staticmethod
+    def _extract_collab_agent_tool_call(item: dict[str, Any]) -> CodexToolItem:
+        collab_tool = item.get("tool", "")
+        name = f"collab:{collab_tool}"
+        collab_args: dict[str, Any] = {}
+        if item.get("prompt"):
+            collab_args["prompt"] = item["prompt"]
+        if item.get("agents"):
+            collab_args["agents"] = item["agents"]
+        result = item.get("result")
+        output = json.dumps(result, default=str) if result is not None else "completed"
+        return CodexToolItem(name, collab_args, output)
 
-            raw_args = (
-                item.get("arguments")
-                if "arguments" in item
-                else item.get("args")
-                if "args" in item
-                else item.get("input")
-                if "input" in item
-                else item.get("inputJson", {})
-            )
-            args = CodexAdapter._coerce_tool_args(raw_args)
+    @staticmethod
+    def _extract_dynamic_tool_call(item: dict[str, Any]) -> CodexToolItem:
+        tool = item.get("tool") or item.get("name") or item.get("toolName")
+        if isinstance(tool, dict):
+            tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
+        name = str(tool or "dynamic_tool")
 
-            output = CodexAdapter._stringify_tool_output(
-                item.get("result"),
-                item.get("output"),
-                item.get("content"),
-                item.get("error"),
-                item.get("contentItems"),
-                default=str(item.get("status", "completed")),
-            )
-            return name, args, output
+        raw_args = (
+            item.get("arguments")
+            if "arguments" in item
+            else item.get("args")
+            if "args" in item
+            else item.get("input")
+            if "input" in item
+            else item.get("inputJson", {})
+        )
+        args = CodexAdapter._coerce_tool_args(raw_args)
 
-        return item_type, {}, "completed"
+        output = CodexAdapter._stringify_tool_output(
+            item.get("result"),
+            item.get("output"),
+            item.get("content"),
+            item.get("error"),
+            item.get("contentItems"),
+            default=str(item.get("status", "completed")),
+        )
+        return CodexToolItem(name, args, output)
 
     @staticmethod
     def _coerce_tool_args(value: Any) -> dict[str, Any]:
@@ -1938,28 +1982,30 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         informative is present so callers can skip emission instead of posting
         a placeholder.
         """
-        if item_type == "reasoning":
-            text = CodexAdapter._stringify_tool_output(
-                item.get("summary"), default=""
-            ).strip()
-            return text or None
+        match item_type:
+            case CodexItemType.REASONING:
+                text = CodexAdapter._stringify_tool_output(
+                    item.get("summary"), default=""
+                ).strip()
+                return text or None
 
-        if item_type == "plan":
-            text = CodexAdapter._stringify_tool_output(
-                item.get("text"), default=""
-            ).strip()
-            return text or None
+            case CodexItemType.PLAN:
+                text = CodexAdapter._stringify_tool_output(
+                    item.get("text"), default=""
+                ).strip()
+                return text or None
 
-        if item_type == "contextCompaction":
-            return "Context compaction performed"
+            case CodexItemType.CONTEXT_COMPACTION:
+                return "Context compaction performed"
 
-        if item_type in {"enteredReviewMode", "exitedReviewMode"}:
-            text = CodexAdapter._stringify_tool_output(
-                item.get("text"), default=""
-            ).strip()
-            return text or f"Review mode: {item_type}"
+            case CodexItemType.ENTERED_REVIEW_MODE | CodexItemType.EXITED_REVIEW_MODE:
+                text = CodexAdapter._stringify_tool_output(
+                    item.get("text"), default=""
+                ).strip()
+                return text or f"Review mode: {item_type}"
 
-        return None
+            case _:
+                return None
 
     async def _resolve_manual_approval(
         self,
@@ -2990,9 +3036,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _approval_type(method: str) -> str:
         """Return a short label for the approval request type."""
         if method == "item/commandExecution/requestApproval":
-            return "commandExecution"
+            return CodexItemType.COMMAND_EXECUTION.value
         if method == "item/fileChange/requestApproval":
-            return "fileChange"
+            return CodexItemType.FILE_CHANGE.value
         return method
 
     def _session_approval_key(self, method: str, params: dict[str, Any]) -> str:

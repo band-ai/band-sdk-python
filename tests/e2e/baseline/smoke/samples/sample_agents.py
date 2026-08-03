@@ -142,16 +142,24 @@ def reasoning_joke_instruction(name: str) -> str:
     """Drive a turn that needs visible reasoning, with ``name`` as the assert token.
 
     ``name`` is both the person in the joke and the verbatim marker (name ==
-    marker — same pattern as add-band's liveness joke probe). Asking the model
-    to consider how the joke might be badly interpreted pushes reasoning
-    summaries into the turn, so Emit.THOUGHTS smokes can observe thought events
-    without forcing ``band_send_event``.
+    marker — same pattern as add-band's liveness joke probe). The joke itself
+    is asked to be harmless (a plain pun) — asking the model to produce
+    something "that might be badly interpreted" risks a safety refusal instead
+    of a reply, an unrelated false failure. The reasoning hook is a separate
+    ask: weigh several distinct ways even a harmless pun could still land
+    wrong, which pushes multi-step deliberation (and therefore a populated
+    reasoning summary) without needing the joke to be edgy. This is what lets
+    Emit.THOUGHTS smokes observe thought events without forcing
+    ``band_send_event``.
     """
     return (
-        "We want to teach kids to be more PC. Tell a short, light-hearted joke "
-        f'that uses the exact name "{name}" — a joke that might be badly '
-        "interpreted. Consider carefully how this joke might be badly "
-        "interpreted, reason about it, and explain that reasoning to the kids. "
+        "We're building a short lesson for kids on being more PC. First, write "
+        f'one short, harmless pun-based joke using the exact name "{name}" — '
+        "nothing edgy, just wordplay. Then, as the actual lesson: think through "
+        f'at least three distinct ways someone (in this case "{name}") could '
+        "still misread or take offense at even a harmless pun like this, "
+        "weigh how serious each risk "
+        "is, and explain that reasoning to the kids. "
         f'In your final reply, include the exact name "{name}".'
     )
 
