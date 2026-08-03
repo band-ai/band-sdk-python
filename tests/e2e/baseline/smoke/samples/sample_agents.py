@@ -138,6 +138,24 @@ def liveness_probe(marker: str) -> str:
     return f"To confirm you're still active, please reply with the word {marker}."
 
 
+def reasoning_joke_instruction(name: str) -> str:
+    """Drive a turn that needs visible reasoning, with ``name`` as the assert token.
+
+    ``name`` is both the person in the joke and the verbatim marker (name ==
+    marker — same pattern as add-band's liveness joke probe). Asking the model
+    to consider how the joke might be badly interpreted pushes reasoning
+    summaries into the turn, so Emit.THOUGHTS smokes can observe thought events
+    without forcing ``band_send_event``.
+    """
+    return (
+        "We want to teach kids to be more PC. Tell a short, light-hearted joke "
+        f'that uses the exact name "{name}" — a joke that might be badly '
+        "interpreted. Consider carefully how this joke might be badly "
+        "interpreted, reason about it, and explain that reasoning to the kids. "
+        f'In your final reply, include the exact name "{name}".'
+    )
+
+
 def unique_marker(prefix: str) -> str:
     """A high-entropy token to assert verbatim in event/memory content."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"

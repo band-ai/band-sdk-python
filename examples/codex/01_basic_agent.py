@@ -129,7 +129,7 @@ async def main() -> None:
             emit_turn_task_markers=_env_bool("CODEX_TURN_TASK_MARKERS", False),
             fallback_send_agent_text=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
+        features=AdapterFeatures(emit={Emit.TASK_EVENTS, Emit.THOUGHTS}),
     )
 
     agent = Agent.from_config(

@@ -15,7 +15,13 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    AgentInput,
+    Emit,
+    HistoryProvider,
+    PlatformMessage,
+)
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import CodexSessionState
 from band.runtime.custom_tools import CustomToolDef
@@ -2530,6 +2536,68 @@ class TestItemCompletedForwarding:
         assert result_data["tool_call_id"] == "dyn-1"
 
     @pytest.mark.asyncio
+    async def test_item_completed_dynamicToolCall_non_text_list_result_falls_back_to_status(
+        self,
+    ) -> None:
+        """A result list with no extractable text falls through to the status default.
+
+        ``_stringify_tool_output`` skips a list that yields no text parts and
+        tries the next candidate field rather than dumping the uninformative
+        list as JSON (the same skip-and-continue behavior thought extraction
+        relies on to avoid placeholders).
+        """
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "callId": "dyn-2",
+                        "tool": "count_files",
+                        "arguments": {},
+                        "result": [1, 2, 3],
+                        "status": "completed",
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = [
+            e for e in tools.events_sent if e["message_type"] == "tool_result"
+        ]
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
         """reasoning item emits thought event when emit_thought_events=True."""
         events = [
@@ -2582,6 +2650,179 @@ class TestItemCompletedForwarding:
         assert len(thought_events) == 1
         assert "Analyzing the codebase structure" in thought_events[0]["content"]
         assert "Identified key files to modify" in thought_events[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_dict_summary_text_emits_thought(self) -> None:
+        """Reasoning summary entries shaped as {text: ...} use stringify SSOT."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-dict",
+                        "summary": [
+                            {"type": "summary_text", "text": "Weighing the tradeoffs"},
+                            {"type": "summary_text", "text": "Choosing the safer joke"},
+                        ],
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(emit={Emit.THOUGHTS}),
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = [
+            e for e in tools.events_sent if e["message_type"] == "thought"
+        ]
+        assert len(thought_events) == 1
+        assert "Weighing the tradeoffs" in thought_events[0]["content"]
+        assert "Choosing the safer joke" in thought_events[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_empty_reasoning_summary_skips_thought(self) -> None:
+        """Empty reasoning summaries must not post a '(reasoning)' placeholder."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-empty",
+                        "summary": [],
+                    }
+                },
+            ),
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-blank",
+                        "summary": ["", "  "],
+                    }
+                },
+            ),
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-none",
+                        "summary": None,
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(emit={Emit.THOUGHTS}),
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = [
+            e for e in tools.events_sent if e["message_type"] == "thought"
+        ]
+        assert thought_events == []
+
+    @pytest.mark.asyncio
+    async def test_item_completed_empty_plan_text_skips_thought(self) -> None:
+        """Empty plan text must not post a '(plan)' placeholder."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {"item": {"type": "plan", "id": "plan-empty", "text": ""}},
+            ),
+            _event_notification(
+                "item/completed",
+                {"item": {"type": "plan", "id": "plan-blank", "text": "   "}},
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(emit={Emit.THOUGHTS}),
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = [
+            e for e in tools.events_sent if e["message_type"] == "thought"
+        ]
+        assert thought_events == []
 
     @pytest.mark.asyncio
     async def test_item_completed_skipped_when_reporting_disabled(self) -> None:

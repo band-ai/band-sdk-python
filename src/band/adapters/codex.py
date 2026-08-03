@@ -1765,6 +1765,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if Emit.THOUGHTS not in self.features.emit:
                 return
             text = self._extract_thought_text(item_type, item)
+            if not text:
+                # Empty reasoning/plan items carry no information — skip rather
+                # than posting a placeholder like "(reasoning)" / "(plan)".
+                return
             await tools.send_event(
                 content=text,
                 message_type="thought",
@@ -1897,7 +1901,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
     @staticmethod
     def _stringify_tool_output(*values: Any, default: str) -> str:
-        """Return the first present tool output as displayable text."""
+        """Return the first present value as displayable text.
+
+        Shared by tool-result narration and thought extraction: strings pass
+        through; lists contribute joined ``str`` / ``dict["text"]`` entries; a
+        list with nothing extractable is skipped so an empty summary does not
+        become ``"[]"`` or a placeholder.
+        """
         for value in values:
             if value is None:
                 continue
@@ -1914,31 +1924,42 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         text_parts.append(item)
                 if text_parts:
                     return "\n".join(text_parts)
+                continue
             return json.dumps(value, default=str)
         return default
 
     @staticmethod
-    def _extract_thought_text(item_type: str, item: dict[str, Any]) -> str:
-        """Extract display text for a thought-like item."""
+    def _extract_thought_text(item_type: str, item: dict[str, Any]) -> str | None:
+        """Extract display text for a thought-like item.
+
+        Reasoning summaries and plan text go through
+        :meth:`_stringify_tool_output` (single source of truth for turning
+        protocol payloads into display text). Returns ``None`` when nothing
+        informative is present so callers can skip emission instead of posting
+        a placeholder.
+        """
         if item_type == "reasoning":
-            summary = item.get("summary", [])
-            if isinstance(summary, list):
-                return "\n".join(str(s) for s in summary) or "(reasoning)"
-            return str(summary) or "(reasoning)"
+            text = CodexAdapter._stringify_tool_output(
+                item.get("summary"), default=""
+            ).strip()
+            return text or None
 
         if item_type == "plan":
-            return str(item.get("text", "")) or "(plan)"
+            text = CodexAdapter._stringify_tool_output(
+                item.get("text"), default=""
+            ).strip()
+            return text or None
 
         if item_type == "contextCompaction":
             return "Context compaction performed"
 
         if item_type in {"enteredReviewMode", "exitedReviewMode"}:
-            text = item.get("text", "")
-            if text:
-                return str(text)
-            return f"Review mode: {item_type}"
+            text = CodexAdapter._stringify_tool_output(
+                item.get("text"), default=""
+            ).strip()
+            return text or f"Review mode: {item_type}"
 
-        return str(item.get("text", "")) or item_type
+        return None
 
     async def _resolve_manual_approval(
         self,

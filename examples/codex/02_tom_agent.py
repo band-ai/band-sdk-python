@@ -94,7 +94,7 @@ async def main() -> None:
             include_base_instructions=True,
             fallback_send_agent_text=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
+        features=AdapterFeatures(emit={Emit.TASK_EVENTS, Emit.THOUGHTS}),
     )
 
     agent = Agent.from_config(
