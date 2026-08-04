@@ -108,7 +108,7 @@ async def main() -> None:
     # Create and start agent
     # The gateway connects to Band and starts its HTTP server
 
-    logger.info("Starting A2A Gateway on %s...", adapter.adapter.gateway_url)
+    logger.info("Starting A2A Gateway on %s...", adapter.gateway_url)
     logger.info("Peers will be exposed at:")
     logger.info(
         "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
