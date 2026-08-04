@@ -251,7 +251,13 @@ class TestLifecycleOwnedServer:
         mock_parlant_server.create_agent = AsyncMock(return_value=mock_parlant_agent)
         mock_parlant_server.container = {application_modules: MagicMock()}
         cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=mock_parlant_server)
+
+        async def enter():
+            setup = factory.call_args.kwargs["setup"]
+            await setup(mock_parlant_server)
+            return mock_parlant_server
+
+        cm.__aenter__ = AsyncMock(side_effect=enter)
         cm.__aexit__ = AsyncMock(return_value=False)
         with patch(
             "band.adapters.parlant.running_parlant_server", return_value=cm
@@ -266,7 +272,9 @@ class TestLifecycleOwnedServer:
 
         await adapter.on_started("BandName", "Band description")
 
-        factory.assert_called_once_with(nlp_service="svc")
+        assert factory.call_count == 1
+        assert factory.call_args.kwargs["nlp_service"] == "svc"
+        assert callable(factory.call_args.kwargs["setup"])
         cm.__aenter__.assert_awaited_once()
         server.create_agent.assert_awaited_once_with(name="Tom", description="A cat")
         assert adapter.server is server
@@ -306,6 +314,36 @@ class TestLifecycleOwnedServer:
                 "metadata": {"k": "v"},
             },
         ]
+
+    async def test_guideline_failure_has_no_live_siblings_and_retries_from_failure(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        """A failed create checkpoints earlier work and never starts later work."""
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        mock_parlant_agent.create_guideline = AsyncMock(
+            side_effect=[None, RuntimeError("bad guideline"), None, None]
+        )
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter.add_guideline(condition="first", action="done")
+        adapter.add_guideline(condition="second", action="retry")
+        adapter.add_guideline(condition="third", action="later")
+
+        with pytest.raises(RuntimeError, match="bad guideline"):
+            await adapter.on_started("BandName", "Band description")
+
+        assert [
+            call.kwargs["condition"]
+            for call in mock_parlant_agent.create_guideline.await_args_list
+        ] == ["first", "second"]
+
+        await adapter.on_started("BandName", "Band description")
+
+        assert [
+            call.kwargs["condition"]
+            for call in mock_parlant_agent.create_guideline.await_args_list
+        ] == ["first", "second", "second", "third"]
 
     async def test_add_guideline_after_start_raises(self, owned_server):
         adapter = ParlantAdapter(name="X", description="Y")
@@ -382,7 +420,9 @@ class TestLifecycleOwnedServer:
 
         assert mock_parlant_agent.create_guideline.await_count == 2
 
-    async def test_on_started_failure_releases_owned_server(self, owned_server):
+    async def test_on_started_failure_leaves_cleanup_to_server_context(
+        self, owned_server
+    ):
         _, cm, _ = owned_server
 
         async def configure(srv, agent):
@@ -393,7 +433,9 @@ class TestLifecycleOwnedServer:
         with pytest.raises(RuntimeError, match="configure blew up"):
             await adapter.on_started("BandName", "Band description")
 
-        cm.__aexit__.assert_awaited_once()
+        # A context manager whose __aenter__ raises owns its partial-enter cleanup;
+        # calling __aexit__ again from the adapter would double-close it.
+        cm.__aexit__.assert_not_awaited()
         assert adapter._server is None
 
 

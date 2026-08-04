@@ -283,43 +283,35 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 options = dict(self._server_options)
                 if self._nlp_service is not None:
                     options["nlp_service"] = self._nlp_service
-                server_cm = running_parlant_server(**options)
-                self._server = await server_cm.__aenter__()
-                self._server_cm = server_cm
 
-            assert self._server is not None  # booted above or required by __init__
+                prepared_agent: p.Agent | None = None
+                prepared_app: Application | None = None
 
-            if self._parlant_agent is None:
-                self._parlant_agent = await self._server.create_agent(
-                    name=self._name or agent_name,
-                    description=self._agent_instructions(agent_description),
-                )
-
-            self._tools = create_parlant_tools(self.features)
-
-            pending_specs = self._guideline_specs[self._guidelines_applied_count :]
-            if pending_specs:
-                await asyncio.gather(
-                    *(
-                        self._parlant_agent.create_guideline(
-                            condition=spec.condition,
-                            action=spec.action,
-                            tools=self._tools if spec.tools is None else spec.tools,
-                            **spec.kwargs,
-                        )
-                        for spec in pending_specs
+                async def setup(server: p.Server) -> None:
+                    nonlocal prepared_agent, prepared_app
+                    prepared_agent, prepared_app = await self._prepare_server(
+                        server, agent_name, agent_description
                     )
+
+                server_cm = running_parlant_server(setup=setup, **options)
+                server = await server_cm.__aenter__()
+                self._server_cm = server_cm
+                assert prepared_agent is not None and prepared_app is not None
+                self._server = server
+                self._parlant_agent = prepared_agent
+                self._app = prepared_app
+            else:
+                self._parlant_agent, self._app = await self._prepare_server(
+                    self._server, agent_name, agent_description
                 )
-            self._guidelines_applied_count = len(self._guideline_specs)
-
-            if self._configure is not None:
-                await self._configure(self._server, self._parlant_agent)
-
-            from parlant.core.application import Application  # type: ignore[missing-import]
-
-            self._app = self._server.container[Application]
         except BaseException:
             await self._release_server()
+            if self._owns_server:
+                # The context manager owns cleanup even when its __aenter__ fails,
+                # but it is only retained after a successful enter.
+                self._server = None
+                self._parlant_agent = None
+                self._guidelines_applied_count = 0
             raise
 
         self._started = True
@@ -328,6 +320,39 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             agent_name,
             self._parlant_agent.id,
         )
+
+    async def _prepare_server(
+        self,
+        server: p.Server,
+        agent_name: str,
+        agent_description: str,
+    ) -> tuple[p.Agent, Application]:
+        """Declare everything Parlant must process before its setup phase."""
+        agent = self._parlant_agent
+        if agent is None:
+            agent = await server.create_agent(
+                name=self._name or agent_name,
+                description=self._agent_instructions(agent_description),
+            )
+
+        self._tools = create_parlant_tools(self.features)
+        for spec in self._guideline_specs[self._guidelines_applied_count :]:
+            await agent.create_guideline(
+                condition=spec.condition,
+                action=spec.action,
+                tools=self._tools if spec.tools is None else spec.tools,
+                **spec.kwargs,
+            )
+            # Each successful create is a retry checkpoint. A later failure leaves
+            # no sibling tasks running and never duplicates this guideline.
+            self._guidelines_applied_count += 1
+
+        if self._configure is not None:
+            await self._configure(server, agent)
+
+        from parlant.core.application import Application  # type: ignore[missing-import]
+
+        return agent, server.container[Application]
 
     async def on_message(
         self,

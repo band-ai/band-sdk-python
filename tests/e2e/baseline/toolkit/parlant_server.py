@@ -1,13 +1,12 @@
 """E2E wrapper around the SDK's hang-free in-process Parlant server helper.
 
-The lifecycle mechanics (port reservation, setup-only ``__aenter__``, teardown
-that cancels the serve-forever ``__aexit__`` after Parlant's own cleanup ran)
-live in ``band.integrations.parlant.server.running_parlant_server`` — the same
-helper the ``ParlantAdapter`` uses for its adapter-owned server. This wrapper
-only adds the E2E default the SDK deliberately doesn't have: ``nlp_service``
-defaults to OpenAI, because the E2E env provides ``OPENAI_API_KEY`` while
-Parlant's own default (Emcie's hosted service) needs an ``EMCIE_API_KEY`` the
-env doesn't set.
+The lifecycle mechanics (configuration, evaluation/retriever setup, readiness,
+and hang-free teardown) live in
+``band.integrations.parlant.server.running_parlant_server`` — the same helper the
+``ParlantAdapter`` uses for its adapter-owned server. This wrapper only adds the
+E2E default the SDK deliberately doesn't have: ``nlp_service`` defaults to OpenAI,
+because the E2E env provides ``OPENAI_API_KEY`` while Parlant's own default
+(Emcie's hosted service) needs an ``EMCIE_API_KEY`` the env doesn't set.
 """
 
 from __future__ import annotations

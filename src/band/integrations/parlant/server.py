@@ -1,29 +1,14 @@
-"""Run an in-process Parlant ``Server`` without its serve-forever exit.
+"""Run a fully initialized Parlant ``Server`` in-process.
 
-Parlant's ``Server`` is a "configure in the body, then serve forever on exit"
-context manager: ``__aenter__`` only builds the DI container, and ``__aexit__`` is
-what boots uvicorn (``serve_app`` -> ``uvicorn_server.serve()``), which blocks
-until a SIGINT/SIGTERM. A plain ``async with p.Server() as server: ...`` therefore
-hangs on teardown when nothing interrupts the process.
+Parlant's context-manager body is its configuration phase. Its normal
+``Server.__aexit__`` then evaluates declared entities, installs retrievers, and
+serves until cancelled. This module owns that whole lifecycle: it enters the
+configuration phase, runs an optional setup callback, starts the normal exit path,
+waits for the public readiness signal, and only then yields the server.
 
-The band ``ParlantAdapter`` drives the engine in-process via the container (set up
-by ``__aenter__``), so the HTTP serve phase is never needed at all. This helper
-enters the server (setup only), yields it for the run, and at teardown drives
-``Server.__aexit__``'s *exception branch* with a sentinel exception: handed an
-exception, ``__aexit__`` skips evaluation processing and the serve loop entirely
-and goes straight to cleanup. The startup context manager unwinds ``load_app``'s
-exit stack with the exception set — ``BackgroundTaskService.__aexit__`` cancels
-its tasks on exactly that signal, then the stores/databases/tracers close — each
-generator re-raises the same sentinel instance (so ``contextlib`` returns instead
-of raising), and ``__aexit__`` finally closes the server's own ``_exit_stack``
-(the plugin tool server on ``tool_service_port``). uvicorn never starts, so there
-is nothing to hang on, cancel, or race.
-
-Version note: verified against parlant 3.3.2, the pinned floor — its exception
-branch runs both the startup-context unwind and ``_exit_stack.aclose()``, and
-``BackgroundTaskService`` cancels its tasks on an exceptional exit. A Parlant
-upgrade that reworks the ``__aexit__`` cleanup path could need this revisited;
-centralising it here keeps that to one place.
+Keeping the exit task here gives one owner responsibility for cancellation and for
+closing Parlant's private resource stack when startup fails before Parlant reaches
+its own cleanup ``finally``.
 """
 
 from __future__ import annotations
@@ -31,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -52,35 +37,25 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["running_parlant_server"]
 
-# Generous ceiling for Parlant's real teardown work: cancelling background tasks,
-# closing stores/databases and the plugin tool server. Hitting it cancels whatever
-# cleanup await is stuck (best-effort) rather than hanging the caller.
+_STARTUP_TIMEOUT_S = 120.0
 _CLEANUP_TIMEOUT_S = 60.0
 
-
-class ServerTeardown(BaseException):
-    """Sentinel driving ``Server.__aexit__``'s no-serve (exception) branch.
-
-    ``BaseException``-derived so no ``except Exception`` inside Parlant's
-    teardown can swallow it and resume toward the serve loop.
-    """
+ServerSetup = Callable[["p.Server"], Awaitable[None]]
 
 
 @asynccontextmanager
 async def running_parlant_server(
+    *,
+    setup: ServerSetup | None = None,
     **server_kwargs: Any,
 ) -> AsyncGenerator[p.Server, None]:
-    """Yield a ready in-process Parlant ``Server``, tearing it down without serving.
+    """Yield a fully set up, ready Parlant server and reliably stop it.
 
-    ``server_kwargs`` are passed straight to ``p.Server(...)``. One default is
-    filled in when the caller omits it: ``port`` / ``tool_service_port`` default to
-    freshly reserved ephemeral ports (see ``reserve_server_ports``) so several
-    agents on one host don't collide on Parlant's fixed defaults. Everything else —
-    including ``nlp_service`` — keeps Parlant's own defaults.
-
-    The agent the caller builds on the yielded server runs against its in-process
-    container; the HTTP API server never comes up at all (see the module docstring
-    for how teardown reaches Parlant's cleanup without it).
+    ``server_kwargs`` are passed straight to ``p.Server(...)``. ``port`` and
+    ``tool_service_port`` default to freshly reserved ephemeral ports. ``setup``
+    runs in Parlant's configuration phase, before guideline evaluation and
+    retriever installation; callers should declare agents, guidelines, journeys,
+    and retrievers there.
     """
     if p is None:
         raise ImportError(
@@ -89,43 +64,124 @@ async def running_parlant_server(
         )
 
     if "port" not in server_kwargs or "tool_service_port" not in server_kwargs:
-        # Reserved on the host this server would bind, so the reservation covers
-        # the interfaces the plugin tool server actually needs.
         ports = reserve_server_ports(server_kwargs.get("host"))
         server_kwargs.setdefault("port", ports.port)
         server_kwargs.setdefault("tool_service_port", ports.tool_service_port)
 
     server = p.Server(**server_kwargs)
     try:
-        await server.__aenter__()  # setup only: builds the DI container, no serving
-    except SystemExit as exc:
-        # Parlant routes SDK/NLP configuration failures through sys.exit(1) after
-        # printing the cause to stderr. Embedded in a host process — possibly
-        # running other agents — that must not die with us: surface a catchable
-        # error instead.
-        raise ValueError(
-            "Parlant server failed to start; see stderr above for the underlying "
-            "configuration error"
-        ) from exc
+        await server.__aenter__()
+    except BaseException as exc:
+        await _close_exit_stack(server)
+        if isinstance(exc, SystemExit):
+            raise ValueError(
+                "Parlant server failed to start; see stderr above for the "
+                "underlying configuration error"
+            ) from exc
+        raise
+
+    try:
+        if setup is not None:
+            await setup(server)
+    except BaseException as exc:
+        await _abort_configuration(server, exc)
+        raise
+
+    exit_task = asyncio.create_task(
+        server.__aexit__(None, None, None),
+        name="parlant-server",
+    )
+    try:
+        await _wait_until_ready(server, exit_task)
+    except BaseException as exc:
+        await _stop_server(server, exit_task, startup_error=exc)
+        raise
+
     try:
         yield server
     finally:
-        await _teardown_without_serving(server)
+        await _stop_server(server, exit_task)
 
 
-async def _teardown_without_serving(server: p.Server) -> None:
-    """Run ``Server.__aexit__``'s cleanup through its exception branch."""
-    signal = ServerTeardown()
+async def _wait_until_ready(server: p.Server, exit_task: asyncio.Task[bool]) -> None:
+    """Wait for readiness, while surfacing setup or serve failures immediately."""
+    ready_task = asyncio.create_task(server.ready.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {ready_task, exit_task},
+            timeout=_STARTUP_TIMEOUT_S,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if exit_task in done:
+            await exit_task
+            raise RuntimeError("Parlant server stopped before becoming ready")
+        if ready_task not in done:
+            raise TimeoutError(
+                f"Parlant server did not become ready within {_STARTUP_TIMEOUT_S}s"
+            )
+    finally:
+        ready_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ready_task
+
+
+async def _abort_configuration(server: p.Server, exc: BaseException) -> None:
+    """Exit a successfully entered server whose configuration failed."""
+    try:
+        await server.__aexit__(type(exc), exc, exc.__traceback__)
+    except BaseException:
+        logger.exception("Parlant cleanup after configuration failure also failed")
+
+
+async def _stop_server(
+    server: p.Server,
+    exit_task: asyncio.Task[bool],
+    *,
+    startup_error: BaseException | None = None,
+) -> None:
+    """Cancel Parlant's serve loop and await its cleanup before returning."""
+    if not exit_task.done():
+        exit_task.cancel()
     try:
         async with asyncio.timeout(_CLEANUP_TIMEOUT_S):
-            # The sentinel is re-raised and re-caught inside Parlant's context
-            # managers and must not escape to the caller even if one layer
-            # re-raises it out of ``__aexit__``.
-            with contextlib.suppress(ServerTeardown):
-                await server.__aexit__(type(signal), signal, None)
+            try:
+                await exit_task
+            except asyncio.CancelledError:
+                pass
+            except BaseException:
+                if startup_error is None:
+                    raise
     except TimeoutError:
         logger.warning(
-            "Parlant server cleanup did not finish within %ss; abandoning it "
-            "(resources may leak until process exit)",
+            "Parlant server cleanup did not finish within %ss; resources may "
+            "remain open until process exit",
             _CLEANUP_TIMEOUT_S,
         )
+
+    # Evaluation/retriever failures occur before Parlant's cleanup finally. The
+    # dependency leaves both stacks open in that case, so close them here.
+    if startup_error is not None and not server.ready.is_set():
+        await _close_startup_context(server, startup_error)
+        await _close_exit_stack(server)
+
+
+async def _close_startup_context(server: p.Server, exc: BaseException) -> None:
+    startup_cm = getattr(server, "_startup_context_manager", None)
+    if startup_cm is None:
+        return
+    try:
+        await startup_cm.__aexit__(type(exc), exc, exc.__traceback__)
+    except BaseException:
+        # It may already have unwound itself. The server-owned exit stack below is
+        # independent and remains safe to close.
+        pass
+
+
+async def _close_exit_stack(server: p.Server) -> None:
+    exit_stack = getattr(server, "_exit_stack", None)
+    if exit_stack is None:
+        return
+    try:
+        await exit_stack.aclose()
+    except BaseException:
+        logger.exception("Failed to close Parlant's server resource stack")
