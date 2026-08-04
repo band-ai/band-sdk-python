@@ -485,7 +485,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         exclude_tools: Iterable[str] | None = None,
         include_categories: Iterable[str] | None = None,
     ) -> AdapterFeatures:
-        """Adopt the inner adapter's resolved features verbatim by default.
+        """Adopt the inner adapter's resolved features, merging any overrides.
 
         No override kwarg given: reuse ``inner.features`` directly rather
         than re-deriving from the mirrored ``SUPPORTED_EMIT``/
@@ -493,7 +493,12 @@ class SlackAdapter(SimpleAdapter[Any]):
         itself further than what it merely supports (e.g. constructed with
         ``emit=()``), and that narrowing must carry through unchanged.
 
-        An explicit override is written onto ``inner.features`` too: a turn
+        A partial override merges over ``inner.features`` field by field,
+        for the same reason: adding ``capabilities=`` must not resurrect
+        emissions the inner was constructed to silence, or drop its tool
+        filters. Only the fields actually supplied change.
+
+        The merged result is written onto ``inner.features`` too: a turn
         dispatches straight to ``self._inner.on_message(...)``, whose body
         reads its own ``self.features`` (the inner instance's), not this
         wrapper's — so the override has to live there to actually take
@@ -507,12 +512,23 @@ class SlackAdapter(SimpleAdapter[Any]):
             and include_categories is None
         ):
             return self._inner.features
+        inner_features = self._inner.features
         resolved = super()._resolve_features(
-            emit=emit,
-            capabilities=capabilities,
-            include_tools=include_tools,
-            exclude_tools=exclude_tools,
-            include_categories=include_categories,
+            emit=inner_features.emit if emit is None else emit,
+            capabilities=(
+                inner_features.capabilities if capabilities is None else capabilities
+            ),
+            include_tools=(
+                inner_features.include_tools if include_tools is None else include_tools
+            ),
+            exclude_tools=(
+                inner_features.exclude_tools if exclude_tools is None else exclude_tools
+            ),
+            include_categories=(
+                inner_features.include_categories
+                if include_categories is None
+                else include_categories
+            ),
         )
         self._inner.features = resolved
         return resolved
@@ -544,6 +560,11 @@ class SlackAdapter(SimpleAdapter[Any]):
             self._router = build_router(self.apps, dispatcher=self._dispatch_event)
         return self._router
 
+    @property
+    def rest(self) -> AsyncRestClient:
+        """The adapter's REST client; raises before the agent starts."""
+        return self.require_rest_client(self._rest)
+
     async def wait_idle(self) -> None:
         """Wait for all background event handlers to complete."""
         while self._background_tasks:
@@ -560,10 +581,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:
-            connection = self.require_platform()
-            self._rest = AsyncRestClient(
-                base_url=connection.rest_url, api_key=connection.api_key
-            )
+            self._rest = self.build_rest_client()
 
         # Propagate the platform connection to the inner adapter. ``Agent.start``
         # injects it on us before calling ``on_started``; the inner adapter
@@ -781,7 +799,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         )
 
         binding = self._room_to_binding[room_id]
-        assert self._rest is not None
         synthesized = PlatformMessage(
             id=f"slack:{ts}",
             room_id=room_id,
@@ -814,7 +831,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             )
 
         slack_client = self._get_client(app)
-        real_tools = AgentTools(room_id=room_id, rest=self._rest, participants=[])
+        real_tools = AgentTools(room_id=room_id, rest=self.rest, participants=[])
         tools = _SlackTeeingTools(
             wrap=real_tools,
             slack=slack_client,
@@ -896,8 +913,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             if existing is not None:
                 return existing, False
 
-            assert self._rest is not None
-            response = await self._rest.agent_api_chats.create_agent_chat(
+            response = await self.rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -938,8 +954,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         thread_ts: str,
         slack_user: str,
     ) -> None:
-        assert self._rest is not None
-        await self._rest.agent_api_events.create_agent_chat_event(
+        await self.rest.agent_api_events.create_agent_chat_event(
             chat_id=room_id,
             event=ChatEventRequest(
                 content="Slack thread context",
@@ -981,7 +996,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         failure here is logged and swallowed so it can't break the reply
         path.
         """
-        assert self._rest is not None
         slack_client = self._get_client(app)
         display_name, handle = await self._resolve_user_label(slack_client, slack_user)
         channel_label = await self._resolve_channel_label(slack_client, channel)
@@ -998,7 +1012,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         content = f"💬 Slack · {channel_label} — {who}: {text}"
 
         try:
-            await self._rest.agent_api_events.create_agent_chat_event(
+            await self.rest.agent_api_events.create_agent_chat_event(
                 chat_id=room_id,
                 event=ChatEventRequest(
                     content=content,

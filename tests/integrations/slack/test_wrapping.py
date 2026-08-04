@@ -327,6 +327,27 @@ def test_explicit_feature_override_reaches_inner():
     assert inner.features.capabilities == frozenset({Capability.MEMORY})
 
 
+def test_partial_feature_override_merges_over_inner_features():
+    """A partial override must not reset the inner's unrelated narrowing.
+
+    Adding only ``capabilities=`` must keep the inner's explicit ``emit=()``
+    silence and its tool filters — merging over ``inner.features``, not
+    re-deriving unsupplied fields from defaults (which would resurrect every
+    supported emission).
+    """
+    inner = _EmitBrain(reply=None)
+    inner.features = AdapterFeatures(
+        emit=(),
+        include_tools=("band_send_message",),
+    )
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    assert inner.features.capabilities == frozenset({Capability.MEMORY})
+    assert inner.features.emit == frozenset()
+    assert inner.features.include_tools == ("band_send_message",)
+    assert adapter.features == inner.features
+
+
 # ── Slack ingress (HTTP webhook → brain invocation) ─────────────────────────
 
 

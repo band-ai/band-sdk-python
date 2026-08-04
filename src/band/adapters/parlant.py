@@ -26,7 +26,6 @@ from band.integrations.parlant.tools import (
     was_message_sent,
 )
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
-from band.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
@@ -104,9 +103,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     def __init__(
         self,
+        *,
         name: str | None = None,
         description: str | None = None,
-        *,
         nlp_service: Any | None = None,
         server_options: dict[str, Any] | None = None,
         server: p.Server | None = None,
@@ -138,8 +137,12 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             parlant_agent: Bring your own ``p.Agent``; requires ``server=``.
             configure: Async callback ``(server, parlant_agent)`` run at startup
                 after guidelines are applied, for full native Parlant API access.
-            system_prompt: Full system prompt override
-            custom_section: Custom instructions appended to agent description
+            system_prompt: Full override of the created Parlant agent's
+                description (its behavioral instructions). Only applies to an
+                adapter-created agent; cannot be combined with ``parlant_agent=``.
+            custom_section: Extra instructions appended to the created agent's
+                description. Ignored when ``system_prompt`` overrides the whole
+                description; cannot be combined with ``parlant_agent=``.
             history_converter: Custom history converter (optional)
             response_timeout: Max seconds to wait for the agent's response per turn.
                 Default 300 (5 min): a cold start — server warmup plus the first
@@ -165,6 +168,14 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 "nlp_service/server_options configure the adapter-owned server; "
                 "they cannot be combined with a caller-provided server="
             )
+        if parlant_agent is not None and (
+            system_prompt is not None or custom_section is not None
+        ):
+            raise ValueError(
+                "system_prompt/custom_section shape the adapter-created agent's "
+                "description; they cannot be applied to a caller-provided "
+                "parlant_agent="
+            )
 
         self._name = name
         self._description = description
@@ -181,11 +192,14 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._response_timeout = response_timeout
         self._response_poll = response_poll
 
-        # Guidelines declared before startup, created on the live agent at start
+        # Guidelines declared before startup, created on the live agent at start.
+        # A restart with a borrowed (still-alive) agent must only create the
+        # specs appended since the last create pass, not the whole list again;
+        # a restart that got a fresh agent (owned server) needs all of them.
+        # This count tracks how many leading specs already exist on the
+        # current self._parlant_agent, so it resets alongside that agent.
         self._guideline_specs: list[GuidelineSpec] = []
-        # Set once the specs exist on the live agent; a restart that keeps a
-        # borrowed server's agent alive must not create them a second time.
-        self._guidelines_applied = False
+        self._guidelines_applied_count = 0
 
         # Band platform tools as Parlant ToolEntry objects (built at start)
         self._tools: list[Any] = []
@@ -200,9 +214,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         # Per-room customer mapping (room_id -> parlant customer_id)
         self._room_customers: dict[str, str] = {}
-
-        # Rendered system prompt (set after start)
-        self._system_prompt: str = ""
 
     def add_guideline(
         self,
@@ -252,17 +263,18 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         """Band platform tools as Parlant ToolEntry objects (built at startup)."""
         return list(self._tools)
 
+    def _agent_instructions(self, agent_description: str) -> str:
+        """Behavioral instructions for the adapter-created Parlant agent."""
+        if self.system_prompt:
+            return self.system_prompt
+        description = self._description or agent_description
+        if self.custom_section:
+            description = f"{description}\n\n{self.custom_section}"
+        return description
+
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Boot the Parlant server (unless borrowed) and configure the agent."""
         await super().on_started(agent_name, agent_description)
-
-        # Render system prompt
-        self._system_prompt = self.system_prompt or render_system_prompt(
-            agent_name=agent_name,
-            agent_description=agent_description,
-            custom_section=self.custom_section or "",
-            features=self.features,
-        )
 
         # A failure below must release the owned server: Agent.start() only runs
         # adapter cleanup for failures *after* on_started, not inside it.
@@ -280,20 +292,20 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             if self._parlant_agent is None:
                 self._parlant_agent = await self._server.create_agent(
                     name=self._name or agent_name,
-                    description=self._description or agent_description,
+                    description=self._agent_instructions(agent_description),
                 )
 
             self._tools = create_parlant_tools(self.features)
 
-            if not self._guidelines_applied:
-                for spec in self._guideline_specs:
-                    await self._parlant_agent.create_guideline(
-                        condition=spec.condition,
-                        action=spec.action,
-                        tools=self._tools if spec.tools is None else spec.tools,
-                        **spec.kwargs,
-                    )
-                self._guidelines_applied = True
+            pending_specs = self._guideline_specs[self._guidelines_applied_count :]
+            for spec in pending_specs:
+                await self._parlant_agent.create_guideline(
+                    condition=spec.condition,
+                    action=spec.action,
+                    tools=self._tools if spec.tools is None else spec.tools,
+                    **spec.kwargs,
+                )
+            self._guidelines_applied_count = len(self._guideline_specs)
 
             if self._configure is not None:
                 await self._configure(self._server, self._parlant_agent)
@@ -830,7 +842,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._server = None
         if self._created_agent:
             self._parlant_agent = None
-            self._guidelines_applied = False
+            self._guidelines_applied_count = 0
         try:
             await server_cm.__aexit__(None, None, None)
         except Exception:

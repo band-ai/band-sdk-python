@@ -65,8 +65,12 @@ def mock_parlant_server():
     # Container returns Application
     server.container = {MagicMock: mock_app}
 
-    # Mock create_customer
+    # Mock create_customer / create_agent
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
+    created_agent = MagicMock()
+    created_agent.id = "parlant-agent-created"
+    created_agent.create_guideline = AsyncMock()
+    server.create_agent = AsyncMock(return_value=created_agent)
 
     return server
 
@@ -118,7 +122,23 @@ class TestInitialization:
         assert adapter._app is None
         assert adapter._room_sessions == {}
         assert adapter._room_customers == {}
-        assert adapter._system_prompt == ""
+
+    def test_prompt_params_rejected_with_borrowed_agent(
+        self, mock_parlant_server, mock_parlant_agent
+    ):
+        """system_prompt/custom_section only shape an adapter-created agent."""
+        with pytest.raises(ValueError, match="parlant_agent"):
+            ParlantAdapter(
+                server=mock_parlant_server,
+                parlant_agent=mock_parlant_agent,
+                system_prompt="You are a custom assistant.",
+            )
+        with pytest.raises(ValueError, match="parlant_agent"):
+            ParlantAdapter(
+                server=mock_parlant_server,
+                parlant_agent=mock_parlant_agent,
+                custom_section="Be helpful.",
+            )
 
 
 class TestOnStarted:
@@ -130,22 +150,18 @@ class TestOnStarted:
         return MagicMock(name="Application")
 
     @pytest.mark.asyncio
-    async def test_renders_system_prompt(
-        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    async def test_custom_section_appended_to_created_agent_description(
+        self, mock_parlant_server, mock_application_class
     ):
-        """Should render system prompt from agent metadata."""
+        """custom_section must reach the created Parlant agent's description."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
-            parlant_agent=mock_parlant_agent,
+            custom_section="Be helpful.",
         )
 
         mock_app = MagicMock()
-
-        # Create a mock module with Application
         mock_module = MagicMock()
         mock_module.Application = mock_application_class
-
-        # Set up container to return app when accessed with Application class
         mock_parlant_server.container = {mock_application_class: mock_app}
 
         with patch.dict(
@@ -156,17 +172,18 @@ class TestOnStarted:
                 agent_name="TestBot", agent_description="A test bot"
             )
 
-        assert adapter._system_prompt != ""
-        assert "TestBot" in adapter._system_prompt
+        mock_parlant_server.create_agent.assert_awaited_once_with(
+            name="TestBot",
+            description="A test bot\n\nBe helpful.",
+        )
 
     @pytest.mark.asyncio
-    async def test_uses_custom_system_prompt_if_provided(
-        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    async def test_system_prompt_overrides_created_agent_description(
+        self, mock_parlant_server, mock_application_class
     ):
-        """Should use custom system_prompt if provided."""
+        """system_prompt must fully replace the created agent's description."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
-            parlant_agent=mock_parlant_agent,
             system_prompt="You are a custom assistant.",
         )
 
@@ -183,7 +200,10 @@ class TestOnStarted:
                 agent_name="TestBot", agent_description="A test bot"
             )
 
-        assert adapter._system_prompt == "You are a custom assistant."
+        mock_parlant_server.create_agent.assert_awaited_once_with(
+            name="TestBot",
+            description="You are a custom assistant.",
+        )
 
     @pytest.mark.asyncio
     async def test_gets_application_from_container(
@@ -391,7 +411,6 @@ class TestOnMessage:
         )
         adapter.agent_name = "TestBot"
         adapter.agent_description = "A test bot"
-        adapter._system_prompt = "Test prompt"
 
         # Mock the application
         mock_app = MagicMock()
@@ -678,7 +697,6 @@ class TestErrorHandling:
             parlant_agent=mock_parlant_agent,
         )
         adapter.agent_name = "TestBot"
-        adapter._system_prompt = "Test prompt"
 
         # Mock app that fails on create_customer_message
         mock_app = MagicMock()
@@ -727,7 +745,6 @@ class TestErrorHandling:
             parlant_agent=mock_parlant_agent,
         )
         adapter.agent_name = "TestBot"
-        adapter._system_prompt = "Test prompt"
 
         mock_app = MagicMock()
         mock_app.sessions = AsyncMock()

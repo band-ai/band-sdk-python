@@ -11,7 +11,7 @@ import functools
 import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
@@ -174,13 +174,17 @@ def _strands_factory(**kw: Any) -> Any:
 def _parlant_factory(**kw: Any) -> Any:
     from band.adapters.parlant import ParlantAdapter
 
+    # A borrowed server with no parlant_agent: system_prompt/custom_section
+    # (exercised via custom_kwargs) only apply to an adapter-created agent,
+    # so the factory lets the adapter create one on the mocked server.
     if "server" not in kw:
-        kw["server"] = MagicMock()
-    if "parlant_agent" not in kw:
         mock_agent = MagicMock()
         mock_agent.id = "parlant-agent-123"
         mock_agent.name = "TestBot"
-        kw["parlant_agent"] = mock_agent
+        mock_agent.create_guideline = AsyncMock()
+        server = MagicMock()
+        server.create_agent = AsyncMock(return_value=mock_agent)
+        kw["server"] = server
     return ParlantAdapter(**kw)
 
 

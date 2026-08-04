@@ -209,9 +209,10 @@ ParlantAdapter(
     server=my_server,                  # bring your own running p.Server (borrowed)
     parlant_agent=my_agent,            # bring your own p.Agent (requires server=)
 
-    # Optional: Custom prompts
-    system_prompt=None,                # Full system prompt override
-    custom_section="...",              # Custom instructions (added to default prompt)
+    # Optional: Custom prompts (adapter-created agent only,
+    # not combinable with parlant_agent=)
+    system_prompt=None,                # Full override of the created agent's description
+    custom_section="...",              # Extra instructions appended to the description
 )
 ```
 
