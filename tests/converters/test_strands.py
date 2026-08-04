@@ -310,6 +310,83 @@ class TestToolPairIntegrity:
         ]
 
 
+class TestOpenAIToolResultSplit:
+    """``split_tool_result_from_text`` keeps a toolResult separate from a held
+    turn instead of merging them, since Strands' OpenAI serializer would
+    otherwise reorder the merged message and strand the tool answer after the
+    text (see ``_merge_consecutive_roles``). Bedrock still needs the merge, so
+    this is opt-in and every other test in this file leaves it off.
+    """
+
+    def test_peer_message_mid_tool_call_stays_separate_from_the_result(self):
+        converter = StrandsHistoryConverter(
+            agent_name="Bot", split_tool_result_from_text=True
+        )
+
+        result = converter.convert(
+            [
+                _tool_call("calc", {"expr": "2+2"}, "call-1"),
+                _text("also, hello"),
+                _tool_result("calc", "4", "call-1"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, success)",
+            "user: text([Alice]: also, hello)",
+        ]
+
+    def test_peer_message_between_parallel_calls_stays_separate(self):
+        converter = StrandsHistoryConverter(
+            agent_name="Bot", split_tool_result_from_text=True
+        )
+
+        result = converter.convert(
+            [
+                _tool_call("a", {}, "call-a"),
+                _text("also, hello"),
+                _tool_call("b", {}, "call-b"),
+                _tool_result("a", "ra", "call-a"),
+                _tool_result("b", "rb", "call-b"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-a) toolUse(call-b)",
+            "user: toolResult(call-a, success) toolResult(call-b, success)",
+            "user: text([Alice]: also, hello)",
+        ]
+
+    def test_synthetic_error_result_stays_separate_from_held_text(self):
+        converter = StrandsHistoryConverter(
+            agent_name="Bot", split_tool_result_from_text=True
+        )
+
+        result = converter.convert(
+            [
+                _tool_call("calc", {}, "call-1"),
+                _text("still there?"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, error)",
+            "user: text([Alice]: still there?)",
+        ]
+
+    def test_two_peer_turns_with_no_tool_result_still_merge(self):
+        """The flag only affects a toolResult->text seam, nothing else."""
+        converter = StrandsHistoryConverter(
+            agent_name="Bot", split_tool_result_from_text=True
+        )
+
+        result = converter.convert([_text("one"), _text("two", sender="Bob")])
+
+        assert _outline(result) == ["user: text([Alice]: one) text([Bob]: two)"]
+
+
 class TestRoleAlternation:
     """Bedrock's Converse rejects a conversation that does not alternate."""
 

@@ -8,6 +8,7 @@ usage, and cleanup.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
@@ -19,6 +20,7 @@ from pydantic import BaseModel
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from strands import tool as strands_tool  # noqa: E402
+from strands.models.openai import OpenAIModel  # noqa: E402
 from strands.types.exceptions import EventLoopException  # noqa: E402
 
 from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
@@ -305,6 +307,61 @@ class TestPromptConfiguration:
 
         assert adapter._system_prompt is not None
         assert "Keep replies concise." in adapter._system_prompt
+
+
+class TestHistoryConverterWiring:
+    """Only a real OpenAIModel should split a toolResult from the text held
+    behind it — Bedrock's bare model-id string (and anything else) must keep
+    the merge, since Bedrock's Converse rejects non-alternating roles.
+    """
+
+    _HISTORY = [
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {"name": "calc", "args": {}, "tool_call_id": "call-1"}
+            ),
+            "message_type": "tool_call",
+        },
+        {
+            "role": "user",
+            "content": "also, hello",
+            "sender_name": "Alice",
+            "message_type": "text",
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "name": "calc",
+                    "output": "4",
+                    "tool_call_id": "call-1",
+                    "is_error": False,
+                }
+            ),
+            "message_type": "tool_result",
+        },
+    ]
+
+    def test_openai_model_splits_the_tool_result_from_the_held_text(self):
+        adapter = StrandsAdapter(
+            model=OpenAIModel(client_args={"api_key": "test"}, model_id="gpt-4o-mini")
+        )
+
+        result = adapter.history_converter.convert(self._HISTORY)
+
+        assert [message["role"] for message in result] == ["assistant", "user", "user"]
+        assert "toolResult" in result[1]["content"][0]
+        assert result[2]["content"] == [{"text": "[Alice]: also, hello"}]
+
+    def test_bedrock_style_model_id_keeps_the_merge(self):
+        adapter = StrandsAdapter(model="us.anthropic.claude-3-sonnet")
+
+        result = adapter.history_converter.convert(self._HISTORY)
+
+        assert [message["role"] for message in result] == ["assistant", "user"]
+        assert "toolResult" in result[1]["content"][0]
+        assert result[1]["content"][1] == {"text": "[Alice]: also, hello"}
 
 
 class TestOnMessage:

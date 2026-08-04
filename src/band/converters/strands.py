@@ -104,21 +104,50 @@ def _patch_orphaned_tool_uses(messages: StrandsMessages) -> None:
             )
 
 
-def _merge_consecutive_roles(messages: StrandsMessages) -> StrandsMessages:
+def _has_tool_result(message: Message) -> bool:
+    """Whether any content block in ``message`` is a toolResult."""
+    return any("toolResult" in block for block in message["content"])
+
+
+def _has_tool_block(message: Message) -> bool:
+    """Whether any content block in ``message`` is a toolUse or toolResult."""
+    return any(
+        "toolUse" in block or "toolResult" in block for block in message["content"]
+    )
+
+
+def _merge_consecutive_roles(
+    messages: StrandsMessages, *, split_tool_result_from_text: bool = False
+) -> StrandsMessages:
     """Combine neighbouring messages that share a role.
 
     Bedrock's Converse rejects a conversation that does not alternate between
     user and assistant, and room history routinely produces same-role
     neighbours: two peers speaking in a row, or a peer's turn landing behind
     the tool results it waited for.
+
+    ``split_tool_result_from_text`` keeps a toolResult message and the plain
+    turn held behind it as two separate same-role messages instead of merging
+    them. Strands' OpenAI provider serializes a Converse message's content by
+    block type, not source order, always emitting the toolResult last — so a
+    merged ``[toolResult, text]`` turn reaches OpenAI as
+    ``[user-text, tool-response]``, stranding the tool answer after the very
+    user turn it was supposed to precede and breaking OpenAI's
+    tool_calls-must-be-followed-by-tool-messages rule. OpenAI has no
+    role-alternation requirement, so leaving the pair unmerged is safe there;
+    Bedrock still needs every same-role run merged, so this stays opt-in.
     """
     merged: StrandsMessages = []
     for message in messages:
         if merged and merged[-1]["role"] == message["role"]:
-            merged[-1]["content"] = list(merged[-1]["content"]) + list(
-                message["content"]
+            keep_separate = split_tool_result_from_text and (
+                _has_tool_result(merged[-1]) and not _has_tool_block(message)
             )
-            continue
+            if not keep_separate:
+                merged[-1]["content"] = list(merged[-1]["content"]) + list(
+                    message["content"]
+                )
+                continue
         merged.append(message)
     return merged
 
@@ -135,12 +164,13 @@ class ConverseTranscript:
     buffered until then, and only then emitted as one paired sequence.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, split_tool_result_from_text: bool = False) -> None:
         self._messages: StrandsMessages = []
         self._tool_uses: list[ContentBlock] = []
         self._tool_results: list[ContentBlock] = []
         self._held_turns: StrandsMessages = []
         self._unanswered: set[str] = set()
+        self._split_tool_result_from_text = split_tool_result_from_text
 
     @property
     def in_tool_exchange(self) -> bool:
@@ -193,7 +223,10 @@ class ConverseTranscript:
         """Return the finished transcript: every call answered, roles alternating."""
         self._close_tool_exchange()
         _patch_orphaned_tool_uses(self._messages)
-        return _merge_consecutive_roles(self._messages)
+        return _merge_consecutive_roles(
+            self._messages,
+            split_tool_result_from_text=self._split_tool_result_from_text,
+        )
 
     def _close_tool_exchange(self) -> None:
         """Emit the exchange's calls, then its results, then the turns it held."""
@@ -213,7 +246,9 @@ class ConverseTranscript:
 class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
     """Convert Band history to Strands Converse messages."""
 
-    def __init__(self, agent_name: str = ""):
+    def __init__(
+        self, agent_name: str = "", *, split_tool_result_from_text: bool = False
+    ):
         """
         Initialize converter.
 
@@ -221,8 +256,13 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
             agent_name: Name of this agent. Messages from this agent are preserved
                        as assistant turns. Messages from other agents are included
                        as user turns with a [name] prefix.
+            split_tool_result_from_text: Keep a toolResult message and the plain
+                       turn held behind it separate rather than merged. Only safe
+                       for providers without a role-alternation requirement — see
+                       ``_merge_consecutive_roles``.
         """
         self._agent_name = agent_name
+        self._split_tool_result_from_text = split_tool_result_from_text
 
     def set_agent_name(self, name: str) -> None:
         """
@@ -235,7 +275,9 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
 
     def convert(self, raw: list[dict[str, Any]]) -> StrandsMessages:
         """Convert platform history to Strands Converse format."""
-        transcript = ConverseTranscript()
+        transcript = ConverseTranscript(
+            split_tool_result_from_text=self._split_tool_result_from_text
+        )
 
         for hist in raw:
             message_type = hist.get("message_type", "text")

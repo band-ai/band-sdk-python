@@ -15,6 +15,7 @@ try:
     from strands.hooks import HookProvider, HookRegistry
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
+    from strands.models.openai import OpenAIModel
     from strands.types.tools import (
         AgentTool,
         ToolGenerator,
@@ -346,8 +347,17 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         features: AdapterFeatures | None = None,
     ) -> None:
         """Create an adapter around a Strands model or Bedrock model identifier."""
+        # Only OpenAI's Converse serializer reorders a merged toolResult+text
+        # message (tool answer emitted after the text, breaking OpenAI's
+        # tool_calls-adjacency rule) — see _merge_consecutive_roles. Bedrock
+        # (including the bare model-id string shorthand Strands treats as
+        # Bedrock) still needs every same-role run merged, so this stays off
+        # for anything but a real OpenAIModel.
+        default_converter = StrandsHistoryConverter(
+            split_tool_result_from_text=isinstance(model, OpenAIModel)
+        )
         super().__init__(
-            history_converter=history_converter or StrandsHistoryConverter(),
+            history_converter=history_converter or default_converter,
             features=features,
         )
         self.model = model
