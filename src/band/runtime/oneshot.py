@@ -49,7 +49,11 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.link import BandLink
 from band.runtime.context_serialization import context_item_to_dict
-from band.runtime.formatters import format_history_for_llm, replace_uuid_mentions
+from band.runtime.formatters import (
+    build_participants_message,
+    format_history_for_llm,
+    replace_uuid_mentions,
+)
 from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
@@ -303,7 +307,12 @@ class OneShotInvoker:
                 msg=msg,
                 tools=tools,
                 history=HistoryProvider(raw=history),
-                participants_msg=None,
+                # OneShotInvoker has no cross-call state to diff the roster
+                # against, so every invocation is "first time" from that
+                # perspective — the same condition under which the
+                # long-running path itself sends the roster (see
+                # ExecutionContext.participants_changed).
+                participants_msg=build_participants_message(participants),
                 contacts_msg=None,
                 is_session_bootstrap=True,
                 room_id=room_id,
