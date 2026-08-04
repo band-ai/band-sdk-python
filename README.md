@@ -255,10 +255,13 @@ separate deployable with its own env surface (`BAND_AGENT_ID`, `AGENT_MAPPING`,
 | `BAND_LOG_STREAM` | `stderr` | `stderr` or `stdout` |
 | `BAND_LOG_OVERRIDES` | `{}` | JSON map of logger name → level |
 
-`BAND_LOG_FILE`'s directory and file are created `0700`/`0600` so the log stays
-readable only by the process owner — worth knowing because Band logs message
-content at `DEBUG` (prompt text, tool payloads), so `BAND_LOG_LEVEL=DEBUG` with
-a file sink can persist room content to disk.
+Band hardens only what it creates for `BAND_LOG_FILE`: directories it has to
+create are `0700`, and the log file — plus every file a rotation replaces it
+with — is created `0600`. A directory or file that already exists keeps the
+mode you gave it. This is worth knowing because Band logs message content at
+`DEBUG` (prompt text, tool payloads), so `BAND_LOG_LEVEL=DEBUG` with a file
+sink can persist room content to disk: if you point it at a path you manage
+yourself, the permissions on it are yours to set.
 
 `configure_logging()` does not demote dependency loggers by itself. When a
 process needs that, pass `extra_loggers=chatty_logger_levels()` (covers

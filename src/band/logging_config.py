@@ -5,11 +5,13 @@ from __future__ import annotations
 import importlib.util
 import logging
 import logging.config
+import logging.handlers
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import IO, Annotated, Any, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -101,6 +103,82 @@ _JSON_RENAME_FIELDS = {
     "levelname": "level",
     "name": "logger",
 }
+
+
+# Band logs message content at DEBUG in several places (prompt text, tool
+# payloads), so a log file can hold room content. Band hardens only what it
+# creates: an existing directory or file belongs to the operator, and narrowing
+# it reaches outside Band entirely — as root, a log path under /tmp would take
+# the whole box's 1777 down to 0700.
+LOG_FILE_MODE = 0o600
+LOG_DIR_MODE = 0o700
+
+
+class OwnerOnlyCreate:
+    """Give log files an owner-only mode at the moment they are created.
+
+    A ``chmod`` after configure only ever protects the first file:
+    ``RotatingFileHandler`` opens a fresh one on every rollover, under the
+    process umask, so a long-lived agent's live log drifts back to ``0644``
+    exactly when it holds the most room content. Setting the mode inside
+    ``_open`` covers the first file and every rollover with one rule, and the
+    backups inherit it because a rollover renames the live file.
+
+    A file that already exists is opened untouched — its mode is the operator's
+    call, the same rule :func:`create_log_directory` follows.
+    """
+
+    baseFilename: str  # noqa: N815 - the attribute logging.FileHandler defines
+
+    def _open(self) -> IO[Any]:
+        try:
+            descriptor = os.open(
+                self.baseFilename,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                LOG_FILE_MODE,
+            )
+        except FileExistsError:
+            pass  # Not ours to re-mode; the handler opens it as it finds it.
+        else:
+            # The creation mode is masked by umask and fchmod is not, so the
+            # pair lands on 0600 whatever the host process set.
+            os.fchmod(descriptor, LOG_FILE_MODE)
+            os.close(descriptor)
+        return super()._open()  # type: ignore[misc]
+
+
+class OwnerOnlyFileHandler(OwnerOnlyCreate, logging.FileHandler):
+    """``FileHandler`` whose file is created owner-only."""
+
+
+class OwnerOnlyRotatingFileHandler(
+    OwnerOnlyCreate, logging.handlers.RotatingFileHandler
+):
+    """``RotatingFileHandler`` whose every generation is created owner-only."""
+
+
+def create_log_directory(path: Path) -> None:
+    """Create the log file's missing parent directories, owner-only.
+
+    Only the segments Band actually creates are hardened. Anything already
+    there is left exactly as the operator has it — Band's job is to not widen
+    a directory's permissions, not to narrow them.
+
+    Each segment is created individually rather than with ``parents=True``,
+    which applies its ``mode`` to the leaf alone and leaves every intermediate
+    directory at the umask default. Losing the race to another process is not
+    an error: that directory is then simply one Band did not create.
+    """
+    missing: list[Path] = []
+    directory = path.expanduser().resolve().parent
+    while not directory.exists() and directory.parent != directory:
+        missing.append(directory)
+        directory = directory.parent
+    for segment in reversed(missing):
+        try:
+            segment.mkdir(mode=LOG_DIR_MODE)
+        except FileExistsError:
+            continue
 
 
 def coerce_log_level(value: object, *, name: str = "level") -> LogLevel:
@@ -445,19 +523,11 @@ def configure_logging(
         file_style=file_style,
         file_level=file_level,
     )
-    resolved_log_file = (
-        Path(log_file).expanduser().resolve() if log_file is not None else None
-    )
-    if resolved_log_file is not None:
-        # Band logs message content at DEBUG in several places (prompt text,
-        # tool payloads), so a log file can hold room content — lock the
-        # directory and file down rather than inherit the umask default
-        # (typically 0o755/0o644, world-readable).
-        resolved_log_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        resolved_log_file.parent.chmod(0o700)
+    if log_file is not None:
+        create_log_directory(Path(log_file))
+    # The handlers create the file itself owner-only (OwnerOnlyCreate), which a
+    # chmod here could not do for the files a rollover replaces.
     logging.config.dictConfig({**config, "loggers": {}})
-    if resolved_log_file is not None:
-        resolved_log_file.chmod(0o600)
     for logger_name, logger_config in config["loggers"].items():
         logging.getLogger(logger_name).setLevel(logger_config["level"])
     return config
@@ -633,13 +703,13 @@ def _file_handler_config(
     filename = str(path.expanduser())
     if max_bytes > 0:
         return {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "band.logging_config.OwnerOnlyRotatingFileHandler",
             "filename": filename,
             "maxBytes": max_bytes,
             "backupCount": backup_count,
         }
     return {
-        "class": "logging.FileHandler",
+        "class": "band.logging_config.OwnerOnlyFileHandler",
         "filename": filename,
     }
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -173,6 +175,32 @@ def test_host_handler_on_band_logger_survives_configure(
     assert shipper.messages == ["shipped record"]
 
 
+def test_configure_leaves_the_whole_band_subtree_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naming `band` in dictConfig's `loggers` reset every `band.*` child too.
+
+    ``_handle_existing_loggers`` clears the handlers of a configured logger's
+    children and returns them to NOTSET/propagate=True, so a host that attached
+    a shipper to ``band.runtime`` or pinned ``band.platform`` to ERROR lost all
+    of it. Dropping the section fixed the subtree, not just ``band`` itself —
+    a different code path from the parent case above, and unguarded until now.
+    """
+    shipper = RecordingHandler()
+
+    with restored_logging("band.runtime"), band_log_env(monkeypatch, FILE=None):
+        child = logging.getLogger("band.runtime")
+        child.addHandler(shipper)
+        child.setLevel(logging.ERROR)
+        child.propagate = False
+
+        LogSettings().configure()
+
+        assert child.handlers == [shipper]
+        assert child.level == logging.ERROR
+        assert child.propagate is False
+
+
 def test_configure_does_not_reverse_a_hosts_propagate_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -194,21 +222,46 @@ def test_configure_does_not_reverse_a_hosts_propagate_false(
         assert logging.getLogger("band").propagate is False
 
 
-def test_constructing_an_agent_does_not_touch_root_logging() -> None:
+def test_creating_an_agent_does_not_touch_root_logging() -> None:
     """No library code path may configure logging on its own.
 
     Only band-acp, band-trigger, the desktop server, and the docker launcher
-    call configure_logging today. A future call from inside Agent.create (or
-    similar) would silently hijack every host's logging with no failing test
-    anywhere -- this pins that nothing in the plain Agent construction path
-    does so.
+    call configure_logging today. This drives ``Agent.create`` — the documented
+    entry point, and where a convenience call would actually get added — rather
+    than the bare constructor, which a regression would route around.
     """
     root = logging.getLogger()
     handlers_before = list(root.handlers)
 
-    Agent(runtime=MagicMock(), adapter=MagicMock())
+    Agent.create(
+        adapter=MagicMock(),
+        agent_id="agent-1",
+        api_key="key-1",
+    )
 
     assert root.handlers == handlers_before
+
+
+def test_importing_the_sdk_does_not_touch_root_logging() -> None:
+    """Importing a library must never configure the host's logging.
+
+    ``band/__init__`` eagerly imports ``band.config.logs``, so this is one
+    stray module-level ``configure()`` away from breaking, and it cannot be
+    observed in-process: by the time a test runs, band is already imported.
+    """
+    probe = (
+        "import band, logging, sys; "
+        "sys.stdout.write(repr(logging.getLogger().handlers))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout == "[]"
 
 
 def test_application_configuration_honors_explicit_root_level(

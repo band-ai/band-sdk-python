@@ -132,6 +132,11 @@ def test_configure_logging_json_outputs_machine_readable_records(
     assert record["service"] == "agent"
 
 
+def mode(path: Path) -> str:
+    """The path's permission bits, spelled the way the octal literal reads."""
+    return oct(path.stat().st_mode & 0o777)
+
+
 def _json_line(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
     return json.loads(capsys.readouterr().out)
 
@@ -262,6 +267,10 @@ def test_rotation_rolls_over_and_keeps_the_requested_backups(tmp_path: Path) -> 
         "agent.log.2",
     ]
     assert log_file.stat().st_size <= 200
+    # A rollover replaces the live file, so a mode set once at configure time
+    # protects only the first generation — and a long-lived agent's newest log
+    # is the one holding the most room content.
+    assert [mode(path) for path in sorted(tmp_path.iterdir())] == ["0o600"] * 3
 
 
 def test_per_logger_level_reaches_the_file_too(tmp_path: Path) -> None:
@@ -354,19 +363,41 @@ def test_configure_logging_creates_parent_directory(tmp_path: Path) -> None:
     assert "written to file" in log_file.read_text()
 
 
-def test_configure_logging_locks_down_log_file_permissions(tmp_path: Path) -> None:
-    """Band logs message content at DEBUG, so a log file must not be world-readable.
+def test_band_creates_its_log_directories_and_file_owner_only(tmp_path: Path) -> None:
+    """Band logs message content at DEBUG, so a log file can hold room content.
 
-    The umask default (typically 0o755/0o644) would otherwise leave both the
-    directory and the file readable by anyone on the box.
+    Every segment Band creates is hardened, not just the leaf — which is all
+    ``mkdir(mode=..., parents=True)`` would do, leaving the intermediates at the
+    umask default.
     """
-    log_file = tmp_path / "nested" / "dir" / "agent.log"
+    log_file = tmp_path / "var" / "band" / "agent.log"
 
     with restored_logging():
         configure_logging(log_file=log_file)
 
-    assert (log_file.parent.stat().st_mode & 0o777) == 0o700
-    assert (log_file.stat().st_mode & 0o777) == 0o600
+    created = (log_file.parent.parent, log_file.parent)
+    assert [mode(path) for path in created] == ["0o700", "0o700"]
+    assert mode(log_file) == "0o600"
+
+
+def test_paths_band_did_not_create_keep_the_modes_they_have(tmp_path: Path) -> None:
+    """Hardening reaches only what Band creates; the rest is the operator's.
+
+    Narrowing what is already there reaches outside Band entirely: as root, a
+    log path under /tmp would take the whole box's 1777 down to 0700, and a log
+    file an operator deliberately made group-readable is theirs to set.
+    """
+    directory = tmp_path / "operator-owned"
+    directory.mkdir()
+    directory.chmod(0o755)
+    log_file = directory / "agent.log"
+    log_file.touch()
+    log_file.chmod(0o644)
+
+    with restored_logging():
+        configure_logging(log_file=log_file)
+
+    assert (mode(directory), mode(log_file)) == ("0o755", "0o644")
 
 
 def test_configure_logging_twice_does_not_duplicate_output(
