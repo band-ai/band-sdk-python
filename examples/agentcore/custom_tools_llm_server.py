@@ -80,7 +80,7 @@ def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
     )
     return AnthropicAdapter(
         model=model,
-        api_key=anthropic_api_key,
+        provider_key=anthropic_api_key,
         prompt=system_prompt,
         features=AdapterFeatures(emit=emit),
         additional_tools=[(WeatherInput, get_weather)],
