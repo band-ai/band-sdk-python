@@ -7,7 +7,10 @@
 # Hub refs are flat (Hub has no nested package path like GHCR's `/image`):
 #   image → docker.io/bandhq/band-python-kit-image
 #   kit   → docker.io/bandhq/band-python-kit
-# Auth: release-environment secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
+# Auth: repository secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN, explicitly
+# forwarded by each caller. The jobs still use the release environment as the
+# deployment gate, but the credentials live at repository scope because GitHub
+# does not reliably expose environment secrets through this reusable workflow.
 # (login-action@v4 / build-push-action@v7 multi-registry pattern — see
 # https://docs.docker.com/build/ci/github-actions/push-multi-registries/).
 #
@@ -27,6 +30,13 @@ name: kit-publish
 
 on:
   workflow_call:
+    secrets:
+      DOCKERHUB_USERNAME:
+        description: Docker Hub organization name
+        required: true
+      DOCKERHUB_TOKEN:
+        description: Docker Hub organization access token
+        required: true
     inputs:
       ref:
         description: Git ref to check out and build from (e.g. band-sdk-vX.Y.Z)
