@@ -334,6 +334,34 @@ class TestLifecycleOwnedServer:
         assert adapter._parlant_agent is mock_parlant_agent
         assert adapter._app is None
 
+    async def test_restart_with_borrowed_server_does_not_duplicate_guidelines(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        """A borrowed agent survives cleanup; its guidelines must not re-create."""
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter.add_guideline(condition="c", action="a")
+
+        await adapter.on_started("BandName", "Band description")
+        await adapter.cleanup_all()
+        await adapter.on_started("BandName", "Band description")
+
+        assert mock_parlant_agent.create_guideline.await_count == 1
+
+    async def test_restart_with_owned_server_applies_guidelines_to_fresh_agent(
+        self, owned_server, mock_parlant_agent
+    ):
+        adapter = ParlantAdapter(name="X", description="Y")
+        adapter.add_guideline(condition="c", action="a")
+
+        await adapter.on_started("BandName", "Band description")
+        await adapter.cleanup_all()
+        await adapter.on_started("BandName", "Band description")
+
+        assert mock_parlant_agent.create_guideline.await_count == 2
+
     async def test_on_started_failure_releases_owned_server(self, owned_server):
         _, cm, _ = owned_server
 

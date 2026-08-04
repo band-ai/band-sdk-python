@@ -192,10 +192,11 @@ class CodexAdapterConfig(BaseSettings):
 
     Every field can be set explicitly (highest priority) or via a
     ``CODEX_``-prefixed environment variable (e.g. ``CODEX_MODEL``,
-    ``CODEX_TRANSPORT``, ``CODEX_APPROVAL_MODE``); ``codex_ws_url`` is the
-    one exception, sourced from the unprefixed ``CODEX_WS_URL`` since the
-    field name already carries the ``codex_`` part. An explicit constructor
-    kwarg always wins over the environment.
+    ``CODEX_TRANSPORT``, ``CODEX_APPROVAL_MODE``); ``codex_ws_url`` is
+    sourced from ``CODEX_WS_URL`` (the field name already carries the
+    ``codex_`` part), and ``emit_turn_task_markers`` also accepts the legacy
+    ``CODEX_TURN_TASK_MARKERS``. An explicit constructor kwarg always wins
+    over the environment.
 
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
@@ -210,8 +211,14 @@ class CodexAdapterConfig(BaseSettings):
     # extra="forbid" (not the usual settings "ignore"): this config is
     # commonly built with many explicit kwargs, so a typo'd field name
     # must fail construction instead of silently vanishing.
+    # populate_by_name: an aliased field stays constructible by its field name
+    # and keeps its prefix-derived environment variable.
     model_config = SettingsConfigDict(
-        env_prefix="CODEX_", case_sensitive=False, extra="forbid", env_ignore_empty=True
+        env_prefix="CODEX_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+        populate_by_name=True,
     )
 
     transport: TransportKind = "stdio"
@@ -229,11 +236,12 @@ class CodexAdapterConfig(BaseSettings):
     custom_section: str = ""
     include_base_instructions: bool = True
     experimental_api: bool = True
+    # A validation_alias names an environment variable verbatim (env_prefix is
+    # not applied), so aliases must be full CODEX_* names — an unprefixed alias
+    # would read a bare env var set for something else entirely.
     emit_turn_task_markers: bool = Field(
         default=False,
-        validation_alias=AliasChoices(
-            "emit_turn_task_markers", "CODEX_TURN_TASK_MARKERS"
-        ),
+        validation_alias=AliasChoices("CODEX_TURN_TASK_MARKERS"),
     )
     fallback_send_agent_text: bool = True
     approval_mode: ApprovalMode = "manual"
@@ -248,7 +256,7 @@ class CodexAdapterConfig(BaseSettings):
     codex_env: dict[str, str] | None = None
     codex_ws_url: str = Field(
         default="ws://127.0.0.1:8765",
-        validation_alias=AliasChoices("codex_ws_url", "CODEX_WS_URL"),
+        validation_alias=AliasChoices("CODEX_WS_URL"),
     )
     enable_self_config_tools: bool = False
     additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)

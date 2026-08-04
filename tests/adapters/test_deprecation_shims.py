@@ -147,7 +147,9 @@ class TestLettaApiKeyShim:
         ):
             config = LettaAdapterConfig(api_key="letta-key")
         assert config.provider_key == "letta-key"
-        assert config.api_key is None
+        # api_key is a constructor-only shim, not a model field: a field would
+        # be exposed to the environment (bare API_KEY is too generic to read).
+        assert "api_key" not in LettaAdapterConfig.model_fields
 
     def test_letta_provider_key_and_api_key_conflict(self) -> None:
         from band.adapters.letta import LettaAdapterConfig

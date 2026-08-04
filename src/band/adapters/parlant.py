@@ -183,6 +183,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         # Guidelines declared before startup, created on the live agent at start
         self._guideline_specs: list[GuidelineSpec] = []
+        # Set once the specs exist on the live agent; a restart that keeps a
+        # borrowed server's agent alive must not create them a second time.
+        self._guidelines_applied = False
 
         # Band platform tools as Parlant ToolEntry objects (built at start)
         self._tools: list[Any] = []
@@ -282,13 +285,15 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
             self._tools = create_parlant_tools(self.features)
 
-            for spec in self._guideline_specs:
-                await self._parlant_agent.create_guideline(
-                    condition=spec.condition,
-                    action=spec.action,
-                    tools=self._tools if spec.tools is None else spec.tools,
-                    **spec.kwargs,
-                )
+            if not self._guidelines_applied:
+                for spec in self._guideline_specs:
+                    await self._parlant_agent.create_guideline(
+                        condition=spec.condition,
+                        action=spec.action,
+                        tools=self._tools if spec.tools is None else spec.tools,
+                        **spec.kwargs,
+                    )
+                self._guidelines_applied = True
 
             if self._configure is not None:
                 await self._configure(self._server, self._parlant_agent)
@@ -825,6 +830,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._server = None
         if self._created_agent:
             self._parlant_agent = None
+            self._guidelines_applied = False
         try:
             await server_cm.__aexit__(None, None, None)
         except Exception:

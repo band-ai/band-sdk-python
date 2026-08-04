@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,27 +76,32 @@ class LettaAdapterConfig(BaseSettings):
 
     Most fields can also be set via a ``LETTA_``-prefixed environment
     variable (e.g. ``LETTA_BASE_URL``, ``LETTA_MODEL``, ``LETTA_EMBEDDING``);
-    ``provider_key`` reads the unprefixed ``LETTA_API_KEY`` instead, matching
-    Letta Cloud's own naming. An explicit constructor kwarg always wins over
-    the environment.
+    ``provider_key`` additionally accepts ``LETTA_API_KEY``, matching Letta
+    Cloud's own naming. An explicit constructor kwarg always wins over the
+    environment.
     """
 
     # extra="forbid" (not the usual settings "ignore"): this config is
     # commonly built with many explicit kwargs, so a typo'd field name
     # must fail construction instead of silently vanishing.
+    # populate_by_name: an aliased field stays constructible by its field name
+    # and keeps its prefix-derived environment variable.
     model_config = SettingsConfigDict(
-        env_prefix="LETTA_", case_sensitive=False, extra="forbid", env_ignore_empty=True
+        env_prefix="LETTA_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+        populate_by_name=True,
     )
 
     agent_id: str | None = None
     model: str | None = None
+    # A validation_alias names an environment variable verbatim (env_prefix is
+    # not applied), so it must be the full LETTA_* name — an unprefixed alias
+    # would read a bare env var and could swallow an unrelated secret.
     provider_key: str | None = Field(
-        default=None, validation_alias=AliasChoices("provider_key", "LETTA_API_KEY")
+        default=None, validation_alias=AliasChoices("LETTA_API_KEY")
     )  # Required for Letta Cloud; omit for self-hosted
-    # Deprecated kwarg-only alias for provider_key — not environment-sourced
-    # (LETTA_API_KEY belongs to provider_key above; a bare "api_key" is too
-    # generic a name to read from the environment safely).
-    api_key: str | None = Field(default=None, validation_alias=AliasChoices("api_key"))
     base_url: str = "https://api.letta.com"
     custom_section: str = ""
     include_base_instructions: bool = True
@@ -141,19 +146,25 @@ class LettaAdapterConfig(BaseSettings):
     # shared uses one agent with per-room Conversations for isolation.
     mode: Literal["per_room", "shared"] = "per_room"
 
-    @model_validator(mode="after")
-    def _apply_deprecated_field_shims(self) -> LettaAdapterConfig:
-        if self.api_key is not None:
+    def __init__(self, **data: Any) -> None:
+        # Deprecated kwarg-only alias for provider_key, handled before field
+        # validation so it is never a model field: a field is exposed to the
+        # environment, and a bare "api_key" is too generic a name to read
+        # from the environment safely.
+        api_key = data.pop("api_key", None)
+        if api_key is not None:
             warnings.warn(
                 "api_key is deprecated on LettaAdapterConfig, use provider_key instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            if self.provider_key is not None:
+            if data.get("provider_key") is not None:
                 raise BandConfigError("Cannot pass both provider_key and api_key")
-            self.provider_key = self.api_key
-            self.api_key = None
+            data["provider_key"] = api_key
+        super().__init__(**data)
 
+    @model_validator(mode="after")
+    def _apply_deprecated_field_shims(self) -> LettaAdapterConfig:
         if self.mcp_server_url is not None or self.mcp_server_name is not None:
             warnings.warn(
                 "mcp_server_url and mcp_server_name are deprecated on "
