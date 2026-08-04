@@ -8,7 +8,6 @@ usage, and cleanup.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
@@ -25,6 +24,12 @@ from strands.types.exceptions import EventLoopException  # noqa: E402
 
 from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
+from tests.converters.test_strands import (  # noqa: E402
+    _outline,
+    _text,
+    _tool_call,
+    _tool_result,
+)
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
     AdapterFeatures,
@@ -316,31 +321,9 @@ class TestHistoryConverterWiring:
     """
 
     _HISTORY = [
-        {
-            "role": "assistant",
-            "content": json.dumps(
-                {"name": "calc", "args": {}, "tool_call_id": "call-1"}
-            ),
-            "message_type": "tool_call",
-        },
-        {
-            "role": "user",
-            "content": "also, hello",
-            "sender_name": "Alice",
-            "message_type": "text",
-        },
-        {
-            "role": "assistant",
-            "content": json.dumps(
-                {
-                    "name": "calc",
-                    "output": "4",
-                    "tool_call_id": "call-1",
-                    "is_error": False,
-                }
-            ),
-            "message_type": "tool_result",
-        },
+        _tool_call("calc", {"expr": "2+2"}, "call-1"),
+        _text("also, hello"),
+        _tool_result("calc", "4", "call-1"),
     ]
 
     def test_openai_model_splits_the_tool_result_from_the_held_text(self):
@@ -350,18 +333,21 @@ class TestHistoryConverterWiring:
 
         result = adapter.history_converter.convert(self._HISTORY)
 
-        assert [message["role"] for message in result] == ["assistant", "user", "user"]
-        assert "toolResult" in result[1]["content"][0]
-        assert result[2]["content"] == [{"text": "[Alice]: also, hello"}]
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, success)",
+            "user: text([Alice]: also, hello)",
+        ]
 
     def test_bedrock_style_model_id_keeps_the_merge(self):
         adapter = StrandsAdapter(model="us.anthropic.claude-3-sonnet")
 
         result = adapter.history_converter.convert(self._HISTORY)
 
-        assert [message["role"] for message in result] == ["assistant", "user"]
-        assert "toolResult" in result[1]["content"][0]
-        assert result[1]["content"][1] == {"text": "[Alice]: also, hello"}
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, success) text([Alice]: also, hello)",
+        ]
 
 
 class TestOnMessage:
