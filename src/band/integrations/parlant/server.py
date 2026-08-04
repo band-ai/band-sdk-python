@@ -7,29 +7,23 @@ until a SIGINT/SIGTERM. A plain ``async with p.Server() as server: ...`` therefo
 hangs on teardown when nothing interrupts the process.
 
 The band ``ParlantAdapter`` drives the engine in-process via the container (set up
-by ``__aenter__``), so the HTTP serve phase is never needed for a turn to complete.
-This helper therefore enters the server (setup only), yields it for the run, and at
-teardown drives ``__aexit__`` *as a cancellable task*: it lets the serve loop come
-up (waiting on the public ``ready`` event) and then cancels it. ``serve_app``
-catches that ``CancelledError`` and returns, so ``__aexit__``'s ``finally`` runs the
-real resource cleanup (``_exit_stack.aclose()`` shuts the plugin server on
-``tool_service_port`` and the DB/evaluator) and the call returns instead of hanging.
+by ``__aenter__``), so the HTTP serve phase is never needed at all. This helper
+enters the server (setup only), yields it for the run, and at teardown drives
+``Server.__aexit__``'s *exception branch* with a sentinel exception: handed an
+exception, ``__aexit__`` skips evaluation processing and the serve loop entirely
+and goes straight to cleanup. The startup context manager unwinds ``load_app``'s
+exit stack with the exception set — ``BackgroundTaskService.__aexit__`` cancels
+its tasks on exactly that signal, then the stores/databases/tracers close — each
+generator re-raises the same sentinel instance (so ``contextlib`` returns instead
+of raising), and ``__aexit__`` finally closes the server's own ``_exit_stack``
+(the plugin tool server on ``tool_service_port``). uvicorn never starts, so there
+is nothing to hang on, cancel, or race.
 
-Why not cancel a *parked body* instead (never serving)? That drives ``__aexit__``'s
-exception branch, where ``await self._startup_context_manager.__aexit__(exc, ...)``
-re-raises and skips ``_exit_stack.aclose()`` — leaking the plugin server and its
-port. Only the no-exception branch runs that cleanup in a ``finally``.
-
-NOTE: Parlant processes guideline/journey evaluations and retriever setup at the
-top of ``__aexit__``, i.e. only at teardown here — the same as the stock
-``async with p.Server()`` body, which the adapter never depended on. Guidelines
-still match and act during in-body engine use (production Parlant agents run
-exactly this way).
-
-Version note: this leans on Parlant's documented context-manager protocol plus the
-public ``Server.ready`` event and ``serve_app``'s ``CancelledError`` handling. A
-Parlant upgrade that reworks the ``__aexit__`` serve/cleanup path could need this
-revisited; centralising it here keeps that to one place.
+Version note: verified against parlant 3.3.2, the pinned floor — its exception
+branch runs both the startup-context unwind and ``_exit_stack.aclose()``, and
+``BackgroundTaskService`` cancels its tasks on an exceptional exit. A Parlant
+upgrade that reworks the ``__aexit__`` cleanup path could need this revisited;
+centralising it here keeps that to one place.
 """
 
 from __future__ import annotations
@@ -43,24 +37,40 @@ from typing import TYPE_CHECKING, Any
 
 from band.integrations.parlant.ports import reserve_server_ports
 
+# parlant is an optional extra, and this module is imported unconditionally
+# (via band.adapters.parlant) in environments that cannot install it, such as
+# the crewai dependency fork. Its absence surfaces on first use, not at import.
 if TYPE_CHECKING:
     import parlant.sdk as p  # type: ignore[missing-import]
+else:
+    try:
+        import parlant.sdk as p
+    except ModuleNotFoundError:
+        p = None
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["running_parlant_server"]
 
-# Generous ceiling for uvicorn to bind + serve + answer its first /healthz at
-# teardown. Hitting it means we cancel a not-yet-serving exit (best-effort cleanup)
-# rather than hang the caller.
-_READY_TIMEOUT_S = 120.0
+# Generous ceiling for Parlant's real teardown work: cancelling background tasks,
+# closing stores/databases and the plugin tool server. Hitting it cancels whatever
+# cleanup await is stuck (best-effort) rather than hanging the caller.
+_CLEANUP_TIMEOUT_S = 60.0
+
+
+class ServerTeardown(BaseException):
+    """Sentinel driving ``Server.__aexit__``'s no-serve (exception) branch.
+
+    ``BaseException``-derived so no ``except Exception`` inside Parlant's
+    teardown can swallow it and resume toward the serve loop.
+    """
 
 
 @asynccontextmanager
 async def running_parlant_server(
     **server_kwargs: Any,
 ) -> AsyncGenerator[p.Server, None]:
-    """Yield a ready in-process Parlant ``Server``, tearing it down without hanging.
+    """Yield a ready in-process Parlant ``Server``, tearing it down without serving.
 
     ``server_kwargs`` are passed straight to ``p.Server(...)``. One default is
     filled in when the caller omits it: ``port`` / ``tool_service_port`` default to
@@ -69,47 +79,53 @@ async def running_parlant_server(
     including ``nlp_service`` — keeps Parlant's own defaults.
 
     The agent the caller builds on the yielded server runs against its in-process
-    container; the HTTP server only ever comes up briefly during teardown, purely so
-    Parlant's own cleanup ``finally`` can run.
+    container; the HTTP API server never comes up at all (see the module docstring
+    for how teardown reaches Parlant's cleanup without it).
     """
-    import parlant.sdk as p  # type: ignore[missing-import]
+    if p is None:
+        raise ImportError(
+            "parlant is not installed; install band-sdk[parlant] to run a "
+            "Parlant server"
+        )
 
     if "port" not in server_kwargs or "tool_service_port" not in server_kwargs:
-        # Reserved on the host this server will bind, so the reservation covers the
-        # interfaces uvicorn actually needs at teardown.
+        # Reserved on the host this server would bind, so the reservation covers
+        # the interfaces the plugin tool server actually needs.
         ports = reserve_server_ports(server_kwargs.get("host"))
         server_kwargs.setdefault("port", ports.port)
         server_kwargs.setdefault("tool_service_port", ports.tool_service_port)
 
     server = p.Server(**server_kwargs)
-    await server.__aenter__()  # setup only: build the DI container, no serving yet
+    try:
+        await server.__aenter__()  # setup only: builds the DI container, no serving
+    except SystemExit as exc:
+        # Parlant routes SDK/NLP configuration failures through sys.exit(1) after
+        # printing the cause to stderr. Embedded in a host process — possibly
+        # running other agents — that must not die with us: surface a catchable
+        # error instead.
+        raise ValueError(
+            "Parlant server failed to start; see stderr above for the underlying "
+            "configuration error"
+        ) from exc
     try:
         yield server
     finally:
-        await _shutdown_without_hanging(server)
+        await _teardown_without_serving(server)
 
 
-async def _shutdown_without_hanging(server: p.Server) -> None:
-    """Run ``Server.__aexit__`` for its cleanup, cancelling its serve loop."""
-    exit_task = asyncio.create_task(server.__aexit__(None, None, None))
-    ready_task = asyncio.create_task(server.ready.wait())
+async def _teardown_without_serving(server: p.Server) -> None:
+    """Run ``Server.__aexit__``'s cleanup through its exception branch."""
+    signal = ServerTeardown()
     try:
-        # Either the server starts serving (ready fires) or __aexit__ errors out of
-        # its pre-serve setup; react to whichever happens first.
-        await asyncio.wait(
-            {exit_task, ready_task},
-            timeout=_READY_TIMEOUT_S,
-            return_when=asyncio.FIRST_COMPLETED,
+        async with asyncio.timeout(_CLEANUP_TIMEOUT_S):
+            # The sentinel is re-raised and re-caught inside Parlant's context
+            # managers and must not escape to the caller even if one layer
+            # re-raises it out of ``__aexit__``.
+            with contextlib.suppress(ServerTeardown):
+                await server.__aexit__(type(signal), signal, None)
+    except TimeoutError:
+        logger.warning(
+            "Parlant server cleanup did not finish within %ss; abandoning it "
+            "(resources may leak until process exit)",
+            _CLEANUP_TIMEOUT_S,
         )
-    finally:
-        ready_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await ready_task
-
-    if not exit_task.done():
-        # Ready (we're inside __aexit__'s try, so its finally will run
-        # _exit_stack.aclose()) or timed out (best-effort). Cancel the serve loop;
-        # serve_app swallows the CancelledError, so __aexit__ returns cleanly.
-        exit_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await exit_task  # re-raises a genuine pre-serve setup error, if any
