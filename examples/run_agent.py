@@ -412,14 +412,19 @@ async def run_parlant_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Parlant agent."""
+    import parlant.sdk as p
+
     from band.adapters import ParlantAdapter
 
+    # Parlant chooses its model via the NLP service, not a model string;
+    # the OpenAI service reads OPENAI_API_KEY.
     adapter = ParlantAdapter(
-        model=model,
         custom_section=custom_section,
-        guidelines=PARLANT_GUIDELINES,
+        nlp_service=p.NLPServices.openai,
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
+    for guideline in PARLANT_GUIDELINES:
+        adapter.add_guideline(**guideline)
 
     agent = Agent.create(
         adapter=adapter,
@@ -429,7 +434,7 @@ async def run_parlant_agent(
         rest_url=rest_url,
     )
 
-    logger.info("Starting Parlant agent with model: %s", model)
+    logger.info("Starting Parlant agent (OpenAI NLP service)")
     await agent.run()
 
 

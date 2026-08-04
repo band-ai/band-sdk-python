@@ -77,7 +77,20 @@ def mock_parlant_agent():
     agent = MagicMock()
     agent.id = "parlant-agent-123"
     agent.name = "TestBot"
+    agent.create_guideline = AsyncMock()
     return agent
+
+
+@pytest.fixture(autouse=True)
+def stub_band_tools():
+    """Stub the Band->Parlant tool build in on_started.
+
+    The real ``create_parlant_tools`` imports ``parlant.sdk``; doing that mid-suite,
+    after other tests have patched ``parlant.core.*`` into ``sys.modules``, corrupts
+    beartype's import hook and breaks later genuine parlant imports.
+    """
+    with patch("band.adapters.parlant.create_parlant_tools", return_value=[]) as stub:
+        yield stub
 
 
 class TestInitialization:
@@ -196,6 +209,144 @@ class TestOnStarted:
             )
 
         assert adapter._app is mock_app
+
+
+class TestLifecycleOwnedServer:
+    """The adapter boots/owns the Parlant server inside its own lifecycle."""
+
+    @pytest.fixture
+    def application_modules(self):
+        """Mock parlant.core.application so on_started's import resolves."""
+        application_class = MagicMock(name="Application")
+        module = MagicMock()
+        module.Application = application_class
+        with patch.dict(sys.modules, {"parlant.core.application": module}):
+            yield application_class
+
+    @pytest.fixture
+    def owned_server(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        """Patch running_parlant_server with a fake CM yielding the mock server."""
+        mock_parlant_server.create_agent = AsyncMock(return_value=mock_parlant_agent)
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=mock_parlant_server)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "band.adapters.parlant.running_parlant_server", return_value=cm
+        ) as factory:
+            yield factory, cm, mock_parlant_server
+
+    async def test_boots_owned_server_and_creates_agent(
+        self, owned_server, mock_parlant_agent
+    ):
+        factory, cm, server = owned_server
+        adapter = ParlantAdapter(name="Tom", description="A cat", nlp_service="svc")
+
+        await adapter.on_started("BandName", "Band description")
+
+        factory.assert_called_once_with(nlp_service="svc")
+        cm.__aenter__.assert_awaited_once()
+        server.create_agent.assert_awaited_once_with(name="Tom", description="A cat")
+        assert adapter.server is server
+        assert adapter.parlant_agent is mock_parlant_agent
+        assert adapter._app is not None
+
+    async def test_name_description_default_to_band_metadata(self, owned_server):
+        _, _, server = owned_server
+        adapter = ParlantAdapter()
+
+        await adapter.on_started("BandName", "Band description")
+
+        server.create_agent.assert_awaited_once_with(
+            name="BandName", description="Band description"
+        )
+
+    async def test_applies_deferred_guidelines_with_band_tools_default(
+        self, owned_server, mock_parlant_agent, stub_band_tools
+    ):
+        band_tools = ["band-tool-entry"]
+        stub_band_tools.return_value = band_tools
+        adapter = ParlantAdapter(name="X", description="Y")
+        adapter.add_guideline(condition="c1", action="a1")
+        adapter.add_guideline(condition="c2", action="a2", tools=[])
+        adapter.add_guideline(condition="c3", action="a3", metadata={"k": "v"})
+
+        await adapter.on_started("BandName", "Band description")
+
+        calls = mock_parlant_agent.create_guideline.await_args_list
+        assert [c.kwargs for c in calls] == [
+            {"condition": "c1", "action": "a1", "tools": band_tools},
+            {"condition": "c2", "action": "a2", "tools": []},
+            {
+                "condition": "c3",
+                "action": "a3",
+                "tools": band_tools,
+                "metadata": {"k": "v"},
+            },
+        ]
+
+    async def test_add_guideline_after_start_raises(self, owned_server):
+        adapter = ParlantAdapter(name="X", description="Y")
+        await adapter.on_started("BandName", "Band description")
+
+        with pytest.raises(RuntimeError, match="before the agent starts"):
+            adapter.add_guideline(condition="late", action="too late")
+
+    async def test_configure_callback_receives_live_objects(
+        self, owned_server, mock_parlant_agent
+    ):
+        _, _, server = owned_server
+        seen: list[tuple] = []
+
+        async def configure(srv, agent):
+            seen.append((srv, agent))
+
+        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+        await adapter.on_started("BandName", "Band description")
+
+        assert seen == [(server, mock_parlant_agent)]
+
+    async def test_cleanup_all_closes_owned_server(self, owned_server):
+        _, cm, _ = owned_server
+        adapter = ParlantAdapter(name="X", description="Y")
+        await adapter.on_started("BandName", "Band description")
+
+        await adapter.cleanup_all()
+
+        cm.__aexit__.assert_awaited_once()
+        assert adapter._server is None
+        assert adapter._app is None
+
+    async def test_cleanup_all_leaves_borrowed_server(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        await adapter.on_started("BandName", "Band description")
+
+        await adapter.cleanup_all()
+
+        assert adapter._server is mock_parlant_server
+        assert adapter._parlant_agent is mock_parlant_agent
+        assert adapter._app is None
+
+    async def test_on_started_failure_releases_owned_server(self, owned_server):
+        _, cm, _ = owned_server
+
+        async def configure(srv, agent):
+            raise RuntimeError("configure blew up")
+
+        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+
+        with pytest.raises(RuntimeError, match="configure blew up"):
+            await adapter.on_started("BandName", "Band description")
+
+        cm.__aexit__.assert_awaited_once()
+        assert adapter._server is None
 
 
 class TestOnMessage:

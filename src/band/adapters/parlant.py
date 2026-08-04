@@ -10,17 +10,25 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from typing import ClassVar, TYPE_CHECKING, Any
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.integrations.parlant.server import running_parlant_server
+from band.integrations.parlant.tools import (
+    create_parlant_tools,
+    set_session_tools,
+    was_message_sent,
+)
 from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
-from band.integrations.parlant.tools import set_session_tools, was_message_sent
-from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     import parlant.sdk as p  # type: ignore[missing-import]
     from parlant.core.application import Application  # type: ignore[missing-import]
     from parlant.core.sessions import SessionId  # type: ignore[missing-import]
@@ -32,41 +40,59 @@ logger = logging.getLogger(__name__)
 PARLANT_PREAMBLE_TAG = "__preamble__"
 EMPTY_READ_BACKOFF_SECONDS = 0.05
 
+# Called in on_started with the live (server, parlant_agent) for anything the
+# declarative surface doesn't cover (journeys, guideline dependencies, ...).
+ConfigureCallback = Callable[["p.Server", "p.Agent"], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class GuidelineSpec:
+    """A guideline declared before startup, created on the live agent at start.
+
+    ``tools=None`` means "attach the Band platform tools" — the common case.
+    An explicit sequence (including ``[]``) is passed through verbatim.
+    """
+
+    condition: str | None
+    action: str | None
+    tools: Sequence[Any] | None
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
 
 class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     """
     Parlant adapter using the official Parlant SDK directly.
 
-    This adapter integrates directly with the Parlant engine for message processing.
+    The adapter owns the Parlant server lifecycle: it reserves free ports, boots
+    ``p.Server`` when the Band agent starts, and tears it down when the agent
+    stops. Guidelines are declared up front with :meth:`add_guideline` and created
+    on the live agent at startup, with the Band platform tools attached by default.
 
     Example:
         import parlant.sdk as p
+        from band import Agent
+        from band.adapters import ParlantAdapter
 
-        from band.integrations.parlant import reserve_server_ports
+        adapter = ParlantAdapter(
+            name="Assistant",
+            description="A helpful assistant",
+            nlp_service=p.NLPServices.openai,
+        )
+        adapter.add_guideline(
+            condition="User asks a question",
+            action="Answer via band_send_message, mentioning the user",
+        )
 
-        # Reserved rather than fixed, so several agents can share one host
-        ports = reserve_server_ports()
+        band_agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
+        await band_agent.run()
 
-        async with p.Server(
-            port=ports.port,
-            tool_service_port=ports.tool_service_port,
-        ) as server:
-            agent = await server.create_agent(
-                name="Assistant",
-                description="A helpful assistant",
-            )
-
-            adapter = ParlantAdapter(
-                server=server,
-                parlant_agent=agent,
-            )
-
-            band_agent = Agent.create(
-                adapter=adapter,
-                agent_id="...",
-                api_key="...",
-            )
-            await band_agent.run()
+    Escape hatches:
+        * ``configure=`` — async callback run at startup with the live
+          ``(server, parlant_agent)`` for full native Parlant API access
+          (journeys, guideline dependencies, canned responses, ...).
+        * ``server=`` / ``parlant_agent=`` — bring your own running server (and
+          optionally your own agent on it). Borrowed objects are never torn down
+          by the adapter.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
@@ -76,12 +102,17 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     def __init__(
         self,
-        server: p.Server,
-        parlant_agent: p.Agent,
+        name: str | None = None,
+        description: str | None = None,
+        *,
+        nlp_service: Any | None = None,
+        server_options: dict[str, Any] | None = None,
+        server: p.Server | None = None,
+        parlant_agent: p.Agent | None = None,
+        configure: ConfigureCallback | None = None,
         system_prompt: str | None = None,
         custom_section: str | None = None,
         history_converter: ParlantHistoryConverter | None = None,
-        additional_tools: list[CustomToolDef] | None = None,
         features: AdapterFeatures | None = None,
         response_timeout: float = 300.0,
         response_poll: float = 30.0,
@@ -90,12 +121,24 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         Initialize the Parlant SDK adapter.
 
         Args:
-            server: The Parlant SDK Server instance
-            parlant_agent: The Parlant Agent instance
+            name: Parlant agent name. Defaults to the Band agent's name.
+            description: Parlant agent description (its behavioral instructions).
+                Defaults to the Band agent's description.
+            nlp_service: Parlant NLP service for the adapter-owned server (e.g.
+                ``p.NLPServices.openai``). Defaults to Parlant's own default.
+            server_options: Extra keyword arguments passed verbatim to
+                ``p.Server(...)`` for the adapter-owned server (``host``,
+                ``session_store``, ``log_level``, ...). ``port`` /
+                ``tool_service_port`` default to freshly reserved free ports.
+            server: Bring your own running ``p.Server`` instead of an
+                adapter-owned one. Borrowed: the adapter never tears it down.
+                Mutually exclusive with ``nlp_service`` / ``server_options``.
+            parlant_agent: Bring your own ``p.Agent``; requires ``server=``.
+            configure: Async callback ``(server, parlant_agent)`` run at startup
+                after guidelines are applied, for full native Parlant API access.
             system_prompt: Full system prompt override
             custom_section: Custom instructions appended to agent description
             history_converter: Custom history converter (optional)
-            additional_tools: List of custom tools as (InputModel, callable) tuples
             features: Shared adapter feature settings (capabilities, emit, tool filters).
             response_timeout: Max seconds to wait for the agent's response per turn.
                 Default 300 (5 min): a cold start — server warmup plus the first
@@ -112,13 +155,38 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             raise ValueError("response_timeout must be greater than 0")
         if response_poll <= 0:
             raise ValueError("response_poll must be greater than 0")
+        if parlant_agent is not None and server is None:
+            raise ValueError(
+                "parlant_agent requires the server it lives on; pass server= as well"
+            )
+        if server is not None and (nlp_service is not None or server_options):
+            raise ValueError(
+                "nlp_service/server_options configure the adapter-owned server; "
+                "they cannot be combined with a caller-provided server="
+            )
 
+        self._name = name
+        self._description = description
+        self._nlp_service = nlp_service
+        self._server_options = dict(server_options or {})
         self._server = server
+        self._owns_server = server is None
+        self._server_cm: AbstractAsyncContextManager[p.Server] | None = None
         self._parlant_agent = parlant_agent
+        self._created_agent = parlant_agent is None
+        self._configure = configure
         self.system_prompt = system_prompt
         self.custom_section = custom_section
         self._response_timeout = response_timeout
         self._response_poll = response_poll
+
+        # Guidelines declared before startup, created on the live agent at start
+        self._guideline_specs: list[GuidelineSpec] = []
+
+        # Band platform tools as Parlant ToolEntry objects (built at start)
+        self._tools: list[Any] = []
+
+        self._started = False
 
         # Parlant application (accessed via container)
         self._app: Application | None = None
@@ -132,11 +200,56 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         # Rendered system prompt (set after start)
         self._system_prompt: str = ""
 
-        # Custom tools (user-provided) - stored for API compatibility
-        self._custom_tools: list[CustomToolDef] = additional_tools or []
+    def add_guideline(
+        self,
+        condition: str | None = None,
+        action: str | None = None,
+        *,
+        tools: Sequence[Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Declare a guideline, created on the live Parlant agent at startup.
+
+        Mirrors ``parlant.sdk.Agent.create_guideline``; extra keyword arguments
+        are forwarded to it verbatim. ``tools`` defaults to the Band platform
+        tools; pass an explicit sequence (including ``[]``) to override.
+
+        For live guideline management (return values, dependencies), use the
+        ``configure=`` callback instead.
+        """
+        if self._started:
+            raise RuntimeError(
+                "add_guideline must be called before the agent starts; use the "
+                "configure= callback or adapter.parlant_agent.create_guideline() "
+                "for a running agent"
+            )
+        self._guideline_specs.append(GuidelineSpec(condition, action, tools, kwargs))
+
+    @property
+    def server(self) -> p.Server:
+        """The running Parlant server (available once the Band agent starts)."""
+        if self._server is None:
+            raise RuntimeError(
+                "Parlant server not running yet; it starts with the agent"
+            )
+        return self._server
+
+    @property
+    def parlant_agent(self) -> p.Agent:
+        """The Parlant agent (available once the Band agent starts)."""
+        if self._parlant_agent is None:
+            raise RuntimeError(
+                "Parlant agent not created yet; it starts with the agent"
+            )
+        return self._parlant_agent
+
+    @property
+    def tools(self) -> list[Any]:
+        """Band platform tools as Parlant ToolEntry objects (built at startup)."""
+        return list(self._tools)
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Initialize after agent metadata is fetched."""
+        """Boot the Parlant server (unless borrowed) and configure the agent."""
         await super().on_started(agent_name, agent_description)
 
         # Render system prompt
@@ -147,19 +260,51 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             features=self.features,
         )
 
-        # Get Application from Parlant container
+        # A failure below must release the owned server: Agent.start() only runs
+        # adapter cleanup for failures *after* on_started, not inside it.
         try:
+            if self._server is None:
+                options = dict(self._server_options)
+                if self._nlp_service is not None:
+                    options["nlp_service"] = self._nlp_service
+                server_cm = running_parlant_server(**options)
+                self._server = await server_cm.__aenter__()
+                self._server_cm = server_cm
+
+            assert self._server is not None  # booted above or required by __init__
+
+            if self._parlant_agent is None:
+                self._parlant_agent = await self._server.create_agent(
+                    name=self._name or agent_name,
+                    description=self._description or agent_description,
+                )
+
+            self._tools = create_parlant_tools(self.features)
+
+            for spec in self._guideline_specs:
+                await self._parlant_agent.create_guideline(
+                    condition=spec.condition,
+                    action=spec.action,
+                    tools=self._tools if spec.tools is None else spec.tools,
+                    **spec.kwargs,
+                )
+
+            if self._configure is not None:
+                await self._configure(self._server, self._parlant_agent)
+
             from parlant.core.application import Application  # type: ignore[missing-import]
 
             self._app = self._server.container[Application]
-            logger.info(
-                "Parlant SDK adapter started for agent: %s (parlant_agent_id=%s)",
-                agent_name,
-                self._parlant_agent.id,
-            )
-        except Exception as e:
-            logger.error("Failed to get Parlant Application: %s", e, exc_info=True)
+        except BaseException:
+            await self._release_server()
             raise
+
+        self._started = True
+        logger.info(
+            "Parlant SDK adapter started for agent: %s (parlant_agent_id=%s)",
+            agent_name,
+            self._parlant_agent.id,
+        )
 
     async def on_message(
         self,
@@ -283,7 +428,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         # Create session
         session = await app.sessions.create(
             customer_id=customer_id,
-            agent_id=self._parlant_agent.id,
+            agent_id=self.parlant_agent.id,
             title=f"Band Room {room_id[:8]}",
         )
 
@@ -302,7 +447,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return self._room_customers[room_id]
 
         # Create customer via server
-        customer = await self._server.create_customer(
+        customer = await self.server.create_customer(
             name=customer_name,
             id=f"band-{room_id[:8]}",
         )
@@ -663,7 +808,23 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             pass
 
     async def cleanup_all(self) -> None:
-        """Cleanup all sessions (call on stop)."""
+        """Release all sessions and the owned Parlant server (call on stop)."""
         self._room_sessions.clear()
         self._room_customers.clear()
+        await self._release_server()
+        self._started = False
         logger.info("Parlant adapter cleanup complete")
+
+    async def _release_server(self) -> None:
+        """Tear down the adapter-owned server; a borrowed one is left running."""
+        self._app = None
+        server_cm, self._server_cm = self._server_cm, None
+        if server_cm is None:
+            return
+        self._server = None
+        if self._created_agent:
+            self._parlant_agent = None
+        try:
+            await server_cm.__aexit__(None, None, None)
+        except Exception:
+            logger.exception("Parlant server shutdown failed")

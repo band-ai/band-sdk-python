@@ -34,8 +34,6 @@ from prompts.characters import generate_tom_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
-from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -52,44 +50,28 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
 
-    # Reserved rather than fixed, so Tom and Jerry can run side by side
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
+    # Adapter owns the Parlant server (fresh ports each run, so Tom and Jerry
+    # can run side by side). Band tools attach to the guideline by default.
+    adapter = ParlantAdapter(
+        name="Tom",
+        description=generate_tom_prompt("Tom"),
         nlp_service=p.NLPServices.openai,
-    ) as server:
-        parlant_tools = create_parlant_tools()
+    )
+    adapter.add_guideline(
+        condition="User sends a message or asks something",
+        action="Respond using band_send_message with the user's name in mentions. Stay in character as Tom the cat.",
+    )
 
-        # Create Parlant agent with Tom's personality
-        parlant_agent = await server.create_agent(
-            name="Tom",
-            description=generate_tom_prompt("Tom"),
-        )
+    # Create and start agent
+    agent = Agent.from_config(
+        "tom_agent",
+        adapter=adapter,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    )
 
-        # Add guideline for using tools
-        await parlant_agent.create_guideline(
-            condition="User sends a message or asks something",
-            action="Respond using band_send_message with the user's name in mentions. Stay in character as Tom the cat.",
-            tools=parlant_tools,
-        )
-
-        # Create adapter with Parlant server and agent
-        adapter = ParlantAdapter(
-            server=server,
-            parlant_agent=parlant_agent,
-        )
-
-        # Create and start agent
-        agent = Agent.from_config(
-            "tom_agent",
-            adapter=adapter,
-            ws_url=ws_url,
-            rest_url=rest_url,
-        )
-
-        logger.info("Tom is on the prowl, looking for Jerry...")
-        await agent.run()
+    logger.info("Tom is on the prowl, looking for Jerry...")
+    await agent.run()
 
 
 if __name__ == "__main__":

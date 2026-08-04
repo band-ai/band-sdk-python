@@ -9,7 +9,8 @@
 Parlant agent with behavioral guidelines using the official Parlant SDK.
 
 This example shows how to use Parlant's guideline system for controlled
-agent behavior with the full Band toolset.
+agent behavior. Guidelines are declared on the adapter and created on the
+live agent at startup, with the full Band toolset attached by default.
 
 Run with:
     uv run examples/parlant/02_with_guidelines.py
@@ -29,8 +30,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
-from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -61,76 +60,65 @@ You are a collaborative assistant in the Band multi-agent platform.
 """
 
 
-async def setup_agent_with_guidelines(
-    server: p.Server,
-    tools: list,
-) -> p.Agent:
-    """Create and configure a Parlant agent with comprehensive guidelines and tools."""
-    agent = await server.create_agent(
+def build_adapter() -> ParlantAdapter:
+    """Build the Parlant adapter with comprehensive guidelines."""
+    adapter = ParlantAdapter(
         name="Parlant",
         description=CUSTOM_DESCRIPTION,
+        nlp_service=p.NLPServices.openai,  # requires OPENAI_API_KEY
     )
 
     # Communication guidelines
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks a question or sends a message",
         action="Use band_send_message to respond, with the user's name in the mentions field",
-        tools=tools,
     )
 
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="You are about to perform a complex action or multi-step process",
         action="First use band_send_event with type='thought' to explain what you're about to do and why",
-        tools=tools,
     )
 
     # Participant management guidelines
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User mentions a specific participant, agent name, or asks to add someone",
         action="First use band_lookup_peers to find available agents. Then IMMEDIATELY call band_add_participant with the name parameter set to the exact name from the band_lookup_peers result. Do NOT ask for confirmation - just add them. If user wants multiple agents, call band_add_participant once for each.",
-        tools=tools,
     )
 
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks about current participants or who is in the room",
         action="Use band_get_participants to list all current room members",
-        tools=tools,
     )
 
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks to remove someone from the chat",
         action="Use band_remove_participant with the name parameter set to the exact name to remove",
-        tools=tools,
     )
 
     # Room management guidelines
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User wants to create a new chat, discussion space, or separate topic",
         action="Use band_create_chatroom to create a dedicated space for the new topic",
-        tools=tools,
     )
 
     # Error handling guideline
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="An error occurs or something goes wrong",
         action="Use band_send_event with type='error' to report the problem, then try to suggest alternatives",
-        tools=tools,
     )
 
     # Conversation flow guidelines
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks for help and you cannot directly provide it",
         action="Use band_lookup_peers to find specialized agents, explain your plan using band_send_event with type='thought', then add the most relevant agent",
-        tools=tools,
     )
 
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="Conversation is ending or user says goodbye",
         action="Use band_send_message to summarize what was discussed and offer to help with anything else",
-        tools=tools,
     )
 
-    return agent
+    return adapter
 
 
 async def main() -> None:
@@ -143,43 +131,18 @@ async def main() -> None:
         raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
-    # Start Parlant server with OpenAI
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
-        nlp_service=p.NLPServices.openai,
-    ) as server:
-        # Create Parlant tools INSIDE server context
-        parlant_tools = create_parlant_tools()
-        logger.info(
-            "Created %s Parlant tools: %s",
-            len(parlant_tools),
-            [t.tool.name for t in parlant_tools],
-        )
 
-        # Create Parlant agent with comprehensive guidelines and tools
-        parlant_agent = await setup_agent_with_guidelines(server, parlant_tools)
-        logger.info("Parlant agent with guidelines created: %s", parlant_agent.id)
+    adapter = build_adapter()
 
-        # Create adapter using Parlant SDK directly
-        adapter = ParlantAdapter(
-            server=server,
-            parlant_agent=parlant_agent,
-        )
+    agent = Agent.from_config(
+        "parlant_agent",
+        adapter=adapter,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    )
 
-        # Create and start Band agent
-        agent = Agent.from_config(
-            "parlant_agent",
-            adapter=adapter,
-            ws_url=ws_url,
-            rest_url=rest_url,
-        )
-
-        logger.info(
-            "Starting Band agent with Parlant SDK and comprehensive guidelines..."
-        )
-        await agent.run()
+    logger.info("Starting Band agent with Parlant SDK and comprehensive guidelines...")
+    await agent.run()
 
 
 if __name__ == "__main__":

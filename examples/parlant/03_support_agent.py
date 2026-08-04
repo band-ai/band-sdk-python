@@ -8,8 +8,10 @@
 """
 Customer support agent using Parlant SDK with guidelines.
 
-This example demonstrates a realistic customer support agent with
-behavioral guidelines using the Parlant SDK directly.
+This example demonstrates a realistic customer support agent with purely
+behavioral guidelines: each passes ``tools=[]`` to opt out of the default
+Band toolset, so Parlant generates plain replies and the adapter forwards
+them to the room.
 
 Run with:
     uv run examples/parlant/03_support_agent.py
@@ -29,7 +31,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -55,46 +56,46 @@ Remember:
 - Always follow up on commitments
 """
 
+# Behavioral guidelines only — no tools. The adapter forwards Parlant's plain
+# replies to the room, so these guidelines shape wording, not tool use.
+SUPPORT_GUIDELINES = [
+    (
+        "Customer asks about refunds or returns",
+        "Express empathy first, then ask for order details (order number, item) before providing refund information",
+    ),
+    (
+        "Customer is frustrated or upset",
+        "Acknowledge their frustration, apologize for any inconvenience, and focus on finding a solution",
+    ),
+    (
+        "Customer asks a technical question",
+        "Ask about their setup (device, OS, version) before troubleshooting",
+    ),
+    (
+        "Issue cannot be resolved by this agent",
+        "Explain the limitation clearly and offer to escalate to a specialist by adding them to the conversation",
+    ),
+    (
+        "Customer provides positive feedback",
+        "Thank them warmly and ask if there's anything else you can help with",
+    ),
+    (
+        "Customer mentions urgency or deadline",
+        "Prioritize their request and provide the fastest path to resolution",
+    ),
+]
 
-async def setup_support_agent(server: p.Server) -> p.Agent:
-    """Create and configure a customer support agent with guidelines."""
-    agent = await server.create_agent(
+
+def build_adapter() -> ParlantAdapter:
+    """Build the support adapter with behavior-only guidelines."""
+    adapter = ParlantAdapter(
         name="Support",
         description=SUPPORT_DESCRIPTION,
+        nlp_service=p.NLPServices.openai,  # requires OPENAI_API_KEY
     )
-
-    # Add support-specific guidelines
-    await agent.create_guideline(
-        condition="Customer asks about refunds or returns",
-        action="Express empathy first, then ask for order details (order number, item) before providing refund information",
-    )
-
-    await agent.create_guideline(
-        condition="Customer is frustrated or upset",
-        action="Acknowledge their frustration, apologize for any inconvenience, and focus on finding a solution",
-    )
-
-    await agent.create_guideline(
-        condition="Customer asks a technical question",
-        action="Ask about their setup (device, OS, version) before troubleshooting",
-    )
-
-    await agent.create_guideline(
-        condition="Issue cannot be resolved by this agent",
-        action="Explain the limitation clearly and offer to escalate to a specialist by adding them to the conversation",
-    )
-
-    await agent.create_guideline(
-        condition="Customer provides positive feedback",
-        action="Thank them warmly and ask if there's anything else you can help with",
-    )
-
-    await agent.create_guideline(
-        condition="Customer mentions urgency or deadline",
-        action="Prioritize their request and provide the fastest path to resolution",
-    )
-
-    return agent
+    for condition, action in SUPPORT_GUIDELINES:
+        adapter.add_guideline(condition=condition, action=action, tools=[])
+    return adapter
 
 
 async def main() -> None:
@@ -107,33 +108,18 @@ async def main() -> None:
         raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
-    # Start Parlant server
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
-        nlp_service=p.NLPServices.openai,
-    ) as server:
-        # Create support agent with guidelines
-        parlant_agent = await setup_support_agent(server)
-        logger.info("Support agent created: %s", parlant_agent.id)
 
-        # Create adapter using Parlant SDK directly
-        adapter = ParlantAdapter(
-            server=server,
-            parlant_agent=parlant_agent,
-        )
+    adapter = build_adapter()
 
-        # Create and start Band agent
-        agent = Agent.from_config(
-            "support_agent",
-            adapter=adapter,
-            ws_url=ws_url,
-            rest_url=rest_url,
-        )
+    agent = Agent.from_config(
+        "support_agent",
+        adapter=adapter,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    )
 
-        logger.info("Starting customer support agent with Parlant SDK...")
-        await agent.run()
+    logger.info("Starting customer support agent with Parlant SDK...")
+    await agent.run()
 
 
 if __name__ == "__main__":
