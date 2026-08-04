@@ -34,18 +34,18 @@ a collection of sandbox-created virtualenv files, caches, and logs.
 
 You need [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`),
 Docker, and a registered Band agent (its id and API key). The kit and its image
-are published to GHCR, so there is **no repo checkout and no local build** — the
-sandbox runtime pulls both.
+are published to Docker Hub (`bandhq/…`; GHCR mirror also exists), so there is
+**no repo checkout and no local build** — the sandbox runtime pulls both.
 
 ```bash
 # 1. One-time host setup: install sbx and sign in.
 brew install docker/tap/sbx && sbx login
 
-# 2. Let the sandbox runtime pull kits from the band-ai GHCR namespace.
-#    kit.allowedSources REPLACES the whole list (default: ["docker.io/"]), so
-#    keep docker.io/ in it. If you have already customized the allowlist, MERGE
-#    instead of pasting — run `sbx settings get kit.allowedSources` first.
-sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
+# 2. Kit source allowlist — usually a no-op.
+#    Default kit.allowedSources is ["docker.io/"], which covers the Hub kit.
+#    Only needed if you pull the GHCR mirror instead — then MERGE
+#    ghcr.io/band-ai/ into your existing list (the setting replaces the list).
+# sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
 
 # 3. Create your workspace from the echo-agent starter, extracted from the
 #    matching release tarball (no repo checkout needed; same <X.Y.Z> as the
@@ -63,7 +63,7 @@ curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags
 
 # 4. Create the sandbox from the published kit — your agent starts immediately.
 sbx create --name my-band-agent \
-  --kit ghcr.io/band-ai/band-python-kit:<X.Y.Z> \
+  --kit docker.io/bandhq/band-python-kit:<X.Y.Z> \
   band-python-kit ~/my-band-agent
 ```
 
@@ -248,12 +248,13 @@ sbx create --name my-band-agent \
 ```
 
 The in-repo `spec.yaml` keeps `sandbox.image: band-python-kit:local` so this
-local flow works unchanged; the published kit's spec is stamped at release time
-to pin the GHCR image by digest (see [`RELEASING.md`](RELEASING.md)).
+local flow works unchanged; each published kit's spec is stamped at release
+time to pin **that registry's** image by digest (see
+[`RELEASING.md`](RELEASING.md)).
 
-Release engineering — how the GHCR image and kit artifact are published, the
-tag policy, the supply-chain quarantine gate, and the CVE-rebuild cadence — is
-documented in [`RELEASING.md`](RELEASING.md).
+Release engineering — how the image and kit artifact are dual-published to
+Docker Hub and GHCR, the tag policy, the supply-chain quarantine gate, and the
+CVE-rebuild cadence — is documented in [`RELEASING.md`](RELEASING.md).
 
 ## Image reference
 
