@@ -73,7 +73,8 @@ class CodexStdioClient(BaseJsonRpcClient):
             binary = self.command[0] if self.command else "codex"
             raise FileNotFoundError(
                 f"Codex CLI binary not found: '{binary}'. "
-                "Install Codex CLI or configure CodexAdapterConfig.codex_command."
+                "Install it (`npm install -g @openai/codex`), authenticate "
+                "(`codex login`), or configure CodexAdapterConfig.codex_command."
             ) from exc
         self._connected = True
         self._reader_task = asyncio.create_task(self._read_stdout_loop())

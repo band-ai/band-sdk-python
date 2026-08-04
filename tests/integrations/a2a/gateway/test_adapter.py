@@ -81,6 +81,17 @@ class TestGatewayConfiguration:
         with pytest.raises(ValueError, match="response_timeout_s"):
             A2AGatewayAdapterConfig(response_timeout_s=0)
 
+    def test_gateway_url_derives_from_port(self) -> None:
+        """Passing only port must not leave agent cards on the default URL."""
+        adapter = A2AGatewayAdapter(port=8080, rest_client=MagicMock())
+        assert adapter.gateway_url == "http://localhost:8080"
+
+    def test_explicit_gateway_url_wins(self) -> None:
+        adapter = A2AGatewayAdapter(
+            gateway_url="https://gw.example.com", port=8080, rest_client=MagicMock()
+        )
+        assert adapter.gateway_url == "https://gw.example.com"
+
 
 class TestGatewayStartup:
     @pytest.mark.asyncio

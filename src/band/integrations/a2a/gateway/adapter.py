@@ -112,7 +112,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
     def __init__(
         self,
-        gateway_url: str = "http://localhost:10000",
+        gateway_url: str | None = None,
         port: int = 10000,
         config: A2AGatewayAdapterConfig | None = None,
         features: AdapterFeatures | None = None,
@@ -121,7 +121,10 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         """Initialize gateway adapter.
 
         Args:
-            gateway_url: Base URL for A2A endpoints exposed by this gateway.
+            gateway_url: Base URL for A2A endpoints exposed by this gateway
+                (what remote clients see in agent cards). ``None`` (default)
+                derives ``http://localhost:{port}``; set explicitly when the
+                gateway is reachable at a different public address.
             port: Port for HTTP server to listen on.
             config: A2A Gateway runtime configuration.
             rest_client: Optional ``AsyncRestClient`` injection seam (tests).
@@ -133,7 +136,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             history_converter=GatewayHistoryConverter(),
             features=features,
         )
-        self.gateway_url = gateway_url
+        self.gateway_url = gateway_url or f"http://localhost:{port}"
         self.port = port
         self.config = config or A2AGatewayAdapterConfig()
 

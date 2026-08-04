@@ -199,6 +199,9 @@ def _letta_factory(**kw: Any) -> Any:
 def _opencode_factory(**kw: Any) -> Any:
     from band.adapters.opencode import OpencodeAdapter
 
+    # Fake the server boundary so on_started's reachability preflight
+    # (which only runs with the default client factory) stays offline.
+    kw.setdefault("client_factory", lambda _config: MagicMock())
     return OpencodeAdapter(**kw)
 
 

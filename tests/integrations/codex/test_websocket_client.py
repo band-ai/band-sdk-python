@@ -254,6 +254,22 @@ async def test_websocket_client_connect_sets_large_max_size(
 
 
 @pytest.mark.asyncio
+async def test_websocket_client_refused_connection_names_the_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing app-server must fail with instructions, not a raw OSError."""
+
+    async def refused_connect(*_args, **_kwargs):
+        raise ConnectionRefusedError("connect call failed")
+
+    monkeypatch.setattr("websockets.asyncio.client.connect", refused_connect)
+
+    client = CodexWebSocketClient(ws_url="ws://127.0.0.1:8765")
+    with pytest.raises(ConnectionError, match="codex app-server --listen"):
+        await client.connect()
+
+
+@pytest.mark.asyncio
 async def test_websocket_client_basic_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

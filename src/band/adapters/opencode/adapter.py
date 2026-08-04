@@ -262,6 +262,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # concurrent agents sharing one serve.
         self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        # Startup reachability check only makes sense against a real server;
+        # an injected factory fakes that boundary (tests, custom transports).
+        self._preflight_enabled = client_factory is None
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -303,7 +306,30 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             f"{self._system_prompt}\n\n{_OPENCODE_SYSTEM_NOTE}".strip()
         )
 
+        await self._preflight_server()
         self._log_startup_config(agent_name)
+
+    async def _preflight_server(self) -> None:
+        """Fail fast at startup when no OpenCode server answers at base_url.
+
+        The working client stays lazy (built on the first turn), so the probe
+        uses a transient one. Without this, an unreachable server surfaces as
+        a per-turn error event in every room instead of one clear startup
+        failure naming the fix.
+        """
+        if not self._preflight_enabled:
+            return
+        probe = self._client_factory(self.config)
+        try:
+            await probe.health()
+        except httpx.HTTPError as exc:
+            raise BandConfigError(
+                f"OpenCode server not reachable at {self.config.base_url}: {exc}. "
+                "Start one with `opencode serve --hostname 127.0.0.1 --port 4096` "
+                "or point OpencodeAdapterConfig.base_url at a running server."
+            ) from exc
+        finally:
+            await probe.close()
 
     def _agent_mcp_server_name(self, agent_identity: str) -> str:
         """Return a stable, serve-global MCP name for one Band identity."""

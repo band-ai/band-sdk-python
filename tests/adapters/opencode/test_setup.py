@@ -32,10 +32,26 @@ from tests.adapters.opencode.helpers import (
 )
 
 
+async def test_startup_fails_loudly_when_server_unreachable() -> None:
+    """The default (real-server) path must fail at startup naming the fix."""
+    import httpx
+
+    adapter = OpencodeAdapter()
+    with patch(
+        "band.integrations.opencode.client.HttpOpencodeClient.health",
+        side_effect=httpx.ConnectError("All connection attempts failed"),
+    ):
+        with pytest.raises(BandConfigError, match="opencode serve"):
+            await adapter.on_started("Tom", "A cat")
+
+
 async def test_mcp_server_name_is_stable_per_agent_and_distinct_per_agent() -> None:
-    first = OpencodeAdapter()
-    restarted = OpencodeAdapter()
-    other = OpencodeAdapter()
+    def factory(_config: OpencodeAdapterConfig) -> FakeOpencodeClient:
+        return FakeOpencodeClient()
+
+    first = OpencodeAdapter(client_factory=factory)
+    restarted = OpencodeAdapter(client_factory=factory)
+    other = OpencodeAdapter(client_factory=factory)
 
     await first.on_started("Tom", "A cat")
     await restarted.on_started("Tom", "A cat")
