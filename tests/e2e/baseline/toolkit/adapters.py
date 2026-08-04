@@ -167,6 +167,29 @@ def _custom_tool_defs(tools: list[ToolSpec] | None) -> list[CustomToolDef] | Non
     return [t.as_custom_tool_def() for t in tools] if tools else None
 
 
+def _feature_kwargs(features: AdapterFeatures | None) -> dict[str, Any]:
+    """Unpack an ``AdapterFeatures`` into the flattened constructor kwargs.
+
+    Adapter constructors take ``emit=``/``capabilities=``/... directly, not a
+    wrapping ``features=AdapterFeatures(...)`` object; every builder in this
+    module keeps its own ``features: AdapterFeatures | None`` parameter (the
+    toolkit's cell-authoring surface, e.g. ``memory_features()`` in
+    ``sample_agents.py``) and spreads ``**_feature_kwargs(features)`` at the
+    real constructor call. ``None`` spreads to nothing, so an adapter's own
+    ``emit`` default applies -- everything it supports. A cell that wants
+    silence instead passes an explicit ``AdapterFeatures(emit=frozenset())``.
+    """
+    if features is None:
+        return {}
+    return {
+        "emit": features.emit,
+        "capabilities": features.capabilities,
+        "include_tools": features.include_tools,
+        "exclude_tools": features.exclude_tools,
+        "include_categories": features.include_categories,
+    }
+
+
 def _reject_tools(adapter_id: Adapter, tools: list[ToolSpec] | None) -> None:
     """Fail loudly when custom tools are asked of an adapter that can't take them.
 

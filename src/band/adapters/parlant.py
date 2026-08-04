@@ -14,9 +14,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import ClassVar, TYPE_CHECKING, Any
 
+from typing_extensions import Unpack
+
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.parlant.server import running_parlant_server
 from band.integrations.parlant.tools import (
     create_parlant_tools,
@@ -113,9 +115,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         system_prompt: str | None = None,
         custom_section: str | None = None,
         history_converter: ParlantHistoryConverter | None = None,
-        features: AdapterFeatures | None = None,
         response_timeout: float = 300.0,
         response_poll: float = 30.0,
+        **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Parlant SDK adapter.
@@ -139,7 +141,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             system_prompt: Full system prompt override
             custom_section: Custom instructions appended to agent description
             history_converter: Custom history converter (optional)
-            features: Shared adapter feature settings (capabilities, emit, tool filters).
             response_timeout: Max seconds to wait for the agent's response per turn.
                 Default 300 (5 min): a cold start — server warmup plus the first
                 guideline-matching/generation round-trips — can run long on a slow host.
@@ -148,7 +149,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         """
         super().__init__(
             history_converter=history_converter or ParlantHistoryConverter(),
-            features=features,
+            **features,
         )
 
         if response_timeout <= 0:

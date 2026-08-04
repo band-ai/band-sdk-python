@@ -65,11 +65,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-
 
 from acp import run_agent
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.config import load_agent_config
@@ -89,14 +88,22 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_api_key: str = ""
+    band_agent_id: str = ""
+
+
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     # JetBrains IDEs inject credentials via ~/.jetbrains/acp.json env config.
     # Fall back to agent_config.yaml for standalone testing.
-    api_key = os.getenv("BAND_API_KEY")
+    api_key = settings.band_api_key
 
     if not api_key:
         try:
@@ -107,11 +114,11 @@ async def main() -> None:
                 "or configure 'jetbrains_acp_agent' in agent_config.yaml"
             )
     else:
-        agent_id = os.getenv("BAND_AGENT_ID")
-        if not agent_id:
+        if not settings.band_agent_id:
             raise ValueError(
                 "BAND_AGENT_ID is required. Pass via --agent-id or set BAND_AGENT_ID."
             )
+        agent_id = settings.band_agent_id
 
     # Create ACP server adapter
     adapter = BandACPServerAdapter()
@@ -138,8 +145,6 @@ async def main() -> None:
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Band ACP server for JetBrains...")

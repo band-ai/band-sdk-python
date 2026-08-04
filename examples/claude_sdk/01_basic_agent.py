@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from band import Agent, configure_logging
 from band.adapters import ClaudeSDKAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     logging.INFO,
@@ -60,7 +60,7 @@ async def main() -> None:
     # fails under API-key auth); pass `model=` to override.
     adapter = ClaudeSDKAdapter(
         custom_section="You are a helpful assistant. Be concise and friendly.",
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 
     agent = Agent.from_config(

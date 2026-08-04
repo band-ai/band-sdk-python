@@ -557,10 +557,10 @@ def _build_codex_config() -> AdapterConfig:
             "config": CodexAdapterConfig(),
         },
         custom_kwargs={
-            "config": CodexAdapterConfig(enable_execution_reporting=True),
+            "config": CodexAdapterConfig(structured_errors=False),
         },
         custom_expected={
-            "config": CodexAdapterConfig(enable_execution_reporting=True),
+            "config": CodexAdapterConfig(structured_errors=False),
         },
         has_custom_tools_attr=True,
         custom_tools_attr="_custom_tools",
@@ -580,14 +580,14 @@ def _build_letta_config() -> AdapterConfig:
         },
         custom_kwargs={
             "config": LettaAdapterConfig(
-                enable_execution_reporting=True,
+                auto_relay=False,
                 mode="shared",
                 mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         custom_expected={
             "config": LettaAdapterConfig(
-                enable_execution_reporting=True,
+                auto_relay=False,
                 mode="shared",
                 mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
@@ -610,7 +610,7 @@ def _build_opencode_config() -> AdapterConfig:
         },
         custom_kwargs={
             "config": OpencodeAdapterConfig(
-                enable_execution_reporting=True,
+                include_base_instructions=True,
                 approval_mode="auto_accept",
                 provider_id="opencode",
                 model_id="minimax-m2.5-free",
@@ -618,7 +618,7 @@ def _build_opencode_config() -> AdapterConfig:
         },
         custom_expected={
             "config": OpencodeAdapterConfig(
-                enable_execution_reporting=True,
+                include_base_instructions=True,
                 approval_mode="auto_accept",
                 provider_id="opencode",
                 model_id="minimax-m2.5-free",

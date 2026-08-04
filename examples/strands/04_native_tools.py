@@ -34,7 +34,7 @@ from strands.models.openai import OpenAIModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ async def main() -> None:
             "human only when the request is outside currency conversion."
         ),
         additional_tools=[convert_from_usd, escalate_to_human],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting Strands agent with native tools...")

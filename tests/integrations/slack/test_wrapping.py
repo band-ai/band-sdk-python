@@ -277,7 +277,7 @@ async def test_on_started_requires_platform_when_no_rest_client_injected():
 class _EmitBrain(_SlackReplyBrain):
     """Inner brain that declares (and is configured to use) execution emit."""
 
-    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
     SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY})
 
 
@@ -291,7 +291,7 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
     """
     inner = _EmitBrain(reply=None)
     inner.features = AdapterFeatures(
-        emit=frozenset({Emit.EXECUTION}),
+        emit=frozenset({Emit.TOOL_CALLS}),
         capabilities=frozenset({Capability.MEMORY}),
     )
     adapter, _, _, _ = _make_adapter(inner=inner)
@@ -304,7 +304,7 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
             await adapter.on_started("MyBot", "")
 
     # Wrapper now reflects the inner's declared support.
-    assert adapter.SUPPORTED_EMIT == frozenset({Emit.EXECUTION})
+    assert adapter.SUPPORTED_EMIT == frozenset({Emit.TOOL_CALLS})
     assert adapter.SUPPORTED_CAPABILITIES == frozenset({Capability.MEMORY})
     # No misleading "does not support" warning for values the brain handles.
     assert not any("does not support" in r.getMessage() for r in caplog.records), [

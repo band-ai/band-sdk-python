@@ -12,12 +12,13 @@ from uuid import uuid4
 
 from acp import spawn_agent_process
 from acp.schema import HttpMcpServer, SseMcpServer
+from typing_extensions import Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
@@ -119,7 +120,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         inject_band_tools: bool = True,
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
-        features: AdapterFeatures | None = None,
         # Transport + advanced knobs are keyword-only: this preserves the original
         # positional order (command, env, cwd, …) for existing callers, and TCP /
         # custom-transport wiring reads clearly at the call site.
@@ -128,10 +128,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         port: int | None = None,
         custom_section: str = "",
         spawn_process: SpawnProcess | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
-            features=features,
+            **features,
         )
         self._host, self._port = self._resolve_transport(command, host, port)
         # stdio spawns a subprocess from ``command``; TCP dials an already-running

@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from band import Agent, configure_logging
 from band.adapters import ClaudeSDKAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     logging.INFO,
@@ -74,9 +74,8 @@ complex problem-solving. When faced with challenging questions:
 3. Evaluate trade-offs
 4. Provide clear, well-reasoned answers""",
         max_thinking_tokens=10000,  # Enable extended thinking
-        features=AdapterFeatures(
-            emit={Emit.EXECUTION, Emit.THOUGHTS}
-        ),  # Report execution and thinking as events
+        emit=Emit.TOOL_CALLS
+        | Emit.THOUGHTS,  # Report tool calls and thinking as events
     )
 
     agent = Agent.from_config(

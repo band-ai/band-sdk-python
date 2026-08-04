@@ -21,14 +21,25 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
-import os
 import signal
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    agent_config: str
+    workspace: str = ""
+    agent_role: str = ""
+
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -156,18 +167,8 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _handle_signal, sig)
 
-    # Get config path from environment
-    config_path = os.environ.get("AGENT_CONFIG")
-    if not config_path:
-        raise ValueError("AGENT_CONFIG environment variable not set")
-
-    # Validate Band platform URLs
-    ws_url = os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
+    settings = Settings()
+    config_path = settings.agent_config
 
     # Validate required mount points (NFR-007a)
     validate_mounts()
@@ -188,10 +189,10 @@ async def main() -> None:
     tool_names = config.get("tools", [])
 
     # Working directory for Claude Code (env overrides config)
-    workspace = os.environ.get("WORKSPACE") or config.get("workspace")
+    workspace = settings.workspace or config.get("workspace")
 
     # Get role from config or environment (env overrides config)
-    role = os.environ.get("AGENT_ROLE") or config.get("role")
+    role = settings.agent_role or config.get("role")
 
     # Build final prompt combining role and custom prompt
     config_dir = Path(config_path).parent
@@ -232,7 +233,7 @@ async def main() -> None:
         fallback_model=fallback_model,
         custom_section=final_prompt,
         max_thinking_tokens=thinking_tokens,
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         additional_tools=custom_tools if custom_tools else None,
         cwd=workspace,
     )
@@ -242,8 +243,6 @@ async def main() -> None:
         "agent",
         config_path=config_path,
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting agent: %s", agent_id)

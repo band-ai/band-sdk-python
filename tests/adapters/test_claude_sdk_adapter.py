@@ -28,7 +28,7 @@ from band.adapters.claude_sdk import (
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.runtime.tools import ALL_TOOL_NAMES
-from band.core.types import PlatformMessage
+from band.core.types import Capability, PlatformMessage
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
@@ -71,17 +71,11 @@ class TestInitialization:
     def test_default_initialization(self):
         """Should initialize with no memory capability by default."""
         adapter = ClaudeSDKAdapter()
-
-        from band.core.types import Capability
-
         assert Capability.MEMORY not in adapter.features.capabilities
 
     def test_enable_memory_tools(self):
-        """Should accept enable_memory_tools parameter (deprecated)."""
-        adapter = ClaudeSDKAdapter(enable_memory_tools=True)
-
-        from band.core.types import Capability
-
+        """Should accept capabilities=Capability.MEMORY."""
+        adapter = ClaudeSDKAdapter(capabilities=Capability.MEMORY)
         assert Capability.MEMORY in adapter.features.capabilities
 
 
@@ -719,7 +713,7 @@ class TestCustomTools:
 
         adapter = ClaudeSDKAdapter(
             additional_tools=[(EchoInput, echo)],
-            enable_memory_tools=True,
+            capabilities=Capability.MEMORY,
         )
 
         mock_backend = MagicMock()

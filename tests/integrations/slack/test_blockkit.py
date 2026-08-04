@@ -1,7 +1,7 @@
 """Tests for tool-call visibility via Block Kit plan/task UI.
 
 When the brain emits ``tool_call`` / ``tool_result`` events (via
-``Emit.EXECUTION``), the SlackAdapter renders them as a progressive
+``Emit.TOOL_CALLS``), the SlackAdapter renders them as a progressive
 Block Kit message in the bound Slack thread. The plan is created on
 the first ``tool_call`` and updated in place via ``chat.update`` as
 work progresses.
@@ -216,7 +216,7 @@ def test_default_write_tool_names_includes_known_mutators():
 #
 # The plan-rendering hook now lives in ``execute_tool_call`` (not
 # ``send_event``) so Slack progress is independent of the brain's
-# ``Emit.EXECUTION`` setting. Tests patch the parent class's
+# ``Emit.TOOL_CALLS`` setting. Tests patch the parent class's
 # ``execute_tool_call_structured`` to return controlled outcomes — the
 # Slack hook derives task success/failure from the structured ``ok``
 # flag, not from the returned string.

@@ -33,7 +33,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from band.core.types import AdapterFeatures
+from typing_extensions import Unpack
+
+from band.core.types import FeatureKwargs
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.runtime.custom_tools import CustomToolDef
 
@@ -77,7 +79,7 @@ class CopilotACPAdapter(ACPClientAdapter):
         config: CopilotACPAdapterConfig | None = None,
         *,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         config = config or CopilotACPAdapterConfig()
         use_tcp = config.host is not None or config.port is not None
@@ -115,13 +117,12 @@ class CopilotACPAdapter(ACPClientAdapter):
             "additional_tools": additional_tools,
             "inject_band_tools": config.inject_band_tools,
             "custom_section": config.custom_section,
-            "features": features,
         }
 
         if use_tcp:
-            super().__init__(host=config.host, port=config.port, **common)
+            super().__init__(host=config.host, port=config.port, **common, **features)
         else:
-            super().__init__(command=list(config.command), **common)
+            super().__init__(command=list(config.command), **common, **features)
 
 
 __all__ = [

@@ -14,10 +14,11 @@ import warnings
 from contextvars import ContextVar
 from typing import ClassVar, TYPE_CHECKING, Any
 
-from band.core.exceptions import BandConfigError
+from typing_extensions import Unpack
+
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.integrations.crewai import (
     CrewAIToolContext,
@@ -102,7 +103,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         the CrewAI LLM class (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -114,8 +115,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         goal: str | None = None,
         backstory: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         verbose: bool = False,
         max_iter: int = 20,
         max_rpm: int | None = None,
@@ -123,7 +122,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         history_converter: CrewAIHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         system_prompt: str | None = None,  # Deprecated
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """Initialize the CrewAI adapter.
 
@@ -134,7 +133,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             goal: Agent's primary goal or objective
             backstory: Agent's background and expertise description
             custom_section: Custom instructions added to the agent's backstory
-            enable_execution_reporting: If True, sends tool_call/tool_result events
             verbose: If True, enables detailed logging from CrewAI
             max_iter: Maximum iterations for the agent (default: 20)
             max_rpm: Maximum requests per minute (rate limiting)
@@ -157,39 +155,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             if backstory is None:
                 backstory = system_prompt
 
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # NOTE: unlike ClaudeSDK, CrewAI's legacy enable_execution_reporting
-            # maps to {Emit.EXECUTION} only (no THOUGHTS). CrewAI had no native
-            # thought emission under this flag, so migrating to THOUGHTS would
-            # turn on a new behavior, not preserve existing behavior.
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or CrewAIHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -288,7 +256,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         reporter all live in ``band.integrations.crewai``. This adapter
         supplies its own context getter (reading the legacy
         ``_current_room_context`` ContextVar), its own reporter
-        (gated by ``Emit.EXECUTION``), and its event loop fallback.
+        (gated by ``Emit.TOOL_CALLS``), and its event loop fallback.
         """
         return build_band_crewai_tools(
             get_context=self._get_context,

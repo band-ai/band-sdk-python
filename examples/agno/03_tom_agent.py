@@ -41,10 +41,10 @@ import sys
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters import AgnoAdapter
-from band.core.types import AdapterFeatures, Emit
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -56,11 +56,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str
+
+
 async def main() -> None:
     load_dotenv()
-
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+    Settings()
 
     # You own the Agno agent — model and in-character instructions.
     agno_agent = AgnoAgent(
@@ -71,11 +77,9 @@ async def main() -> None:
     logger.info("Tom is on the prowl, looking for Jerry...")
     async with Agent.from_config(
         "tom_agent",
-        # emit=EXECUTION posts tool_call/tool_result events so Tom's platform
+        # Default emit posts tool_call/tool_result events so Tom's platform
         # actions (lookup, invite, send) are visible in the room.
-        adapter=AgnoAdapter(
-            agno_agent, features=AdapterFeatures(emit={Emit.EXECUTION})
-        ),
+        adapter=AgnoAdapter(agno_agent),
     ) as agent:
         await agent.run_forever()
 

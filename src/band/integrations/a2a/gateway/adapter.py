@@ -15,6 +15,7 @@ from uuid import uuid4
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Task, TaskState, TaskStatus
+from typing_extensions import Unpack
 
 from band.client.rest import (
     AsyncRestClient,
@@ -28,7 +29,7 @@ from band.client.rest import (
 from band.converters.a2a_gateway import GatewayHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -115,8 +116,8 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         gateway_url: str | None = None,
         port: int = 10000,
         config: A2AGatewayAdapterConfig | None = None,
-        features: AdapterFeatures | None = None,
         rest_client: AsyncRestClient | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize gateway adapter.
 
@@ -134,7 +135,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         """
         super().__init__(
             history_converter=GatewayHistoryConverter(),
-            features=features,
+            **features,
         )
         self.gateway_url = gateway_url or f"http://localhost:{port}"
         self.port = port

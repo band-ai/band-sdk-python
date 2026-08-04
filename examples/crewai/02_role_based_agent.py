@@ -24,7 +24,6 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
-from band.core.types import AdapterFeatures, Emit
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -43,7 +42,6 @@ async def main() -> None:
         analyzing data, and presenting findings in a clear, actionable format.
         You're known for your attention to detail and ability to connect disparate
         pieces of information into meaningful insights.""",
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
         verbose=True,
     )
 

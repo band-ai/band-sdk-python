@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
-from band.core.types import AdapterFeatures, Emit
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -63,7 +62,6 @@ When coordinating:
 6. Synthesize outputs from multiple agents
 7. Clean up by removing agents no longer needed
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
         verbose=True,
     )
 

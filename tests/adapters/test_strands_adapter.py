@@ -25,7 +25,6 @@ from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
-    AdapterFeatures,
     Capability,
     Emit,
     PlatformMessage,
@@ -222,9 +221,7 @@ class TestToolRegistration:
     async def test_capability_gated_tools_registered(self):
         adapter = StrandsAdapter(
             model="m",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY, Capability.CONTACTS}
-            ),
+            capabilities=Capability.MEMORY | Capability.CONTACTS,
         )
         await adapter.on_started("Bot", "A bot")
 
@@ -252,7 +249,7 @@ class TestToolRegistration:
         """Reaching a tool is enough to execute it, so a filter must apply here."""
         adapter = StrandsAdapter(
             model="m",
-            features=AdapterFeatures(exclude_tools=["band_remove_participant"]),
+            exclude_tools=["band_remove_participant"],
         )
         await adapter.on_started("Bot", "A bot")
 
@@ -379,9 +376,7 @@ class TestOnMessage:
                 raise RuntimeError("events down")
 
         tools = NoEventTools(room_id=ROOM)
-        adapter = await scripted(
-            SEND_TURN, features=AdapterFeatures(emit={Emit.EXECUTION})
-        )
+        adapter = await scripted(SEND_TURN, emit=Emit.TOOL_CALLS)
 
         await _run_message(adapter, tools)
 
@@ -393,7 +388,7 @@ class TestOnMessage:
             SEND_TURN,
             input_tokens=_INPUT_TOKENS_PER_CALL,
             output_tokens=_OUTPUT_TOKENS_PER_CALL,
-            features=AdapterFeatures(emit={Emit.USAGE}),
+            emit=Emit.USAGE,
         )
 
         await _run_message(adapter, tools)
@@ -446,9 +441,7 @@ class TestTurnProductivity:
                 raise RuntimeError("backend down")
 
         tools = FailingTools(room_id=ROOM)
-        adapter = await scripted(
-            SEND_TURN, features=AdapterFeatures(emit={Emit.EXECUTION})
-        )
+        adapter = await scripted(SEND_TURN, emit=Emit.TOOL_CALLS)
 
         await _run_message(adapter, tools)
 
@@ -525,7 +518,7 @@ class TestTurnFailure:
             SEND_TURN,
             ErrorTurn(RuntimeError("provider down")),
             input_tokens=_INPUT_TOKENS_PER_CALL,
-            features=AdapterFeatures(emit={Emit.USAGE}),
+            emit=Emit.USAGE,
         )
 
         with pytest.raises(EventLoopException, match="provider down"):

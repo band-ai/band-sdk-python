@@ -31,7 +31,7 @@ from strands.models.openai import OpenAIModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ async def main() -> None:
         # Full override: custom_section would be ignored alongside this.
         system_prompt=SUPPORT_PROMPT,
         # Post each tool call and result into the room for visibility.
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting Strands support agent...")

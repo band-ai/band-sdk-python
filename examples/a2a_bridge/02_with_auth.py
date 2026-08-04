@@ -23,11 +23,10 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import A2AAdapter
@@ -37,52 +36,41 @@ configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    a2a_agent_url: str = "http://localhost:10000"
+    a2a_api_key: str = ""
+    a2a_bearer_token: str = ""
+    # A JSON object env var (e.g. '{"X-Custom-Auth":"value"}'); pydantic-settings
+    # decodes and validates it against dict[str, str] on construction.
+    a2a_auth_headers_json: dict[str, str] = {}
+
+
 async def main() -> None:
     load_dotenv()
-
-    # URL of the remote A2A agent
-    a2a_url = os.getenv("A2A_AGENT_URL", "http://localhost:10000")
-
-    # A2A agent authentication (if required)
-    a2a_api_key = os.getenv("A2A_API_KEY")
-    a2a_bearer_token = os.getenv("A2A_BEARER_TOKEN")
-    a2a_auth_headers_json = os.getenv("A2A_AUTH_HEADERS_JSON")
-
-    custom_headers: dict[str, str] = {}
-    if a2a_auth_headers_json:
-        try:
-            parsed_headers = json.loads(a2a_auth_headers_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError("A2A_AUTH_HEADERS_JSON must be valid JSON") from exc
-        if not isinstance(parsed_headers, dict):
-            raise ValueError("A2A_AUTH_HEADERS_JSON must decode to a JSON object")
-        invalid_header_values = [
-            key for key, value in parsed_headers.items() if not isinstance(value, str)
-        ]
-        if invalid_header_values:
-            raise ValueError(
-                "A2A_AUTH_HEADERS_JSON values must all be strings; "
-                f"invalid keys: {', '.join(sorted(invalid_header_values))}"
-            )
-        custom_headers = {
-            str(key): value
-            for key, value in parsed_headers.items()
-            if isinstance(key, str)
-        }
+    settings = Settings()
+    a2a_url = settings.a2a_agent_url
 
     # Configure auth if credentials provided
     auth = None
-    if a2a_api_key or a2a_bearer_token or custom_headers:
+    if (
+        settings.a2a_api_key
+        or settings.a2a_bearer_token
+        or settings.a2a_auth_headers_json
+    ):
         auth = A2AAuth(
-            api_key=a2a_api_key,
-            bearer_token=a2a_bearer_token,
-            headers=custom_headers,
+            api_key=settings.a2a_api_key,
+            bearer_token=settings.a2a_bearer_token,
+            headers=settings.a2a_auth_headers_json,
         )
         logger.info(
             "Using authentication for A2A agent (api_key=%s, bearer=%s, custom_headers=%s)",
-            bool(a2a_api_key),
-            bool(a2a_bearer_token),
-            sorted(custom_headers),
+            bool(settings.a2a_api_key),
+            bool(settings.a2a_bearer_token),
+            sorted(settings.a2a_auth_headers_json),
         )
 
     # Create adapter with auth

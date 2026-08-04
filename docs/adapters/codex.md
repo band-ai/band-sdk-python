@@ -97,15 +97,15 @@ The adapter handles Codex approval requests in the room, persists thread metadat
 This section covers Codex adapter parameters, not `Agent.create(...)` parameters. `CodexAdapter(...)` has two layers:
 
 - Put runtime settings in `CodexAdapterConfig(...)`.
-- Pass adapter-level settings such as `features=` and `additional_tools=` directly to `CodexAdapter(...)`.
+- Pass adapter-level settings such as `emit=`, `capabilities=`, and `additional_tools=` directly to `CodexAdapter(...)`.
 
 ```python
-from band import AdapterFeatures, Emit
+from band.core.types import Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(cwd="/repo", sandbox="workspace-write"),
-    features=AdapterFeatures(emit={Emit.EXECUTION, Emit.TASK_EVENTS}),
+    emit=Emit.TOOL_CALLS | Emit.TASK_EVENTS,
 )
 ```
 
@@ -183,50 +183,52 @@ Pass these directly to `CodexAdapter(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `emit` | `Emit \| Iterable[Emit] \| None` | everything supported | Telemetry events the adapter sends back to Band. Opt-out: omitted, defaults to everything `SUPPORTED_EMIT` declares; pass `emit=()` for silence, or narrow with `\|`. |
+| `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
 | `history_converter` | `CodexHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default history/thread-metadata converter. |
 | `client_factory` | callable | `None` | Test/advanced injection point for a custom Codex client. |
 
-## AdapterFeatures: Capabilities and Emit
+## Feature flags: Capabilities and Emit
 
-`AdapterFeatures` is passed to `CodexAdapter(...)`, not to `CodexAdapterConfig(...)`. It has two jobs:
+`emit=`/`capabilities=` are passed directly to `CodexAdapter(...)`, never wrapped in an `AdapterFeatures(...)` object, and are independent of `CodexAdapterConfig(...)`'s own runtime settings:
 
-- `capabilities` exposes optional Band tool categories to the model.
-- `emit` controls telemetry events the adapter sends back to Band.
+- `capabilities` exposes optional Band tool categories to the model. **Opt-in** — omitted, it defaults to empty.
+- `emit` controls telemetry events the adapter sends back to Band. **Opt-out** — omitted, it defaults to everything this adapter supports, including `Emit.TASK_EVENTS`.
 
-If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` because task events are used for lifecycle data and thread resume metadata. Optional capabilities are still off by default. If you pass `features=...`, your value is authoritative; include `Emit.TASK_EVENTS` if you want thread resume across reconnects.
+Requesting a value this adapter doesn't support raises `BandConfigError` immediately at construction.
+
+`Emit.TASK_EVENTS` is load-bearing, not just narration: it persists the session/thread-resume mapping in task-event metadata. Narrowing `emit` to exclude it also stops thread resumption across restarts.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Codex. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
-| `Emit.EXECUTION` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
+| `Emit.TOOL_CALLS` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
 | `Emit.THOUGHTS` | Yes | Sends completed reasoning, plan, and review-mode events as `thought` events. |
 | `Emit.TASK_EVENTS` | Yes | Sends lifecycle, thread-resume, approval, diff-summary, token-usage, and error task events. Required for persisted Codex thread mapping. |
+| `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 
 Example:
 
 ```python
-from band import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(model="gpt-5.5"),
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-        emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
+    emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
 )
 ```
 
 ## Telemetry Options
 
-Use `AdapterFeatures.emit` for the broad telemetry categories:
+Use `emit=` for the broad telemetry categories:
 
 | Emit | Best for | Event output |
 |------|----------|--------------|
-| `Emit.EXECUTION` | Auditing commands, tools, and file activity. | `tool_call` and `tool_result` pairs. |
+| `Emit.TOOL_CALLS` | Auditing commands, tools, and file activity. | `tool_call` and `tool_result` pairs. |
 | `Emit.THOUGHTS` | Debugging reasoning and planning UX. | Completed `thought` events. |
 | `Emit.TASK_EVENTS` | Lifecycle, resume, approvals, and usage tracking. | Task events with metadata. |
 

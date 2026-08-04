@@ -68,7 +68,7 @@ from dotenv import load_dotenv
 
 from band import Agent
 from band.config import PlatformSettings, load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 from band.platform.event import ContactRequestReceivedEvent, ContactEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -282,7 +282,7 @@ async def run_pydantic_ai_agent(
     adapter = PydanticAIAdapter(
         model=model,
         custom_section=section,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     streaming_str = " with execution reporting" if enable_streaming else ""
@@ -325,7 +325,7 @@ async def run_anthropic_agent(
     adapter = AnthropicAdapter(
         model=model,
         prompt=custom_section,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     streaming_str = " with execution reporting" if enable_streaming else ""
@@ -370,7 +370,7 @@ async def run_claude_sdk_agent(
         fallback_model=fallback_model,
         custom_section=custom_section,
         max_thinking_tokens=10000 if enable_thinking else None,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     options = []
@@ -413,11 +413,14 @@ async def run_parlant_agent(
     from band.adapters import ParlantAdapter
 
     # Parlant chooses its model via the NLP service, not a model string;
-    # the OpenAI service reads OPENAI_API_KEY.
+    # the OpenAI service reads OPENAI_API_KEY. Its adapter has no emit kinds
+    # to opt into (Parlant's engine handles tool execution invisibly), so
+    # enable_streaming has no effect here — unlike every other framework in
+    # this file.
+    del enable_streaming
     adapter = ParlantAdapter(
         custom_section=custom_section,
         nlp_service=p.NLPServices.openai,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
     for guideline in PARLANT_GUIDELINES:
         adapter.add_guideline(**guideline)
@@ -452,7 +455,7 @@ async def run_crewai_agent(
         goal=CREWAI_DEFAULTS["goal"],
         backstory=CREWAI_DEFAULTS["backstory"],
         custom_section=custom_section,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+        emit=Emit.TOOL_CALLS if enable_streaming else (),
     )
 
     logger.info("Starting CrewAI agent with model: %s", model)
@@ -505,7 +508,7 @@ async def run_codex_agent(
             fallback_send_agent_text=True,
             experimental_api=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
+        emit=Emit.TASK_EVENTS,
     )
 
     logger.info(
@@ -546,7 +549,7 @@ async def run_pydantic_ai_contacts_agent(
     adapter = PydanticAIAdapter(
         model=model,
         custom_section=CONTACTS_INSTRUCTIONS,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),  # Show tool calls
+        emit=Emit.TOOL_CALLS,  # Show tool calls
     )
 
     logger.info("Starting Pydantic AI contacts agent with model: %s", model)
@@ -600,7 +603,7 @@ async def run_contacts_auto_agent(
         model=model,
         custom_section="""You are a helpful assistant. Contact requests are handled automatically.
 When you see system messages about new contacts, acknowledge them to the user.""",
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting contacts auto-approve agent with model: %s", model)
@@ -658,7 +661,7 @@ Actions available:
 - band_respond_contact_request(action="approve", handle="...")
 - band_respond_contact_request(action="reject", handle="...")
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting contacts hub room agent with model: %s", model)
@@ -707,7 +710,7 @@ You will receive system messages when contacts are added or removed.
 These appear as "[Contacts]: @handle (name) is now a contact" or similar.
 Acknowledge these updates to the user when you see them.
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting contacts broadcast-only agent with model: %s", model)

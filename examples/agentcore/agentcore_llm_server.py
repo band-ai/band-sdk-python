@@ -44,77 +44,90 @@ Run locally::
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
+
+class LogSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    log_level: str = "INFO"
+
+
 logging.basicConfig(
-    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    level=getattr(logging, LogSettings().log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
 
 
-def _require_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value or not value.strip():
-        raise ValueError(f"{name} environment variable is required")
-    return value
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_agent_id: str
+    band_api_key: str
+    anthropic_api_key: str
+    band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
+    band_rest_url: str = "https://app.band.ai"
+    anthropic_model: str = "claude-sonnet-4-5-20250929"
+    system_prompt: str = ""
+    emit_execution: bool = True
+    port: int = 8080
+    host: str = "0.0.0.0"
 
 
-def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
+def _build_adapter(settings: Settings) -> AnthropicAdapter:
     """Build the AnthropicAdapter from env config.
 
-    Enables ``Emit.EXECUTION`` by default so every tool_call and tool_result
+    Enables ``Emit.TOOL_CALLS`` by default so every tool_call and tool_result
     is posted to the room as a platform event (visible in the Band UI).
     Set ``EMIT_EXECUTION=false`` to disable.
     """
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
-    system_prompt = os.environ.get("SYSTEM_PROMPT")
-    emit_execution = os.environ.get("EMIT_EXECUTION", "true").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    emit: frozenset[Emit] = (
-        frozenset({Emit.EXECUTION}) if emit_execution else frozenset()
-    )
+    emit = Emit.TOOL_CALLS if settings.emit_execution else ()
     return AnthropicAdapter(
-        model=model,
-        api_key=anthropic_api_key,
-        prompt=system_prompt,
-        features=AdapterFeatures(emit=emit),
+        model=settings.anthropic_model,
+        api_key=settings.anthropic_api_key,
+        prompt=settings.system_prompt or None,
+        emit=emit,
     )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize link + adapter + invoker; prime the adapter."""
-    agent_id = _require_env("BAND_AGENT_ID")
-    api_key = _require_env("BAND_API_KEY")
-    anthropic_api_key = _require_env("ANTHROPIC_API_KEY")
-    ws_url = os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    settings = Settings()
 
     link = BandLink(
-        agent_id=agent_id, api_key=api_key, ws_url=ws_url, rest_url=rest_url
+        agent_id=settings.band_agent_id,
+        api_key=settings.band_api_key,
+        ws_url=settings.band_ws_url,
+        rest_url=settings.band_rest_url,
     )
     invoker = OneShotInvoker(
         link=link,
-        adapter=_build_adapter(anthropic_api_key),
-        agent_id=agent_id,
+        adapter=_build_adapter(settings),
+        agent_id=settings.band_agent_id,
     )
     await invoker.startup()
-    logger.info("Container ready: agent_id=%s name=%s", agent_id, invoker.agent_name)
+    logger.info(
+        "Container ready: agent_id=%s name=%s",
+        settings.band_agent_id,
+        invoker.agent_name,
+    )
 
     app.state.invoker = invoker
 
@@ -160,9 +173,8 @@ async def invocations(request: Request) -> dict[str, Any]:
 
 
 def main() -> None:
-    port = int(os.environ.get("PORT", "8080"))
-    host = os.environ.get("HOST", "0.0.0.0")
-    uvicorn.run(app, host=host, port=port)
+    settings = Settings()
+    uvicorn.run(app, host=settings.host, port=settings.port)
 
 
 if __name__ == "__main__":

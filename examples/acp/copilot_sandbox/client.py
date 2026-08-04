@@ -37,6 +37,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
@@ -48,18 +49,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main() -> None:
-    load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
     # The sandbox name you created with `sbx create --name <name> copilot <workspace>`.
-    sandbox = os.getenv("SBX_SANDBOX", "copilot-band")
-    # An absolute cwd that exists INSIDE the sandbox for each ACP session. With sbx's
-    # default direct mount, the workspace is at the same path as on the host.
-    workspace = os.path.abspath(os.getenv("SBX_WORKSPACE", "."))
-    band_mcp_sse_url = os.getenv("BAND_MCP_SSE_URL")
+    sbx_sandbox: str = "copilot-band"
+    # A cwd that exists INSIDE the sandbox for each ACP session, resolved against
+    # the host cwd (with sbx's default direct mount, the same path applies inside).
+    sbx_workspace: str = "."
+    band_mcp_sse_url: str = ""
+
+
+async def main() -> None:
+    load_dotenv()
+    settings = Settings()
+
+    sandbox = settings.sbx_sandbox
+    workspace = os.path.abspath(settings.sbx_workspace)
+    band_mcp_sse_url = settings.band_mcp_sse_url or None
     mcp_servers = (
         [{"type": "sse", "name": "band", "url": band_mcp_sse_url, "headers": []}]
         if band_mcp_sse_url
@@ -84,8 +93,6 @@ async def main() -> None:
     async with Agent.from_config(
         "copilot_acp_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 

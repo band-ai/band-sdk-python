@@ -29,6 +29,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add parent directory to path for prompts import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -42,13 +43,22 @@ configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    github_token: str = ""
+
+
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
     adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             custom_section=generate_jerry_prompt("Jerry"),
-            github_token=os.getenv("GITHUB_TOKEN"),
+            github_token=settings.github_token or None,
         ),
     )
 

@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -24,6 +25,14 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 SCRIPT_DIR = Path(__file__).parent
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_rest_url: str = "https://app.band.ai"
 
 
 def load_agent_config(filename: str) -> dict:
@@ -46,10 +55,12 @@ async def main() -> None:
     planner = load_agent_config("planner.yaml")
     reviewer = load_agent_config("reviewer.yaml")
 
-    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    settings = Settings()
 
     # Use planner as the "orchestrator" to create the room
-    client = AsyncRestClient(api_key=planner["api_key"], base_url=base_url)
+    client = AsyncRestClient(
+        api_key=planner["api_key"], base_url=settings.band_rest_url
+    )
 
     # Step 1: Create a chat room
     logger.info("Creating chat room...")

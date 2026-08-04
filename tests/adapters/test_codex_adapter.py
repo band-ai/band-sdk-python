@@ -15,7 +15,7 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import CodexSessionState
 from band.runtime.custom_tools import CustomToolDef
@@ -228,7 +228,6 @@ class TestCodexAdapter:
     def test_config_defaults_are_low_noise_and_manual_approval(self) -> None:
         config = CodexAdapterConfig()
         assert config.emit_turn_task_markers is False
-        assert config.emit_thought_events is False
         assert config.approval_mode == "manual"
 
     @pytest.mark.asyncio
@@ -1850,7 +1849,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_execution_reporting_emits_tool_call_and_result_events(self) -> None:
-        """With enable_execution_reporting, tool_call and tool_result events are emitted."""
+        """With emit=Emit.TOOL_CALLS, tool_call and tool_result events are emitted."""
         events = [
             _event_request(
                 50,
@@ -1875,8 +1874,9 @@ class TestCodexAdapter:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -1909,8 +1909,8 @@ class TestCodexAdapter:
         assert result_data["tool_call_id"] == "call-50"
 
     @pytest.mark.asyncio
-    async def test_execution_reporting_disabled_by_default(self) -> None:
-        """Without enable_execution_reporting, no tool_call/tool_result events are emitted."""
+    async def test_execution_reporting_silenced_with_explicit_empty_emit(self) -> None:
+        """emit=() silences tool_call/tool_result events (emit otherwise defaults on)."""
         events = [
             _event_request(
                 50,
@@ -1937,6 +1937,7 @@ class TestCodexAdapter:
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=(),
         )
         tools = ToolSchemaFakeTools()
 
@@ -1995,9 +1996,10 @@ class TestCodexAdapter:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             additional_tools=custom_tools,
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2058,8 +2060,9 @@ class TestCodexAdapter:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2125,8 +2128,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2194,8 +2198,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2255,8 +2260,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2308,8 +2314,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2368,8 +2375,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2432,8 +2440,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2495,8 +2504,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2531,7 +2541,7 @@ class TestItemCompletedForwarding:
 
     @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
-        """reasoning item emits thought event when emit_thought_events=True."""
+        """reasoning item emits thought event when emit=Emit.THOUGHTS."""
         events = [
             _event_notification(
                 "item/completed",
@@ -2560,8 +2570,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", emit_thought_events=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.THOUGHTS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2585,7 +2596,7 @@ class TestItemCompletedForwarding:
 
     @pytest.mark.asyncio
     async def test_item_completed_skipped_when_reporting_disabled(self) -> None:
-        """No tool events when enable_execution_reporting=False."""
+        """No tool events when emit narrows to Emit.TASK_EVENTS only."""
         events = [
             _event_notification(
                 "item/completed",
@@ -2622,12 +2633,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                enable_execution_reporting=False,
-                emit_thought_events=False,
-            ),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TASK_EVENTS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2689,8 +2697,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2742,8 +2751,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -2795,8 +2805,9 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
         )
         tools = ToolSchemaFakeTools()
 
@@ -3434,9 +3445,7 @@ class TestHistoryInjection:
             ],
         )
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                emit_thought_events=False,
-            ),
+            config=CodexAdapterConfig(),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -4642,8 +4651,6 @@ class TestDiffsAndTokenUsage:
     @pytest.mark.asyncio
     async def test_diff_event_requires_task_events_emit(self) -> None:
         """Diffs are not forwarded when TASK_EVENTS is not in features.emit."""
-        from band.core.types import AdapterFeatures
-
         events = [
             _event_notification(
                 "turn/diff/updated",
@@ -4667,8 +4674,8 @@ class TestDiffsAndTokenUsage:
                 transport="ws",
                 emit_diff_events=True,
             ),
-            features=AdapterFeatures(emit=frozenset()),
             client_factory=lambda _config: fake_client,
+            emit=(),
         )
         tools = ToolSchemaFakeTools()
 

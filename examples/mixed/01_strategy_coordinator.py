@@ -28,7 +28,6 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
-from band.core.types import AdapterFeatures, Emit
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -73,7 +72,6 @@ When a user posts a request:
 
 Keep messages short, explicit, and coordination-focused.
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
         verbose=True,
     )
 

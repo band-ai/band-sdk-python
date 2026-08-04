@@ -35,25 +35,31 @@ import sys
 
 from copilot import ProviderConfig
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add examples directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from band import Agent, configure_logging
 from band.adapters import CopilotSDKAdapter, CopilotSDKAdapterConfig
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str
+
+
 async def main() -> None:
     load_dotenv()
-
-    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required for BYOK")
+    settings = Settings()
 
     # The MEMORY/CONTACTS capabilities already inject full memory- and
     # contact-tool instructions into the system prompt; custom_section only
@@ -70,16 +76,14 @@ async def main() -> None:
             provider=ProviderConfig(
                 type="anthropic",
                 base_url="https://api.anthropic.com",
-                api_key=anthropic_api_key,
+                api_key=settings.anthropic_api_key,
             ),
             use_logged_in_user=False,
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-contact-memory-",
         ),
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY, Capability.CONTACTS},
-            emit={Emit.EXECUTION},
-        ),
+        capabilities=Capability.MEMORY | Capability.CONTACTS,
+        emit=Emit.TOOL_CALLS,
     )
 
     # Contact WebSocket events (requests arriving, contacts added/removed):

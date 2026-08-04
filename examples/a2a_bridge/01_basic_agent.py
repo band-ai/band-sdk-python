@@ -35,9 +35,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import A2AAdapter
@@ -46,12 +46,19 @@ configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    # Default: LangGraph currency agent sample running locally
+    a2a_agent_url: str = "http://localhost:10000"
+
+
 async def main() -> None:
     load_dotenv()
-
-    # URL of the remote A2A agent
-    # Default: LangGraph currency agent sample running locally
-    a2a_url = os.getenv("A2A_AGENT_URL", "http://localhost:10000")
+    settings = Settings()
+    a2a_url = settings.a2a_agent_url
 
     # Create adapter pointing to remote A2A agent
     adapter = A2AAdapter(

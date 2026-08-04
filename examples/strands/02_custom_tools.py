@@ -9,8 +9,8 @@
 Strands agent with custom tools and capabilities.
 
 Shows the portable ``CustomToolDef`` (InputModel, handler) form shared across
-adapters, plus enabling memory/contact tools and execution/usage event
-emission via AdapterFeatures.
+adapters, plus enabling memory/contact tools (execution/usage events are on
+by default).
 
 Run with:
     uv run examples/strands/02_custom_tools.py
@@ -27,7 +27,7 @@ from strands.models.openai import OpenAIModel
 
 from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,10 +50,7 @@ async def main() -> None:
         model=OpenAIModel(model_id="gpt-5.4-mini"),
         custom_section="You can check the weather with the weather tool.",
         additional_tools=[(WeatherInput, get_weather)],  # CustomToolDef tuple
-        features=AdapterFeatures(
-            emit=frozenset({Emit.EXECUTION, Emit.USAGE}),
-            capabilities=frozenset({Capability.MEMORY, Capability.CONTACTS}),
-        ),
+        capabilities=Capability.MEMORY | Capability.CONTACTS,
     )
 
     logger.info("Starting Strands agent with custom tools...")

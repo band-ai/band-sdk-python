@@ -18,7 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters.crewai import CrewAIAdapter
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
 
@@ -70,13 +70,11 @@ async def main() -> None:
     adapter = CrewAIAdapter(
         model=config.model,
         custom_section=build_persona(),
-        # Surface tool_call/tool_result in the room, and expose the memory tools so
-        # the architect can record its verdict rationale. CrewAI has no native
-        # reasoning stream, so THOUGHTS is unsupported and intentionally omitted.
-        features=AdapterFeatures(
-            emit={Emit.EXECUTION},
-            capabilities={Capability.MEMORY},
-        ),
+        # Default emit already surfaces tool_call/tool_result in the room
+        # (CrewAI has no native reasoning stream, so THOUGHTS is unsupported).
+        # Memory tools are opt-in so the architect can record its verdict
+        # rationale.
+        capabilities=Capability.MEMORY,
     )
     agent = Agent.create(
         adapter=adapter,

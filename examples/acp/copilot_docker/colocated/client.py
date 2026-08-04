@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
@@ -37,20 +37,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main() -> None:
-    load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
     # Copilot's ACP server, published by the container.
-    host = os.getenv("COPILOT_ACP_HOST", "localhost")
-    port = int(os.getenv("COPILOT_ACP_PORT", "8080"))
+    copilot_acp_host: str = "localhost"
+    copilot_acp_port: int = 8080
     # The TCP server runs in a container, so this must be a path it can access.
-    cwd = os.getenv("COPILOT_ACP_CWD", "/")
-
+    copilot_acp_cwd: str = "/"
     # band-mcp's SSE endpoint as reachable BY COPILOT — the container's own loopback.
-    band_mcp_sse_url = os.getenv("BAND_MCP_SSE_URL", "http://127.0.0.1:3000/sse")
+    band_mcp_sse_url: str = "http://127.0.0.1:3000/sse"
+
+
+async def main() -> None:
+    load_dotenv()
+    settings = Settings()
+
+    host = settings.copilot_acp_host
+    port = settings.copilot_acp_port
+    cwd = settings.copilot_acp_cwd
+    band_mcp_sse_url = settings.band_mcp_sse_url
 
     config = CopilotACPAdapterConfig(
         host=host,
@@ -70,8 +78,6 @@ async def main() -> None:
     async with Agent.from_config(
         "copilot_acp_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 

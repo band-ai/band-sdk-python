@@ -47,7 +47,7 @@ from importlib.metadata import version as _get_version, PackageNotFoundError
 from .agent import Agent
 
 # Core types (v0.3.0)
-from .core.types import AdapterFeatures, Capability, Emit
+from .core.types import AdapterFeatures, Capability, Emit, FeatureKwargs
 from .core.exceptions import (
     BandError,
     BandConfigError,
@@ -106,6 +106,7 @@ __all__ = [
     "AdapterFeatures",
     "Capability",
     "Emit",
+    "FeatureKwargs",
     "BandError",
     "BandConfigError",
     "BandConnectionError",

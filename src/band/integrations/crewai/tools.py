@@ -8,7 +8,7 @@ The builder takes three injectables:
 - get_context: callable returning the current room context (room_id + tools).
   Each adapter owns its own ContextVar and supplies its own getter.
 - reporter: CrewAIToolReporter implementation. Two ship in this module:
-  EmitExecutionReporter (gates by Emit.EXECUTION) and NoopReporter.
+  EmitExecutionReporter (gates by Emit.TOOL_CALLS) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
 Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
@@ -137,7 +137,7 @@ class CrewAIToolReporter(Protocol):
 
     Implementations decide whether to send tool_call / tool_result events to
     the platform. The default EmitExecutionReporter gates emission on
-    Emit.EXECUTION. NoopReporter never emits.
+    Emit.TOOL_CALLS. NoopReporter never emits.
 
     Both methods are best-effort: implementations must not raise on transport
     failure. Wrappers depend on this contract.
@@ -160,7 +160,7 @@ class CrewAIToolReporter(Protocol):
 
 
 class EmitExecutionReporter:
-    """Reporter gated by Emit.EXECUTION — matches legacy CrewAIAdapter behavior."""
+    """Reporter gated by Emit.TOOL_CALLS — matches legacy CrewAIAdapter behavior."""
 
     def __init__(self, features: AdapterFeatures) -> None:
         self._features = features
@@ -171,7 +171,7 @@ class EmitExecutionReporter:
         tool_name: str,
         input_data: dict[str, Any],
     ) -> None:
-        if Emit.EXECUTION not in self._features.emit:
+        if Emit.TOOL_CALLS not in self._features.emit:
             return
         try:
             await tools.send_event(
@@ -190,7 +190,7 @@ class EmitExecutionReporter:
         result: Any,
         is_error: bool = False,
     ) -> None:
-        if Emit.EXECUTION not in self._features.emit:
+        if Emit.TOOL_CALLS not in self._features.emit:
             return
         try:
             await tools.send_event(

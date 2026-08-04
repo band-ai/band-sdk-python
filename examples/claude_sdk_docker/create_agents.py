@@ -15,6 +15,7 @@ import logging
 import os
 
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -25,17 +26,24 @@ AGENTS = [
 ]
 
 
-async def main() -> None:
-    api_key = os.environ.get("BAND_API_KEY")
-    if not api_key:
-        raise ValueError("BAND_API_KEY environment variable is required")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
-    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    band_api_key: str
+    band_rest_url: str = "https://app.band.ai"
+
+
+async def main() -> None:
+    settings = Settings()
 
     from band_rest import AsyncRestClient
     from band_rest.types import AgentRegisterRequest
 
-    client = AsyncRestClient(api_key=api_key, base_url=base_url)
+    client = AsyncRestClient(
+        api_key=settings.band_api_key, base_url=settings.band_rest_url
+    )
 
     created = []
     script_dir = os.path.dirname(os.path.abspath(__file__))

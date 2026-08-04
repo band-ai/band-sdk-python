@@ -63,21 +63,31 @@ import os
 import sys
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add examples directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from band import Agent, configure_logging
 from band.adapters import CopilotSDKAdapter, CopilotSDKAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    github_token: str = ""
+
+
 async def main() -> None:
     """Run the Copilot SDK agent with room-routed ask_user."""
     load_dotenv()
+    settings = Settings()
 
     adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
@@ -85,12 +95,12 @@ async def main() -> None:
             # (the adapter injects the contract into the system prompt);
             # the custom section stays for unrelated behavior.
             custom_section="Keep replies short and concrete.",
-            github_token=os.getenv("GITHUB_TOKEN"),
+            github_token=settings.github_token or None,
             ask_user="room",
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-ask-user-",
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 
     agent = Agent.from_config(

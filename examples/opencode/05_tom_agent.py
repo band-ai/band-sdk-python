@@ -28,7 +28,7 @@ from prompts.characters import generate_tom_prompt
 from settings import OpenCodeExampleSettings
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     level=logging.INFO,
@@ -50,7 +50,7 @@ async def main() -> None:
             approval_mode=settings.opencode_approval_mode,
             custom_section=generate_tom_prompt("Tom"),
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Tom is on the prowl, looking for Jerry")

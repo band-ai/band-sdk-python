@@ -24,7 +24,7 @@ import logging
 from settings import OpenCodeExampleSettings
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 
 configure_logging(
     level=logging.INFO,
@@ -55,10 +55,8 @@ async def main() -> None:
             approval_mode=settings.opencode_approval_mode,
             custom_section=MEMORY_INSTRUCTIONS,
         ),
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY},
-            emit={Emit.EXECUTION},
-        ),
+        capabilities=Capability.MEMORY,
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting OpenCode memory secretary")

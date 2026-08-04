@@ -1,6 +1,6 @@
 """Guards: examples and docs must use the current adapter construction surface.
 
-Two retired patterns are cheap to reintroduce by copy-pasting an old example,
+Three retired patterns are cheap to reintroduce by copy-pasting an old example,
 and nothing else would catch them (``examples/`` is excluded from the
 markdown-docs CI run, and example scripts are not imported by the unit suite):
 
@@ -10,6 +10,11 @@ markdown-docs CI run, and example scripts are not imported by the unit suite):
 * Bridge adapters taking Band credentials (``api_key=`` / ``rest_url=``) that
   the caller already gives ``Agent.create()``. The runtime injects the
   platform connection instead.
+* The ``features=AdapterFeatures(...)`` wrapper and its legacy boolean shims
+  (``enable_execution_reporting``, ``enable_memory_tools``, and the Codex/
+  Letta/Opencode config-boolean variants). Adapters take ``emit=``/
+  ``capabilities=``/... directly now (see ``FeatureKwargs``); ``Emit.EXECUTION``
+  was renamed ``Emit.TOOL_CALLS`` in the same change.
 """
 
 from __future__ import annotations
@@ -54,6 +59,18 @@ URL_BOILERPLATE_TOKENS = (
     "BAND_REST_URL environment variable is required",
 )
 
+# The wrapper-object feature surface and its legacy boolean shims are retired:
+# adapters take emit=/capabilities=/... directly (FeatureKwargs), and the
+# Emit vocabulary member was renamed EXECUTION -> TOOL_CALLS in the same change.
+RETIRED_FEATURE_SURFACE_TOKENS = (
+    "features=AdapterFeatures(",
+    "Emit.EXECUTION",
+    "enable_execution_reporting",
+    "enable_memory_tools",
+    "emit_thought_events",
+    "enable_task_events",
+)
+
 
 def example_scripts() -> list[Path]:
     return sorted(EXAMPLES_ROOT.rglob("*.py"))
@@ -94,6 +111,14 @@ def test_example_uses_current_construction_surface(path: Path) -> None:
             "ws_url/rest_url arguments (or use band.config.PlatformSettings)"
         )
 
+    for token in RETIRED_FEATURE_SURFACE_TOKENS:
+        assert token not in source, (
+            f"{path}: uses retired feature surface '{token}' — pass "
+            "emit=/capabilities=/... directly to the adapter constructor "
+            "instead of features=AdapterFeatures(...); Emit.EXECUTION is now "
+            "Emit.TOOL_CALLS"
+        )
+
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -120,4 +145,12 @@ def test_doc_uses_current_construction_surface(path: Path) -> None:
         assert token not in text, (
             f"{path}: documents retired Parlant ceremony '{token}' — the "
             "adapter owns ports/server/tools now"
+        )
+
+    for token in RETIRED_FEATURE_SURFACE_TOKENS:
+        assert token not in text, (
+            f"{path}: documents retired feature surface '{token}' — pass "
+            "emit=/capabilities=/... directly to the adapter constructor "
+            "instead of features=AdapterFeatures(...); Emit.EXECUTION is now "
+            "Emit.TOOL_CALLS"
         )

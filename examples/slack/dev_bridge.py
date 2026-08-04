@@ -33,7 +33,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters import AnthropicAdapter
@@ -45,43 +46,57 @@ logging.basicConfig(
 )
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    slack_transport: str = "http"
+    slack_bot_token: str
+    band_agent_id: str
+    band_api_key: str
+    # AnthropicAdapter reads ANTHROPIC_API_KEY from the env on its own; required
+    # here too so a missing key fails before any Slack/Band setup runs.
+    anthropic_api_key: str
+    slack_signing_secret: str = ""
+    slack_app_token: str = ""
+    slack_bot_model: str = "claude-sonnet-4-6"
+
+
 async def main() -> None:
-    transport = os.environ.get("SLACK_TRANSPORT", "http").lower()
+    settings = Settings()
+
+    transport = settings.slack_transport.lower()
     if transport not in ("http", "socket"):
         raise ValueError(
             f"SLACK_TRANSPORT must be 'http' or 'socket', got {transport!r}"
         )
 
-    bot_token = os.environ["SLACK_BOT_TOKEN"]
-    agent_id = os.environ["BAND_AGENT_ID"]
-    api_key = os.environ["BAND_API_KEY"]
-    # AnthropicAdapter reads ANTHROPIC_API_KEY from the env on its own.
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY is required")
-
     if transport == "http":
-        signing_secret = os.environ["SLACK_SIGNING_SECRET"]
+        if not settings.slack_signing_secret:
+            raise ValueError("SLACK_SIGNING_SECRET environment variable is required")
+        signing_secret = settings.slack_signing_secret
         app_token = ""
     else:
+        if not settings.slack_app_token:
+            raise ValueError("SLACK_APP_TOKEN environment variable is required")
         signing_secret = ""
-        app_token = os.environ["SLACK_APP_TOKEN"]
+        app_token = settings.slack_app_token
 
-    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    ws_url = os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    model = os.environ.get("SLACK_BOT_MODEL", "claude-sonnet-4-6")
+    model = settings.slack_bot_model
 
-    # Slack plan-block visibility is now independent of the brain's
-    # ``Emit.EXECUTION`` setting — ``SlackAdapter`` observes tool
-    # execution directly via its tools wrapper. To ALSO record
-    # ``tool_call``/``tool_result`` events on the Band side, pass
-    # ``features=AdapterFeatures(emit={Emit.EXECUTION})`` here.
+    # Slack plan-block visibility is independent of the brain's ``emit``
+    # setting — ``SlackAdapter`` observes tool execution directly via its
+    # tools wrapper. The brain's default ``emit`` already records
+    # ``tool_call``/``tool_result`` events on the Band side too; narrow it
+    # with ``emit=`` if that's not wanted.
     brain = AnthropicAdapter(model=model)
     slack = SlackAdapter(
         inner=brain,
         apps=[
             SlackApp(
                 slug="dev",
-                bot_token=bot_token,
+                bot_token=settings.slack_bot_token,
                 signing_secret=signing_secret,
                 app_token=app_token,
             ),
@@ -90,10 +105,8 @@ async def main() -> None:
     )
     agent = Agent.create(
         adapter=slack,
-        agent_id=agent_id,
-        api_key=api_key,
-        rest_url=rest_url,
-        ws_url=ws_url,
+        agent_id=settings.band_agent_id,
+        api_key=settings.band_api_key,
     )
 
     if transport == "http":

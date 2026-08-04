@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
-from band.core.types import PlatformMessage
+from band.core.types import Emit, PlatformMessage
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -101,11 +101,9 @@ class TestInitialization:
         assert adapter.custom_section == "Be helpful."
 
     def test_execution_reporting_default(self):
-        """Should default execution reporting to False."""
-        from band.core.types import Emit
-
+        """Should default emit to everything the adapter supports."""
         adapter = GoogleADKAdapter()
-        assert Emit.EXECUTION not in adapter.features.emit
+        assert Emit.TOOL_CALLS in adapter.features.emit
 
     def test_memory_tools_default(self):
         """Should default memory tools to False."""
@@ -806,7 +804,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_function_calls(self, mock_tools):
         """Should report function calls as tool_call events."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(emit=Emit.TOOL_CALLS)
 
         mock_fc = MagicMock()
         mock_fc.name = "band_send_message"
@@ -827,7 +825,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_function_responses(self, mock_tools):
         """Should report function responses as tool_result events."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(emit=Emit.TOOL_CALLS)
 
         mock_fr = MagicMock()
         mock_fr.name = "band_send_message"
@@ -848,7 +846,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_skips_event_without_function_methods(self, mock_tools):
         """Should skip events that lack function call/response methods."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(emit=Emit.TOOL_CALLS)
 
         event = MagicMock(spec=[])  # No attributes
 
@@ -859,7 +857,7 @@ class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_handles_report_failure_gracefully(self, mock_tools):
         """Should not raise when event reporting fails."""
-        adapter = GoogleADKAdapter(enable_execution_reporting=True)
+        adapter = GoogleADKAdapter(emit=Emit.TOOL_CALLS)
         mock_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
 
         mock_fc = MagicMock()

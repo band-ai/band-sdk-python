@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -28,9 +28,7 @@ class TestThoughts:
                 AssistantReasoningData(content="pondering...", reasoning_id="r1")
             ]
         )
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.THOUGHTS})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.THOUGHTS)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -51,9 +49,7 @@ class TestThoughts:
                 AssistantReasoningData(content="pondering...", reasoning_id="r1"),
             ]
         )
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.THOUGHTS})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.THOUGHTS)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -72,9 +68,7 @@ class TestThoughts:
                 AssistantReasoningData(content="second thought", reasoning_id="r2"),
             ]
         )
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.THOUGHTS})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.THOUGHTS)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -89,7 +83,7 @@ class TestThoughts:
                 AssistantReasoningData(content="pondering...", reasoning_id="r1")
             ]
         )
-        adapter = await make_started_adapter(client)
+        adapter = await make_started_adapter(client, emit=())
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)

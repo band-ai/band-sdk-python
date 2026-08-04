@@ -396,7 +396,7 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Inspect the delivery lifecycle | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
 | Scope a read to a later turn (reused capture) | `mark = capture.messages.snapshot()` before sending; `capture.messages.since(mark)` after the barrier |
-| See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.EXECUTION`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
+| See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.TOOL_CALLS`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive, subset args) |
 | See which events an agent emitted | `await capture.thoughts(sender_id=agent.id)` (or `errors()`/`tasks()`/`events(MessageType.X)`) |
 | Assert an event was emitted | `thoughts.assert_present()` / `thoughts.assert_contains_any([marker])` |
@@ -485,7 +485,7 @@ calls.assert_fired("get_weather", with_args={"place": "Zorath"})
 ```
 
 This reads the persisted `tool_call` events (so the agent must run with
-`Emit.EXECUTION` — use `**TOOL_AGENT`-style features), not a live subscription. It is
+`Emit.TOOL_CALLS` — use `**TOOL_AGENT`-style features), not a live subscription. It is
 race-free: the platform marks the trigger `processed` only after the reply is
 emitted, by which point the turn's tool-call events are already persisted.
 `assert_fired` is tolerant — name matches case-insensitively and `with_args` is a
@@ -513,7 +513,7 @@ generic `error` event on any turn exception. See `smoke/inspection/test_events.p
 
 - **Call layer** — `mem.calls` (a `MemoryToolCalls`), from the room's `tool_call`
   events: `mem.calls.assert_store_called(scope=..., system=..., type=...)`,
-  `assert_list_called()`, etc. Needs `Emit.EXECUTION` (use `**MEMORY_AGENT`).
+  `assert_list_called()`, etc. Needs `Emit.TOOL_CALLS` (use `**MEMORY_AGENT`).
 - **Store layer** — `mem.stored` (a `Memories`) of records that *actually landed*,
   from the memories API: `mem.stored.where(scope=..., system=...)` +
   `.assert_stored(...)` / `.assert_present()` / `.assert_none()`.

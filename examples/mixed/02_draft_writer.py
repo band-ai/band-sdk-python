@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
-from band.core.types import AdapterFeatures, Emit
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -63,7 +62,6 @@ When the room is active:
 
 Do not try to coordinate the room. Your job is to synthesize.
 """,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
         verbose=True,
     )
 

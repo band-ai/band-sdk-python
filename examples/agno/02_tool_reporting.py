@@ -8,10 +8,10 @@
 """
 Agno agent with tool-execution reporting.
 
-Builds an Agno agent that has its own tools, and enables Band execution
-reporting via ``AdapterFeatures(emit={Emit.EXECUTION})``. Whenever the Agno
-agent calls one of its tools, the adapter posts tool_call/tool_result events to
-the room so the tool activity is visible in Band.
+Builds an Agno agent that has its own tools. By default the adapter narrates
+everything it supports, so whenever the Agno agent calls one of its tools, the
+adapter posts tool_call/tool_result events to the room so the tool activity is
+visible in Band.
 
 Requires:
     - agent_config.yaml in the working directory with an `agno_agent` entry
@@ -29,19 +29,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters import AgnoAdapter
-from band.core.types import AdapterFeatures, Emit
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str
 
 
 def get_weather(city: str) -> str:
@@ -50,16 +57,9 @@ def get_weather(city: str) -> str:
     return f"It is 22°C and sunny in {city}."
 
 
-def load_environment() -> None:
-    """Load env vars and validate credentials."""
-    load_dotenv()
-
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-
-
 async def main() -> None:
-    load_environment()
+    load_dotenv()
+    Settings()
 
     # The Agno agent owns its tools; the adapter reports their executions.
     agno_agent = AgnoAgent(
@@ -68,11 +68,9 @@ async def main() -> None:
         tools=[get_weather],
     )
 
-    # emit={Emit.EXECUTION} posts tool_call/tool_result events to the room.
-    adapter = AgnoAdapter(
-        agno_agent,
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
-    )
+    # Default emit narrates everything the adapter supports, including
+    # tool_call/tool_result events posted to the room.
+    adapter = AgnoAdapter(agno_agent)
 
     logger.info("Starting Agno agent with tool reporting...")
     async with Agent.from_config(

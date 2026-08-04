@@ -31,9 +31,7 @@ class TestCapabilityGatingEndToEnd:
     async def test_anthropic_adapter_renders_memory_section_when_enabled(self) -> None:
         from band.adapters.anthropic import AnthropicAdapter
 
-        adapter = AnthropicAdapter(
-            features=AdapterFeatures(capabilities={Capability.MEMORY}),
-        )
+        adapter = AnthropicAdapter(capabilities={Capability.MEMORY})
         await adapter.on_started("test-agent", "A test agent")
 
         assert "## Memory Tools" in adapter._system_prompt
@@ -52,9 +50,7 @@ class TestCapabilityGatingEndToEnd:
     ) -> None:
         from band.adapters.anthropic import AnthropicAdapter
 
-        adapter = AnthropicAdapter(
-            features=AdapterFeatures(capabilities={Capability.CONTACTS}),
-        )
+        adapter = AnthropicAdapter(capabilities={Capability.CONTACTS})
         await adapter.on_started("test-agent", "A test agent")
 
         assert "## Contact Management Tools" in adapter._system_prompt
@@ -65,9 +61,7 @@ class TestCapabilityGatingEndToEnd:
         from band.adapters.anthropic import AnthropicAdapter
 
         adapter = AnthropicAdapter(
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY, Capability.CONTACTS}
-            ),
+            capabilities={Capability.MEMORY, Capability.CONTACTS}
         )
         await adapter.on_started("test-agent", "A test agent")
 
@@ -77,9 +71,7 @@ class TestCapabilityGatingEndToEnd:
     async def test_gemini_adapter_renders_memory_section_when_enabled(self) -> None:
         from band.adapters.gemini import GeminiAdapter
 
-        adapter = GeminiAdapter(
-            features=AdapterFeatures(capabilities={Capability.MEMORY}),
-        )
+        adapter = GeminiAdapter(capabilities={Capability.MEMORY})
         await adapter.on_started("test-agent", "A test agent")
 
         assert "## Memory Tools" in adapter._system_prompt
@@ -92,7 +84,7 @@ class TestCapabilityGatingEndToEnd:
         adapter = LangGraphAdapter(
             llm=MagicMock(),
             checkpointer=MagicMock(),
-            features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            capabilities={Capability.MEMORY},
         )
         await adapter.on_started("test-agent", "A test agent")
 
@@ -114,7 +106,7 @@ class TestCapabilityGatingEndToEnd:
 
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            capabilities={Capability.MEMORY},
         )
         await adapter.on_started("test-agent", "A test agent")
 
@@ -204,9 +196,7 @@ class TestCapabilityGatingEndToEnd:
             mock_agent_cls.return_value = MagicMock()
             from band.adapters.crewai import CrewAIAdapter
 
-            adapter = CrewAIAdapter(
-                features=AdapterFeatures(capabilities={Capability.MEMORY}),
-            )
+            adapter = CrewAIAdapter(capabilities={Capability.MEMORY})
             await adapter.on_started("test-agent", "A test agent")
 
             backstory = mock_agent_cls.call_args[1]["backstory"]
@@ -255,7 +245,7 @@ class TestCapabilityGatingEndToEnd:
 
         adapter = AnthropicAdapter(
             include_base_instructions=False,
-            features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            capabilities={Capability.MEMORY},
         )
         await adapter.on_started("test-agent", "A test agent")
 

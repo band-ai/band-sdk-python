@@ -24,7 +24,6 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import AnthropicAdapter
-from band.core.types import AdapterFeatures, Emit
 
 configure_logging(logging.INFO, extra_loggers={"band_anthropic_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -49,12 +48,11 @@ When helping users:
 async def main() -> None:
     load_dotenv()
 
-    # Create adapter with custom instructions and execution reporting
+    # Custom instructions; the adapter's default emit already shows tool
+    # calls in the chat.
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
         prompt=CUSTOM_PROMPT,
-        # Enable execution reporting to see tool calls in the chat
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
     logger.info("Starting support agent...")

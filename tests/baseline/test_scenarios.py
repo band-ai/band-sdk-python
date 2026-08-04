@@ -43,7 +43,7 @@ async def test_execution_events_follow_a_platform_tool_call() -> None:
             ),
             ModelDecision.text_reply("done"),
         ],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
     )
 
     observation = await scenario.run("Show your work")
@@ -90,7 +90,7 @@ async def test_malformed_tool_arguments_are_reported_without_platform_io() -> No
             ModelDecision.call("band_send_message", mentions=["@baseline-user"]),
             ModelDecision.text_reply("recovered"),
         ],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        features=AdapterFeatures(emit={Emit.TOOL_CALLS}),
     )
 
     observation = await scenario.run("Send a malformed call")

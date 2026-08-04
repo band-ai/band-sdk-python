@@ -35,7 +35,7 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import GoogleADKAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ async def main() -> None:
             "You are a helpful assistant with access to a calculator and "
             "weather tool in addition to the platform tools."
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting Google ADK agent with custom tools...")

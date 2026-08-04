@@ -20,6 +20,7 @@ from band.adapters.letta import (
     _RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.types import Emit
 from band.testing import FakeAgentTools
 from tests.adapters.lettakit import (
     default_enforcement,
@@ -51,7 +52,6 @@ class TestLettaAdapterInit:
             provider_key="sk-test",
             mode="shared",
             mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
-            enable_execution_reporting=True,
         )
         adapter = LettaAdapter(config=config)
         assert adapter.config is config
@@ -579,8 +579,8 @@ class TestLettaAdapterSharedMode:
 class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_non_silent_tool_calls(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -619,8 +619,8 @@ class TestExecutionReporting:
 
     @pytest.mark.asyncio
     async def test_silent_tools_not_reported(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -881,8 +881,8 @@ class TestTaskEvents:
 
     @pytest.mark.asyncio
     async def test_task_events_disabled(self) -> None:
-        config = LettaAdapterConfig(enable_task_events=False)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=())
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"

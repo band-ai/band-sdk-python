@@ -31,7 +31,7 @@ import logging
 from settings import OpenCodeExampleSettings
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     level=logging.INFO,
@@ -53,7 +53,7 @@ async def main() -> None:
             custom_section="You are a helpful assistant. Keep replies concise.",
             approval_mode=settings.opencode_approval_mode,
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting OpenCode agent: %s", settings.agent_key)

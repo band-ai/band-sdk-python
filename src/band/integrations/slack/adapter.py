@@ -18,9 +18,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+
+from typing_extensions import Unpack
 
 from band.client.rest import (
     AsyncRestClient,
@@ -36,6 +38,7 @@ from band.core.types import (
     AgentInput,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
 )
 from band.integrations.slack.block_kit import (
@@ -252,10 +255,10 @@ class _SlackTeeingTools(AgentTools):
 
         Plan rendering is observed directly here (not by intercepting
         ``send_event``) so it's independent of the brain's
-        ``Emit.EXECUTION`` setting. The two emit/visibility knobs are
+        ``Emit.TOOL_CALLS`` setting. The two emit/visibility knobs are
         fully orthogonal:
 
-        - Brain's ``Emit.EXECUTION`` → controls Band-side recording
+        - Brain's ``Emit.TOOL_CALLS`` → controls Band-side recording
           of ``tool_call``/``tool_result`` events.
         - ``SlackAdapter.show_tool_progress`` → controls Slack-side
           plan-block rendering. Lives on this object as
@@ -346,10 +349,10 @@ class SlackAdapter(SimpleAdapter[Any]):
         transport: SlackTransport = "http",
         web_client_factory: WebClientFactory | None = None,
         rest_client: AsyncRestClient | None = None,
-        features: AdapterFeatures | None = None,
         write_tool_names: frozenset[str] | set[str] | None = None,
         show_tool_progress: bool = True,
         mirror_slack_context: bool = True,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize the Slack adapter.
 
@@ -367,9 +370,11 @@ class SlackAdapter(SimpleAdapter[Any]):
             web_client_factory: Optional factory for injecting mock
                 ``AsyncWebClient`` instances in tests.
             rest_client: Optional ``AsyncRestClient`` injection seam.
-            features: Optional override for adapter features. Defaults
-                to the inner adapter's features so the brain's
-                capabilities flow through unchanged.
+            **features: Optional override for adapter features (emit,
+                capabilities, ...). Omitted entirely (the default), the
+                bridge adopts the inner adapter's features verbatim so the
+                brain's capabilities flow through unchanged; passing any
+                feature kwarg here replaces that wholesale.
             mirror_slack_context: When ``True`` (default), each inbound
                 Slack user turn is mirrored into the bound Band room
                 as a context-only ``thought`` event so the Band UI
@@ -416,13 +421,21 @@ class SlackAdapter(SimpleAdapter[Any]):
                 f"Unknown transport={transport!r}; expected 'http' or 'socket'"
             )
 
-        # Use the inner adapter's history converter and feature settings
-        # so the brain sees its native history type and capabilities.
+        # Mirror the inner adapter's declared support *before* super().__init__
+        # runs its construction-time validation, so a feature kwarg the brain
+        # supports (but this wrapper's own empty ClassVars would reject) is
+        # validated against the brain's real capabilities instead.
+        self.SUPPORTED_EMIT = inner.SUPPORTED_EMIT  # type: ignore[read-only]
+        self.SUPPORTED_CAPABILITIES = inner.SUPPORTED_CAPABILITIES  # type: ignore[read-only]
+        # Set before super().__init__() so _resolve_features (below) can read it.
+        self._inner = inner
+
+        # Use the inner adapter's history converter so the brain sees its
+        # native history type.
         super().__init__(
             history_converter=inner.history_converter or SlackHistoryConverter(),
-            features=features or inner.features,
+            **features,
         )
-        self._inner = inner
         self.apps = apps
         self._port = port
         self._transport: SlackTransport = transport
@@ -463,6 +476,39 @@ class SlackAdapter(SimpleAdapter[Any]):
         # value: channel display label (e.g. "#general" or "DM")
         self._channel_label_cache: dict[str, str] = {}
 
+    def _resolve_features(
+        self,
+        *,
+        emit: Emit | Iterable[Emit] | None = None,
+        capabilities: Capability | Iterable[Capability] | None = None,
+        include_tools: Iterable[str] | None = None,
+        exclude_tools: Iterable[str] | None = None,
+        include_categories: Iterable[str] | None = None,
+    ) -> AdapterFeatures:
+        """Adopt the inner adapter's resolved features verbatim by default.
+
+        No override kwarg given: reuse ``inner.features`` directly rather
+        than re-deriving from the mirrored ``SUPPORTED_EMIT``/
+        ``SUPPORTED_CAPABILITIES`` — the inner adapter may have narrowed
+        itself further than what it merely supports (e.g. constructed with
+        ``emit=()``), and that narrowing must carry through unchanged.
+        """
+        if (
+            emit is None
+            and capabilities is None
+            and include_tools is None
+            and exclude_tools is None
+            and include_categories is None
+        ):
+            return self._inner.features
+        return super()._resolve_features(
+            emit=emit,
+            capabilities=capabilities,
+            include_tools=include_tools,
+            exclude_tools=exclude_tools,
+            include_categories=include_categories,
+        )
+
     @property
     def inner(self) -> SimpleAdapter[Any]:
         """The wrapped framework adapter (the brain)."""
@@ -498,17 +544,11 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Build the REST client and start the inner adapter."""
-        # We adopt ``inner.features`` (see __init__) and delegate all
-        # reasoning to the inner brain, so the inner — not this wrapper — is
-        # what actually acts on emit/capability values. Mirror its declared
-        # support before the base feature-mismatch check runs, otherwise
-        # SimpleAdapter warns "SlackAdapter does not support emit values:
-        # execution" even though the brain handles it. The inner's own
-        # on_started still performs the authoritative check.
-        # type: ignore[read-only] — base declares these ClassVar; shadowing
-        # per-instance is intentional since support is the inner's, not ours.
-        self.SUPPORTED_EMIT = self._inner.SUPPORTED_EMIT  # type: ignore[read-only]
-        self.SUPPORTED_CAPABILITIES = self._inner.SUPPORTED_CAPABILITIES  # type: ignore[read-only]
+        # SUPPORTED_EMIT/SUPPORTED_CAPABILITIES were already mirrored from
+        # inner in __init__ (before construction-time validation ran); we
+        # adopt inner.features wholesale and delegate all reasoning to it, so
+        # the inner -- not this wrapper -- is what actually acts on emit/
+        # capability values.
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:

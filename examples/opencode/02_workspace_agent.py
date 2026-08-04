@@ -30,7 +30,7 @@ import os
 from settings import OpenCodeExampleSettings
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     level=logging.INFO,
@@ -65,7 +65,7 @@ async def main() -> None:
                 "not modify files or run commands without the user's approval."
             ),
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.TASK_EVENTS}),
+        emit=Emit.TOOL_CALLS | Emit.TASK_EVENTS,
     )
 
     logger.info("Starting workspace agent for %s", settings.opencode_directory)

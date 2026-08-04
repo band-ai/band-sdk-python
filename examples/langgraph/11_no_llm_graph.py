@@ -92,9 +92,7 @@ def build_no_llm_graph_factory() -> Any:
 async def main() -> None:
     load_dotenv()
 
-    adapter = LangGraphAdapter(
-        graph_factory=build_no_llm_graph_factory(), enable_execution_reporting=True
-    )
+    adapter = LangGraphAdapter(graph_factory=build_no_llm_graph_factory())
 
     logger.info("Starting no-LLM LangGraph agent...")
     async with Agent.from_config(

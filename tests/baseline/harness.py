@@ -17,6 +17,25 @@ from tests.baseline.decisions import ModelDecision
 from tests.baseline.tools import BaselineTools
 
 
+def _feature_kwargs(features: AdapterFeatures | None) -> dict[str, Any]:
+    """Unpack an ``AdapterFeatures`` into the flattened constructor kwargs.
+
+    ``AnthropicAdapter`` (and every adapter) takes ``emit=``/``capabilities=``/
+    ... directly, not a wrapping ``features=AdapterFeatures(...)`` object.
+    ``None`` spreads to nothing, so the adapter's own default (everything it
+    supports) applies.
+    """
+    if features is None:
+        return {}
+    return {
+        "emit": features.emit,
+        "capabilities": features.capabilities,
+        "include_tools": features.include_tools,
+        "exclude_tools": features.exclude_tools,
+        "include_categories": features.include_categories,
+    }
+
+
 class DecisionScript:
     """Finite sequence of injected decisions consumed by an adapter turn."""
 
@@ -116,7 +135,7 @@ class BaselineScenario:
     ) -> None:
         self.script = DecisionScript(decisions)
         self.tools = tools or BaselineTools()
-        self.adapter = AnthropicAdapter(features=features)
+        self.adapter = AnthropicAdapter(**_feature_kwargs(features))
         self._rooms_started: set[str] = set()
 
     async def run(

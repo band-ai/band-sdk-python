@@ -45,17 +45,15 @@ Providers beyond `openai` need their own Strands extra (e.g.
 ## Prompt, tools, capabilities
 
 ```python notest
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 
 StrandsAdapter(
     model=model,
     custom_section="Appended to the SDK-rendered Band prompt (recommended)",
     system_prompt="Replaces it entirely — you own the tool contract then",
     additional_tools=[(WeatherInput, get_weather), native_strands_tool],
-    features=AdapterFeatures(
-        emit=frozenset({Emit.EXECUTION, Emit.USAGE}),
-        capabilities=frozenset({Capability.MEMORY, Capability.CONTACTS}),
-    ),
+    emit=Emit.TOOL_CALLS | Emit.USAGE,
+    capabilities=Capability.MEMORY | Capability.CONTACTS,
 )
 ```
 

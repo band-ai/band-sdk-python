@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from band.adapters.langgraph import LangGraphAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage
 
 from .helpers import make_capture_graph
 
@@ -257,9 +257,7 @@ class TestOnMessage:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            features=AdapterFeatures(
-                capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY})
-            ),
+            capabilities=Capability.CONTACTS | Capability.MEMORY,
         )
         await adapter.on_started("TestBot", "Test bot")
 
@@ -284,40 +282,6 @@ class TestOnMessage:
         mock_convert.assert_called_once_with(
             mock_tools,
             features=adapter.features,
-        )
-
-    @pytest.mark.asyncio
-    async def test_enable_memory_tools_shim_enables_memory_capability(
-        self, sample_message, mock_tools, mock_llm, mock_checkpointer
-    ):
-        with pytest.warns(DeprecationWarning):
-            adapter = LangGraphAdapter(
-                llm=mock_llm,
-                checkpointer=mock_checkpointer,
-                enable_memory_tools=True,
-            )
-        await adapter.on_started("TestBot", "Test bot")
-
-        mock_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
-        adapter.graph_factory = MagicMock(return_value=mock_graph)
-
-        with patch(
-            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
-        ) as mock_convert:
-            mock_convert.return_value = []
-
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-        assert (
-            Capability.MEMORY in mock_convert.call_args.kwargs["features"].capabilities
         )
 
     @pytest.mark.asyncio
@@ -359,7 +323,7 @@ class TestOnMessage:
 
         adapter = LangGraphAdapter(
             graph=graph,
-            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+            emit=Emit.TOOL_CALLS,
         )
         await adapter.on_started("TestBot", "Test bot")
 

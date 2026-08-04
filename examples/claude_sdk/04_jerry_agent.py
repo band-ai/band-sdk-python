@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_jerry_prompt
 from band import Agent, configure_logging
 from band.adapters import ClaudeSDKAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     logging.INFO,
@@ -56,7 +56,7 @@ async def main() -> None:
 
     adapter = ClaudeSDKAdapter(
         custom_section=generate_jerry_prompt("Jerry"),
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
 
     agent = Agent.from_config(

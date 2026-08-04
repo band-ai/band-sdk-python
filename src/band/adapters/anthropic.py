@@ -13,14 +13,15 @@ from typing import Any, ClassVar, cast
 
 from anthropic import AsyncAnthropic
 from anthropic.types import Message, MessageParam, ToolParam, ToolUseBlock
+from typing_extensions import Unpack
 
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -48,16 +49,13 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5-20250929",
             prompt="You are a helpful assistant.",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY},
-                emit={Emit.EXECUTION},
-            ),
+            capabilities=Capability.MEMORY,
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -71,14 +69,12 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         max_tokens: int = 4096,
         history_converter: AnthropicHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         include_base_instructions: bool = True,
         # --- Deprecated (one release, then remove) ---
         api_key: str | None = None,
         anthropic_api_key: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
+        **features: Unpack[FeatureKwargs],
     ):
         # --- Selective: provider_key rename ---
         if anthropic_api_key is not None:
@@ -114,30 +110,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 raise BandConfigError("Cannot pass both prompt and custom_section")
             prompt = custom_section
 
-        # --- Universal: boolean → AdapterFeatures migration ---
-        if enable_memory_tools or enable_execution_reporting:
-            if features is not None:
-                raise BandConfigError(
-                    "Cannot pass both features= and legacy boolean params "
-                    "(enable_memory_tools, enable_execution_reporting)"
-                )
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated, "
-                "use features=AdapterFeatures(...) instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or AnthropicHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -448,7 +423,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
             # Report tool call if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(
@@ -486,7 +461,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
             # Report tool result if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(

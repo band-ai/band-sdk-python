@@ -35,6 +35,36 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 - `band_supersede_memory`: Mark memory as superseded (soft delete)
 - `band_archive_memory`: Archive memory (hide but preserve)
 
+## Adapter Feature Flags (emit / capabilities)
+
+Every adapter constructor takes `emit=`, `capabilities=`, `include_tools=`,
+`exclude_tools=`, `include_categories=` directly (`**features:
+Unpack[FeatureKwargs]`), never a wrapping `AdapterFeatures(...)` object:
+
+```python notest
+adapter = ClaudeSDKAdapter(model="...", emit=Emit.TOOL_CALLS | Emit.THOUGHTS)
+adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
+```
+
+`Emit` and `Capability` are `StrEnum`s whose members combine with `|` into a
+`frozenset`; a lone member is also accepted directly (no set literal needed).
+
+- **`emit` is opt-out**: omitted, it defaults to everything the adapter's
+  `SUPPORTED_EMIT` declares (tool-call narration, thoughts, task events,
+  usage — whichever that adapter supports). Pass `emit=()` for silence, or a
+  narrower `Emit` combination to select specific kinds.
+- **`capabilities` is opt-in**: omitted, it defaults to empty. Turning on
+  `Capability.MEMORY`/`Capability.CONTACTS` puts extra tool schemas in front
+  of the model on every turn, so it stays off by default.
+- Requesting an `emit`/`capabilities` value outside the adapter's
+  `SUPPORTED_EMIT`/`SUPPORTED_CAPABILITIES` raises `BandConfigError`
+  immediately at construction — never a silent no-op.
+- `Emit.TASK_EVENTS` is load-bearing, not just narration, on Codex/Letta/
+  Opencode: each persists its session/thread/agent-resume mapping in task
+  event metadata gated by that flag. Narrowing `emit` to exclude it also
+  stops resumption across restarts — see the class docstring on each of
+  those three adapters before doing so.
+
 ## REST Client API Pattern
 
 The SDK uses Fern-generated REST client with property-based namespace API:
@@ -537,7 +567,7 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 ### Phase 1: Scaffold Source Files
 
 1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters.parsing import parse_tool_call, parse_tool_result`.
-2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
+2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `history_converter`, `**features: Unpack[FeatureKwargs]`. Stub `on_message`, `on_started`, `on_cleanup`.
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
 ### Phase 2: Register with Conformance Infrastructure

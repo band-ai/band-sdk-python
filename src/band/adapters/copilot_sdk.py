@@ -67,9 +67,10 @@ if TYPE_CHECKING:
         UserInputRequest,
         UserInputResponse,
     )
+    from typing_extensions import Unpack
 
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
-    from band.core.types import AdapterFeatures, PlatformMessage
+    from band.core.types import FeatureKwargs, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
 
 logger = logging.getLogger(__name__)
@@ -192,14 +193,14 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     Example:
         adapter = CopilotSDKAdapter(
             CopilotSDKAdapterConfig(model="gpt-5"),
-            # Event reporting is off by default; opt in explicitly.
-            features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+            # Narrowing is opt-in; the default is everything supported.
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )
         agent = Agent.create(adapter=adapter, agent_id=..., api_key=...)
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -211,9 +212,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         *,
         history_converter: HistoryConverter[CopilotSDKSessionState] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         client: Any | None = None,
         client_factory: Callable[[], Any] | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """Initialize the Copilot SDK adapter.
 
@@ -222,7 +223,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 prompts, timeouts) — see :class:`CopilotSDKAdapterConfig`.
             history_converter: Override the default history converter.
             additional_tools: Developer custom tools as (InputModel, handler).
-            features: Shared adapter feature settings.
             client: Externally-owned ``CopilotClient`` shared with other
                 adapters (one client, many sessions). The adapter borrows it —
                 it never calls ``stop()`` on it; the caller owns its lifecycle.
@@ -245,7 +245,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         super().__init__(
             history_converter=history_converter or CopilotSDKHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = config or CopilotSDKAdapterConfig()
         ask_user = self.config.ask_user
@@ -694,7 +694,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = Emit.EXECUTION in self.features.emit
+        should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
 

@@ -42,7 +42,6 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
-from band.core.types import AdapterFeatures, Emit
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -149,7 +148,6 @@ async def main() -> None:
         goal=member["goal"],
         backstory=member["backstory"],
         custom_section=member["custom_section"],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
     logger.info("Starting %s...", member["role"])

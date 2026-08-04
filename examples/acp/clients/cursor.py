@@ -52,8 +52,8 @@ import asyncio
 import logging
 import os
 
-
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
@@ -70,15 +70,21 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    acp_agent_cwd: str = "."
+
+
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
+    cwd = settings.acp_agent_cwd
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
-    # Working directory for Cursor sessions
-    cwd = os.getenv("ACP_AGENT_CWD", ".")
-
-    # Cursor authentication environment — passed to the subprocess
+    # Cursor authentication environment — passed to the subprocess, so left as
+    # a direct os.getenv pair rather than a Settings field.
     cursor_env: dict[str, str] = {}
     cursor_api_key = os.getenv("CURSOR_API_KEY")
     cursor_auth_token = os.getenv("CURSOR_AUTH_TOKEN")
@@ -104,8 +110,6 @@ async def main() -> None:
     async with Agent.from_config(
         "cursor_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 

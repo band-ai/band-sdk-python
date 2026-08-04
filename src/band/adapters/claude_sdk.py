@@ -47,13 +47,14 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
-from band.core.exceptions import BandConfigError
+from typing_extensions import Unpack
+
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -186,7 +187,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -199,8 +200,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         custom_section: str | None = None,
         max_thinking_tokens: int | None = None,
         permission_mode: PermissionMode = "acceptEdits",
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
@@ -212,8 +211,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         approval_timeout_decision: ApprovalDecision = "decline",
         max_pending_approvals_per_room: int = 50,
         approval_authorized_senders: set[str] | None = None,
-        features: AdapterFeatures | None = None,
         send_message_dedup_ttl_seconds: float = DEFAULT_DEDUP_TTL_SECONDS,
+        **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Claude SDK adapter.
@@ -232,12 +231,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             permission_mode: SDK permission mode
-            enable_execution_reporting: Deprecated. Use
-                ``features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS})``.
-                If True, emit tool_call/tool_result *and* thought events.
-            enable_memory_tools: Deprecated. Use
-                ``features=AdapterFeatures(capabilities={Capability.MEMORY})``.
-                If True, includes memory management tools (enterprise only).
             history_converter: Optional custom history converter
             additional_tools: Optional list of custom tools as (PydanticModel, callable)
                 tuples. These are converted to MCP tools internally.
@@ -261,9 +254,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 issue ``/approve`` and ``/decline`` commands.  When ``None``
                 (default), any room participant can approve.  ``/approvals``
                 and ``/status`` are always available to all participants.
-            features: Unified adapter feature settings. When provided alongside
-                deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
-                raises ``BandConfigError``.
             send_message_dedup_ttl_seconds: Window (seconds) inside which two
                 ``band_send_message`` MCP tool calls with identical
                 ``(content, mentions)`` are collapsed into one platform POST.
@@ -277,47 +267,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "Install with: pip install band-sdk[claude_sdk]\n"
                 "Or: uv add band-sdk[claude_sdk]"
             )
-        # --- Shim deprecated params into features -------------------------
-        _has_legacy = enable_execution_reporting or enable_memory_tools
-        if _has_legacy and features is not None:
-            raise BandConfigError(
-                "Cannot combine 'features' with deprecated "
-                "'enable_execution_reporting' / 'enable_memory_tools'. "
-                "Use AdapterFeatures exclusively."
-            )
-
-        if _has_legacy:
-            _emit: set[Emit] = set()
-            _caps: set[Capability] = set()
-
-            if enable_execution_reporting:
-                warnings.warn(
-                    "enable_execution_reporting is deprecated. "
-                    "Use features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}).",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                # ClaudeSDK historically emitted both execution AND thought
-                # events under this single flag.
-                _emit.update({Emit.EXECUTION, Emit.THOUGHTS})
-
-            if enable_memory_tools:
-                warnings.warn(
-                    "enable_memory_tools is deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}).",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                _caps.add(Capability.MEMORY)
-
-            features = AdapterFeatures(
-                capabilities=frozenset(_caps),
-                emit=frozenset(_emit),
-            )
-
         super().__init__(
             history_converter=history_converter or ClaudeSDKHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -730,7 +682,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                             tool_name,
                             str(block.input)[:100],
                         )
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
@@ -752,7 +704,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                             block.tool_use_id[:20],
                             block.is_error,
                         )
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
                                     content=json.dumps(

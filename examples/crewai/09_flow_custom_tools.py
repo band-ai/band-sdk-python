@@ -27,7 +27,6 @@ from pydantic import BaseModel
 from band import Agent  # noqa: E402, configure_logging
 from band.adapters import CrewAIFlowAdapter  # noqa: E402
 from band.adapters.crewai_flow import get_current_flow_runtime  # noqa: E402
-from band.core.types import AdapterFeatures, Emit  # noqa: E402
 from band import configure_logging  # noqa: E402
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
@@ -91,7 +90,6 @@ async def main() -> None:
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         additional_tools=[(EmailsInput, emails)],
-        features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
     )
 
     logger.info("CrewAI Flow custom tools agent starting")

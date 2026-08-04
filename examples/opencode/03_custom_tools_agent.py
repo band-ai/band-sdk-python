@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from settings import OpenCodeExampleSettings
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     level=logging.INFO,
@@ -66,7 +66,7 @@ async def main() -> None:
             ),
         ),
         additional_tools=[(PercentageInput, percentage)],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting OpenCode agent with a percentage tool")

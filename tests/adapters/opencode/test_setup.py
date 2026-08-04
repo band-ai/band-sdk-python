@@ -10,10 +10,7 @@ from pydantic import BaseModel
 
 from band import BandConfigError
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import (
-    AdapterFeatures,
-    Capability,
-)
+from band.core.types import Capability
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools
@@ -218,14 +215,6 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     assert fake_backend.stop_calls == 1
 
 
-def test_legacy_feature_flags_cannot_mix_with_features() -> None:
-    with pytest.raises(BandConfigError, match="Cannot pass both legacy boolean flags"):
-        OpencodeAdapter(
-            config=OpencodeAdapterConfig(enable_memory_tools=True),
-            features=AdapterFeatures(),
-        )
-
-
 async def test_bootstrap_creates_session_relays_text_and_persists_task(
     make_adapter, tools
 ) -> None:
@@ -401,9 +390,7 @@ async def test_capability_gating_controls_registered_tool_set(
             client_factory=lambda _config: FakeOpencodeClient(
                 prompt_event_sequences=[[event_session_idle("sess-1")]]
             ),
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY, Capability.CONTACTS}
-            ),
+            capabilities={Capability.MEMORY, Capability.CONTACTS},
         )
         await full_adapter.on_started("OpenCode Agent", "A coding agent")
         await full_adapter.on_message(
@@ -432,7 +419,7 @@ def test_own_band_tools_recognized_before_mcp_registration() -> None:
     on_message, or any register_mcp_server call."""
     adapter = OpencodeAdapter(
         client_factory=lambda _config: FakeOpencodeClient(),
-        features=AdapterFeatures(capabilities={Capability.MEMORY, Capability.CONTACTS}),
+        capabilities={Capability.MEMORY, Capability.CONTACTS},
     )
 
     # Nothing has been registered with OpenCode yet.

@@ -33,7 +33,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import Capability
 
 configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,8 +53,6 @@ async def main() -> None:
     ws_url = get_required_env("BAND_WS_URL")
     rest_url = get_required_env("BAND_REST_URL")
 
-    features = AdapterFeatures(capabilities={Capability.MEMORY})
-
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
@@ -67,7 +65,7 @@ async def main() -> None:
             "asks you to remember it. After storing a memory, briefly acknowledge "
             "what you saved and continue helping the user."
         ),
-        features=features,
+        capabilities=Capability.MEMORY,
     )
 
     logger.info("Starting LangGraph memory tools example agent...")

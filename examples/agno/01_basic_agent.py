@@ -29,11 +29,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters import AgnoAdapter
@@ -43,16 +43,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_environment() -> None:
-    """Load env vars and validate credentials."""
-    load_dotenv()
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+    anthropic_api_key: str
 
 
 async def main() -> None:
-    load_environment()
+    load_dotenv()
+    Settings()
 
     # Build the Agno agent — you choose the model, instructions, and tools.
     agno_agent = AgnoAgent(

@@ -31,6 +31,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add parent directory to path for prompts import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -39,7 +40,7 @@ from prompts.characters import generate_tom_prompt
 
 from band import Agent, configure_logging
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 configure_logging(
     level=logging.INFO,
@@ -54,20 +55,30 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    codex_cwd: str = ""
+    codex_model: str = ""
+
+
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport="stdio",
-            cwd=os.getenv("CODEX_CWD", os.getcwd()),
-            model=os.getenv("CODEX_MODEL") or None,
+            cwd=settings.codex_cwd or os.getcwd(),
+            model=settings.codex_model or None,
             personality="none",
             custom_section=generate_tom_prompt("Tom"),
             include_base_instructions=True,
             fallback_send_agent_text=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
+        emit=Emit.TASK_EVENTS,
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")

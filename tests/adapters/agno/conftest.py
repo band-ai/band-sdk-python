@@ -12,9 +12,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agno.agent import Agent as AgnoAgent
 from agno.run.agent import RunOutput
+from typing_extensions import Unpack
 
 from band.adapters.agno import AgnoAdapter
-from band.core.types import AdapterFeatures, PlatformMessage
+from band.core.types import FeatureKwargs, PlatformMessage
 from band.testing import FakeAgentTools
 
 from tests.adapters.agno.helpers import CapturingModel, SchemaTools
@@ -98,10 +99,10 @@ def make_started_adapter(
     async def _make(
         response: RunOutput | None = None,
         *,
-        features: AdapterFeatures | None = None,
         add_history_to_context: bool = False,
         db: object | None = None,
         events: list[Any] | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> tuple[AgnoAdapter, MagicMock]:
         agent = make_agno_agent(
             response=response,
@@ -109,7 +110,13 @@ def make_started_adapter(
             db=db,
             events=events,
         )
-        adapter = AgnoAdapter(agent, features=features)
+        # Most call sites here test something other than narration, and the
+        # fake agent's arun() is a plain (non-streaming) AsyncMock unless the
+        # test supplies events=. Default to silent -- as the adapter itself
+        # used to -- so a test only pays the streaming-mock cost when it
+        # explicitly opts into an emit kind.
+        features.setdefault("emit", ())
+        adapter = AgnoAdapter(agent, **features)
         await adapter.on_started("TestBot", "desc")
         return adapter, agent
 
@@ -127,14 +134,18 @@ def run_real_agent() -> Callable[..., Awaitable[CapturingModel]]:
         *,
         instructions: str = "You are Dev.",
         additional_context: str | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> CapturingModel:
         agno = AgnoAgent(
             model=CapturingModel(),
             instructions=instructions,
             additional_context=additional_context,
         )
-        adapter = AgnoAdapter(agno, features=features)
+        # CapturingModel's streaming hooks are inert stubs; default to silent
+        # (the non-streaming path) unless a test explicitly opts into an emit
+        # kind that needs the streaming path.
+        features.setdefault("emit", ())
+        adapter = AgnoAdapter(agno, **features)
         await adapter.on_started("Bot", "desc")
         await adapter.on_message(
             msg,

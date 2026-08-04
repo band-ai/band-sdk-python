@@ -336,7 +336,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
-LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
+LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 
 > Install `crewai` in its own environment, apart from `parlant` and `pydantic-ai` — it carries the narrowest transitive pins of the three and the lockfile resolves it in a separate fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for the current pins.
 
@@ -357,9 +357,9 @@ Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` s
 
 ## Platform Tools
 
-Agents using the Band SDK can receive built-in tools for interacting with Band. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities on adapters that support `AdapterFeatures`, and are disabled unless you explicitly enable them.
+Agents using the Band SDK can receive built-in tools for interacting with Band. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities, configured via `capabilities=` on the adapters that support them, and are disabled unless you explicitly enable them.
 
-The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; protocol bridge adapters (`A2AAdapter`, `A2AGatewayAdapter`, and ACP adapters) do not expose those optional capability tools through `AdapterFeatures`.
+The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; protocol bridge adapters (`A2AAdapter`, `A2AGatewayAdapter`, and ACP adapters) do not expose those optional capability tools via `capabilities=`.
 
 | Category     | Tool Names | What They Enable |
 | ------------ | ---------- | ---------------- |
@@ -367,17 +367,15 @@ The table below is the agent tool surface exposed to LLM adapters. Framework ada
 | **Contacts** | `band_list_contacts`, `band_add_contact`, `band_remove_contact`, `band_list_contact_requests`, `band_respond_contact_request` | Review and manage contact relationships |
 | **Memory**   | `band_list_memories`, `band_store_memory`, `band_get_memory`, `band_supersede_memory`, `band_archive_memory` | Store and retrieve agent memory. Requires an Enterprise workspace with memory enabled |
 
-Enable optional contact and memory tool categories by passing `features=` when you construct an adapter:
+Enable optional contact and memory tool categories by passing `capabilities=` when you construct an adapter:
 
 ```python
 from band.adapters import AnthropicAdapter
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import Capability
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5",
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
 )
 ```
 
@@ -385,19 +383,17 @@ adapter = AnthropicAdapter(
 
 ### Configuring Adapters
 
-Adapters support optional capabilities, emit telemetry, custom instructions, and custom tools. These are configured through `AdapterFeatures` and adapter constructor parameters.
+Adapters support optional capabilities, emit telemetry, custom instructions, and custom tools, all passed directly as adapter constructor keyword arguments.
 
 ```python
-from band import AdapterFeatures, Capability, Emit
+from band import Capability, Emit
 from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5",
     prompt="You are a concise technical reviewer.",
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS},
-        emit={Emit.EXECUTION},
-    ),
+    capabilities=Capability.CONTACTS,
+    emit=Emit.TOOL_CALLS,
 )
 ```
 
@@ -426,7 +422,7 @@ Emit controls adapter-level telemetry: events the adapter publishes when it obse
 
 Adapter emit support:
 
-| Adapter | `EXECUTION` | `THOUGHTS` | `TASK_EVENTS` |
+| Adapter | `TOOL_CALLS` | `THOUGHTS` | `TASK_EVENTS` |
 | ------- | ----------- | ---------- | ------------- |
 | Codex | Yes | Yes | Yes |
 | Claude SDK | Yes | Yes | - |
@@ -445,7 +441,7 @@ Adapter emit support:
 | A2A / A2A Gateway | - | - | - |
 | ACP Client | - | - | - |
 
-If you request an unsupported emit value, the adapter logs a warning at startup and the value has no effect.
+Requesting an unsupported `emit` or `capabilities` value raises `BandConfigError` immediately at construction.
 
 Adapter-specific configuration such as Codex streaming flags, Claude SDK approval modes, or LangGraph graph factories is documented in the per-adapter guides linked in the table above. See [docs/adapters/](docs/adapters/) for full reference.
 
@@ -772,7 +768,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | **Find peers** | `band_lookup_peers()` |
 | **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
-| **Emit telemetry** | `AdapterFeatures(emit={Emit.EXECUTION})` |
+| **Emit telemetry** | `AnthropicAdapter(model=..., emit=Emit.TOOL_CALLS)` |
 | **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
 | **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
 | **Editor ACP** | `band-acp --agent-id ID --api-key KEY` |
