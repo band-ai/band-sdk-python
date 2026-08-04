@@ -43,3 +43,17 @@ def test_every_caller_forwards_only_the_dockerhub_secrets() -> None:
         assert set(call["secrets"]) == DOCKERHUB_SECRETS
         for secret in DOCKERHUB_SECRETS:
             assert call["secrets"][secret] == f"${{{{ secrets.{secret} }}}}"
+
+
+def test_stamped_specs_are_verified_against_the_versioned_image_refs() -> None:
+    workflow = load_workflow("kit-publish.yml")
+    stamp = next(
+        step
+        for step in workflow["jobs"]["kit"]["steps"]
+        if step.get("name") == "Stamp distribution specs (GHCR + Hub image digests)"
+    )
+
+    assert 'grep -qF "${IMAGE_NAME}:${{ inputs.version }}@${digest}"' in stamp["run"]
+    assert (
+        'grep -qF "${HUB_IMAGE_NAME}:${{ inputs.version }}@${digest}"' in stamp["run"]
+    )

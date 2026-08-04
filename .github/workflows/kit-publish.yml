@@ -291,8 +291,8 @@ jobs:
           grep 'image:' staging/ghcr/spec.yaml
           echo "── Hub stamped sandbox.image ──"
           grep 'image:' staging/hub/spec.yaml
-          grep -qF "${IMAGE_NAME}@${digest}" staging/ghcr/spec.yaml
-          grep -qF "${HUB_IMAGE_NAME}@${digest}" staging/hub/spec.yaml
+          grep -qF "${IMAGE_NAME}:${{ inputs.version }}@${digest}" staging/ghcr/spec.yaml
+          grep -qF "${HUB_IMAGE_NAME}:${{ inputs.version }}@${digest}" staging/hub/spec.yaml
 
       - name: Assemble the OCI v2 kit layers
         run: |
