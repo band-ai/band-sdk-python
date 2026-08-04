@@ -28,47 +28,40 @@ uv sync --extra parlant
 
 ## Quick Start
 
-The adapter uses the Parlant SDK directly - no separate HTTP server needed:
+The adapter owns the Parlant server: it reserves free ports, boots `p.Server`
+when the Band agent starts, and tears it down on stop. No server or port
+wiring in your code:
 
-The reserved ports below are what lets a second agent start on this machine — see
-[Running two agents locally](#running-two-agents-locally-tom-and-jerry).
-
-```python
+```python notest
 import parlant.sdk as p
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant import reserve_server_ports
 
-ports = reserve_server_ports()
+adapter = ParlantAdapter(
+    name="Assistant",
+    description="A helpful assistant.",
+    nlp_service=p.NLPServices.openai,  # reads OPENAI_API_KEY
+)
 
-async with p.Server(
-    port=ports.port,
-    tool_service_port=ports.tool_service_port,
-) as server:
-    # Create Parlant agent with guidelines
-    parlant_agent = await server.create_agent(
-        name="Assistant",
-        description="A helpful assistant.",
-    )
+adapter.add_guideline(
+    condition="User asks for help",
+    action="Acknowledge their request and provide detailed assistance",
+)
 
-    await parlant_agent.create_guideline(
-        condition="User asks for help",
-        action="Acknowledge their request and provide detailed assistance",
-    )
+agent = Agent.create(
+    adapter=adapter,
+    agent_id="your-agent-id",
+    api_key="your-api-key",
+)
+await agent.run()
+```
 
-    # Create Band adapter
-    adapter = ParlantAdapter(
-        server=server,
-        parlant_agent=parlant_agent,
-    )
+Prefer an explicit lifecycle? `Agent` is an async context manager — same
+behavior, resources boot on enter, graceful teardown on exit:
 
-    # Create and run agent
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id="your-agent-id",
-        api_key="your-api-key",
-    )
-    await agent.run()
+```python notest
+async with Agent.create(adapter=adapter, agent_id="...", api_key="...") as agent:
+    await agent.run_forever()
 ```
 
 ---
@@ -79,25 +72,45 @@ async with p.Server(
 |------|-------------|
 | `01_basic_agent.py` | **Minimal setup** - Simple agent with Parlant SDK. |
 | `02_with_guidelines.py` | **Behavioral guidelines** - Agent with condition/action rules. |
-| `03_support_agent.py` | **Customer support** - Realistic support agent with specialized guidelines. |
+| `03_support_agent.py` | **Customer support** - Behavior-only guidelines (`tools=[]`). |
+| `04_tom_agent.py` | **Character agent** - Tom, runs side by side with Jerry. |
+| `05_jerry_agent.py` | **Character agent** - Jerry, runs side by side with Tom. |
 
 ---
 
 ## Guidelines System
 
-Parlant's guidelines are the key differentiator. They ensure consistent behavior through condition/action pairs:
+Parlant's guidelines are the key differentiator. They ensure consistent behavior
+through condition/action pairs. Declare them on the adapter before the agent
+starts — they are created on the live Parlant agent at startup, with the Band
+platform tools (send message, add participant, ...) attached by default:
 
-```python
-# Using the Parlant SDK directly
-await agent.create_guideline(
+```python notest
+adapter.add_guideline(
     condition="Customer asks about refunds",
     action="Check order status first to see if eligible",
 )
 
-await agent.create_guideline(
+# Behavior-only guideline: opt out of the default Band tools
+adapter.add_guideline(
     condition="User is frustrated",
     action="Acknowledge their frustration before providing solutions",
+    tools=[],
 )
+```
+
+Extra keyword arguments are forwarded verbatim to Parlant's
+`create_guideline`, so Parlant's own documentation applies.
+
+Need the full native API (journeys, guideline dependencies, canned
+responses)? Pass a `configure=` callback — it runs at startup with the live
+`(server, parlant_agent)`:
+
+```python notest
+async def configure(server: p.Server, parlant_agent: p.Agent) -> None:
+    await parlant_agent.create_journey(...)
+
+adapter = ParlantAdapter(name="Assistant", description="...", configure=configure)
 ```
 
 ---
@@ -157,11 +170,10 @@ uv run python examples/parlant/03_support_agent.py
 
 ### Running two agents locally (Tom and Jerry)
 
-Each Parlant agent starts its own in-process server, and Parlant's tool-service
-port defaults to a fixed `8818` — so a second agent on the same machine fails to
-start while the first holds it, with a `SystemExit` out of uvicorn startup. The examples
-call `reserve_server_ports()` to get a free pair from the OS instead, which lets
-them run side by side:
+Parlant's server ports default to fixed numbers (`8800` API, `8818` tool
+service), so two stock Parlant servers on one machine collide. The adapter
+handles this: each agent's server boots on freshly reserved free ports, so
+side-by-side agents just work:
 
 ```bash
 # terminal 1
@@ -171,37 +183,35 @@ uv run python examples/parlant/04_tom_agent.py
 uv run python examples/parlant/05_jerry_agent.py
 ```
 
-Each process logs the pair it reserved, so a refused connection can be traced back
-to a known port:
+Each process logs the pair it reserved, so a refused connection can be traced
+back to a known port:
 
 ```
 Parlant server ports: api=54231, tool_service=54232
 ```
 
-Only `tool_service` is actually bound here: these examples block in `Agent.run()`
-inside the `async with` body, and Parlant starts its API/UI server on exit from
-that block — which never happens. The `api` port is reserved anyway, so the server
-has a free one if it ever does serve.
-
-> **Note:** Pass real port numbers, not `port=0`. Parlant formats the number it
-> was given into URLs rather than reading it back off the bound socket, so `0`
-> would register the tool service at `http://127.0.0.1:0` (breaking every tool
-> call) and point the readiness poll at a port that never answers (hanging
-> shutdown).
-
 ---
 
 ## Adapter Options
 
-```python
+```python notest
 ParlantAdapter(
-    # Required: Parlant SDK components
-    server=server,           # Parlant Server instance (from p.Server())
-    parlant_agent=agent,     # Parlant Agent instance
+    # Parlant agent identity (defaults to the Band agent's name/description)
+    name="Assistant",
+    description="A helpful assistant.",
+
+    # Adapter-owned server configuration
+    nlp_service=p.NLPServices.openai,  # Parlant's default (Emcie) if omitted
+    server_options={...},              # extra p.Server(...) kwargs, verbatim
+
+    # Escape hatches
+    configure=my_callback,             # async (server, parlant_agent) at startup
+    server=my_server,                  # bring your own running p.Server (borrowed)
+    parlant_agent=my_agent,            # bring your own p.Agent (requires server=)
 
     # Optional: Custom prompts
-    system_prompt=None,      # Full system prompt override
-    custom_section="...",    # Custom instructions (added to default prompt)
+    system_prompt=None,                # Full system prompt override
+    custom_section="...",              # Custom instructions (added to default prompt)
 )
 ```
 
