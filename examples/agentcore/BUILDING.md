@@ -223,27 +223,33 @@ same `AgentInput` regardless of which adapter consumes it.
 
 ### Adding custom tools
 
-The SDK supports custom tools via the adapter's `additional_tools` arg:
+The SDK supports custom tools via the adapter's `additional_tools` arg. A
+`CustomToolDef` is a `(InputModel, handler)` pair — a Pydantic model for the
+tool's arguments (its class name minus an optional `Input` suffix, lowercased,
+becomes the tool name) and an async or sync callable that takes a validated
+instance of that model:
 
 ```python
-from band.runtime.custom_tools import CustomToolDef
+from pydantic import BaseModel
 
-custom_tools = [
-    CustomToolDef(
-        name="search_company_db",
-        description="Look up a customer by name",
-        input_schema={...},
-        handler=async_handler,
-    )
-]
+class WeatherInput(BaseModel):
+    """Get the weather for a city."""
+
+    city: str
+
+async def get_weather(args: WeatherInput) -> str:
+    return f"{args.city}: sunny, 22°C"
+
 return AnthropicAdapter(
     ...,
-    additional_tools=custom_tools,
+    additional_tools=[(WeatherInput, get_weather)],
 )
 ```
 
-Custom tool schemas are merged with the SDK's built-in tools and exposed
-to Claude alongside the platform tools.
+Custom tool schemas are merged with the SDK's built-in tools and exposed to
+Claude alongside the platform tools. See
+[`custom_tools_llm_server.py`](custom_tools_llm_server.py) for a full,
+runnable container variant wired this way.
 
 ## Common gotchas
 
