@@ -27,18 +27,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 from band.core.types import AdapterFeatures, Capability
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
@@ -83,16 +80,13 @@ async def main() -> None:
         features=features,
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting CrewAI memory tools example agent (model=%s)...", model)
+    async with Agent.from_config(
         "memory_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting CrewAI memory tools example agent (model=%s)...", model)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

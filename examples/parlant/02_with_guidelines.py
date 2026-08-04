@@ -26,11 +26,12 @@ import logging
 import parlant.sdk as p
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ParlantAdapter
 
-setup_logging()
+configure_logging(
+    logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
+)
 logger = logging.getLogger(__name__)
 
 CUSTOM_DESCRIPTION = """
@@ -125,13 +126,11 @@ async def main() -> None:
 
     adapter = build_adapter()
 
-    agent = Agent.from_config(
+    logger.info("Starting Band agent with Parlant SDK and comprehensive guidelines...")
+    async with Agent.from_config(
         "parlant_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Band agent with Parlant SDK and comprehensive guidelines...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

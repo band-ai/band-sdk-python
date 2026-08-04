@@ -33,11 +33,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -52,14 +51,11 @@ async def main() -> None:
         custom_section=generate_tom_prompt("Tom"),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Tom is on the prowl, looking for Jerry...")
+    async with Agent.from_config(
         "tom_agent",
         adapter=adapter,
-    )
-
-    logger.info("Tom is on the prowl, looking for Jerry...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

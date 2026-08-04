@@ -55,12 +55,19 @@ import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+        "uvicorn": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
@@ -84,34 +91,32 @@ async def main() -> None:
 
     # Gateway configuration
     gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
-    gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
-
     # Create gateway adapter
     # It uses its own REST client for room/message operations
-    adapter = A2AGatewayAdapter(
-        gateway_url=gateway_url,
-        port=gateway_port,
-    )
+    # gateway_url derives from port (override for a public address)
+    adapter = A2AGatewayAdapter(port=gateway_port)
 
     # Create and start agent
     # The gateway connects to Band and starts its HTTP server
-    agent = Agent.create(
+
+    logger.info("Starting A2A Gateway on %s...", adapter.adapter.gateway_url)
+    logger.info("Peers will be exposed at:")
+    logger.info(
+        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
+        adapter.gateway_url,
+    )
+    logger.info(
+        "  - %s/agents/{peer_id}/v1/message:stream (messaging)", adapter.gateway_url
+    )
+    logger.info("Waiting for peers to be discovered...")
+
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A Gateway on %s...", gateway_url)
-    logger.info("Peers will be exposed at:")
-    logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
-    )
-    logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
-    logger.info("Waiting for peers to be discovered...")
-
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

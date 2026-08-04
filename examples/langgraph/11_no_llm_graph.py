@@ -30,11 +30,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.pregel import Pregel
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 _SENDER_PATTERN = re.compile(r"^\[(?P<sender>[^\]]+)\]:\s*(?P<text>.*)$", re.DOTALL)
@@ -97,13 +96,11 @@ async def main() -> None:
         graph_factory=build_no_llm_graph_factory(), enable_execution_reporting=True
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting no-LLM LangGraph agent...")
+    async with Agent.from_config(
         "no_llm_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting no-LLM LangGraph agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

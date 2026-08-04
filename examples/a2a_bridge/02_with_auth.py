@@ -29,12 +29,11 @@ import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AAdapter
 from band.integrations.a2a import A2AAuth
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -93,14 +92,11 @@ async def main() -> None:
         streaming=True,
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
+    async with Agent.from_config(
         "a2a_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

@@ -133,14 +133,13 @@ async def main() -> None:
         raise ValueError("BAND_API_KEY environment variable is required")
 
     adapter = LangGraphAdapter(graph_factory=deterministic_graph_factory)
-    agent = Agent.create(
+
+    logger.info("Sandbox smoke agent starting (agent_id=%s)", agent_id)
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-    )
-
-    logger.info("Sandbox smoke agent starting (agent_id=%s)", agent_id)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

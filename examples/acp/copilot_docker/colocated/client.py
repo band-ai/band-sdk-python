@@ -63,18 +63,16 @@ async def main() -> None:
     )
     adapter = CopilotACPAdapter(config)
 
-    agent = Agent.from_config(
-        "copilot_acp_agent",
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info("Connecting to Copilot ACP server at %s:%s over TCP...", host, port)
     logger.info(
         "Copilot will call Band tools at %s (its own loopback)", band_mcp_sse_url
     )
-    async with agent:
+    async with Agent.from_config(
+        "copilot_acp_agent",
+        adapter=adapter,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    ) as agent:
         await agent.run_forever()
 
 

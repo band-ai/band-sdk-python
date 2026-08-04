@@ -78,17 +78,15 @@ async def main() -> None:
     )
     adapter = CopilotACPAdapter(config)
 
-    agent = Agent.from_config(
+    logger.info("Driving Copilot in sandbox %r over stdio (sbx exec -i)...", sandbox)
+    if band_mcp_sse_url:
+        logger.info("Copilot will call Band tools at %s", band_mcp_sse_url)
+    async with Agent.from_config(
         "copilot_acp_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Driving Copilot in sandbox %r over stdio (sbx exec -i)...", sandbox)
-    if band_mcp_sse_url:
-        logger.info("Copilot will call Band tools at %s", band_mcp_sse_url)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

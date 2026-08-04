@@ -67,20 +67,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging
-
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -132,14 +127,11 @@ async def main() -> None:
         ),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting Letta agent...")
+    async with Agent.from_config(
         "letta_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Letta agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

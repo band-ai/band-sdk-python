@@ -43,12 +43,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from standalone_rag import create_rag_graph
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 from band.integrations.langgraph import graph_as_tool
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -125,13 +124,11 @@ User: "tell nvidia about reward hacking"
         custom_section=rag_instructions,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting agent with RAG tool...")
+    async with Agent.from_config(
         "rag_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting agent with RAG tool...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

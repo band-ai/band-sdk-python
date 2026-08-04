@@ -35,11 +35,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_jerry_prompt
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -51,13 +50,11 @@ async def main() -> None:
         custom_section=generate_jerry_prompt("Jerry"),
     )
 
-    agent = Agent.from_config(
+    logger.info("Jerry is watching for Tom from his mouse hole...")
+    async with Agent.from_config(
         "jerry_agent",
         adapter=adapter,
-    )
-
-    logger.info("Jerry is watching for Tom from his mouse hole...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

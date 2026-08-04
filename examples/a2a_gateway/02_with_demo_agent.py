@@ -83,12 +83,19 @@ from starlette.applications import Starlette
 
 from demo_orchestrator.agent import OrchestratorAgent
 from demo_orchestrator.agent_executor import OrchestratorAgentExecutor
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+        "uvicorn": logging.WARNING,
+    },
+)
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -137,16 +144,14 @@ async def run_gateway() -> None:
         port=GATEWAY_PORT,
     )
 
-    agent = Agent.create(
+    logger.info("Starting A2A Gateway on %s...", gateway_url)
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A Gateway on %s...", gateway_url)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

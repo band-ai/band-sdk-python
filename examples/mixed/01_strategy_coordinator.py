@@ -26,8 +26,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 from band.core.types import AdapterFeatures, Emit
 
@@ -36,7 +35,7 @@ CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
 
 async def main() -> None:
-    setup_logging()
+    configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
     ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
@@ -78,16 +77,14 @@ Keep messages short, explicit, and coordination-focused.
         verbose=True,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting mixed-example strategy coordinator...")
+    async with Agent.from_config(
         "mixed_strategy_agent",
         config_path=CONFIG_PATH,
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting mixed-example strategy coordinator...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

@@ -68,17 +68,15 @@ async def main() -> None:
         instructions=generate_tom_prompt("Tom"),
     )
 
-    agent = Agent.from_config(
+    logger.info("Tom is on the prowl, looking for Jerry...")
+    async with Agent.from_config(
         "tom_agent",
         # emit=EXECUTION posts tool_call/tool_result events so Tom's platform
         # actions (lookup, invite, send) are visible in the room.
         adapter=AgnoAdapter(
             agno_agent, features=AdapterFeatures(emit={Emit.EXECUTION})
         ),
-    )
-
-    logger.info("Tom is on the prowl, looking for Jerry...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

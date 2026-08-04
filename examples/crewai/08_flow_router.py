@@ -25,20 +25,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from typing import Any
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging  # noqa: E402
-
-from band import Agent  # noqa: E402
+from band import Agent  # noqa: E402, configure_logging
 from band.adapters import CrewAIFlowAdapter  # noqa: E402
+from band import configure_logging  # noqa: E402
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
@@ -138,12 +134,11 @@ async def main() -> None:
         sequential_chains={"data-fetcher": "presenter"},
     )
 
-    agent = Agent.from_config(
+    logger.info("CrewAI Flow router agent starting")
+    async with Agent.from_config(
         "crewai_flow_router",
         adapter=adapter,
-    )
-    logger.info("CrewAI Flow router agent starting")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

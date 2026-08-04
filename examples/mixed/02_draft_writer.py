@@ -25,8 +25,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 from band.core.types import AdapterFeatures, Emit
 
@@ -35,7 +34,7 @@ CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
 
 async def main() -> None:
-    setup_logging()
+    configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
     ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
@@ -68,16 +67,14 @@ Do not try to coordinate the room. Your job is to synthesize.
         verbose=True,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting mixed-example engineering handoff writer...")
+    async with Agent.from_config(
         "mixed_writer_agent",
         config_path=CONFIG_PATH,
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting mixed-example engineering handoff writer...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

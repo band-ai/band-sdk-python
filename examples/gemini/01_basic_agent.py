@@ -28,18 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from setup_logging import setup_logging
-
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import GeminiAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -51,14 +45,11 @@ async def main() -> None:
         prompt="You are a helpful assistant. Be concise and friendly.",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting Gemini agent...")
+    async with Agent.from_config(
         "gemini_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Gemini agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

@@ -25,13 +25,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
 
-from setup_logging import setup_logging
 from settings import OpenCodeExampleSettings
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    stream="stdout",
+    root_level=logging.INFO,
+    extra_loggers={"httpx": logging.WARNING},
+)
 logger = logging.getLogger(__name__)
 
 
@@ -49,15 +53,13 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.from_config(
+    logger.info("Tom is on the prowl, looking for Jerry")
+    async with Agent.from_config(
         "tom_agent",
         adapter=adapter,
         ws_url=settings.band_ws_url,
         rest_url=settings.band_rest_url,
-    )
-
-    logger.info("Tom is on the prowl, looking for Jerry")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

@@ -63,13 +63,11 @@ async def main() -> None:
     # Bridge the Agno agent to Band.
     adapter = AgnoAdapter(agno_agent)
 
-    agent = Agent.from_config(
+    logger.info("Starting Agno agent...")
+    async with Agent.from_config(
         "agno_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Agno agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

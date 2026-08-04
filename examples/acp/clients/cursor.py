@@ -51,18 +51,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
@@ -95,17 +99,14 @@ async def main() -> None:
         profile=CursorACPClientProfile(),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting Cursor ACP client bridge...")
+    logger.info("Messages from Band will be forwarded to Cursor's agent.")
+    async with Agent.from_config(
         "cursor_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting Cursor ACP client bridge...")
-    logger.info("Messages from Band will be forwarded to Cursor's agent.")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

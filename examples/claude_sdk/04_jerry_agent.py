@@ -36,12 +36,17 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_jerry_prompt
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ClaudeSDKAdapter
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(
+    logging.INFO,
+    extra_loggers={
+        "band_claude_sdk_agent": logging.INFO,
+        "session_manager": logging.INFO,
+    },
+)
 logger = logging.getLogger(__name__)
 
 

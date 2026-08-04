@@ -22,11 +22,10 @@ import logging
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import PydanticAIAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -39,14 +38,11 @@ async def main() -> None:
         custom_section="You are a helpful assistant. Be concise and friendly.",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting Pydantic AI agent...")
+    async with Agent.from_config(
         "pydantic_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Pydantic AI agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

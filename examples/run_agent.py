@@ -175,7 +175,7 @@ _DEFAULT_MODELS: dict[str, str] = {
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-5.4-mini",
+    # parlant: deliberately omitted — its model comes from the NLP service.
     "crewai": "gpt-5.4-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
@@ -242,16 +242,14 @@ async def run_langgraph_agent(
         custom_section=custom_section,
     )
 
-    agent = Agent.create(
+    logger.info("Starting LangGraph agent...")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting LangGraph agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -287,15 +285,6 @@ async def run_pydantic_ai_agent(
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=contact_config,
-    )
-
     streaming_str = " with execution reporting" if enable_streaming else ""
     contacts_str = ""
     if contact_config:
@@ -308,7 +297,14 @@ async def run_pydantic_ai_agent(
         streaming_str,
         contacts_str,
     )
-    async with agent:
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        ws_url=ws_url,
+        rest_url=rest_url,
+        contact_config=contact_config,
+    ) as agent:
         await agent.run_forever()
 
 
@@ -332,15 +328,6 @@ async def run_anthropic_agent(
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=contact_config,
-    )
-
     streaming_str = " with execution reporting" if enable_streaming else ""
     contacts_str = (
         f", contacts={contact_config.strategy.value}" if contact_config else ""
@@ -351,7 +338,14 @@ async def run_anthropic_agent(
         streaming_str,
         contacts_str,
     )
-    async with agent:
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        ws_url=ws_url,
+        rest_url=rest_url,
+        contact_config=contact_config,
+    ) as agent:
         await agent.run_forever()
 
 
@@ -379,15 +373,6 @@ async def run_claude_sdk_agent(
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-        contact_config=contact_config,
-    )
-
     options = []
     if enable_thinking:
         options.append("extended thinking")
@@ -401,7 +386,14 @@ async def run_claude_sdk_agent(
     logger.info(
         "Starting Claude SDK agent with model: %s%s", model or "auto", options_str
     )
-    async with agent:
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        ws_url=ws_url,
+        rest_url=rest_url,
+        contact_config=contact_config,
+    ) as agent:
         await agent.run_forever()
 
 
@@ -430,16 +422,14 @@ async def run_parlant_agent(
     for guideline in PARLANT_GUIDELINES:
         adapter.add_guideline(**guideline)
 
-    agent = Agent.create(
+    logger.info("Starting Parlant agent (OpenAI NLP service)")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting Parlant agent (OpenAI NLP service)")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -465,16 +455,14 @@ async def run_crewai_agent(
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
     )
 
-    agent = Agent.create(
+    logger.info("Starting CrewAI agent with model: %s", model)
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting CrewAI agent with model: %s", model)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -520,21 +508,19 @@ async def run_codex_agent(
         features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info(
         "Starting Codex agent (transport=%s, model=%s, cwd=%s)",
         codex_transport,
         codex_model or "auto",
         codex_cwd,
     )
-    async with agent:
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    ) as agent:
         await agent.run_forever()
 
 
@@ -563,17 +549,15 @@ async def run_pydantic_ai_contacts_agent(
         features=AdapterFeatures(emit={Emit.EXECUTION}),  # Show tool calls
     )
 
-    agent = Agent.create(
+    logger.info("Starting Pydantic AI contacts agent with model: %s", model)
+    logger.info("Try: 'check my contact requests', 'list contacts', 'approve X'")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting Pydantic AI contacts agent with model: %s", model)
-    logger.info("Try: 'check my contact requests', 'list contacts', 'approve X'")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -619,19 +603,17 @@ When you see system messages about new contacts, acknowledge them to the user.""
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.create(
+    logger.info("Starting contacts auto-approve agent with model: %s", model)
+    logger.info("Contact requests will be automatically approved")
+    logger.info("All rooms will see broadcast: '@handle (name) is now a contact'")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=config,
-    )
-
-    logger.info("Starting contacts auto-approve agent with model: %s", model)
-    logger.info("Contact requests will be automatically approved")
-    logger.info("All rooms will see broadcast: '@handle (name) is now a contact'")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -679,19 +661,17 @@ Actions available:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.create(
+    logger.info("Starting contacts hub room agent with model: %s", model)
+    logger.info("Contact events will appear in hub room for LLM reasoning")
+    logger.info("All rooms will see broadcasts when contacts change")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=config,
-    )
-
-    logger.info("Starting contacts hub room agent with model: %s", model)
-    logger.info("Contact events will appear in hub room for LLM reasoning")
-    logger.info("All rooms will see broadcasts when contacts change")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -730,19 +710,17 @@ Acknowledge these updates to the user when you see them.
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.create(
+    logger.info("Starting contacts broadcast-only agent with model: %s", model)
+    logger.info("Contact changes will be broadcast to all rooms")
+    logger.info("Use chat commands to manually manage contacts")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=config,
-    )
-
-    logger.info("Starting contacts broadcast-only agent with model: %s", model)
-    logger.info("Contact changes will be broadcast to all rooms")
-    logger.info("Use chat commands to manually manage contacts")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -768,16 +746,14 @@ async def run_a2a_agent(
         streaming=True,
     )
 
-    agent = Agent.create(
+    logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
@@ -802,28 +778,26 @@ async def run_a2a_gateway_agent(
     if enable_debug:
         logging.getLogger("band.integrations.a2a.gateway").setLevel(logging.DEBUG)
 
-    gateway_url = f"http://localhost:{gateway_port}"
-
     adapter = A2AGatewayAdapter(
-        gateway_url=gateway_url,
         port=gateway_port,
     )
 
-    agent = Agent.create(
+    logger.info("Starting A2A Gateway on %s...", adapter.gateway_url)
+    logger.info("Peers will be exposed at:")
+    logger.info(
+        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
+        adapter.gateway_url,
+    )
+    logger.info(
+        "  - %s/agents/{peer_id}/v1/message:stream (messaging)", adapter.gateway_url
+    )
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A Gateway on %s...", gateway_url)
-    logger.info("Peers will be exposed at:")
-    logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
-    )
-    logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

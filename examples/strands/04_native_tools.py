@@ -32,12 +32,11 @@ from dotenv import load_dotenv
 from strands import tool
 from strands.models.openai import OpenAIModel
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 _RATES = {"EUR": 0.92, "GBP": 0.79, "JPY": 157.0}
@@ -76,13 +75,11 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Strands agent with native tools...")
+    async with Agent.from_config(
         "strands_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Strands agent with native tools...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

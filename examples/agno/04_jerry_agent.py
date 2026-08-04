@@ -68,17 +68,15 @@ async def main() -> None:
         instructions=generate_jerry_prompt("Jerry"),
     )
 
-    agent = Agent.from_config(
+    logger.info("Jerry is ready to outsmart Tom...")
+    async with Agent.from_config(
         "jerry_agent",
         # emit=EXECUTION posts tool_call/tool_result events so Jerry's platform
         # actions (lookup, invite, send) are visible in the room.
         adapter=AgnoAdapter(
             agno_agent, features=AdapterFeatures(emit={Emit.EXECUTION})
         ),
-    )
-
-    logger.info("Jerry is ready to outsmart Tom...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

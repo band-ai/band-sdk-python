@@ -27,11 +27,10 @@ import logging
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
@@ -44,14 +43,11 @@ async def main() -> None:
         custom_section="You are a helpful assistant. Be concise and friendly.",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting CrewAI agent...")
+    async with Agent.from_config(
         "crewai_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting CrewAI agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

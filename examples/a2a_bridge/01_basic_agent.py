@@ -39,11 +39,10 @@ import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -60,15 +59,12 @@ async def main() -> None:
         streaming=True,  # Enable SSE streaming for real-time updates
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
-        "a2a_agent",
-        adapter=adapter,
-    )
-
     logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
     logger.info("Try asking: 'What is 10 USD in EUR?'")
-    async with agent:
+    async with Agent.from_config(
+        "a2a_agent",
+        adapter=adapter,
+    ) as agent:
         await agent.run_forever()
 
 

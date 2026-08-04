@@ -14,6 +14,9 @@ using the Codex adapter.
 The character prompt is loaded from a shared prompts module that can be
 reused across different adapter implementations.
 
+Prerequisites: Codex CLI installed and authenticated (`codex login`).
+A missing or unreachable backend fails at startup with instructions.
+
 Run with (from repo root):
     uv run examples/codex/02_tom_agent.py
 
@@ -25,8 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import subprocess
 import sys
 
 from dotenv import load_dotenv
@@ -36,45 +37,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    style="json",
+    root_level=logging.INFO,
+    stream="stdout",
+    extra_loggers={
+        "websockets": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
-
-    codex_bin = shutil.which("codex")
-    if codex_bin is None:
-        logger.error(
-            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
-        )
-        sys.exit(1)
-
-    login_check = subprocess.run(
-        [codex_bin, "login", "status"],
-        capture_output=True,
-        text=True,
-    )
-    if login_check.returncode != 0:
-        print("Codex is not logged in.")
-        try:
-            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
-        except EOFError:
-            print("Non-interactive shell. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-        if answer in ("", "y", "yes"):
-            result = subprocess.run([codex_bin, "login"], check=False)
-            if result.returncode != 0:
-                print("Login failed. Check the output above and retry.")
-                sys.exit(1)
-        else:
-            print("Exiting. Run 'codex login' manually, then retry.")
-            sys.exit(1)
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
@@ -89,13 +70,11 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
-    agent = Agent.from_config(
+    logger.info("Tom is on the prowl, looking for Jerry...")
+    async with Agent.from_config(
         "tom_agent",
         adapter=adapter,
-    )
-
-    logger.info("Tom is on the prowl, looking for Jerry...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

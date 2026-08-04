@@ -39,13 +39,12 @@ from dotenv import load_dotenv
 # Add examples directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CopilotSDKAdapter, CopilotSDKAdapterConfig
 from band.core.types import AdapterFeatures, Capability, Emit
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -94,14 +93,12 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Copilot SDK contact-and-memory example agent")
+    async with Agent.from_config(
         "copilot_contact_memory_agent",
         adapter=adapter,
         contact_config=contact_config,
-    )
-
-    logger.info("Starting Copilot SDK contact-and-memory example agent")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

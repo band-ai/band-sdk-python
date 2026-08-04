@@ -69,13 +69,12 @@ import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import AdapterFeatures, Agent, Emit
+from band import AdapterFeatures, Agent, Emit, configure_logging
 from band.adapters import AnthropicAdapter
 from band.config import load_agent_config
 from band.integrations.slack import SlackAdapter, SlackApp
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"slack_sdk": logging.INFO})
 logger = logging.getLogger(__name__)
 
 

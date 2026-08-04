@@ -28,8 +28,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AAdapter
 
 logger = logging.getLogger(__name__)
@@ -64,7 +63,7 @@ def _build_bridge_agent(
 
 
 async def main() -> None:
-    setup_logging()
+    configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
     ws_url, rest_url = _load_platform_urls()

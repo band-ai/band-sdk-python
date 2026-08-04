@@ -51,17 +51,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
@@ -87,16 +91,14 @@ async def main() -> None:
     )
     adapter = CopilotACPAdapter(config)
 
-    agent = Agent.from_config(
+    logger.info("Starting GitHub Copilot ACP client bridge...")
+    logger.info("Messages from Band will be forwarded to Copilot.")
+    async with Agent.from_config(
         "copilot_acp_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting GitHub Copilot ACP client bridge...")
-    logger.info("Messages from Band will be forwarded to Copilot.")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

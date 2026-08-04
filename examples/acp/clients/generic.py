@@ -40,18 +40,22 @@ import asyncio
 import logging
 import os
 import shlex
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
 from band.config import load_agent_config
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
@@ -78,21 +82,18 @@ async def main() -> None:
         cwd=acp_cwd,
     )
 
-    # Create and start agent
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info(
         "Starting ACP client bridge (forwarding to '%s')...",
         " ".join(acp_command),
     )
     logger.info("Messages from Band will be forwarded to the ACP agent.")
-    async with agent:
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    ) as agent:
         await agent.run_forever()
 
 

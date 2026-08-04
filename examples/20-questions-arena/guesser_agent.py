@@ -96,14 +96,11 @@ async def main() -> None:
         custom_section=generate_guesser_prompt("Guesser"),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Guesser is ready -- waiting to be invited to a game...")
+    async with Agent.from_config(
         args.config,
         adapter=adapter,
-    )
-
-    logger.info("Guesser is ready -- waiting to be invited to a game...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

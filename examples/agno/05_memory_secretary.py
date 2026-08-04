@@ -97,15 +97,13 @@ async def main() -> None:
         ),
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Agno memory secretary...")
+    async with Agent.from_config(
         "agno_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting Agno memory secretary...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

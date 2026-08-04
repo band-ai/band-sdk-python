@@ -22,12 +22,11 @@ import logging
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import AnthropicAdapter
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_anthropic_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 CUSTOM_PROMPT = """
@@ -58,14 +57,11 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting support agent...")
+    async with Agent.from_config(
         "support_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting support agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

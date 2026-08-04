@@ -96,15 +96,13 @@ async def main() -> None:
         session_id_factory=lambda _room_id: session_id,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Agno DB-history agent (session_id=%s)...", session_id)
+    async with Agent.from_config(
         "agno_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
-    )
-
-    logger.info("Starting Agno DB-history agent (session_id=%s)...", session_id)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

@@ -38,12 +38,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from copilot import ProviderConfig
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CopilotSDKAdapter, CopilotSDKAdapterConfig
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 

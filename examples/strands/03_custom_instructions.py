@@ -29,12 +29,11 @@ import logging
 from dotenv import load_dotenv
 from strands.models.openai import OpenAIModel
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 SUPPORT_PROMPT = """
@@ -64,13 +63,11 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Strands support agent...")
+    async with Agent.from_config(
         "strands_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Strands support agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

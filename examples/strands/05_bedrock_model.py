@@ -31,11 +31,10 @@ import os
 from dotenv import load_dotenv
 from strands.models import BedrockModel
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -53,13 +52,11 @@ async def main() -> None:
         custom_section="You are a helpful assistant. Be concise and friendly.",
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Strands agent on Bedrock model %s...", MODEL_ID)
+    async with Agent.from_config(
         "strands_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Strands agent on Bedrock model %s...", MODEL_ID)
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

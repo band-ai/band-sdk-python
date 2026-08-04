@@ -34,12 +34,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from standalone_calculator import create_calculator_graph
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 from band.integrations.langgraph import graph_as_tool
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -75,14 +74,11 @@ async def main() -> None:
         additional_tools=[calculator_tool],
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting agent with calculator tool...")
+    async with Agent.from_config(
         "calculator_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting agent with calculator tool...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

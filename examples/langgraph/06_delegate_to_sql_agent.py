@@ -37,12 +37,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from standalone_sql_agent import create_sql_agent, download_chinook_db
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 from band.integrations.langgraph import graph_as_tool
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -88,14 +87,11 @@ async def main() -> None:
         additional_tools=[sql_tool],
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting agent with SQL tool...")
+    async with Agent.from_config(
         "sql_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting agent with SQL tool...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

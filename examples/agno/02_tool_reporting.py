@@ -74,13 +74,11 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Agno agent with tool reporting...")
+    async with Agent.from_config(
         "agno_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting Agno agent with tool reporting...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

@@ -31,13 +31,12 @@ import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 from band.core.types import AdapterFeatures, Capability
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
@@ -82,16 +81,14 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting CrewAI contact-and-memory example agent")
+    async with Agent.from_config(
         "crewai_contact_memory_agent",
         adapter=adapter,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=contact_config,
-    )
-
-    logger.info("Starting CrewAI contact-and-memory example agent")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

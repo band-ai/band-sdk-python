@@ -26,11 +26,10 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -93,14 +92,11 @@ async def main() -> None:
         Always send your response using band_send_message.""",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting agent with custom tools...")
+    async with Agent.from_config(
         "custom_tools_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting agent with custom tools...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

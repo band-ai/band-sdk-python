@@ -18,23 +18,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging  # noqa: E402
-
-from band import Agent  # noqa: E402
+from band import Agent  # noqa: E402, configure_logging
 from band.adapters import CrewAIFlowAdapter  # noqa: E402
 from band.adapters.crewai_flow import get_current_flow_runtime  # noqa: E402
 from band.core.types import AdapterFeatures, Emit  # noqa: E402
+from band import configure_logging  # noqa: E402
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 USER_INBOX_TEXT = """Recent emails:
@@ -98,12 +94,11 @@ async def main() -> None:
         features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
     )
 
-    agent = Agent.from_config(
+    logger.info("CrewAI Flow custom tools agent starting")
+    async with Agent.from_config(
         "crewai_flow_custom_tools",
         adapter=adapter,
-    )
-    logger.info("CrewAI Flow custom tools agent starting")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

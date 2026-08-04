@@ -40,12 +40,11 @@ import sys
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 # Define crew member configurations
@@ -153,14 +152,11 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting %s...", member["role"])
+    async with Agent.from_config(
         member["config_name"],
         adapter=adapter,
-    )
-
-    logger.info("Starting %s...", member["role"])
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

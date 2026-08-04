@@ -86,14 +86,11 @@ async def main() -> None:
         custom_section=generate_thinker_prompt("Thinker"),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Thinker is ready -- waiting for a user to start a game...")
+    async with Agent.from_config(
         "arena_thinker",
         adapter=adapter,
-    )
-
-    logger.info("Thinker is ready -- waiting for a user to start a game...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

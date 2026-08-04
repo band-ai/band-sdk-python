@@ -31,11 +31,12 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_jerry_prompt
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ParlantAdapter
 
-setup_logging()
+configure_logging(
+    logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
+)
 logger = logging.getLogger(__name__)
 
 
@@ -54,14 +55,11 @@ async def main() -> None:
         action="Respond using band_send_message with the user's name in mentions. Stay in character as Jerry the mouse.",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Jerry is cozy in his hole, watching for Tom...")
+    async with Agent.from_config(
         "jerry_agent",
         adapter=adapter,
-    )
-
-    logger.info("Jerry is cozy in his hole, watching for Tom...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 

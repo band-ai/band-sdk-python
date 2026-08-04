@@ -35,19 +35,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.types import AdapterFeatures, Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    style="json",
+    root_level=logging.INFO,
+    stream="stdout",
+    extra_loggers={
+        "websockets": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
@@ -60,34 +65,6 @@ def _env_bool(name: str, default: bool) -> bool:
 
 async def main() -> None:
     load_dotenv()
-
-    codex_bin = shutil.which("codex")
-    if codex_bin is None:
-        logger.error(
-            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
-        )
-        sys.exit(1)
-
-    login_check = subprocess.run(
-        [codex_bin, "login", "status"],
-        capture_output=True,
-        text=True,
-    )
-    if login_check.returncode != 0:
-        print("Codex is not logged in.")
-        try:
-            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
-        except EOFError:
-            print("Non-interactive shell. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-        if answer in ("", "y", "yes"):
-            result = subprocess.run([codex_bin, "login"], check=False)
-            if result.returncode != 0:
-                print("Login failed. Check the output above and retry.")
-                sys.exit(1)
-        else:
-            print("Exiting. Run 'codex login' manually, then retry.")
-            sys.exit(1)
 
     agent_key = os.getenv("AGENT_KEY", "darter")
     codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
@@ -124,18 +101,16 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
-    agent = Agent.from_config(
-        agent_key,
-        adapter=adapter,
-    )
-
     logger.info(
         "Starting Codex agent: agent_key=%s transport=%s role=%s",
         agent_key,
         codex_transport,
         codex_role or "none",
     )
-    async with agent:
+    async with Agent.from_config(
+        agent_key,
+        adapter=adapter,
+    ) as agent:
         await agent.run_forever()
 
 

@@ -25,11 +25,10 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -42,14 +41,11 @@ async def main() -> None:
         checkpointer=InMemorySaver(),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting LangGraph agent...")
+    async with Agent.from_config(
         "simple_agent",
         adapter=adapter,
-    )
-
-    logger.info("Starting LangGraph agent...")
-    async with agent:
+    ) as agent:
         await agent.run_forever()
 
 
