@@ -312,6 +312,21 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
     ]
 
 
+def test_explicit_feature_override_reaches_inner():
+    """An explicit emit=/capabilities= kwarg must govern the actual turn.
+
+    A turn dispatches straight to ``inner.on_message(...)``, whose body reads
+    the inner instance's own ``self.features`` — not the wrapper's. Without
+    propagating the override onto ``inner.features``, passing
+    ``capabilities=`` to ``SlackAdapter`` would silently do nothing.
+    """
+    inner = _EmitBrain(reply=None)
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    assert adapter.features.capabilities == frozenset({Capability.MEMORY})
+    assert inner.features.capabilities == frozenset({Capability.MEMORY})
+
+
 # ── Slack ingress (HTTP webhook → brain invocation) ─────────────────────────
 
 

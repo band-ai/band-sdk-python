@@ -48,6 +48,7 @@ except ImportError:
     )
 
 from band.config.loader import load_agent_config
+from band.core.types import Emit
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -218,9 +219,8 @@ async def main() -> None:
             project=letta_project,
             custom_section="",
             include_base_instructions=True,
-            enable_task_events=True,
-            enable_execution_reporting=False,
-        )
+        ),
+        emit=Emit.TASK_EVENTS,
     )
 
     agent = Agent.create(

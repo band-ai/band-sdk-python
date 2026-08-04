@@ -73,12 +73,20 @@ RETIRED_FEATURE_SURFACE_TOKENS = (
 
 
 def example_scripts() -> list[Path]:
-    return sorted(EXAMPLES_ROOT.rglob("*.py"))
+    """Customer-facing adapter-construction scripts: examples/ + docker/*/runner.py.
+
+    The docker runners are their own deployment entrypoints, not under
+    examples/, but construct adapters the exact same way a customer would.
+    """
+    scripts = sorted(EXAMPLES_ROOT.rglob("*.py"))
+    scripts += sorted((REPO_ROOT / "docker").glob("*/runner.py"))
+    return scripts
 
 
 def customer_docs() -> list[Path]:
-    """Markdown a customer reads: example READMEs + top-level repo docs."""
+    """Markdown a customer reads: example READMEs + top-level + per-adapter docs."""
     docs = sorted(EXAMPLES_ROOT.rglob("*.md"))
+    docs += sorted((REPO_ROOT / "docs" / "adapters").glob("*.md"))
     docs += [REPO_ROOT / "README.md", REPO_ROOT / "CLAUDE.md"]
     return docs
 

@@ -492,6 +492,12 @@ class SlackAdapter(SimpleAdapter[Any]):
         ``SUPPORTED_CAPABILITIES`` — the inner adapter may have narrowed
         itself further than what it merely supports (e.g. constructed with
         ``emit=()``), and that narrowing must carry through unchanged.
+
+        An explicit override is written onto ``inner.features`` too: a turn
+        dispatches straight to ``self._inner.on_message(...)``, whose body
+        reads its own ``self.features`` (the inner instance's), not this
+        wrapper's — so the override has to live there to actually take
+        effect, not just be reflected on the wrapper's own ``self.features``.
         """
         if (
             emit is None
@@ -501,13 +507,15 @@ class SlackAdapter(SimpleAdapter[Any]):
             and include_categories is None
         ):
             return self._inner.features
-        return super()._resolve_features(
+        resolved = super()._resolve_features(
             emit=emit,
             capabilities=capabilities,
             include_tools=include_tools,
             exclude_tools=exclude_tools,
             include_categories=include_categories,
         )
+        self._inner.features = resolved
+        return resolved
 
     @property
     def inner(self) -> SimpleAdapter[Any]:

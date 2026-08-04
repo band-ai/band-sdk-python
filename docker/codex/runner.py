@@ -33,6 +33,7 @@ import yaml
 
 from band.docker.repo_init import initialize_repo
 from band.config.loader import load_agent_config
+from band.core.types import Emit
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -271,13 +272,11 @@ async def main() -> None:
                 part for part in (custom_section, repo_init.context_bundle) if part
             ),
             include_base_instructions=True,
-            enable_task_events=True,
             emit_turn_task_markers=codex_turn_markers,
-            enable_execution_reporting=False,
-            emit_thought_events=False,
             fallback_send_agent_text=True,
             experimental_api=True,
-        )
+        ),
+        emit=Emit.TASK_EVENTS,
     )
 
     agent = Agent.create(
