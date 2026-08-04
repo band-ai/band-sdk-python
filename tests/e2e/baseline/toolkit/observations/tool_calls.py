@@ -34,7 +34,7 @@ from typing import Any, ClassVar
 from band_rest import ChatMessage
 
 from band.core.types import MessageType
-from band.runtime.tools import MEMORY_TOOL_NAMES
+from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -61,6 +61,23 @@ if {tool.value for tool in MemoryTool} != set(MEMORY_TOOL_NAMES):
     raise ValueError(
         "MemoryTool drifted from band.runtime.tools.MEMORY_TOOL_NAMES: "
         f"{set(MEMORY_TOOL_NAMES) ^ {tool.value for tool in MemoryTool}}"
+    )
+
+
+class ContactTool(StrEnum):
+    """Canonical contact platform-tool names for capability scenarios."""
+
+    LIST = "band_list_contacts"
+    ADD = "band_add_contact"
+    REMOVE = "band_remove_contact"
+    LIST_REQUESTS = "band_list_contact_requests"
+    RESPOND_REQUEST = "band_respond_contact_request"
+
+
+if {tool.value for tool in ContactTool} != set(CONTACT_TOOL_NAMES):
+    raise ValueError(
+        "ContactTool drifted from band.runtime.tools.CONTACT_TOOL_NAMES: "
+        f"{set(CONTACT_TOOL_NAMES) ^ {tool.value for tool in ContactTool}}"
     )
 
 
@@ -256,9 +273,12 @@ class MemoryToolCalls(ToolCalls):
         }
         self.assert_fired(MemoryTool.STORE, with_args=with_args or None)
 
-    def assert_list_called(self) -> None:
-        """Assert ``band_list_memories`` fired."""
-        self.assert_fired(MemoryTool.LIST)
+    def assert_list_called(self, *, content_query: str | None = None) -> None:
+        """Assert ``band_list_memories`` fired, optionally for a content query."""
+        with_args = (
+            {"content_query": content_query} if content_query is not None else None
+        )
+        self.assert_fired(MemoryTool.LIST, with_args=with_args)
 
     def assert_get_called(self) -> None:
         """Assert ``band_get_memory`` fired."""

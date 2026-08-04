@@ -4,9 +4,10 @@
 Only the OCI Distribution Specification's ``MANIFEST_UNKNOWN`` and
 ``NAME_UNKNOWN`` responses mean that a reference is absent. ORAS 1.3.1 also
 renders a registry's absent-manifest response as ``failed to find ...: not
-found``; that exact form is accepted. Authentication, authorization, rate-limit,
-transport, and other registry failures are errors; publish workflows must stop
-instead of treating them as permission to overwrite an immutable tag.
+found``; that exact form is accepted. Authentication, authorization (including
+a missing or inaccessible repository), rate-limit, transport, and other
+registry failures are errors; publish workflows must stop instead of treating
+them as permission to overwrite an immutable tag.
 """
 
 from __future__ import annotations

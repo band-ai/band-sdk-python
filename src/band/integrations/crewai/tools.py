@@ -58,6 +58,7 @@ from band.core.types import (
     Emit,
     EventMessageType,
     MessageType,
+    ToolEventKey,
 )
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
@@ -174,7 +175,9 @@ class EmitExecutionReporter:
             return
         try:
             await tools.send_event(
-                content=json.dumps({"name": tool_name, "args": input_data}),
+                content=json.dumps(
+                    {ToolEventKey.NAME: tool_name, ToolEventKey.ARGS: input_data}
+                ),
                 message_type="tool_call",
             )
         except Exception as e:
@@ -192,7 +195,11 @@ class EmitExecutionReporter:
         try:
             await tools.send_event(
                 content=json.dumps(
-                    {"name": tool_name, "output": result, "is_error": is_error}
+                    {
+                        ToolEventKey.NAME: tool_name,
+                        ToolEventKey.OUTPUT: result,
+                        ToolEventKey.IS_ERROR: is_error,
+                    }
                 ),
                 message_type="tool_result",
             )

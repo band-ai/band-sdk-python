@@ -26,6 +26,16 @@ class MessageType(StrEnum):
     USAGE = "usage"
 
 
+class ToolEventKey(StrEnum):
+    """Canonical JSON keys for execution events written into room history."""
+
+    NAME = "name"
+    ARGS = "args"
+    OUTPUT = "output"
+    TOOL_CALL_ID = "tool_call_id"
+    IS_ERROR = "is_error"
+
+
 # Subset of message types accepted by ``band_send_event`` — the non-history
 # event kinds. Derived from MessageType so the taxonomy stays single-sourced.
 EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]

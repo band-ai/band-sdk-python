@@ -50,8 +50,9 @@ Building an agent for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)?
 The `band-python-kit` kit runs your agent in an isolated microVM — the Band
 SDK in a read-only virtual environment, automatic sandbox proxy-CA trust
 wiring, a default-deny egress allowlist, arm64 and x86_64. It is distributed
-on GHCR (`ghcr.io/band-ai/band-python-kit`), so adopting it is one
-`sbx create --kit …` from a clean machine — no repo checkout or local build.
+on Docker Hub (`docker.io/bandhq/band-python-kit`; also mirrored on GHCR), so
+adopting it is one `sbx create --kit …` from a clean machine — no repo
+checkout or local build.
 
 Choose the guide that matches what you need:
 
@@ -64,7 +65,8 @@ Choose the guide that matches what you need:
 - [Release engineering](docker/band_python_kit/RELEASING.md) — how the kit is
   published, tag policy, CVE-rebuild cadence, supply-chain quarantine.
 
-The declarative kit and published GHCR image are separate release deliverables.
+The declarative kit and published sandbox image are separate release
+deliverables (dual-published to Docker Hub and GHCR).
 
 #### Proxy-managed credentials
 
@@ -456,6 +458,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Parlant          | `parlant`     | `ParlantAdapter`                     | | [examples](examples/parlant/)         |
 | Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
 | Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
+| Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
@@ -563,6 +566,7 @@ Adapter emit support:
 | Google ADK | Yes | - | - |
 | Pydantic AI | Yes | - | - |
 | LangGraph | Yes | - | - |
+| Strands Agents | Yes | - | - |
 | Parlant | - | - | - |
 | A2A / A2A Gateway | - | - | - |
 | ACP Client | - | - | - |
@@ -879,7 +883,7 @@ uv run python examples/run_agent.py --example anthropic
 uv run python examples/run_agent.py --example codex
 ```
 
-`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, `examples/agno/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
+`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, `examples/agno/01_basic_agent.py`, `examples/strands/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
 
 For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged services in the same room, see [examples/mixed](examples/mixed/).
 

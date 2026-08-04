@@ -41,6 +41,7 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
+  HUB_IMAGE_NAME: docker.io/bandhq/band-python-kit-image
   DOCKERFILE: docker/band_python_kit/Dockerfile
 
 jobs:
@@ -138,43 +139,56 @@ jobs:
           VERSION: ${{ steps.readver.outputs.version }}
         run: |
           set -euo pipefail
-          # One listing answers both questions: which tag is the *currently
-          # published* state of this version (X.Y.Z-rMax, or bare X.Y.Z when
-          # never rebuilt) — the tag the CVE scan must target — and what the
-          # next free rebuild suffix is. Listed straight from the registry
-          # (same auth as every other step) rather than the GitHub packages
-          # REST API — one auth surface, no URL-encoded package names.
-          set +e
-          tags="$(oras repo tags "$IMAGE_NAME" 2>listing-err.txt)"
-          rc=$?
-          set -e
-          if [ $rc -ne 0 ]; then
-            if grep -qiE "name unknown|NAME_UNKNOWN" listing-err.txt; then
-              tags="" # package not created yet — nothing published
-            else
-              # Any other listing failure must fail loudly: defaulting to an
-              # empty list would reset the counter and re-mint an existing
-              # immutable -rN tag.
-              cat listing-err.txt >&2
-              exit $rc
+          # Both registries are authoritative for whether the mirror is
+          # complete. Use the lower rebuild suffix so the next run repairs a
+          # tag that exists in only one registry instead of skipping it.
+          list_tags() {
+            local ref="$1" output="$2" error="$3"
+            set +e
+            # Hub packages are public; keep this read anonymous so the decide
+            # job does not need release-environment credentials.
+            oras repo tags "$ref" >"$output" 2>"$error"
+            local rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              if grep -qiE "name unknown|NAME_UNKNOWN" "$error"; then
+                : >"$output" # package not created yet — nothing published
+              else
+                cat "$error" >&2
+                exit "$rc"
+              fi
             fi
-          fi
-          max=0
-          while IFS= read -r t; do
-            case "$t" in
-              "${VERSION}-r"*)
-                n="${t##*-r}"
-                if [ "$n" -gt "$max" ] 2>/dev/null; then max="$n"; fi
-                ;;
-            esac
-          done <<< "$tags"
+          }
+          max_suffix() {
+            local max=0 n
+            while IFS= read -r t; do
+              case "$t" in
+                "${VERSION}-r"*)
+                  n="${t##*-r}"
+                  if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -gt "$max" ]; then max="$n"; fi
+                  ;;
+              esac
+            done < "$1"
+            echo "$max"
+          }
+          list_tags "$IMAGE_NAME" ghcr-tags.txt ghcr-listing-err.txt
+          list_tags "$HUB_IMAGE_NAME" hub-tags.txt hub-listing-err.txt
+          ghcr_max="$(max_suffix ghcr-tags.txt)"
+          hub_max="$(max_suffix hub-tags.txt)"
+          max="$ghcr_max"
+          if [ "$hub_max" -lt "$max" ]; then max="$hub_max"; fi
+          mirror_incomplete="false"
+          if [ "$ghcr_max" -ne "$hub_max" ]; then mirror_incomplete="true"; fi
           if [ "$max" -gt 0 ]; then
             current_tag="${VERSION}-r${max}"
           else
             current_tag="${VERSION}"
           fi
-          echo "current_tag=${current_tag}" >> "$GITHUB_OUTPUT"
-          echo "rversion=${VERSION}-r$((max + 1))" >> "$GITHUB_OUTPUT"
+          {
+            echo "current_tag=${current_tag}"
+            echo "rversion=${VERSION}-r$((max + 1))"
+            echo "mirror_incomplete=${mirror_incomplete}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Check whether the current tag is pullable
         id: published
@@ -233,11 +247,13 @@ jobs:
           published="${{ steps.published.outputs.exists }}"
           base_changed="${{ steps.bases.outputs.base_changed }}"
           scan_found="${{ steps.findings.outputs.found }}" # empty when unpublished/skipped
+          mirror_incomplete="${{ steps.tags.outputs.mirror_incomplete }}"
           forced="${{ github.event.inputs.force }}"
           reason=""
           rebuild="false"
           if [ "$base_changed" = "true" ]; then rebuild="true"; reason="${reason}base-digest-changed "; fi
           if [ "$scan_found" = "true" ]; then rebuild="true"; reason="${reason}fixable-high-critical "; fi
+          if [ "$mirror_incomplete" = "true" ]; then rebuild="true"; reason="${reason}registry-mirror-incomplete "; fi
           if [ "$forced" = "true" ]; then rebuild="true"; reason="${reason}forced(${FORCE_REASON}) "; fi
           # A version that was never published cannot be REbuilt — the initial
           # X.Y.Z belongs to the release workflow alone. Absolute: overrides

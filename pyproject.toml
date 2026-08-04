@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "1.5.0"
+version = "1.6.0"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -151,6 +151,9 @@ google_adk = [
 agno = [
     "agno>=2.6.0",
 ]
+strands = [
+    "strands-agents[openai]>=1.40,<2",
+]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai, which is
 # declared conflicting with both parlant and pydantic-ai (see tool.uv.conflicts).
@@ -208,6 +211,8 @@ dev = [
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
     # Include Agno for testing
     "agno>=2.6.0",
+    # Include Strands Agents for testing
+    "strands-agents[openai]>=1.40,<2",
     # Include letta-client for testing
     "letta-client>=0.1.0",
     # Include bridge deps for testing

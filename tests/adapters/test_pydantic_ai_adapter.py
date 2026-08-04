@@ -280,19 +280,6 @@ class TestInitialization:
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         assert adapter.model == "openai:gpt-5.4"
 
-    def test_create_agent_uses_str_output_type(self):
-        """Agent must be constructed with output_type=str, never None.
-
-        pydantic-ai raises UserError("At least one output type must be provided
-        other than `None`") when output_type is None.
-        """
-        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
-        adapter.agent_name = "TestBot"
-
-        with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
-            adapter._create_agent()
-            assert MockAgent.call_args.kwargs["output_type"] is str
-
     def test_create_agent_registers_content_null_history_processor(self):
         """The agent must sanitize content:null responses on every request.
 
@@ -306,9 +293,12 @@ class TestInitialization:
 
         with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
             adapter._create_agent()
-            (capability,) = MockAgent.call_args.kwargs["capabilities"]
-            assert isinstance(capability, ProcessHistory)
-            assert capability.processor is _drop_non_replayable_messages
+            history_processors = [
+                capability.processor
+                for capability in MockAgent.call_args.kwargs["capabilities"]
+                if isinstance(capability, ProcessHistory)
+            ]
+            assert history_processors == [_drop_non_replayable_messages]
 
     def test_create_agent_registers_context_free_custom_tool(self):
         """A CustomToolDef-derived tool takes no RunContext, so it needs tool_plain.
@@ -363,19 +353,28 @@ class TestInitialization:
 
         assert echo_tool.function_schema.json_schema["required"] == ["message"]
 
-    async def test_unsatisfiable_output_never_reruns_a_side_effecting_tool(self):
+    @pytest.mark.parametrize(
+        "nothing_to_say",
+        [
+            pytest.param([], id="no-parts"),
+            pytest.param([TextPart(content="")], id="blank-text"),
+            pytest.param([ThinkingPart(content="done")], id="thinking-only"),
+        ],
+    )
+    async def test_nothing_left_to_say_never_reruns_a_side_effecting_tool(
+        self, nothing_to_say: list
+    ):
         """One turn must post to the room exactly once, however the run ends.
 
-        This agent answers through tools, so ``output_type=str`` can never be
-        satisfied and its retry budget is always spent. Each attempt sends the model a
-        retry prompt asking it to return text *or call a tool*, and an agent told to
-        answer only through tools calls one again — so a budget above zero re-posts the
-        reply once per attempt (a bare ``retries=N`` sets tools *and* output, which is
-        how that budget gets granted by accident).
+        This agent answers through tools, so once it has acted it has nothing left to
+        say — which providers spell in several ways. Each must end the run: forcing a
+        satisfiable output instead spends an output retry per attempt, and every
+        attempt sends the model a retry prompt asking it to return text *or call a
+        tool*, which an agent told to answer only through tools obliges by re-posting
+        the reply.
 
-        The FunctionModel below stands in for that model: a tool call, then an empty
-        final response, alternating — the shape a real run exhibits. With output
-        retries refused the tool runs once; with any budget it runs again per attempt.
+        The FunctionModel below stands in for that model: a tool call, then a
+        nothing-to-say response, alternating — the shape a real run exhibits.
         """
         posted: list[str] = []
 
@@ -400,7 +399,7 @@ class TestInitialization:
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name=tool_name, args={"text": "hi"})]
                 )
-            return ModelResponse(parts=[TextPart(content="")])
+            return ModelResponse(parts=list(nothing_to_say))
 
         adapter = PydanticAIAdapter(
             model=FunctionModel(reply_via_tool_then_nothing),  # type: ignore[arg-type]
@@ -408,11 +407,32 @@ class TestInitialization:
         )
         adapter.agent_name = "TestBot"
 
-        with pytest.raises(UnexpectedModelBehavior) as exc:
-            await adapter._create_agent().run("go", deps=MagicMock())
+        result = await adapter._create_agent().run("go", deps=MagicMock())
 
-        assert _is_output_retries_exhausted(exc.value)
+        assert result.output is None
         assert posted == ["hi"]
+
+    async def test_no_actionable_output_before_any_tool_ends_the_turn(self):
+        """A model that says nothing must not blow the turn up before it acts.
+
+        Thinking-mode models sometimes return no actionable output on the very first
+        response, before any tool has run. Ending that run with no output lets the
+        caller report a missing reply; without ``None`` as a valid outcome the
+        refused output budget raises UnexpectedModelBehavior and fails the whole
+        turn instead.
+        """
+
+        def think_only(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ThinkingPart(content="hmm..."), TextPart("")])
+
+        adapter = PydanticAIAdapter(
+            model=FunctionModel(think_only),  # type: ignore[arg-type]
+        )
+        adapter.agent_name = "TestBot"
+
+        result = await adapter._create_agent().run("go", deps=MagicMock())
+
+        assert result.output is None
 
 
 class TraceCapture(NamedTuple):
@@ -1222,10 +1242,10 @@ def make_raising_stream(
 
 
 class TestEmptyFinalAnswer:
-    """gpt-5.4-mini can return an empty final answer after the agent already
-    replied/acted via tools, exhausting pydantic-ai's output_type=str retry
-    budget. That is benign — the work already went out — so it must not fail the
-    message, but a genuine no-work failure must still surface.
+    """A model can end a turn with output pydantic-ai cannot accept — blank text,
+    say — after the agent already replied/acted via tools, exhausting the refused
+    output-retry budget. That is benign — the work already went out — so it must not
+    fail the message, but a genuine no-work failure must still surface.
     """
 
     def test_swallow_matches_the_wording_pydantic_ai_actually_raises(self) -> None:

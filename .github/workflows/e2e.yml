@@ -74,6 +74,11 @@ on:
 # the orphan sweep only reaps agents older than BAND_E2E_ORPHAN_MAX_AGE_MINUTES,
 # so a concurrent run's fresh agents are never swept out from under it.
 
+# Every job here only reads the repo. The GitHub API work uses E2E_GITHUB_TOKEN,
+# and the scorecard artifacts are downloaded from this same run.
+permissions:
+  contents: read
+
 jobs:
 
   lanes:

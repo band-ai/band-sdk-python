@@ -20,6 +20,14 @@ from band.testing import FakeAgentTools
 from tests.adapters.agno.helpers import CapturingModel, SchemaTools
 
 
+@pytest.fixture(autouse=True)
+def _disable_agno_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real ``AgnoAgent.arun()`` fires an async telemetry POST to Agno's API
+    unless disabled -- an accidental live network call that can hang a unit
+    test under restricted CI egress."""
+    monkeypatch.setenv("AGNO_TELEMETRY", "false")
+
+
 @pytest.fixture
 def tools() -> FakeAgentTools:
     """A fresh, call-tracking Band tool surface for one test."""
