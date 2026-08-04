@@ -98,6 +98,20 @@ def _result_text(result: ToolResult) -> str:
     return "\n".join(parts)
 
 
+def _openai_history(messages: StrandsMessages) -> StrandsMessages:
+    """Keep tool results ahead of text in Strands' OpenAI serialization."""
+    normalized: StrandsMessages = []
+    for message in messages:
+        tool_results = [block for block in message["content"] if "toolResult" in block]
+        other = [block for block in message["content"] if "toolResult" not in block]
+        if tool_results and other:
+            normalized.append({"role": message["role"], "content": tool_results})
+            normalized.append({"role": message["role"], "content": other})
+        else:
+            normalized.append(message)
+    return normalized
+
+
 def _input_schema(input_model: type[BaseModel]) -> dict[str, Any]:
     """The JSON schema Strands advertises for a tool's input model.
 
@@ -347,17 +361,8 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         features: AdapterFeatures | None = None,
     ) -> None:
         """Create an adapter around a Strands model or Bedrock model identifier."""
-        # Only OpenAI's Converse serializer reorders a merged toolResult+text
-        # message (tool answer emitted after the text, breaking OpenAI's
-        # tool_calls-adjacency rule) — see _merge_consecutive_roles. Bedrock
-        # (including the bare model-id string shorthand Strands treats as
-        # Bedrock) still needs every same-role run merged, so this stays off
-        # for anything but a real OpenAIModel.
-        default_converter = StrandsHistoryConverter(
-            split_tool_result_from_text=isinstance(model, OpenAIModel)
-        )
         super().__init__(
-            history_converter=history_converter or default_converter,
+            history_converter=history_converter or StrandsHistoryConverter(),
             features=features,
         )
         self.model = model
@@ -435,6 +440,8 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> StrandsMessages:
         """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
+            if isinstance(self.model, OpenAIModel):
+                history = _openai_history(history)
             self._message_history[room_id] = list(history)
             if history:
                 logger.debug("Room %s: rehydrated %s message(s)", room_id, len(history))
