@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.types import PlatformConnection
 from band.runtime.oneshot import (
     OneShotEnvelopeError,
     OneShotInvoker,
@@ -89,6 +90,17 @@ def _make_link_mock(
     stubbed so ``startup()`` succeeds.
     """
     link = MagicMock()
+    link.api_key = "test-api-key"
+    link.rest_url = "https://app.band.ai"
+    link.ws_url = "wss://app.band.ai/api/v1/socket/websocket"
+    link.to_platform_connection = MagicMock(
+        side_effect=lambda agent_id: PlatformConnection(
+            agent_id=agent_id,
+            api_key=link.api_key,
+            rest_url=link.rest_url,
+            ws_url=link.ws_url,
+        )
+    )
 
     # Identity (for startup()).
     agent_me = MagicMock()

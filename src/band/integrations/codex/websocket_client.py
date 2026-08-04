@@ -8,6 +8,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from band.core.exceptions import BandConnectionError
+
 from .rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -53,7 +55,7 @@ class CodexWebSocketClient(BaseJsonRpcClient):
                 open_timeout=self._connect_timeout_s,
             )
         except OSError as exc:
-            raise ConnectionError(
+            raise BandConnectionError(
                 f"Codex app-server not reachable at {self.ws_url}: {exc}. "
                 f"Start it with `codex app-server --listen {self.ws_url}` "
                 "or use the stdio transport (CodexAdapterConfig.transport='stdio')."

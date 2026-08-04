@@ -298,12 +298,17 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             self._tools = create_parlant_tools(self.features)
 
             pending_specs = self._guideline_specs[self._guidelines_applied_count :]
-            for spec in pending_specs:
-                await self._parlant_agent.create_guideline(
-                    condition=spec.condition,
-                    action=spec.action,
-                    tools=self._tools if spec.tools is None else spec.tools,
-                    **spec.kwargs,
+            if pending_specs:
+                await asyncio.gather(
+                    *(
+                        self._parlant_agent.create_guideline(
+                            condition=spec.condition,
+                            action=spec.action,
+                            tools=self._tools if spec.tools is None else spec.tools,
+                            **spec.kwargs,
+                        )
+                        for spec in pending_specs
+                    )
                 )
             self._guidelines_applied_count = len(self._guideline_specs)
 

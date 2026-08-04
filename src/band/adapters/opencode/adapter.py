@@ -18,7 +18,7 @@ from typing_extensions import Unpack
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConnectionError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -294,7 +294,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         try:
             await probe.health()
         except httpx.HTTPError as exc:
-            raise BandConfigError(
+            raise BandConnectionError(
                 f"OpenCode server not reachable at {self.config.base_url}: {exc}. "
                 "Start one with `opencode serve --hostname 127.0.0.1 --port 4096` "
                 "or point OpencodeAdapterConfig.base_url at a running server."

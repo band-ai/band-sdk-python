@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
-from band import BandConfigError
+from band import BandConnectionError
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Capability
 from band.integrations.opencode.types import OpencodeSessionState
@@ -38,7 +38,7 @@ async def test_startup_fails_loudly_when_server_unreachable() -> None:
         "band.integrations.opencode.client.HttpOpencodeClient.health",
         side_effect=httpx.ConnectError("All connection attempts failed"),
     ):
-        with pytest.raises(BandConfigError, match="opencode serve"):
+        with pytest.raises(BandConnectionError, match="opencode serve"):
             await adapter.on_started("Tom", "A cat")
 
 

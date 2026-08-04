@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from band import BandConnectionError
 from band.integrations.codex import (
     CodexJsonRpcError,
     CodexWebSocketClient,
@@ -265,7 +266,7 @@ async def test_websocket_client_refused_connection_names_the_fix(
     monkeypatch.setattr("websockets.asyncio.client.connect", refused_connect)
 
     client = CodexWebSocketClient(ws_url="ws://127.0.0.1:8765")
-    with pytest.raises(ConnectionError, match="codex app-server --listen"):
+    with pytest.raises(BandConnectionError, match="codex app-server --listen"):
         await client.connect()
 
 
