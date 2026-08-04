@@ -16,7 +16,6 @@ Run with: uv run pytest tests/integration/test_agentcore_concurrency.py -v -s
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -28,16 +27,11 @@ import pytest
 from tests.conftest_integration import get_api_key, get_base_url, get_test_agent_id
 from tests.integration.conftest import requires_api
 from tests.paths import EXAMPLES_ROOT
+from tests.ports import reserve_port
 
 _SCRIPT = EXAMPLES_ROOT / "agentcore" / "custom_tools_llm_server.py"
 _STARTUP_TIMEOUT = 15.0
 _POLL_INTERVAL = 0.5
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def _spawn(port: int) -> subprocess.Popen[str]:
@@ -89,7 +83,7 @@ class TestConcurrentContainerInstances:
     """L3 co-resident instances: no port, lock-file, or shared-resource collision."""
 
     def test_three_instances_start_independently_on_one_host(self) -> None:
-        ports = [_free_port(), _free_port(), _free_port()]
+        ports = [reserve_port(), reserve_port(), reserve_port()]
         procs = [_spawn(port) for port in ports]
         deadline = time.monotonic() + _STARTUP_TIMEOUT
         try:
@@ -107,7 +101,7 @@ class TestConcurrentContainerInstances:
         silently collides. A deliberate port clash fails at the OS bind
         step, not because of a shared lock file or app-level singleton.
         """
-        port = _free_port()
+        port = reserve_port()
         holder = _spawn(port)
         try:
             _wait_for_ping(port, time.monotonic() + _STARTUP_TIMEOUT)
