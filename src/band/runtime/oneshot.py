@@ -60,6 +60,15 @@ logger = logging.getLogger(__name__)
 # ``drain_truncated`` rather than draining indefinitely.
 DEFAULT_DRAIN_CAP = 50
 
+# Items per page when following the context endpoint's cursor pagination.
+DEFAULT_HISTORY_LIMIT = 50
+
+# Defensive cap on how many pages of history to follow per invocation. A room
+# shouldn't backlog thousands of messages for a single agent in normal
+# operation; if it does, surface it via ``history_truncated`` rather than
+# paginating indefinitely on every stateless invocation.
+DEFAULT_HISTORY_PAGE_CAP = 20
+
 
 class OneShotEnvelopeError(ValueError):
     """Raised when the forwarded event envelope is missing required fields."""
@@ -80,6 +89,8 @@ class OneShotInvoker:
         agent_id: This container's Band agent identity (used for
             self-message filtering and the adapter's runtime identity).
         drain_cap: Defensive ceiling on the drain loop. Default 50.
+        history_page_cap: Defensive ceiling on how many pages of history to
+            follow per invocation. Default 20.
     """
 
     def __init__(
@@ -89,11 +100,13 @@ class OneShotInvoker:
         adapter: FrameworkAdapter | SimpleAdapter,
         agent_id: str,
         drain_cap: int = DEFAULT_DRAIN_CAP,
+        history_page_cap: int = DEFAULT_HISTORY_PAGE_CAP,
     ) -> None:
         self._link = link
         self._adapter = adapter
         self._agent_id = agent_id
         self._drain_cap = drain_cap
+        self._history_page_cap = history_page_cap
         self._agent_name: str = ""
         self._agent_description: str = ""
         self._started = False
@@ -274,7 +287,7 @@ class OneShotInvoker:
             sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
 
             msg = _build_platform_message(payload, room_id, sender_name, participants)
-            history, seen_ids = await self._fetch_history(
+            history, seen_ids, history_truncated = await self._fetch_history(
                 room_id,
                 exclude_message_id=msg.id,
                 participants=participants,
@@ -374,6 +387,8 @@ class OneShotInvoker:
             result["drained"] = drained
         if drain_truncated:
             result["drain_truncated"] = True
+        if history_truncated:
+            result["history_truncated"] = True
         return result
 
     # --- REST helpers ---
@@ -416,24 +431,55 @@ class OneShotInvoker:
         *,
         exclude_message_id: str | None,
         participants: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], set[str]]:
+    ) -> tuple[list[dict[str, Any]], set[str], bool]:
         """Fetch room history formatted for the LLM, plus the set of message
         ids the LLM will see. The id set scopes the drain loop so it never
         swallows a message that arrived after this snapshot.
+
+        Follows the endpoint's cursor pagination (``next_cursor``/
+        ``has_more``) rather than fetching a single page — ``page``/
+        ``page_size`` are deprecated on the real API and, single-page, would
+        silently drop any turn past the first page. Bounded by
+        ``self._history_page_cap``; the third return value reports whether
+        that cap (or a mid-pagination fetch failure) left history
+        incomplete.
         """
-        try:
-            response = await self._link.rest.agent_api_context.get_agent_chat_context(
-                chat_id=room_id,
-                page=1,
-                page_size=50,
-                request_options=DEFAULT_REQUEST_OPTIONS,
-            )
-        except Exception:
+        items: list[Any] = []
+        cursor: str | None = None
+        truncated = False
+        for page_num in range(self._history_page_cap):
+            try:
+                response = (
+                    await self._link.rest.agent_api_context.get_agent_chat_context(
+                        chat_id=room_id,
+                        cursor=cursor,
+                        limit=DEFAULT_HISTORY_LIMIT,
+                        request_options=DEFAULT_REQUEST_OPTIONS,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to fetch history for room %s (page %d)",
+                    room_id,
+                    page_num,
+                    exc_info=True,
+                )
+                if page_num == 0:
+                    return [], set(), False
+                truncated = True
+                break
+            items.extend(response.data or [])
+            if not response.metadata.has_more:
+                break
+            cursor = response.metadata.next_cursor
+        else:
+            truncated = True
             logger.warning(
-                "Failed to fetch history for room %s", room_id, exc_info=True
+                "Hit history page cap (%d) for room %s — history may be incomplete",
+                self._history_page_cap,
+                room_id,
             )
-            return [], set()
-        items = response.data or []
+
         seen_ids = {item.id for item in items if getattr(item, "id", None)}
         raw_messages = [context_item_to_dict(item) for item in items]
         history = (
@@ -444,7 +490,7 @@ class OneShotInvoker:
             )
             or []
         )
-        return history, seen_ids
+        return history, seen_ids, truncated
 
 
 # --- Module-level helpers (no state, easy to unit-test) ---
