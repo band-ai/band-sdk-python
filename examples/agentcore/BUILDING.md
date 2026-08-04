@@ -251,6 +251,16 @@ Claude alongside the platform tools. See
 [`custom_tools_llm_server.py`](custom_tools_llm_server.py) for a full,
 runnable container variant wired this way.
 
+**Make side-effecting tools idempotent.** A container can die between a
+tool call completing and the message being marked processed; the platform
+then re-serves the same message to the next invocation, which replays the
+whole turn — including the tool call — from scratch. `OneShotInvoker` has
+no cross-process state to detect this (same boundary `single_instance.py`
+and `claims.py` document for the long-running path), so a tool that emails,
+charges, or writes to an external system needs its own idempotency (e.g. a
+key derived from the tool's own arguments) if being called twice would
+matter.
+
 ## Common gotchas
 
 - **The LLM might over-help.** Claude will try to address every
