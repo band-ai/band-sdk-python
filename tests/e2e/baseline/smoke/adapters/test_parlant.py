@@ -68,10 +68,11 @@ async def test_parlant_replies(
 ) -> None:
     """A Parlant agent (in-process server) processes a message and replies.
 
-    Construction is bespoke (server + parlant agent + adapter), but the run is the
-    standard toolkit flow: ``running_provisioned_agent`` provisions and runs it,
-    and the delivery barrier proves the turn completed before we read the reply.
-    The ``AsyncExitStack`` closes the agent before the server (LIFO), so the server
+    Construction is bespoke (borrowed server + adapter-created agent, with
+    ``custom_section`` shaping its description), but the run is the standard
+    toolkit flow: ``running_provisioned_agent`` provisions and runs it, and the
+    delivery barrier proves the turn completed before we read the reply. The
+    ``AsyncExitStack`` closes the agent before the server (LIFO), so the server
     outlives the run; ``running_parlant_server`` then tears the server down without
     hanging on Parlant's serve-forever ``__aexit__``.
     """
@@ -81,16 +82,17 @@ async def test_parlant_replies(
 
     async with contextlib.AsyncExitStack() as stack:
         # running_parlant_server fills in the OpenAI NLP service and fresh ephemeral
-        # ports by default, and tears the server down without hanging.
+        # ports by default, and tears the server down without hanging. The adapter
+        # creates its Parlant agent on this borrowed server at startup, appending
+        # custom_section to the description it hands Parlant.
         server = await stack.enter_async_context(running_parlant_server())
-        parlant_agent = await server.create_agent(
+        adapter = ParlantAdapter(
+            server=server,
             name="E2E Showcase Agent",
             description=(
                 "A test agent for baseline E2E validation. Keep replies short."
             ),
-        )
-        adapter = ParlantAdapter(
-            server=server, parlant_agent=parlant_agent, custom_section=_SHORT
+            custom_section=_SHORT,
         )
         agent = await stack.enter_async_context(
             running_provisioned_agent(adapter, resource_manager, label="parlant")
