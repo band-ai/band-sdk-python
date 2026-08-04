@@ -77,7 +77,8 @@ Do not try to coordinate the room. Your job is to synthesize.
     )
 
     logger.info("Starting mixed-example engineering handoff writer...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

@@ -102,7 +102,8 @@ async def main() -> None:
     logger.info("Starting ACP client bridge with rich streaming...")
     logger.info("Command: %s", " ".join(acp_command))
     logger.info("Thoughts, tool calls, and plans will be posted to the platform.")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

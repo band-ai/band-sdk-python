@@ -154,7 +154,8 @@ async def main() -> None:
     )
 
     logger.info("Starting custom LangGraph operations orchestrator...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

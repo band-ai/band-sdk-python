@@ -74,7 +74,8 @@ async def main() -> None:
     logger.info(
         "Copilot will call Band tools at %s (its own loopback)", band_mcp_sse_url
     )
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

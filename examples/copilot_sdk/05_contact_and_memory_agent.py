@@ -52,13 +52,6 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
     if not anthropic_api_key:
         raise ValueError("ANTHROPIC_API_KEY environment variable is required for BYOK")
@@ -104,13 +97,12 @@ async def main() -> None:
     agent = Agent.from_config(
         "copilot_contact_memory_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=contact_config,
     )
 
     logger.info("Starting Copilot SDK contact-and-memory example agent")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

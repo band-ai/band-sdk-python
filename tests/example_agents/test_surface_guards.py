@@ -40,6 +40,20 @@ PARLANT_CEREMONY_TOKENS = (
     "create_parlant_tools",
 )
 
+# Platform-URL env boilerplate is retired: Agent.create resolves BAND_WS_URL /
+# BAND_REST_URL itself (band.config.PlatformSettings). Examples never read
+# these two env vars by hand.
+URL_BOILERPLATE_TOKENS = (
+    'os.getenv("BAND_WS_URL")',
+    'os.getenv("BAND_REST_URL")',
+    'os.environ.get("BAND_WS_URL")',
+    'os.environ.get("BAND_REST_URL")',
+    'os.environ["BAND_WS_URL"]',
+    'os.environ["BAND_REST_URL"]',
+    "BAND_WS_URL environment variable is required",
+    "BAND_REST_URL environment variable is required",
+)
+
 
 def example_scripts() -> list[Path]:
     return sorted(EXAMPLES_ROOT.rglob("*.py"))
@@ -71,6 +85,13 @@ def test_example_uses_current_construction_surface(path: Path) -> None:
         assert token not in source, (
             f"{path}: uses retired Parlant ceremony '{token}' — the adapter "
             "owns ports/server/tools now (see examples/parlant/)"
+        )
+
+    for token in URL_BOILERPLATE_TOKENS:
+        assert token not in source, (
+            f"{path}: hand-rolls platform-URL env handling ('{token}') — "
+            "Agent.create resolves BAND_WS_URL/BAND_REST_URL itself; omit the "
+            "ws_url/rest_url arguments (or use band.config.PlatformSettings)"
         )
 
     tree = ast.parse(source)

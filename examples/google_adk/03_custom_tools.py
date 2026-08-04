@@ -88,13 +88,6 @@ def weather(input: WeatherInput) -> str:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with custom tools
     adapter = GoogleADKAdapter(
         model="gemini-2.5-flash",
@@ -112,12 +105,11 @@ async def main() -> None:
     agent = Agent.from_config(
         "google_adk_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Google ADK agent with custom tools...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

@@ -57,7 +57,8 @@ async def main() -> None:
     )
 
     logger.info("Tom is on the prowl, looking for Jerry")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

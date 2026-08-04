@@ -88,7 +88,8 @@ async def main() -> None:
     logger.info("Driving Copilot in sandbox %r over stdio (sbx exec -i)...", sandbox)
     if band_mcp_sse_url:
         logger.info("Copilot will call Band tools at %s", band_mcp_sse_url)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

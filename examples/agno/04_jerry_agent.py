@@ -62,13 +62,6 @@ async def main() -> None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise ValueError("ANTHROPIC_API_KEY environment variable is required")
 
-    ws_url = os.environ.get("BAND_WS_URL")
-    rest_url = os.environ.get("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
     # You own the Agno agent — model and in-character instructions.
     agno_agent = AgnoAgent(
         model=Claude(id="claude-sonnet-4-6"),
@@ -82,12 +75,11 @@ async def main() -> None:
         adapter=AgnoAdapter(
             agno_agent, features=AdapterFeatures(emit={Emit.EXECUTION})
         ),
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Jerry is ready to outsmart Tom...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

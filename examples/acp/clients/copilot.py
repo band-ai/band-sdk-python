@@ -96,7 +96,8 @@ async def main() -> None:
 
     logger.info("Starting GitHub Copilot ACP client bridge...")
     logger.info("Messages from Band will be forwarded to Copilot.")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

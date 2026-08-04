@@ -92,7 +92,8 @@ async def main() -> None:
         " ".join(acp_command),
     )
     logger.info("Messages from Band will be forwarded to the ACP agent.")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

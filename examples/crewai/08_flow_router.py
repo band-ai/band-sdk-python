@@ -132,12 +132,6 @@ def flow_factory() -> ToyRouterFlow:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         join_policy="all",
@@ -147,11 +141,10 @@ async def main() -> None:
     agent = Agent.from_config(
         "crewai_flow_router",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
     logger.info("CrewAI Flow router agent starting")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

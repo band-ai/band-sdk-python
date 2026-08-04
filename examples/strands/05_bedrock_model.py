@@ -44,14 +44,6 @@ MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
     # `model=MODEL_ID` (a bare string) is equivalent to this and picks up the
     # ambient AWS region; construct the provider when you need to pin one.
     model = BedrockModel(model_id=MODEL_ID, region_name=os.getenv("AWS_REGION"))
@@ -64,12 +56,11 @@ async def main() -> None:
     agent = Agent.from_config(
         "strands_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Strands agent on Bedrock model %s...", MODEL_ID)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

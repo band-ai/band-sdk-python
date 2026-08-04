@@ -63,7 +63,8 @@ async def main() -> None:
     )
 
     logger.info("Starting OpenCode agent: %s", settings.agent_key)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

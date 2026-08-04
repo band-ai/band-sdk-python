@@ -72,7 +72,8 @@ async def main() -> None:
 
     logger.info("Connecting to Copilot ACP server at %s:%s over TCP...", host, port)
     logger.info("Copilot will call Band tools at %s", band_mcp_sse_url)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

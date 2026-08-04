@@ -124,15 +124,9 @@ def deterministic_graph_factory(band_tools: list[Any]) -> Any:
 
 
 async def main() -> None:
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
     agent_id = os.getenv("BAND_AGENT_ID")
     api_key = os.getenv("BAND_API_KEY")
 
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     if not agent_id:
         raise ValueError("BAND_AGENT_ID environment variable is required")
     if not api_key:
@@ -143,12 +137,11 @@ async def main() -> None:
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Sandbox smoke agent starting (agent_id=%s)", agent_id)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

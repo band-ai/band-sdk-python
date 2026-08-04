@@ -146,7 +146,8 @@ async def run_gateway() -> None:
     )
 
     logger.info("Starting A2A Gateway on %s...", gateway_url)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 def run_orchestrator() -> None:

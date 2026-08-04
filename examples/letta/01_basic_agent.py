@@ -13,8 +13,8 @@ bidirectional communication.  Works with both Letta Cloud and self-hosted
 Letta servers.
 
 Environment variables:
-    BAND_WS_URL      Band WebSocket URL (required)
-    BAND_REST_URL    Band REST URL (required)
+    BAND_WS_URL      Band WebSocket URL (optional; defaults to production)
+    BAND_REST_URL    Band REST URL (optional; defaults to production)
     LETTA_BASE_URL      Letta server URL (default: https://api.letta.com)
                         Set to http://localhost:8283 for self-hosted.
     LETTA_API_KEY       Letta API key (required for Cloud, optional for self-hosted)
@@ -89,8 +89,6 @@ class ExampleSettings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    band_ws_url: str = ""  # BAND_WS_URL (required)
-    band_rest_url: str = ""  # BAND_REST_URL (required)
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str | None = None  # LETTA_API_KEY (required for Letta Cloud)
     letta_project: str | None = None  # LETTA_PROJECT
@@ -104,10 +102,6 @@ async def main() -> None:
     load_dotenv()
     settings = ExampleSettings()
 
-    if not settings.band_ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not settings.band_rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # An explicit MCP_SERVER_URL selects an external band-mcp (the Letta Cloud
     # topology); otherwise the adapter self-hosts its Band MCP server in-process.
     if settings.mcp_server_url:
@@ -142,12 +136,11 @@ async def main() -> None:
     agent = Agent.from_config(
         "letta_agent",
         adapter=adapter,
-        ws_url=settings.band_ws_url,
-        rest_url=settings.band_rest_url,
     )
 
     logger.info("Starting Letta agent...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

@@ -50,24 +50,16 @@ def get_weather(city: str) -> str:
     return f"It is 22°C and sunny in {city}."
 
 
-def load_environment() -> tuple[str, str]:
-    """Load env vars, validate credentials, and return (ws_url, rest_url)."""
+def load_environment() -> None:
+    """Load env vars and validate credentials."""
     load_dotenv()
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise ValueError("ANTHROPIC_API_KEY environment variable is required")
 
-    ws_url = os.environ.get("BAND_WS_URL")
-    rest_url = os.environ.get("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-    return ws_url, rest_url
-
 
 async def main() -> None:
-    ws_url, rest_url = load_environment()
+    load_environment()
 
     # The Agno agent owns its tools; the adapter reports their executions.
     agno_agent = AgnoAgent(
@@ -85,12 +77,11 @@ async def main() -> None:
     agent = Agent.from_config(
         "agno_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Agno agent with tool reporting...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

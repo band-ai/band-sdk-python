@@ -68,17 +68,6 @@ async def main() -> None:
     logger.info("  model flag : %s", args.model or "(auto-detect)")
     logger.info("=" * 60)
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
-    logger.info("  ws_url     : %s", ws_url)
-    logger.info("  rest_url   : %s", rest_url)
-
     # Select LLM: explicit model name or auto-detect from env
     if args.model:
         llm = create_llm_by_name(args.model)
@@ -101,12 +90,11 @@ async def main() -> None:
     agent = Agent.from_config(
         "arena_thinker",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Thinker is ready -- waiting for a user to start a game...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

@@ -88,13 +88,7 @@ async def main() -> None:
             f"SLACK_TRANSPORT must be 'http' or 'socket', got {transport!r}"
         )
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
     bot_token = os.getenv("SLACK_BOT_TOKEN")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     if not bot_token:
         raise ValueError("SLACK_BOT_TOKEN environment variable is required")
 
@@ -149,8 +143,6 @@ async def main() -> None:
         adapter=slack,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Slack bot (transport=%s)...", transport)

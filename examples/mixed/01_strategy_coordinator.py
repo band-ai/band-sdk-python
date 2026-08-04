@@ -87,7 +87,8 @@ Keep messages short, explicit, and coordination-focused.
     )
 
     logger.info("Starting mixed-example strategy coordinator...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

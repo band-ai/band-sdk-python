@@ -111,7 +111,8 @@ async def main() -> None:
     logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
     logger.info("Waiting for peers to be discovered...")
 
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

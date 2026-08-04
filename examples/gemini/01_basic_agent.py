@@ -58,7 +58,8 @@ async def main() -> None:
     )
 
     logger.info("Starting Gemini agent...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

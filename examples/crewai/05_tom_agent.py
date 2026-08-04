@@ -60,14 +60,6 @@ async def main() -> None:
     load_dotenv()
     args = parse_args()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
     # Load Tom's credentials from agent_config.yaml
     # Create adapter with Tom's character prompt
     adapter = CrewAIAdapter(
@@ -79,12 +71,11 @@ async def main() -> None:
     agent = Agent.from_config(
         "tom_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 
 from dotenv import load_dotenv
@@ -144,13 +143,6 @@ async def main() -> None:
 
     member = CREW_MEMBERS[role]
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with crew member configuration
     adapter = CrewAIAdapter(
         model="gpt-5.4-mini",
@@ -165,12 +157,11 @@ async def main() -> None:
     agent = Agent.from_config(
         member["config_name"],
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting %s...", member["role"])
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

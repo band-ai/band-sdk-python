@@ -67,7 +67,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from band import Agent
-from band.config import load_agent_config
+from band.config import PlatformSettings, load_agent_config
 from band.core.types import AdapterFeatures, Emit
 from band.platform.event import ContactRequestReceivedEvent, ContactEvent
 from band.runtime.contact_tools import ContactTools
@@ -251,7 +251,8 @@ async def run_langgraph_agent(
     )
 
     logger.info("Starting LangGraph agent...")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_pydantic_ai_agent(
@@ -307,7 +308,8 @@ async def run_pydantic_ai_agent(
         streaming_str,
         contacts_str,
     )
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_anthropic_agent(
@@ -349,7 +351,8 @@ async def run_anthropic_agent(
         streaming_str,
         contacts_str,
     )
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_claude_sdk_agent(
@@ -398,7 +401,8 @@ async def run_claude_sdk_agent(
     logger.info(
         "Starting Claude SDK agent with model: %s%s", model or "auto", options_str
     )
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_parlant_agent(
@@ -435,7 +439,8 @@ async def run_parlant_agent(
     )
 
     logger.info("Starting Parlant agent (OpenAI NLP service)")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_crewai_agent(
@@ -469,7 +474,8 @@ async def run_crewai_agent(
     )
 
     logger.info("Starting CrewAI agent with model: %s", model)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_codex_agent(
@@ -528,7 +534,8 @@ async def run_codex_agent(
         codex_model or "auto",
         codex_cwd,
     )
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_pydantic_ai_contacts_agent(
@@ -566,7 +573,8 @@ async def run_pydantic_ai_contacts_agent(
 
     logger.info("Starting Pydantic AI contacts agent with model: %s", model)
     logger.info("Try: 'check my contact requests', 'list contacts', 'approve X'")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_contacts_auto_agent(
@@ -623,7 +631,8 @@ When you see system messages about new contacts, acknowledge them to the user.""
     logger.info("Starting contacts auto-approve agent with model: %s", model)
     logger.info("Contact requests will be automatically approved")
     logger.info("All rooms will see broadcast: '@handle (name) is now a contact'")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_contacts_hub_agent(
@@ -682,7 +691,8 @@ Actions available:
     logger.info("Starting contacts hub room agent with model: %s", model)
     logger.info("Contact events will appear in hub room for LLM reasoning")
     logger.info("All rooms will see broadcasts when contacts change")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_contacts_broadcast_agent(
@@ -732,7 +742,8 @@ Acknowledge these updates to the user when you see them.
     logger.info("Starting contacts broadcast-only agent with model: %s", model)
     logger.info("Contact changes will be broadcast to all rooms")
     logger.info("Use chat commands to manually manage contacts")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_a2a_agent(
@@ -766,7 +777,8 @@ async def run_a2a_agent(
     )
 
     logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def run_a2a_gateway_agent(
@@ -811,7 +823,8 @@ async def run_a2a_gateway_agent(
         "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
     )
     logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 async def main() -> None:
@@ -1034,14 +1047,10 @@ Examples:
     if args.agent is None:
         args.agent = default_agents.get(args.example, "simple_agent")
 
-    # Load URLs from environment
-    rest_url = os.getenv("BAND_REST_URL")
-    ws_url = os.getenv("BAND_WS_URL")
-
-    if not rest_url:
-        parser.error("BAND_REST_URL environment variable is required")
-    if not ws_url:
-        parser.error("BAND_WS_URL environment variable is required")
+    # Platform URLs: BAND_REST_URL / BAND_WS_URL env or production defaults
+    platform = PlatformSettings()
+    rest_url = platform.BAND_REST_URL
+    ws_url = platform.BAND_WS_URL
 
     # Load agent credentials
     try:

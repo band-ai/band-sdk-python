@@ -104,7 +104,8 @@ async def main() -> None:
         type(profile).__name__ if profile else "None",
     )
 
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

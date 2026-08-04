@@ -80,14 +80,6 @@ async def main() -> None:
     """Run the Copilot SDK agent with room-routed ask_user."""
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
     adapter = CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
             # ask_user="room" already teaches the model when and how to ask
@@ -105,8 +97,6 @@ async def main() -> None:
     agent = Agent.from_config(
         "copilot_sdk_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Copilot SDK ask_user agent...")
@@ -115,7 +105,8 @@ async def main() -> None:
     logger.info("Press Ctrl+C to stop")
 
     try:
-        await agent.run()
+        async with agent:
+            await agent.run_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
 

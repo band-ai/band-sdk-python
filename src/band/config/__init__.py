@@ -8,5 +8,16 @@ Usage:
 """
 
 from band.config.loader import load_agent_config, get_config_path
+from band.config.settings import (
+    DEFAULT_REST_URL,
+    DEFAULT_WS_URL,
+    PlatformSettings,
+)
 
-__all__ = ["load_agent_config", "get_config_path"]
+__all__ = [
+    "DEFAULT_REST_URL",
+    "DEFAULT_WS_URL",
+    "PlatformSettings",
+    "get_config_path",
+    "load_agent_config",
+]

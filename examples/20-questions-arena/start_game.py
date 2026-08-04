@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 
 from dotenv import load_dotenv
@@ -26,7 +25,7 @@ from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from setup_logging import setup_logging
-from band.config import load_agent_config
+from band.config import PlatformSettings, load_agent_config
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +40,7 @@ def _load_agent_id(config_key: str) -> str | None:
 
 
 async def start_game(user_api_key: str) -> str:
-    rest_url = os.getenv("BAND_REST_URL")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
+    rest_url = PlatformSettings().BAND_REST_URL
 
     thinker_agent_id = _load_agent_id("arena_thinker")
     if not thinker_agent_id:

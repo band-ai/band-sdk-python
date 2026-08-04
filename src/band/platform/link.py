@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
+from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from band.runtime.types import PlatformMessage
 from band_rest.core.api_error import ApiError
@@ -80,8 +81,8 @@ class BandLink:
         self,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
-        rest_url: str = "https://app.band.ai",
+        ws_url: str = DEFAULT_WS_URL,
+        rest_url: str = DEFAULT_REST_URL,
     ):
         self.agent_id = agent_id
         self.api_key = api_key

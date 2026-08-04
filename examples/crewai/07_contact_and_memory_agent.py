@@ -91,7 +91,8 @@ async def main() -> None:
     )
 
     logger.info("Starting CrewAI contact-and-memory example agent")
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

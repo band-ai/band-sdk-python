@@ -92,7 +92,8 @@ async def main() -> None:
     )
 
     logger.info("Starting CrewAI memory tools example agent (model=%s)...", model)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

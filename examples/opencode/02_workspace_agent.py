@@ -74,7 +74,8 @@ async def main() -> None:
     )
 
     logger.info("Starting workspace agent for %s", settings.opencode_directory)
-    await agent.run()
+    async with agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":
