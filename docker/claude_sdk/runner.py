@@ -152,18 +152,6 @@ async def main() -> None:
 
     agent_key = os.environ.get("AGENT_KEY", "agent")
 
-    ws_url = os.environ.get(
-        "BAND_WS_URL",
-        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
-    )
-    rest_url = os.environ.get(
-        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    )
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
-
     validate_mounts()
 
     logger.info("Loading config from: %s (key: %s)", config_path, agent_key)
@@ -239,8 +227,6 @@ async def main() -> None:
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting agent: %s", agent_id)

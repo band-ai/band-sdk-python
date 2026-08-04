@@ -37,8 +37,6 @@ async def main() -> None:
     configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     adapter = CrewAIAdapter(
         model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
         role="Release Readiness Coordinator",
@@ -80,8 +78,6 @@ Keep messages short, explicit, and coordination-focused.
         "mixed_strategy_agent",
         config_path=CONFIG_PATH,
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 

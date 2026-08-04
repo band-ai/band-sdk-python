@@ -47,12 +47,13 @@ PARLANT_CEREMONY_TOKENS = (
 
 # Platform-URL env boilerplate is retired: Agent.create resolves BAND_WS_URL /
 # BAND_REST_URL itself (band.config.PlatformSettings). Examples never read
-# these two env vars by hand.
+# these two env vars by hand. Tokens omit the closing paren so a hardcoded
+# default argument (os.getenv("BAND_WS_URL", "wss://...")) still matches.
 URL_BOILERPLATE_TOKENS = (
-    'os.getenv("BAND_WS_URL")',
-    'os.getenv("BAND_REST_URL")',
-    'os.environ.get("BAND_WS_URL")',
-    'os.environ.get("BAND_REST_URL")',
+    'os.getenv("BAND_WS_URL"',
+    'os.getenv("BAND_REST_URL"',
+    'os.environ.get("BAND_WS_URL"',
+    'os.environ.get("BAND_REST_URL"',
     'os.environ["BAND_WS_URL"]',
     'os.environ["BAND_REST_URL"]',
     "BAND_WS_URL environment variable is required",
