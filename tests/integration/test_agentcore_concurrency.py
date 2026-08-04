@@ -16,6 +16,7 @@ Run with: uv run pytest tests/integration/test_agentcore_concurrency.py -v -s
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -31,6 +32,12 @@ from tests.paths import EXAMPLES_ROOT
 _SCRIPT = EXAMPLES_ROOT / "agentcore" / "custom_tools_llm_server.py"
 _STARTUP_TIMEOUT = 15.0
 _POLL_INTERVAL = 0.5
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _spawn(port: int) -> subprocess.Popen[str]:
@@ -82,7 +89,7 @@ class TestConcurrentContainerInstances:
     """L3 co-resident instances: no port, lock-file, or shared-resource collision."""
 
     def test_three_instances_start_independently_on_one_host(self) -> None:
-        ports = [8191, 8192, 8193]
+        ports = [_free_port(), _free_port(), _free_port()]
         procs = [_spawn(port) for port in ports]
         deadline = time.monotonic() + _STARTUP_TIMEOUT
         try:
@@ -100,19 +107,25 @@ class TestConcurrentContainerInstances:
         silently collides. A deliberate port clash fails at the OS bind
         step, not because of a shared lock file or app-level singleton.
         """
-        port = 8194
+        port = _free_port()
         holder = _spawn(port)
         try:
             _wait_for_ping(port, time.monotonic() + _STARTUP_TIMEOUT)
 
             clasher = _spawn(port)
             try:
-                returncode = clasher.wait(timeout=10)
-                out = clasher.stdout.read() if clasher.stdout else ""
-            finally:
-                _terminate(clasher)
+                # communicate() drains stdout while waiting — a plain wait()
+                # risks deadlock if the child blocks on a full pipe buffer.
+                out, _ = clasher.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                clasher.kill()
+                out, _ = clasher.communicate()
+            returncode = clasher.returncode
 
             assert returncode != 0
-            assert "address already in use" in out
+            # asyncio's own bind-error wrapper text (stdlib, same across
+            # platforms) — the OSError strerror after it is OS-specific
+            # ("address already in use" vs. Windows' own wording).
+            assert "attempting to bind" in out
         finally:
             _terminate(holder)
