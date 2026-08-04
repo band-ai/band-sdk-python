@@ -49,7 +49,6 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AgentInput,
     HistoryProvider,
-    PlatformConnection,
     PlatformMessage,
 )
 from band.platform.link import BandLink
@@ -133,12 +132,7 @@ class OneShotInvoker:
         setattr(
             self._adapter,
             "platform",
-            PlatformConnection(
-                agent_id=self._agent_id,
-                api_key=self._link.api_key,
-                rest_url=self._link.rest_url,
-                ws_url=self._link.ws_url,
-            ),
+            self._link.to_platform_connection(self._agent_id),
         )
         await self._adapter.on_started(self._agent_name, self._agent_description)
         self._started = True

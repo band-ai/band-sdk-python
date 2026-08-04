@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from typing_extensions import Unpack
 
+from band.client.rest import AsyncRestClient
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol, HistoryConverter
 from band.core.types import (
@@ -172,6 +173,24 @@ class SimpleAdapter(Generic[H], ABC):
                 "when the Agent starts"
             )
         return self.platform
+
+    def build_rest_client(self) -> AsyncRestClient:
+        """A REST client for the injected platform connection.
+
+        For a bridge adapter (Slack, A2A gateway, ACP server) that needs its
+        own REST client: call this lazily in ``on_started``/on first use and
+        cache the result, then expose it via `require_rest_client`.
+        """
+        connection = self.require_platform()
+        return AsyncRestClient(base_url=connection.rest_url, api_key=connection.api_key)
+
+    def require_rest_client(self, cached: AsyncRestClient | None) -> AsyncRestClient:
+        """Return a lazily-built REST client; raises before the agent starts."""
+        if cached is None:
+            raise RuntimeError(
+                "REST client not available yet; it is built when the Agent starts"
+            )
+        return cached
 
     @abstractmethod
     async def on_message(

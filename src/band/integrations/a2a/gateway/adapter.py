@@ -167,10 +167,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:
-            connection = self.require_platform()
-            self._rest = AsyncRestClient(
-                base_url=connection.rest_url, api_key=connection.api_key
-            )
+            self._rest = self.build_rest_client()
 
         # Fetch ALL peers at startup using REST client (with pagination)
         all_peers = await self._fetch_all_peers()
@@ -197,11 +194,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     @property
     def rest(self) -> AsyncRestClient:
         """The gateway's REST client; raises before the agent starts."""
-        if self._rest is None:
-            raise RuntimeError(
-                "REST client not available yet; it is built when the Agent starts"
-            )
-        return self._rest
+        return self.require_rest_client(self._rest)
 
     async def _fetch_all_peers(self) -> list[Peer]:
         """Fetch every peer page using the REST client's retry policy."""

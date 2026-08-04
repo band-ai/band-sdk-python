@@ -192,11 +192,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
     @property
     def rest(self) -> AsyncRestClient:
         """The adapter's REST client; raises before the agent starts."""
-        if self._rest is None:
-            raise RuntimeError(
-                "REST client not available yet; it is built when the Agent starts"
-            )
-        return self._rest
+        return self.require_rest_client(self._rest)
 
     async def verify_credentials(self) -> bool:
         """Validate API key by calling the Band identity endpoint."""
@@ -253,10 +249,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:
-            connection = self.require_platform()
-            self._rest = AsyncRestClient(
-                base_url=connection.rest_url, api_key=connection.api_key
-            )
+            self._rest = self.build_rest_client()
 
         # Fetch own agent ID for mention filtering
         try:
