@@ -452,8 +452,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         """
         if self.config.session_id_prefix is not None:
             return self.config.session_id_prefix
-        if agent_id := getattr(self, "_band_agent_id", None):
-            return f"band-{agent_id}-"
+        if self.platform is not None:
+            return f"band-{self.platform.agent_id}-"
         # Adapters driven without the Band runtime fall back to the name.
         agent_slug = re.sub(r"[^a-z0-9]+", "-", self.agent_name.lower()).strip("-")
         return f"band-{agent_slug or 'agent'}-"

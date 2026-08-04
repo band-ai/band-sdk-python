@@ -13,6 +13,9 @@ from band.exports import lazy_exports
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
     from band.testing.fake_tools import FakeAgentTools as FakeAgentTools
+    from band.testing.platform import (
+        platform_connection_stub as platform_connection_stub,
+    )
     from band.testing.strands import (
         ErrorTurn as ErrorTurn,
         ScriptedStrandsModel as ScriptedStrandsModel,
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
 __all__, __getattr__ = lazy_exports(
     __name__,
     fake_tools=["FakeAgentTools"],
+    platform=["platform_connection_stub"],
     strands=[
         "ErrorTurn",
         "ScriptedStrandsModel",

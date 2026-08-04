@@ -236,8 +236,10 @@ class Agent:
             # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
             await self._runtime.initialize()
 
-            # 2. Initialize adapter with agent metadata BEFORE message processing
-            setattr(self._adapter, "_band_agent_id", self._runtime.agent_id)
+            # 2. Initialize adapter with agent metadata BEFORE message processing.
+            # setattr rather than assignment: FrameworkAdapter is a Protocol, so
+            # a duck-typed adapter may not declare the attribute.
+            setattr(self._adapter, "platform", self._runtime.connection)
             await self._adapter.on_started(
                 self._runtime.agent_name,
                 self._runtime.agent_description,

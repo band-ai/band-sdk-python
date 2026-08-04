@@ -538,7 +538,7 @@ class TestA2ABridgeSnippet:
 
 
 class TestA2AGatewaySnippet:
-    """README snippet: A2AGatewayAdapter(api_key=..., gateway_url=..., port=...)."""
+    """README snippet: A2AGatewayAdapter(gateway_url=..., port=...)."""
 
     @patch.dict(
         os.environ,
@@ -555,7 +555,6 @@ class TestA2AGatewaySnippet:
         gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
         adapter = A2AGatewayAdapter(
-            api_key=os.environ["GATEWAY_API_KEY"],
             gateway_url=gateway_url,
             port=gateway_port,
         )

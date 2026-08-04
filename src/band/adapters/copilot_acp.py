@@ -61,7 +61,6 @@ class CopilotACPAdapterConfig:
     env: dict[str, str] | None = None
     custom_section: str = ""
     inject_band_tools: bool = True
-    rest_url: str | None = None
     mcp_servers: list[dict[str, Any]] | None = None
 
 
@@ -114,7 +113,6 @@ class CopilotACPAdapter(ACPClientAdapter):
             "cwd": config.cwd,
             "mcp_servers": config.mcp_servers,
             "additional_tools": additional_tools,
-            "rest_url": config.rest_url,
             "inject_band_tools": config.inject_band_tools,
             "custom_section": config.custom_section,
             "features": features,

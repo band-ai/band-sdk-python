@@ -1670,7 +1670,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
         if self._configured_metadata_namespace is None:
-            agent_id = getattr(self, "_band_agent_id", None) or agent_name
+            agent_id = self.platform.agent_id if self.platform else agent_name
             self.metadata_namespace = f"crewai_flow:{agent_id}"
         else:
             self.metadata_namespace = self._configured_metadata_namespace

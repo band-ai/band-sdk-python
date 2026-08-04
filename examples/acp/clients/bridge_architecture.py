@@ -84,7 +84,6 @@ async def main() -> None:
     adapter = ACPClientAdapter(
         command=command,
         cwd=cwd,
-        rest_url=rest_url,
         inject_band_tools=inject_band_tools,
         auth_method=auth_method,
         profile=profile,

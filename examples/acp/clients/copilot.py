@@ -83,7 +83,6 @@ async def main() -> None:
         port=int(port) if port else None,
         cwd=cwd,
         github_token=github_token,
-        rest_url=rest_url,
         inject_band_tools=True,
     )
     adapter = CopilotACPAdapter(config)

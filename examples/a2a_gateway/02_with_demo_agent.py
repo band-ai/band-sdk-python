@@ -133,8 +133,6 @@ async def run_gateway() -> None:
     gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"
 
     adapter = A2AGatewayAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
         gateway_url=gateway_url,
         port=GATEWAY_PORT,
     )

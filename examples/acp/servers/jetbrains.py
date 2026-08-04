@@ -110,10 +110,7 @@ async def main() -> None:
             )
 
     # Create ACP server adapter
-    adapter = BandACPServerAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
-    )
+    adapter = BandACPServerAdapter()
 
     # Optional: configure routing for slash commands
     # Users can type "/codex fix bug" in the AI Chat to route to a specific peer

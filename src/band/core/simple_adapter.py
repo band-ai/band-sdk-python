@@ -16,6 +16,7 @@ from band.core.types import (
     AgentInput,
     Capability,
     Emit,
+    PlatformConnection,
     PlatformMessage,
     TurnUsage,
 )
@@ -96,6 +97,18 @@ class SimpleAdapter(Generic[H], ABC):
         self.features = features or AdapterFeatures()
         self.agent_name: str = ""
         self.agent_description: str = ""
+        # Injected by the runtime before on_started; adapters needing their own
+        # platform access read it via require_platform().
+        self.platform: PlatformConnection | None = None
+
+    def require_platform(self) -> PlatformConnection:
+        """The injected platform connection; raises before the agent starts."""
+        if self.platform is None:
+            raise RuntimeError(
+                "platform connection not available yet; the runtime injects it "
+                "when the Agent starts"
+            )
+        return self.platform
 
     @abstractmethod
     async def on_message(

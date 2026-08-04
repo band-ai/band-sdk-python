@@ -60,10 +60,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         from band import Agent
         from band.integrations.acp import BandACPServerAdapter, ACPServer
 
-        adapter = BandACPServerAdapter(
-            rest_url="https://app.band.ai",
-            api_key="your-api-key",
-        )
+        adapter = BandACPServerAdapter()
         server = ACPServer(adapter)
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.start()
@@ -72,19 +69,21 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     def __init__(
         self,
-        rest_url: str = "https://app.band.ai",
-        api_key: str = "",
+        rest_client: AsyncRestClient | None = None,
     ) -> None:
         """Initialize ACP server adapter.
 
         Args:
-            rest_url: Base URL for Band REST API.
-            api_key: API key for authentication.
+            rest_client: Optional ``AsyncRestClient`` injection seam (tests).
+                Normally the client is built at startup from the platform
+                connection the runtime injects — the credentials given to
+                ``Agent.create()`` are not repeated here.
         """
         super().__init__(history_converter=ACPServerHistoryConverter())
 
-        # Direct REST client for room/message operations
-        self._rest = AsyncRestClient(base_url=rest_url, api_key=api_key)
+        # Direct REST client for room/message operations; built at startup
+        # from the injected platform connection unless a seam is provided.
+        self._rest: AsyncRestClient | None = rest_client
 
         # Session state (all dicts guarded by _state_lock)
         self._session_to_room: dict[str, str] = {}  # ACP session_id -> room_id
@@ -190,10 +189,19 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """Return the room_id for an ACP session, or None."""
         return self._session_to_room.get(session_id)
 
+    @property
+    def rest(self) -> AsyncRestClient:
+        """The adapter's REST client; raises before the agent starts."""
+        if self._rest is None:
+            raise RuntimeError(
+                "REST client not available yet; it is built when the Agent starts"
+            )
+        return self._rest
+
     async def verify_credentials(self) -> bool:
         """Validate API key by calling the Band identity endpoint."""
         try:
-            await self._rest.agent_api_identity.get_agent_me(
+            await self.rest.agent_api_identity.get_agent_me(
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             return True
@@ -211,7 +219,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         method. The ``hasattr`` guard prevents breakage if internals change.
         """
         try:
-            if hasattr(self._rest, "_client") and self._rest._client:
+            if self._rest is not None and getattr(self._rest, "_client", None):
                 await self._rest._client.aclose()
         except Exception:
             logger.exception("Error closing REST client")
@@ -244,9 +252,15 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """
         await super().on_started(agent_name, agent_description)
 
+        if self._rest is None:
+            connection = self.require_platform()
+            self._rest = AsyncRestClient(
+                base_url=connection.rest_url, api_key=connection.api_key
+            )
+
         # Fetch own agent ID for mention filtering
         try:
-            identity = await self._rest.agent_api_identity.get_agent_me(
+            identity = await self.rest.agent_api_identity.get_agent_me(
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             self._agent_id = identity.data.id
@@ -290,7 +304,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._sessions_in_flight += 1
 
         try:
-            response = await self._rest.agent_api_chats.create_agent_chat(
+            response = await self.rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -370,7 +384,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
         # Get participants for mentions
         participants = (
-            await self._rest.agent_api_participants.list_agent_chat_participants(
+            await self.rest.agent_api_participants.list_agent_chat_participants(
                 chat_id=room_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -392,7 +406,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         mention_text = " ".join(f"@{m.name}" for m in mentions)
 
         try:
-            await self._rest.agent_api_messages.create_agent_chat_message(
+            await self.rest.agent_api_messages.create_agent_chat_message(
                 chat_id=room_id,
                 message=ChatMessageRequest(
                     content=f"{mention_text} {prompt_text}".strip(),
@@ -550,7 +564,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             room_id: The room ID.
             session_id: The ACP session ID.
         """
-        await self._rest.agent_api_events.create_agent_chat_event(
+        await self.rest.agent_api_events.create_agent_chat_event(
             chat_id=room_id,
             event=ChatEventRequest(
                 content="ACP session context",

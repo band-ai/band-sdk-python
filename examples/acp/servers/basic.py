@@ -82,10 +82,7 @@ async def main() -> None:
         agent_id = os.getenv("BAND_AGENT_ID", "acp-server")
 
     # Create ACP server adapter with direct REST client
-    adapter = BandACPServerAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
-    )
+    adapter = BandACPServerAdapter()
 
     # Create ACP protocol handler
     server = ACPServer(adapter)

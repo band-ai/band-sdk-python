@@ -86,8 +86,6 @@ async def main() -> None:
                 app_token=app_token,
             ),
         ],
-        rest_url=rest_url,
-        api_key=api_key,
         transport=transport,  # type: ignore[arg-type]
     )
     agent = Agent.create(

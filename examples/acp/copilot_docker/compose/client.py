@@ -60,7 +60,6 @@ async def main() -> None:
         mcp_servers=[
             {"type": "sse", "name": "band", "url": band_mcp_sse_url, "headers": []}
         ],
-        rest_url=rest_url,
     )
     adapter = CopilotACPAdapter(config)
 

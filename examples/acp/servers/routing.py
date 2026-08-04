@@ -90,10 +90,7 @@ async def main() -> None:
     )
 
     # Create ACP server adapter with routing
-    adapter = BandACPServerAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
-    )
+    adapter = BandACPServerAdapter()
     adapter.set_router(router)
 
     # Create ACP protocol handler

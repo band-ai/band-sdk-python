@@ -7,6 +7,7 @@ import logging
 from typing import Awaitable, Callable
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.core.types import PlatformConnection
 from band.platform.link import BandLink
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.runtime.contact_handler import ContactEventHandler
@@ -80,6 +81,16 @@ class PlatformRuntime:
     @property
     def agent_id(self) -> str:
         return self._agent_id
+
+    @property
+    def connection(self) -> PlatformConnection:
+        """Platform coordinates for injection into the adapter (see Agent.start)."""
+        return PlatformConnection(
+            agent_id=self._agent_id,
+            api_key=self._api_key,
+            rest_url=self._rest_url,
+            ws_url=self._ws_url,
+        )
 
     @property
     def agent_name(self) -> str:

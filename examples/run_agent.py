@@ -793,8 +793,6 @@ async def run_a2a_gateway_agent(
     gateway_url = f"http://localhost:{gateway_port}"
 
     adapter = A2AGatewayAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
         gateway_url=gateway_url,
         port=gateway_port,
     )

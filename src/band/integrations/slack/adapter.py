@@ -327,7 +327,6 @@ class SlackAdapter(SimpleAdapter[Any]):
                     bot_token="xoxb-...",
                 ),
             ],
-            api_key="...",
         )
         agent = Agent.create(adapter=slack, agent_id="...", api_key="...")
         # mount slack.router into your ASGI app on the side, e.g.:
@@ -343,8 +342,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         *,
         inner: SimpleAdapter[Any],
         apps: list[SlackApp],
-        rest_url: str = "https://app.band.ai",
-        api_key: str = "",
         port: int = 3000,
         transport: SlackTransport = "http",
         web_client_factory: WebClientFactory | None = None,
@@ -360,10 +357,6 @@ class SlackAdapter(SimpleAdapter[Any]):
             inner: The framework adapter that does the actual reasoning
                 (e.g. ``AnthropicAdapter``, ``LangGraphAdapter``).
             apps: One or more ``SlackApp`` configurations.
-            rest_url: Base URL for the Band REST API.
-            api_key: API key for the Band agent (same key passed to
-                ``Agent.create``). Used to mirror Slack messages into
-                Band rooms.
             port: TCP port for the HTTP server.
             transport: ``"http"`` (default) serves events via a mountable
                 Starlette router; the developer points their Slack app's
@@ -431,8 +424,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         )
         self._inner = inner
         self.apps = apps
-        self._rest_url = rest_url
-        self._api_key = api_key
         self._port = port
         self._transport: SlackTransport = transport
         self._router: Router | None = None
@@ -521,19 +512,16 @@ class SlackAdapter(SimpleAdapter[Any]):
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:
-            if not self._api_key:
-                raise ValueError(
-                    "SlackAdapter requires api_key to reach the Band REST API; "
-                    "pass it via SlackAdapter(api_key=...)."
-                )
-            self._rest = AsyncRestClient(base_url=self._rest_url, api_key=self._api_key)
+            connection = self.require_platform()
+            self._rest = AsyncRestClient(
+                base_url=connection.rest_url, api_key=connection.api_key
+            )
 
-        # Propagate the agent identity to the inner adapter. ``Agent.start``
-        # sets ``_band_agent_id`` on us before calling ``on_started``;
-        # the inner adapter needs it too so it can dedup own messages.
-        own_id = getattr(self, "_band_agent_id", None)
-        if own_id is not None:
-            setattr(self._inner, "_band_agent_id", own_id)
+        # Propagate the platform connection to the inner adapter. ``Agent.start``
+        # injects it on us before calling ``on_started``; the inner adapter
+        # needs it too (e.g. to dedup its own messages by agent id).
+        if self.platform is not None:
+            setattr(self._inner, "platform", self.platform)
 
         await self._inner.on_started(agent_name, agent_description)
 

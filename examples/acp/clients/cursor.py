@@ -90,7 +90,6 @@ async def main() -> None:
         command=[os.path.expanduser("~/.local/bin/agent"), "acp"],
         cwd=cwd,
         env=cursor_env or None,
-        rest_url=rest_url,
         inject_band_tools=True,
         auth_method="cursor_login",
         profile=CursorACPClientProfile(),

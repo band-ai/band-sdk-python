@@ -85,7 +85,7 @@ class TestGatewayConfiguration:
 class TestGatewayStartup:
     @pytest.mark.asyncio
     async def test_discovers_peers_and_starts_server(self) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         response = MagicMock()
         response.data = [make_peer("weather", "Weather Agent")]
         adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
@@ -116,7 +116,7 @@ class TestGatewayExecution:
     async def test_initial_task_snapshot_stays_working_if_reply_is_immediate(
         self,
     ) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
         tools = FakeAgentTools()
@@ -146,7 +146,7 @@ class TestGatewayExecution:
 
     @pytest.mark.asyncio
     async def test_posts_to_band_and_returns_terminal_response(self) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
         sent = asyncio.Event()
@@ -187,7 +187,8 @@ class TestGatewayExecution:
         # Generous timeout: the test never needs it to fire, and a tight one
         # turns a loaded CI runner into a spurious FAILED terminal event.
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=30)
+            config=A2AGatewayAdapterConfig(response_timeout_s=30),
+            rest_client=MagicMock(),
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
@@ -238,7 +239,8 @@ class TestGatewayExecution:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=0.01)
+            config=A2AGatewayAdapterConfig(response_timeout_s=0.01),
+            rest_client=MagicMock(),
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
@@ -259,7 +261,7 @@ class TestGatewayExecution:
     async def test_cleanup_all_stops_the_hosted_server(self) -> None:
         """Agent.stop() reaches the adapter only via cleanup_all, so the
         self-hosted HTTP server must be stopped there."""
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         server = MagicMock()
         server.stop = AsyncMock()
         adapter._server = server
@@ -273,7 +275,7 @@ class TestGatewayExecution:
     async def test_cleanup_all_fails_inflight_requests(self) -> None:
         """A shutdown must not leave remote clients waiting out the full
         response timeout."""
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
         adapter._pending_tasks["room-123"] = pending
@@ -289,7 +291,7 @@ class TestGatewayExecution:
     async def test_concurrent_request_for_room_is_rejected_without_id_leak(
         self,
     ) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._pending_tasks["room-123"] = make_pending(EventQueueLegacy())
 
         with pytest.raises(RuntimeError) as excinfo:
@@ -304,7 +306,7 @@ class TestGatewayExecution:
 
     @pytest.mark.asyncio
     async def test_room_cleanup_returns_terminal_failure(self) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
         adapter._pending_tasks["room-123"] = pending
@@ -320,7 +322,7 @@ class TestGatewayExecution:
 class TestGatewayRoomState:
     @pytest.fixture
     def adapter(self) -> A2AGatewayAdapter:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._peers = {
             "weather": make_peer("weather", "Weather Agent"),
             "data": make_peer("data", "Data Agent"),
@@ -370,7 +372,7 @@ class TestGatewayRoomState:
         )
 
     def test_rehydrate_merges_without_overwriting_live_context(self) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         adapter._context_to_room["ctx"] = "live-room"
 
         adapter._rehydrate(
@@ -429,7 +431,7 @@ class TestGatewayResponses:
     async def test_publishes_band_message_with_matching_task_state(
         self, message_type: str, state: int
     ) -> None:
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
         queue = EventQueueLegacy()
         pending = make_pending(queue)
 

@@ -116,7 +116,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         cwd: str | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        rest_url: str | None = None,
         inject_band_tools: bool = True,
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
@@ -148,8 +147,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._rest_url = rest_url or "https://app.band.ai"
-        self._validate_rest_url(self._rest_url)
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
@@ -336,11 +333,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if has_tcp and (host is None or port is None):
             raise ValueError("TCP transport requires both host and port")
         return (host, port) if has_tcp else (None, None)
-
-    @staticmethod
-    def _validate_rest_url(rest_url: str) -> None:
-        if not rest_url.startswith(("http://", "https://")):
-            raise ValueError("rest_url must be a valid HTTP(S) URL")
 
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
         from band.runtime.prompts import render_system_prompt

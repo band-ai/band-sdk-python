@@ -26,7 +26,7 @@ class TestACPServerInitialize:
     @pytest.mark.asyncio
     async def test_initialize_returns_agent_info(self) -> None:
         """Should return agent metadata, capabilities, and auth methods."""
-        adapter = BandACPServerAdapter()
+        adapter = BandACPServerAdapter(rest_client=MagicMock())
         await adapter.on_started("My Agent", "A test agent")
         server = ACPServer(adapter)
 

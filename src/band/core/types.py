@@ -254,6 +254,22 @@ def is_usage_event(metadata: object) -> bool:
 
 
 @dataclass(frozen=True)
+class PlatformConnection:
+    """Band platform coordinates, injected into the adapter before ``on_started``.
+
+    The runtime sets ``adapter.platform`` to this once credentials are known, so
+    an adapter that needs its own platform access (e.g. a bridge building an
+    ``AsyncRestClient``) reads it from here instead of asking for ``api_key`` /
+    ``rest_url`` constructor parameters the caller already gave the Agent.
+    """
+
+    agent_id: str
+    api_key: str
+    rest_url: str
+    ws_url: str
+
+
+@dataclass(frozen=True)
 class AdapterFeatures:
     """Shared adapter feature settings. Framework-agnostic knobs only.
 

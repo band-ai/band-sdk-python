@@ -583,7 +583,6 @@ async def main() -> None:
     gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
     adapter = A2AGatewayAdapter(
-        api_key=os.environ["GATEWAY_API_KEY"],
         gateway_url=gateway_url,
         port=gateway_port,
         # The default is 300 seconds. Use None for no response deadline.

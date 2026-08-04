@@ -89,8 +89,6 @@ async def main() -> None:
     # Create gateway adapter
     # It uses its own REST client for room/message operations
     adapter = A2AGatewayAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
         gateway_url=gateway_url,
         port=gateway_port,
     )

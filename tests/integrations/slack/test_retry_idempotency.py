@@ -33,6 +33,7 @@ from band.integrations.slack.server import (
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
+from band.testing.platform import platform_connection_stub
 
 
 # ── Unit tests on _SeenEvents ────────────────────────────────────────────────
@@ -317,11 +318,10 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     adapter = SlackAdapter(
         inner=brain,
         apps=apps,
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(chat_postMessage=AsyncMock()),
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
     await adapter.on_started("bot", "")
 
     payload = _event_payload(event_id="EvE2E")

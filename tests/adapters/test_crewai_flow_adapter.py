@@ -41,6 +41,7 @@ from band.adapters.crewai_flow import (  # noqa: E402
 from band.core.exceptions import BandConfigError  # noqa: E402
 from band.core.types import PlatformMessage  # noqa: E402
 from band.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.testing.platform import platform_connection_stub  # noqa: E402
 
 
 def _factory():
@@ -262,7 +263,7 @@ class TestOnStartedAndNamespace:
     @pytest.mark.asyncio
     async def test_default_namespace_resolves_with_agent_id(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
-        adapter._band_agent_id = "agent-id-A"
+        adapter.platform = platform_connection_stub(agent_id="agent-id-A")
         await adapter.on_started("Router", "desc")
         assert adapter.metadata_namespace == "crewai_flow:agent-id-A"
 
@@ -270,8 +271,8 @@ class TestOnStartedAndNamespace:
     async def test_two_adapters_get_distinct_namespaces(self) -> None:
         a = CrewAIFlowAdapter(flow_factory=_factory)
         b = CrewAIFlowAdapter(flow_factory=_factory)
-        a._band_agent_id = "agent-id-X"
-        b._band_agent_id = "agent-id-Y"
+        a.platform = platform_connection_stub(agent_id="agent-id-X")
+        b.platform = platform_connection_stub(agent_id="agent-id-Y")
         await a.on_started("Router", "")
         await b.on_started("Router", "")
         assert a.metadata_namespace != b.metadata_namespace
@@ -495,6 +496,6 @@ class TestPublicImportPath:
     @pytest.mark.asyncio
     async def test_default_namespace_matches_documented_format(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
-        adapter._band_agent_id = "crewai-flow-router-id"
+        adapter.platform = platform_connection_stub(agent_id="crewai-flow-router-id")
         await adapter.on_started("crewai_flow_router", "")
         assert adapter.metadata_namespace == "crewai_flow:crewai-flow-router-id"

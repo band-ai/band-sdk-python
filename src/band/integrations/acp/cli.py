@@ -81,10 +81,7 @@ async def main(args: argparse.Namespace | None = None) -> None:
     from band.integrations.acp.server import ACPServer
     from band.integrations.acp.server_adapter import BandACPServerAdapter
 
-    adapter = BandACPServerAdapter(
-        rest_url=args.rest_url,
-        api_key=args.api_key,
-    )
+    adapter = BandACPServerAdapter()
 
     # Wire up push handler
     push_handler = ACPPushHandler(adapter)

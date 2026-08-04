@@ -49,6 +49,7 @@ from band.integrations.slack.adapter import (
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.runtime.tools import AgentTools
+from band.testing.platform import platform_connection_stub
 
 
 # ── Test doubles ─────────────────────────────────────────────────────────────
@@ -197,12 +198,11 @@ def _make_adapter(
     adapter = SlackAdapter(
         inner=inner,
         apps=apps,
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
         **adapter_kwargs,
     )
-    adapter._band_agent_id = bridge_agent_id  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id=bridge_agent_id)
     return adapter, inner, web_mocks, rest
 
 
@@ -262,14 +262,15 @@ async def test_on_started_propagates_to_inner_and_sets_agent_id():
     await adapter.on_started("MyBot", "describes me")
 
     assert inner.started == ("MyBot", "describes me")
-    assert getattr(inner, "_band_agent_id", None) == "bridge-uuid"
+    assert inner.platform is not None
+    assert inner.platform.agent_id == "bridge-uuid"
 
 
 @pytest.mark.asyncio
-async def test_on_started_requires_api_key_when_no_rest_client_injected():
+async def test_on_started_requires_platform_when_no_rest_client_injected():
     inner = _SlackReplyBrain()
     adapter = SlackAdapter(inner=inner, apps=[_slack_app()])
-    with pytest.raises(ValueError, match="requires api_key"):
+    with pytest.raises(RuntimeError, match="platform connection"):
         await adapter.on_started("MyBot", "")
 
 

@@ -9,6 +9,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
 from band.runtime.types import AgentConfig, SessionConfig
 from band.preprocessing.default import DefaultPreprocessor
+from band.testing.platform import platform_connection_stub
 
 
 @pytest.fixture
@@ -500,6 +501,7 @@ class TestStartupRaceCondition:
             agent_name = "TestBot"
             agent_description = "A test bot"
             agent_id = "agent-123"
+            connection = platform_connection_stub(agent_id="agent-123")
             _on_execute = None
 
             async def initialize(self) -> None:

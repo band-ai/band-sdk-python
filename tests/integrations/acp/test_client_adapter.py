@@ -94,11 +94,6 @@ class TestACPClientAdapterInit:
         adapter = ACPClientAdapter(command="codex", cwd="examples")
         assert adapter._cwd == os.path.abspath("examples")
 
-    def test_init_rejects_invalid_rest_url(self) -> None:
-        """Should fail fast on invalid Band base URLs."""
-        with pytest.raises(ValueError, match="rest_url"):
-            ACPClientAdapter(command="codex", rest_url="ftp://invalid")
-
 
 class TestACPClientAdapterTransport:
     """Tests for stdio-vs-TCP transport selection and validation."""

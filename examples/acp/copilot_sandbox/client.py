@@ -75,7 +75,6 @@ async def main() -> None:
         # so no github_token here.
         inject_band_tools=False,  # sandbox egress blocks host loopback; see README
         mcp_servers=mcp_servers,
-        rest_url=rest_url,
     )
     adapter = CopilotACPAdapter(config)
 
