@@ -474,13 +474,22 @@ class OneShotInvoker:
                     exc_info=True,
                 )
                 if page_num == 0:
-                    return [], set(), False
+                    return [], set(), True
                 truncated = True
                 break
             items.extend(response.data or [])
             if not response.metadata.has_more:
                 break
             cursor = response.metadata.next_cursor
+            if cursor is None:
+                logger.warning(
+                    "has_more=True but no next_cursor for room %s (page %d) — "
+                    "stopping pagination",
+                    room_id,
+                    page_num,
+                )
+                truncated = True
+                break
         else:
             truncated = True
             logger.warning(

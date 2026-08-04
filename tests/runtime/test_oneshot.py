@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from anthropic.types import ToolUseBlock
-from band_rest import CreateAgentChatMessageResponse, MessageSentResponse
+from band_rest import (
+    CreateAgentChatMessageResponse,
+    GetAgentChatContextResponse,
+    GetAgentChatContextResponseMetadata,
+    MessageSentResponse,
+)
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
@@ -551,6 +556,53 @@ class TestHistoryPagination:
 
         result = await invoker.handle_event(_msg_body())
 
+        assert result["history_truncated"] is True
+
+    async def test_first_page_fetch_failure_is_reported_as_truncated(self) -> None:
+        """A page-0 fetch failure is the worst case of "history incomplete" —
+        the LLM runs with zero history instead of some. It must not be
+        reported identically to a fully successful fetch.
+        """
+        link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
+        link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=RuntimeError("context endpoint unavailable")
+        )
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        result = await invoker.handle_event(_msg_body())
+
+        assert adapter.received_input.history.raw == []
+        assert result["history_truncated"] is True
+
+    async def test_has_more_without_a_next_cursor_stops_instead_of_looping(
+        self,
+    ) -> None:
+        """``has_more=True`` with no ``next_cursor`` is a backend contract
+        violation the response type doesn't rule out (``next_cursor`` is
+        ``Optional``). Re-requesting with ``cursor=None`` would just refetch
+        page 0 forever (until the page cap) and duplicate its items — this
+        must instead stop after one page and say so honestly.
+        """
+        link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
+        malformed_response = GetAgentChatContextResponse(
+            data=[ctx_item("hist-1", content="page with a broken cursor contract")],
+            metadata=GetAgentChatContextResponseMetadata(
+                has_more=True,
+                limit=50,
+                next_cursor=None,
+            ),
+        )
+        get_context = AsyncMock(return_value=malformed_response)
+        link.rest.agent_api_context.get_agent_chat_context = get_context
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter, history_page_cap=5)
+
+        result = await invoker.handle_event(_msg_body())
+
+        get_context.assert_awaited_once()
+        history_content = [m["content"] for m in adapter.received_input.history.raw]
+        assert history_content.count("page with a broken cursor contract") == 1
         assert result["history_truncated"] is True
 
 
