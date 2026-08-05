@@ -1,13 +1,10 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]",
+#   "band-sdk[anthropic]>=1.2.0,<2.0.0",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
 # ]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """AgentCore container that runs the Band SDK per invocation.
 

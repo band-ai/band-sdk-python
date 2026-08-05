@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[copilot_sdk]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[copilot_sdk]>=1.5.0,<2.0.0"]
 # ///
 """
 Tom the cat agent - tries to catch Jerry!

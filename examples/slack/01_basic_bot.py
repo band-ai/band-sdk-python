@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[slack,anthropic]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[slack,anthropic]>=1.2.0,<2.0.0"]
 # ///
 """
 Basic Slack bot: wrap an Anthropic brain with the SlackAdapter and

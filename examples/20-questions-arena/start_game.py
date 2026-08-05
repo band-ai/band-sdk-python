@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0,<2.0.0"]
 # ///
 """Start a 20 Questions Arena game as a user by creating a room, adding all agents, and sending a message.
 

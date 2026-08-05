@@ -2,12 +2,9 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]",
+#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]>=1.2.0,<2.0.0",
 #   "python-dotenv>=1.1.1",
 # ]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Run Band SDK agents using the composition pattern.

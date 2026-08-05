@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0,<2.0.0"]
 # ///
 """
 LangGraph agent with no LLM inside — a deterministic ping/pong graph.
