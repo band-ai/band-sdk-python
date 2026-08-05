@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -30,11 +29,10 @@ from tests.adapters.opencode.helpers import (
 )
 
 
-def test_no_leaked_adapter_config_env_vars() -> None:
-    """tests/conftest.py's isolated_adapter_config_env must keep a leaked
-    .env.test (or another test's leftover) from ever reaching here."""
-    leaked = [k for k in os.environ if k.startswith(("CODEX_", "LETTA_", "OPENCODE_"))]
-    assert leaked == [], f"leaked adapter-config env vars: {leaked}"
+def test_no_leaked_adapter_config_env_vars(
+    assert_no_leaked_adapter_config_env: None,
+) -> None:
+    """Requesting the fixture is the assertion — see its docstring."""
 
 
 async def test_startup_fails_loudly_when_server_unreachable() -> None:

@@ -224,6 +224,18 @@ def isolated_adapter_config_env(request, monkeypatch):
     yield
 
 
+@pytest.fixture
+def assert_no_leaked_adapter_config_env() -> None:
+    """Fail loudly if a CODEX_/LETTA_/OPENCODE_ var reached this test.
+
+    Requested by a handful of adapters' own "config defaults" tests to prove
+    ``isolated_adapter_config_env`` above is actually doing its job, rather
+    than each repeating the prefix tuple and the check.
+    """
+    leaked = [k for k in os.environ if k.startswith(_ADAPTER_CONFIG_ENV_PREFIXES)]
+    assert leaked == [], f"leaked adapter-config env vars: {leaked}"
+
+
 # =============================================================================
 # Controllable on_execute handler (interrupt/stop tests)
 # =============================================================================
