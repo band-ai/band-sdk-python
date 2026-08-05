@@ -601,15 +601,17 @@ uv run ruff check . && uv run ruff format .
 
 ### PEP 723 Script Metadata (Required for `uv run` support)
 
-Every example file must include PEP 723 inline script metadata at the top for standalone execution with `uv run`:
+Every example file must include PEP 723 inline script metadata at the top for
+standalone execution with `uv run` — this includes **every** standalone script
+in an example directory (registration/provisioning helpers, test harnesses,
+one-off utilities), not just the primary agent entrypoint. Bare `python foo.py`
+assumes the SDK is already installed; document `uv run foo.py` in the README so
+the script runs against a fetched-on-the-fly SDK. Metadata:
 
 ```python
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[<extra>]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[<extra>]>=1.2.0,<2.0.0"]
 # ///
 """
 Brief description of what this example does.
@@ -621,15 +623,52 @@ Run with:
 
 Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anthropic`, `crewai`, `claude-sdk`, `pydantic-ai`, `parlant`).
 
+**Depend on the published PyPI `band-sdk`, pinned `>=1.2.0,<2.0.0`** — not a
+`[tool.uv.sources]` git override. `uv run` then fetches a released wheel instead
+of building the default branch HEAD (reproducible, no git needed). The **only**
+exception: an example whose extra is not yet published on PyPI (a brand-new
+adapter) may keep a git source until the next release exposes the extra — leave
+a one-line comment saying so, and flip it to the pinned PyPI form once released.
+
 ### Other Requirements
 
 - Use `load_agent_config("agent_name")` for credentials, NOT direct `os.environ.get()`
+  and NOT a hand-rolled YAML loader. `band.config.load_agent_config()` already
+  validates a missing file / empty values / required fields and understands both
+  the keyed (`planner:`/`reviewer:`) and flat single-agent formats — reuse it.
 - Always load and validate `BAND_WS_URL` and `BAND_REST_URL` with `ValueError`
+- **A helper script must read the same config source as the stack it supports.**
+  If the runtime (e.g. Docker Compose) reads `.env` for `BAND_REST_URL`, the
+  companion scripts must `load_dotenv()` the same `.env` — otherwise they
+  silently target a *different* platform (the default `app.band.ai`) than the
+  containers, and register/probe agents the stack can't see.
 - Use `raise ValueError(...)` for missing required config, NOT `logger.error()` + `sys.exit()`
 - Use single sys.path line: `sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))`
 - Never hardcode UUIDs in docstrings - reference `agent_config.yaml` instead
 - All `async def main()` functions must have `-> None` return type hint
 - Always include `from __future__ import annotations` as first import
+
+### Provisioning / setup scripts (create-agents, register-*, bootstrap)
+
+Scripts that create remote resources (agents, rooms) or generate credential
+files have failure modes plain examples don't. Follow these:
+
+- **Persist created resource ids immediately, append-only.** Write each id to a
+  cleanup ledger the moment the resource exists — before the next create or any
+  file write can fail. Writing all ids once at the end orphans everything already
+  created if a later step throws; overwriting the ledger on a re-run loses the
+  *previous* run's ids. Both leak paid/limited resources.
+- **Refuse to clobber existing credentials without an explicit `FORCE`.** A
+  re-run that silently overwrites `agent_config.yaml` orphans the agents it
+  referenced. Fail with a message pointing at the cleanup ledger.
+- **Guard file writes against the stale bind-mount directory.** Docker
+  auto-creates a *missing* bind-mount source as an empty **directory**. Check
+  `path.is_dir()` / `path.exists()`, NOT `path.is_file()` (which is `False` for a
+  directory and lets the work run, then crashes at `write_text` with
+  `IsADirectoryError`). Do this check **before** any irreversible step (e.g.
+  registering agents), so you never create resources you then can't record.
+- **Keep `main()` thin.** Extract persistence (config/ledger writes) and the
+  user-facing summary into small named helpers — easier to read and to test.
 
 ## Documentation Testing (markdown snippets)
 

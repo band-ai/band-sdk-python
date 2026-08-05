@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[parlant,logging]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[parlant,logging]>=1.2.0,<2.0.0"]
 # ///
 """
 Tom the cat agent using Parlant.

@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[anthropic]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[anthropic]>=1.2.0,<2.0.0"]
 # ///
 """
 Basic Anthropic SDK agent example.

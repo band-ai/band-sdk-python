@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[pydantic-ai]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[pydantic-ai]>=1.2.0,<2.0.0"]
 # ///
 """
 Basic Pydantic AI agent example.
