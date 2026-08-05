@@ -500,6 +500,24 @@ class TestOnMessage:
         mock_parlant_server.create_customer.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_customer_id_does_not_collide_across_rooms_sharing_a_prefix(
+        self, initialized_adapter, mock_parlant_server
+    ):
+        """Two rooms sharing a UUID prefix must map to distinct Parlant customers."""
+        room_a = "aaaaaaaa-1111-4444-8888-000000000001"
+        room_b = "aaaaaaaa-2222-4444-8888-000000000002"
+
+        await initialized_adapter._get_or_create_customer(room_a, "Alice")
+        await initialized_adapter._get_or_create_customer(room_b, "Bob")
+
+        customer_ids = [
+            call.kwargs["id"]
+            for call in mock_parlant_server.create_customer.await_args_list
+        ]
+        assert customer_ids == [f"band-{room_a}", f"band-{room_b}"]
+        assert len(set(customer_ids)) == 2
+
+    @pytest.mark.asyncio
     async def test_sends_customer_message_to_parlant(
         self, initialized_adapter, sample_message, mock_tools
     ):

@@ -390,7 +390,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         # Set tools for this session (keyed by session_id for cross-task access)
         set_session_tools(session_id_str, tools)
-        logger.info("Room %s: Set tools for session_id=%s", room_id, session_id_str)
+        logger.debug("Room %s: Set tools for session_id=%s", room_id, session_id_str)
 
         # On bootstrap, inject historical context
         if is_session_bootstrap and history:
@@ -401,11 +401,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         user_message = msg.format_for_llm()
         if participants_msg:
             user_message = f"[System Update]: {participants_msg}\n\n{user_message}"
-            logger.info("Room %s: Included participants update in message", room_id)
+            logger.debug("Room %s: Included participants update in message", room_id)
         if contacts_msg:
             user_message = f"[System Update]: {contacts_msg}\n\n{user_message}"
-            logger.info("Room %s: Included contacts broadcast in message", room_id)
-        logger.info(
+            logger.debug("Room %s: Included contacts broadcast in message", room_id)
+        logger.debug(
             "Room %s: Sending message to Parlant: %s...",
             room_id,
             user_message[:100],
@@ -416,7 +416,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             from parlant.core.sessions import EventSource  # type: ignore[missing-import]
 
             # Create customer message event (triggers processing)
-            logger.info("Room %s: Creating customer message event...", room_id)
+            logger.debug("Room %s: Creating customer message event...", room_id)
             event = await app.sessions.create_customer_message(
                 session_id=session_id,
                 moderation=Moderation.NONE,
@@ -425,7 +425,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 trigger_processing=True,
                 metadata=None,
             )
-            logger.info(
+            logger.debug(
                 "Room %s: Customer message created, offset=%s",
                 room_id,
                 event.offset,
@@ -447,7 +447,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         finally:
             # Clear tools after message processing
             set_session_tools(session_id_str, None)
-            logger.info(
+            logger.debug(
                 "Room %s: Cleared tools for session_id=%s",
                 room_id,
                 session_id_str,
@@ -468,7 +468,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             raise RuntimeError("Parlant Application not initialized")
 
         app = self._app
-        logger.info("Creating Parlant session for room: %s", room_id)
+        logger.debug("Creating Parlant session for room: %s", room_id)
 
         # Create or get customer
         customer_id = await self._get_or_create_customer(room_id, customer_name)
@@ -494,10 +494,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if room_id in self._room_customers:
             return self._room_customers[room_id]
 
-        # Create customer via server
+        # Create customer via server. Uses the full room_id (not a truncated
+        # prefix) since this is a stable per-room identity key on Parlant's
+        # server — a short prefix risks two Band rooms colliding onto the
+        # same Parlant customer.
         customer = await self.server.create_customer(
             name=customer_name,
-            id=f"band-{room_id[:8]}",
+            id=f"band-{room_id}",
         )
 
         self._room_customers[room_id] = customer.id
@@ -640,7 +643,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             poll = min(self._response_poll, deadline - time.perf_counter())
 
             # Wait for agent response
-            logger.info(
+            logger.debug(
                 "Room %s: Waiting for agent response (min_offset=%s)...",
                 room_id,
                 current_offset + 1,
@@ -654,7 +657,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     source=EventSource.AI_AGENT,
                     timeout=Timeout(poll),
                 )
-                logger.info(
+                logger.debug(
                     "Room %s: wait_for_more_events returned: %s", room_id, has_update
                 )
             except Exception as e:
@@ -666,7 +669,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 )
                 # Check if message was sent via tool before giving up
                 if was_message_sent(session_id_str):
-                    logger.info(
+                    logger.debug(
                         "Room %s: Message was sent via tool, error is acceptable",
                         room_id,
                     )
@@ -676,7 +679,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 # Empty poll window. If a tool already sent the reply we're done;
                 # otherwise keep waiting until the budget — don't drop a slow turn.
                 if was_message_sent(session_id_str):
-                    logger.info(
+                    logger.debug(
                         "Room %s: No new events but message was sent via tool, OK",
                         room_id,
                     )
@@ -697,7 +700,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     kinds=[EventKind.MESSAGE],
                     trace_id=None,  # Required by Parlant SDK v3.x
                 )
-                logger.info("Room %s: Found %s agent events", room_id, len(events))
+                logger.debug("Room %s: Found %s agent events", room_id, len(events))
             except Exception as e:
                 logger.error(
                     "Room %s: Error finding events: %s",
@@ -758,7 +761,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     is_preamble = PARLANT_PREAMBLE_TAG in tags
 
                     if is_preamble:
-                        logger.info(
+                        logger.debug(
                             "Room %s: Skipping preamble message: %s...",
                             room_id,
                             message_content[:50],
@@ -769,7 +772,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     # If so, don't send Parlant's response (would be duplicate/empty)
                     # Also don't mark as final - Parlant may still have more tool calls
                     if was_message_sent(session_id_str):
-                        logger.info(
+                        logger.debug(
                             "Room %s: Message already sent via tool, skipping Parlant response: %s...",
                             room_id,
                             message_content[:50],
@@ -780,7 +783,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     got_final_message = True
 
                     if message_content:
-                        logger.info(
+                        logger.debug(
                             "Room %s: Sending agent response to platform: %s...",
                             room_id,
                             message_content[:100],
@@ -805,19 +808,19 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
             # If we got a final (non-preamble) message, we're done
             if got_final_message:
-                logger.info("Room %s: Got final message, processing complete", room_id)
+                logger.debug("Room %s: Got final message, processing complete", room_id)
                 return
 
             # Check if message was sent via tool (tool execution may happen without final message)
             if was_message_sent(session_id_str):
-                logger.info(
+                logger.debug(
                     "Room %s: Message sent via tool, no need to wait for final message",
                     room_id,
                 )
                 return
 
             # Otherwise, continue waiting for the final message after tool execution
-            logger.info(
+            logger.debug(
                 "Room %s: Only got preamble, continuing to wait for final message...",
                 room_id,
             )
@@ -853,7 +856,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
         except Exception:
-            pass
+            logger.exception("Failed to send error event")
 
     async def cleanup_all(self) -> None:
         """Release all sessions and the owned Parlant server (call on stop)."""
