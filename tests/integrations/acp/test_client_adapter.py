@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.helpers import update_agent_message_text
 
+from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -16,7 +17,7 @@ from band.integrations.acp.client_types import (
     BandACPClient,
 )
 from band.integrations.acp.room_emitter import turn_replied_in_room
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
 from band.testing import FakeAgentTools
 
 from .conftest import make_platform_message
@@ -775,6 +776,7 @@ class TestACPClientAdapterPermissionHandler:
             tool_call = MagicMock()
             tool_call.title = "rm_rf"
             tool_call.tool_call_id = "tc-danger"
+            tool_call.raw_input = {"path": "/tmp/important"}
 
             result = await adapter_with_mocks._runtime._client.request_permission(
                 options=[
@@ -803,7 +805,13 @@ class TestACPClientAdapterPermissionHandler:
         assert all(
             event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
         )
-        assert perm_events[1]["content"] == "Permission cancelled"
+        call = parse_tool_call(str(perm_events[0]["content"]))
+        assert call is not None
+        assert call.args == {"path": "/tmp/important"}
+        result = parse_tool_result(str(perm_events[1]["content"]))
+        assert result is not None
+        assert result.output == "Permission cancelled"
+        assert result.is_error
         assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
@@ -1138,7 +1146,23 @@ class TestTurnRepliedInRoom:
 
     @staticmethod
     def _chunk(chunk_type: str, content: str, **metadata: object) -> CollectedChunk:
-        return CollectedChunk(chunk_type=chunk_type, content=content, metadata=metadata)
+        tool_call_id = str(metadata.get("tool_call_id", ""))
+        call = ACPToolCall(
+            tool_call_id=tool_call_id,
+            name=content if chunk_type == "tool_call" else "unknown",
+            arguments={},
+        )
+        tool = (
+            call
+            if chunk_type == "tool_call"
+            else ACPToolResult(call=call, output=content, status=metadata.get("status"))
+        )
+        return CollectedChunk(
+            chunk_type=chunk_type,
+            content=content,
+            metadata=metadata,
+            tool=tool,
+        )
 
     def test_completed_posting_tool_call_counts_as_reply(self) -> None:
         chunks = [

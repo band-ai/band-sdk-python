@@ -146,7 +146,39 @@ async def test_tool_call_and_result_relayed_as_events(fake_agent) -> None:
 
     assert len(reply.tool_calls) == 1
     assert len(reply.tool_results) == 1
-    assert reply.tool_results[0]["content"] == "72F"
+    assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_tool_execution_round_trips_to_acp_editor(
+    fake_agent, acp_editor
+) -> None:
+    """A tool run by an ACP client remains a tool lifecycle for an ACP editor."""
+    room_id = "room-1"
+    tool_call_id = "tc-probe"
+    tool_title = "Run terminal command"
+    command = "printf ACP_TOOL_PROBE"
+    output = "ACP_TOOL_PROBE"
+    expected_editor_updates = ["tool_call", "tool_call_update"]
+
+    fake_agent.will_call_tool(
+        tool_call_id,
+        tool_title,
+        raw_input={"command": command},
+        result=output,
+    )
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("Run the probe command.", room=room_id)
+
+    editor = acp_editor.awaiting_reply(room_id)
+    await editor.forward_tool_activity(reply)
+
+    updates = editor.updates
+    assert [update.session_update for update in updates] == expected_editor_updates
+    assert updates[0].tool_call_id == tool_call_id
+    assert updates[0].raw_input == {"command": command}
+    assert updates[1].tool_call_id == tool_call_id
+    assert updates[1].raw_output == output
 
 
 @pytest.mark.asyncio
@@ -170,7 +202,7 @@ async def test_streamed_tool_result_updates_collapse_into_one_event(fake_agent) 
         reply = await session.send("run ls", room="room-1")
 
     assert len(reply.tool_results) == 1
-    assert reply.tool_results[0]["content"] == listing
+    assert reply.outline == ["tool_call", "tool_result", "task"]
 
 
 @pytest.mark.asyncio
