@@ -539,10 +539,15 @@ class TestHistoryPagination:
         self,
     ) -> None:
         """A room that's been running for months can carry far more history
-        than any one page holds. The agent still has to answer promptly, so
-        it stops at a bound rather than replaying the entire backlog on every
-        message — and says so honestly instead of presenting a partial
-        conversation as the whole thing.
+        than the retention window holds. The agent still has to answer
+        promptly, so it keeps only the trailing pages rather than replaying
+        the entire backlog on every message — and says so honestly instead
+        of presenting a partial conversation as the whole thing.
+
+        Critically, "partial" must mean the *most recent* days, not the
+        oldest ones — the endpoint is oldest-first with no way to request
+        newest-first, so pagination has to walk to the true end and evict
+        old pages, never stop early and keep the stale ones.
         """
         months_of_daily_updates = [
             [ctx_item(f"hist-{day}", content=f"day {day} update")] for day in range(5)
@@ -556,6 +561,15 @@ class TestHistoryPagination:
 
         result = await invoker.handle_event(_msg_body())
 
+        get_context = link.rest.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == 5  # walked to the true end, not the cap
+
+        history_content = [m["content"] for m in adapter.received_input.history.raw]
+        assert history_content == [
+            "day 2 update",
+            "day 3 update",
+            "day 4 update",
+        ]
         assert result["history_truncated"] is True
 
     async def test_first_page_fetch_failure_is_reported_as_truncated(self) -> None:

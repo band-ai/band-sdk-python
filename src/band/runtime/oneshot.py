@@ -40,6 +40,7 @@ Example usage::
 from __future__ import annotations
 
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -67,11 +68,18 @@ DEFAULT_DRAIN_CAP = 50
 # Items per page when following the context endpoint's cursor pagination.
 DEFAULT_HISTORY_LIMIT = 50
 
-# Defensive cap on how many pages of history to follow per invocation. A room
-# shouldn't backlog thousands of messages for a single agent in normal
-# operation; if it does, surface it via ``history_truncated`` rather than
-# paginating indefinitely on every stateless invocation.
+# How many of the most recent pages of history to retain per invocation. The
+# context endpoint is oldest-first with no way to request newest-first (see
+# ``_fetch_history``), so pagination always walks to the true end regardless
+# of this value — it only bounds memory/what reaches the LLM, never causes
+# the newest messages to be dropped in favor of older ones.
 DEFAULT_HISTORY_PAGE_CAP = 20
+
+# Absolute ceiling on pagination round-trips per invocation, independent of
+# how many pages are retained (``DEFAULT_HISTORY_PAGE_CAP``). Guards against
+# a backend that never reports ``has_more=False`` — hitting this is a
+# backend contract violation, not a real conversation length.
+DEFAULT_HISTORY_FETCH_CEILING = 500
 
 
 class OneShotEnvelopeError(ValueError):
@@ -93,8 +101,8 @@ class OneShotInvoker:
         agent_id: This container's Band agent identity (used for
             self-message filtering and the adapter's runtime identity).
         drain_cap: Defensive ceiling on the drain loop. Default 50.
-        history_page_cap: Defensive ceiling on how many pages of history to
-            follow per invocation. Default 20.
+        history_page_cap: How many of the most recent pages of history to
+            retain per invocation. Default 20.
     """
 
     def __init__(
@@ -446,17 +454,19 @@ class OneShotInvoker:
         swallows a message that arrived after this snapshot.
 
         Follows the endpoint's cursor pagination (``next_cursor``/
-        ``has_more``) rather than fetching a single page — ``page``/
-        ``page_size`` are deprecated on the real API and, single-page, would
-        silently drop any turn past the first page. Bounded by
-        ``self._history_page_cap``; the third return value reports whether
-        that cap (or a mid-pagination fetch failure) left history
-        incomplete.
+        ``has_more``) to the true end of the room's history — the endpoint
+        is oldest-first with no ``sort_order``/``before`` parameter, so
+        stopping early would keep the oldest pages and drop the newest ones,
+        including the turns the triggering message is replying to. Retains
+        only the trailing ``self._history_page_cap`` pages in memory; the
+        third return value reports whether any earlier pages were evicted
+        (or a mid-pagination fetch failure left history incomplete).
         """
-        items: list[Any] = []
+        pages: deque[list[Any]] = deque(maxlen=self._history_page_cap)
         cursor: str | None = None
+        fetched_pages = 0
         truncated = False
-        for page_num in range(self._history_page_cap):
+        for page_num in range(DEFAULT_HISTORY_FETCH_CEILING):
             try:
                 response = (
                     await self._link.rest.agent_api_context.get_agent_chat_context(
@@ -477,7 +487,8 @@ class OneShotInvoker:
                     return [], set(), True
                 truncated = True
                 break
-            items.extend(response.data or [])
+            pages.append(response.data or [])
+            fetched_pages += 1
             if not response.metadata.has_more:
                 break
             cursor = response.metadata.next_cursor
@@ -493,11 +504,16 @@ class OneShotInvoker:
         else:
             truncated = True
             logger.warning(
-                "Hit history page cap (%d) for room %s — history may be incomplete",
-                self._history_page_cap,
+                "Hit history fetch ceiling (%d) for room %s — backend never "
+                "reported has_more=False",
+                DEFAULT_HISTORY_FETCH_CEILING,
                 room_id,
             )
 
+        if fetched_pages > self._history_page_cap:
+            truncated = True
+
+        items = [item for page in pages for item in page]
         seen_ids = {item.id for item in items if getattr(item, "id", None)}
         raw_messages = [context_item_to_dict(item) for item in items]
         history = (
