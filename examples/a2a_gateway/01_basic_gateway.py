@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     band_api_key: str = ""
     band_agent_id: str = "a2a-gateway"
     gateway_port: int = 10000
+    gateway_url: str = ""
 
 
 async def main() -> None:
@@ -102,8 +103,11 @@ async def main() -> None:
 
     # Create gateway adapter
     # It uses its own REST client for room/message operations
-    # gateway_url derives from port (override for a public address)
-    adapter = A2AGatewayAdapter(port=settings.gateway_port)
+    # gateway_url derives from port unless GATEWAY_URL overrides it (e.g.
+    # behind a public host/reverse proxy, where localhost would be unreachable)
+    adapter = A2AGatewayAdapter(
+        port=settings.gateway_port, gateway_url=settings.gateway_url
+    )
 
     # Create and start agent
     # The gateway connects to Band and starts its HTTP server

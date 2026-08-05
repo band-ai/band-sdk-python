@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import ClassVar, Any, Callable, Literal, Protocol
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Unpack
 
@@ -194,9 +194,12 @@ class CodexAdapterConfig(BaseSettings):
     ``CODEX_``-prefixed environment variable (e.g. ``CODEX_MODEL``,
     ``CODEX_TRANSPORT``, ``CODEX_APPROVAL_MODE``); ``codex_ws_url`` is
     sourced from ``CODEX_WS_URL`` (the field name already carries the
-    ``codex_`` part), and ``emit_turn_task_markers`` also accepts the legacy
-    ``CODEX_TURN_TASK_MARKERS``. An explicit constructor kwarg always wins
-    over the environment.
+    ``codex_`` part), ``emit_turn_task_markers`` also accepts the legacy
+    ``CODEX_TURN_TASK_MARKERS``, and ``codex_command`` is sourced from the
+    established ``CODEX_COMMAND`` (not the doubly-prefixed
+    ``CODEX_CODEX_COMMAND``), parsed the same way as an explicit tuple: a
+    whitespace-split shell string (e.g. ``"custom-codex --args"``). An
+    explicit constructor kwarg always wins over the environment.
 
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
@@ -252,7 +255,10 @@ class CodexAdapterConfig(BaseSettings):
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
-    codex_command: tuple[str, ...] | None = None
+    codex_command: tuple[str, ...] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CODEX_COMMAND"),
+    )
     codex_env: dict[str, str] | None = None
     codex_ws_url: str = Field(
         default="ws://127.0.0.1:8765",
@@ -304,6 +310,15 @@ class CodexAdapterConfig(BaseSettings):
     # --- Phase 4: Diffs & token usage ---
     emit_diff_events: bool = False
     emit_token_usage_events: bool = False
+
+    @field_validator("codex_command", mode="before")
+    @classmethod
+    def _split_codex_command(cls, value: Any) -> Any:
+        """CODEX_COMMAND is a shell string; an explicit tuple/list kwarg
+        passes through unchanged."""
+        if isinstance(value, str):
+            return value.split()
+        return value
 
 
 class CodexAdapter(SimpleAdapter[CodexSessionState]):

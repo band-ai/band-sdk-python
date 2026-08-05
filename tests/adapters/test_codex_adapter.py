@@ -6908,6 +6908,8 @@ class TestConfigEnvSourcing:
             "EMIT_TURN_TASK_MARKERS",
             "CODEX_TURN_TASK_MARKERS",
             "CODEX_EMIT_TURN_TASK_MARKERS",
+            "CODEX_COMMAND",
+            "CODEX_CODEX_COMMAND",
         ):
             monkeypatch.delenv(var, raising=False)
 
@@ -6936,3 +6938,20 @@ class TestConfigEnvSourcing:
         monkeypatch.setenv("CODEX_WS_URL", "ws://elsewhere:9999")
 
         assert CodexAdapterConfig().codex_ws_url == "ws://elsewhere:9999"
+
+    def test_codex_command_env_splits_shell_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CODEX_COMMAND (the established name), not the doubly-prefixed default."""
+        monkeypatch.setenv("CODEX_COMMAND", "custom-codex --args")
+
+        assert CodexAdapterConfig().codex_command == ("custom-codex", "--args")
+
+    def test_codex_command_kwarg_wins_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CODEX_COMMAND", "ignored --value")
+
+        config = CodexAdapterConfig(codex_command=("explicit", "--kwarg"))
+
+        assert config.codex_command == ("explicit", "--kwarg")
