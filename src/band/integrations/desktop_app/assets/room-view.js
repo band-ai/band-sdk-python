@@ -191,7 +191,7 @@
   /** @type {{idle_seconds?: number, stale?: boolean}} */
   let monitoring = {};
   /** Whose attention the room gets first; the server owns the choice. */
-  let attention = "room_first";
+  let attention = "user_first";
   let pendingCount = 0;
   /** @type {RelayStatus} */
   let transport = {};
@@ -430,7 +430,7 @@
     roleBriefing = "";
     monitoringNotice = "";
     monitoring = {};
-    attention = "room_first";
+    attention = "user_first";
     pendingCount = 0;
     cursor = null;
     unseen = 0;

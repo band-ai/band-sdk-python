@@ -10,14 +10,13 @@ never enters this VM.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import subprocess
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.types import AdapterFeatures, Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
@@ -78,9 +77,7 @@ def login_codex() -> None:
 async def main() -> None:
     # INFO so the Band lifecycle trace (messages, tool calls, replies) shows in the
     # sandbox log the demo pane tails — without this, only WARNING+ would surface.
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    LogSettings().configure()
     expose_llm_key()
     login_codex()
     identity = Identity()

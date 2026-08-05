@@ -208,9 +208,12 @@ block if you need them:
 | `BAND_LOG_LEVEL` | `INFO` | The room view's own log level; `DEBUG` shows quiet monitor ticks. |
 | `BAND_LOG_MAX_BYTES` | `1000000` | Size at which `band-room-view.log` rotates. |
 | `BAND_LOG_BACKUPS` | `1` | Rotated log files kept. |
+| `BAND_LOG_OVERRIDES` | `{}` | JSON map of logger name → level; merged over the room view's demotion of `CHATTY_LOGGERS` (httpx/httpcore/phoenix) plus the MCP server logger. |
 
-They are read once at startup, because the tool schemas advertise them to the
-host at connect time. Restart Desktop after changing one.
+They are read once at startup through the shared SDK `LogSettings` helper
+(the room view still pins its log file under the Band cache directory). Tool
+schemas also bake the non-logging knobs in as defaults, so restart Desktop
+after changing one.
 
 ## Troubleshooting
 

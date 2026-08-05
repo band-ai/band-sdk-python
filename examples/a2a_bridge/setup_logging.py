@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import logging
-
-from band import configure_logging
+from band import LogLevel, LogSettings
 
 
-def setup_logging(level: int = logging.INFO, a2a_debug: bool = False) -> None:
+def setup_logging(level: LogLevel | None = None, a2a_debug: bool = False) -> None:
     """Configure logging to show only band logs, hiding noisy dependencies.
 
     Args:
-        level: Log level for band package (default: INFO)
+        level: Log level for band package (default: INFO via BAND_LOG_LEVEL)
         a2a_debug: If True, enable DEBUG logging for A2A adapter to trace
             context_id and session rehydration
     """
-    extra_loggers = {"band.integrations.a2a": logging.DEBUG} if a2a_debug else None
-    configure_logging(level, extra_loggers=extra_loggers)
+    settings = LogSettings.create(log_level=level)
+    extra = {"band.integrations.a2a": "DEBUG"} if a2a_debug else None
+    settings.configure(extra_loggers=extra)

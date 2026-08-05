@@ -60,11 +60,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+from band import LogSettings
+
 logger = logging.getLogger("verify_deployment")
 
 # Load .env.test from the repo root so BAND_* vars are available without export.
 load_dotenv(Path(__file__).resolve().parents[2] / ".env.test", override=False)
+LogSettings().for_application().configure()
 
 PA_AGENT_ID_ENV = "AGENTCORE_DEMO_PA_AGENT_ID"
 
@@ -361,8 +363,9 @@ async def verify_parallel_rooms(
 
 
 async def main() -> None:
-    from band.client.streaming import WebSocketClient
     from band_rest import AsyncRestClient
+
+    from band.client.streaming import WebSocketClient
 
     rest_url = require_env("BAND_REST_URL", "the target platform's REST base URL")
     ws_url = require_env("BAND_WS_URL", "the target platform's WebSocket URL")

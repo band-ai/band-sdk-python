@@ -20,15 +20,18 @@ This is a complete, functional example with:
 
 import os
 from typing import Annotated, Literal
-from typing_extensions import TypedDict
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_openai import ChatOpenAI
-from langchain_community.utilities import SQLDatabase
+
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
+from langchain_community.utilities import SQLDatabase
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from typing_extensions import TypedDict
+
+from band import LogSettings
 
 
 class MessagesState(TypedDict):
@@ -159,7 +162,7 @@ if __name__ == "__main__":
     import asyncio
     import logging
 
-    logging.basicConfig(level=logging.INFO)
+    LogSettings().for_application().configure()
     logger = logging.getLogger(__name__)
 
     async def test():

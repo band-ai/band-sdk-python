@@ -16,7 +16,13 @@ import os
 
 import yaml
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+from band import LoggingStyle, LogSettings
+
+# The bare message format only exists for the standard style, so the style is
+# pinned rather than read from BAND_LOG_CONSOLE_STYLE.
+LogSettings(log_console_style=LoggingStyle.STANDARD).for_application().configure(
+    fmt="%(message)s"
+)
 logger = logging.getLogger(__name__)
 
 AGENTS = [

@@ -66,10 +66,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from band import Agent
+from band import Agent, LogSettings
 from band.config import load_agent_config
 from band.core.types import AdapterFeatures, Emit
-from band.platform.event import ContactRequestReceivedEvent, ContactEvent
+from band.platform.event import ContactEvent, ContactRequestReceivedEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -128,13 +128,9 @@ def build_contact_config(
     raise ValueError(f"Unknown contacts mode: {mode}")
 
 
-def setup_logging(level: str = "INFO") -> logging.Logger:
-    """Configure logging."""
-    log_level = level.upper()
-    logging.basicConfig(
-        level=getattr(logging, log_level, logging.INFO),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+def setup_logging(level: str | None = None) -> logging.Logger:
+    """Configure logging from an explicit level or BAND_LOG_*."""
+    LogSettings.create(log_level=level).for_application().configure()
     return logging.getLogger(__name__)
 
 
@@ -904,8 +900,10 @@ Examples:
     parser.add_argument(
         "--log-level",
         "-l",
-        default=os.getenv("LOG_LEVEL", "INFO"),
-        help="Logging level (default: INFO or LOG_LEVEL env var)",
+        default=None,
+        type=str.upper,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (env: BAND_LOG_LEVEL, default: INFO)",
     )
     parser.add_argument(
         "--thinking",

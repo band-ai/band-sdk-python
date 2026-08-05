@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import logging
-
-from band import configure_logging
+from band import LogLevel, LogSettings
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging to show only band logs, hiding noisy dependencies."""
-    configure_logging(level)
+    settings = LogSettings.create(log_level=level)
+    settings.configure()

@@ -264,7 +264,13 @@ async def test_a_relay_that_cannot_take_a_role_still_starts(
     relays: RelayHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """REST-backed room reads remain available while relay election retries."""
+    """No role must not mean no room view.
+
+    Every read path works over REST, and the same platform refusal arriving a
+    minute later only degrades this process to polling — so failing the launch
+    on it would turn a degraded room view into none at all, which the user
+    cannot repair without restarting Desktop.
+    """
     monkeypatch.setattr(event_relay.RELAY_TUNING, "band_relay_start_timeout_s", 0.2)
     refused = ConnectionError("agent key already has a live consumer")
     relay = relays.build()
@@ -277,8 +283,8 @@ async def test_a_relay_that_cannot_take_a_role_still_starts(
         )
         await relay.start()
         try:
-            assert not relay.status.live
-            assert relay.status.warning
+            assert not relay.status.live, "a roleless relay must not claim liveness"
+            assert relay.status.warning, "the agent is told events arrive by REST"
             assert str(refused) in str(relay.status.last_error)
         finally:
             await relay.stop()

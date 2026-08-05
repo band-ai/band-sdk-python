@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import os
-
-from band import LogLevel, configure_logging
+from band import LogLevel, LogSettings
 
 
 def setup_logging(level: LogLevel | None = None) -> None:
-    """Configure logging to show only band logs, hiding noisy dependencies."""
-    if level is None:
-        # Tolerate LOG_LEVEL= (empty) and numeric forms like LOG_LEVEL=20;
-        # configure_logging rejects both as level-name strings.
-        raw = os.environ.get("LOG_LEVEL") or "INFO"
-        level = int(raw) if raw.isdecimal() else raw
-    configure_logging(level)
+    """Configure logging to show only band logs, hiding noisy dependencies.
+
+    Level comes from an explicit argument or ``BAND_LOG_LEVEL`` (default INFO).
+    """
+    LogSettings.create(log_level=level).configure()

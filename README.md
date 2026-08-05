@@ -213,13 +213,64 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 ### Logging
 
-The SDK uses standard Python loggers and does not configure process-wide handlers unless your application opts in. For readable Band logs while keeping noisy dependencies quiet:
+The SDK uses standard Python loggers and does not configure process-wide handlers unless you opt in. The recommended entry point is `LogSettings`, which reads validated `BAND_LOG_*` environment variables.
+
+**Pick one setup:**
+
+| You are… | Call |
+|---|---|
+| Embedding Band inside a larger app (only want Band's own logs) | `LogSettings().configure()` |
+| Running a Band agent / runner / CLI as the main process | `LogSettings().for_application().configure()` |
+
+Why the split? Default settings raise the `band` logger to `BAND_LOG_LEVEL` (usually `INFO`) but leave the root logger at `WARNING`. That keeps embeds quiet. Your script's own logger (`logging.getLogger(__name__)`, often `__main__`) is *not* under `band`, so its `INFO` lines stay hidden unless you call `for_application()` — which raises root to match the Band level. Set `BAND_LOG_ROOT_LEVEL` yourself if you want a different root level; `for_application()` will not override it.
 
 ```python
-from band import configure_logging
+from band import LogSettings
 
-configure_logging()
+assert LogSettings is not None
+
+# Library / embed: Band INFO, other loggers quiet
+LogSettings().configure()
+
+# Application entrypoint: Band + your process loggers at the same level
+LogSettings().for_application().configure()
+
+# Optional CLI flag: None keeps BAND_LOG_LEVEL
+LogSettings.create(log_level=None).for_application().configure()
 ```
+
+The `examples/` scripts read `BAND_LOG_LEVEL` only; the old, informal `LOG_LEVEL`
+var some of them used to read is no longer honored there. `band-bridge` is a
+separate deployable with its own env surface (`BAND_AGENT_ID`, `AGENT_MAPPING`,
+...) — its `LOG_LEVEL` is unrelated and unaffected by this rename.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BAND_LOG_LEVEL` | `INFO` | Level for the `band` logger (and console when a file sink differs) |
+| `BAND_LOG_ROOT_LEVEL` | `WARNING` | Root logger level for non-Band loggers |
+| `BAND_LOG_FILE` | unset | Optional log file path |
+| `BAND_LOG_FILE_LEVEL` | follows `BAND_LOG_LEVEL` | File handler level (use `DEBUG` for quiet console / verbose file) |
+| `BAND_LOG_MAX_BYTES` | `0` | Rotate when positive; `0` uses a plain file handler |
+| `BAND_LOG_BACKUPS` | `1` | Rotated backups to keep; `0` alongside a size cap is rejected, since a handler with no backups never rotates |
+| `BAND_LOG_CONSOLE_STYLE` | `standard` | `standard`, `rich`, or `json` |
+| `BAND_LOG_FILE_STYLE` | `standard` | `standard` or `json` |
+| `BAND_LOG_STREAM` | `stderr` | `stderr` or `stdout` |
+| `BAND_LOG_OVERRIDES` | `{}` | JSON map of logger name → level |
+
+Band hardens only what it creates for `BAND_LOG_FILE`: directories it has to
+create are `0700`, and the log file — plus every file a rotation replaces it
+with — is created `0600`. A directory or file that already exists keeps the
+mode you gave it. This is worth knowing because Band logs message content at
+`DEBUG` (prompt text, tool payloads), so `BAND_LOG_LEVEL=DEBUG` with a file
+sink can persist room content to disk: if you point it at a path you manage
+yourself, the permissions on it are yours to set.
+
+`configure_logging()` does not demote dependency loggers by itself. When a
+process needs that, pass `extra_loggers=chatty_logger_levels()` (covers
+`httpx`, `httpcore`, and `phoenix_channels_python_client`) and add any
+framework-specific names on top.
+
+Precedence: an explicit constructor argument (for example a CLI `--log-level`) beats the environment; the environment beats class defaults. Empty env values fall back to the field default. Prefer `LogSettings.create(log_level=...)` for optional CLI flags so a missing flag does not override the environment.
 
 For production JSON logs or Rich console output, install the logging extra:
 
@@ -228,8 +279,10 @@ uv add "band-sdk[logging]"
 ```
 
 ```python notest
-configure_logging(style="json", stream="stdout")
-configure_logging(style="rich")
+from band import LoggingStyle, LogStream, configure_logging
+
+configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+configure_logging(style=LoggingStyle.RICH)
 ```
 
 The examples intentionally show different styles: `examples/langgraph` uses the standard formatter, `examples/parlant` uses Rich, and `examples/codex` emits JSON to stdout.
@@ -239,11 +292,83 @@ If you need to modify the logging setup before applying it, build a fresh `dictC
 ```python notest
 import logging.config
 
-from band import build_logging_config
+from band import LoggingStyle, build_logging_config
 
-config = build_logging_config(style="json", static_fields={"service": "agent"})
+config = build_logging_config(style=LoggingStyle.JSON, static_fields={"service": "agent"})
 logging.config.dictConfig(config)
 ```
+
+### OpenTelemetry
+
+**The host owns the telemetry pipeline.** Band creates no `TracerProvider`, no
+`LoggerProvider`, no processor, and no exporter, and depends on no OpenTelemetry
+package. What it does is stay out of the way and meet an instrumented host
+halfway:
+
+- **JSON logs are correlation-ready.** The default JSON schema carries the four
+  attributes `LoggingInstrumentor(inject_trace_context=True)` injects. Without
+  instrumentation they are `null`, so the schema does not change shape when you
+  turn tracing on later. Passing your own `json_fields` replaces that default —
+  splice `*OTEL_CORRELATION_FIELDS` in to keep them.
+- **Pydantic AI runs can be traced through Band.** `PydanticAIAdapter` passes
+  `instrument` straight to the pydantic-ai agent.
+
+```python
+from band.logging_config import OTEL_CORRELATION_FIELDS
+
+assert OTEL_CORRELATION_FIELDS == (
+    "otelTraceID",
+    "otelSpanID",
+    "otelTraceSampled",
+    "otelServiceName",
+)
+```
+
+```python
+from band.adapters import PydanticAIAdapter
+
+# None (default) inherits Agent.instrument_all(); False opts out of it;
+# True uses the global TracerProvider; InstrumentationSettings(...) customizes.
+adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini", instrument=True)
+
+assert adapter.instrument is True
+```
+
+Set it up in this order:
+
+```python notest
+with telemetry("my-service") as otel:      # 1. your providers + trace-context injection
+    LogSettings().for_application().configure()   # 2. Band's logging
+    otel.attach_log_handler()                     # 3. your OTEL log handler
+```
+
+Step 3 comes last because Band applies its configuration with
+`logging.config.dictConfig`, which is non-incremental and *replaces* the root
+logger's handlers — a handler attached before step 2 is silently dropped. There
+is deliberately no "keep my handlers" option: by the time Band could restore
+one, `dictConfig` has already closed it. Step 1 can go either side of step 2,
+since trace-context injection is a log-record factory rather than a handler.
+
+A runnable host pipeline (shared `Resource`, both providers, console exporters,
+clean shutdown) lives in [examples/opentelemetry/](examples/opentelemetry/).
+
+**Where model-call spans come from, per adapter.** Support is not equivalent
+across these rows — Band only bridges the first one:
+
+| Adapter | How its model calls get traced |
+|---|---|
+| Pydantic AI | Natively, through Band: `PydanticAIAdapter(instrument=...)` — see [Pydantic AI instrumentation](https://ai.pydantic.dev/logfire/) |
+| Parlant | Parlant's own [built-in OpenTelemetry](https://www.parlant.io/docs/production/observability), configured with its `OTEL_EXPORTER_OTLP_*` variables |
+| Google ADK | ADK traces against the global `TracerProvider`, so setting one is enough — see [ADK observability](https://google.github.io/adk-docs/observability/) |
+| LangGraph, Agno, CrewAI Flow | You construct the graph / agent / flow and hand it to the adapter, so instrument it before you do — for LangChain, [tracing with OpenTelemetry](https://docs.smith.langchain.com/observability/how_to_guides/trace_with_opentelemetry) |
+| Anthropic, Gemini, CrewAI | Band builds the client from a model string, so instrument the provider SDK or framework process-wide with a third-party instrumentor ([OpenTelemetry registry](https://opentelemetry.io/ecosystem/registry/?language=python), [CrewAI observability](https://docs.crewai.com/en/observability/overview)) |
+| Claude SDK, Copilot SDK, Codex, OpenCode, ACP clients, A2A, Letta | The model call runs in another process or on a remote host, so this process has no model spans to emit. Band's own logs still correlate; the backend has to export its own traces. |
+
+**Containers and sandboxes.** The Docker and `sbx` examples deliberately stop at
+`BAND_LOG_*` plus host-side log tails. Running a collector inside the sandbox —
+or handing it OTLP credentials — needs an egress path, a decision about MITM
+trust, and somewhere to keep the secret; none of that is designed yet, so it is
+not offered as if it were.
 
 ### Slack (`examples/slack/`)
 

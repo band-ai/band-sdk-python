@@ -1,18 +1,16 @@
 """Logging setup for A2A Gateway examples."""
 
-import logging
+from __future__ import annotations
 
-from band import configure_logging
+from band import LogLevel, LogSettings, chatty_logger_levels
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging for the example."""
-    configure_logging(
-        level=level,
-        root_level=level,
+    settings = LogSettings.create(log_level=level)
+    settings.for_application().configure(
         extra_loggers={
-            "httpcore": logging.WARNING,
-            "httpx": logging.WARNING,
-            "uvicorn": logging.WARNING,
+            **chatty_logger_levels("WARNING"),
+            "uvicorn": "WARNING",
         },
     )

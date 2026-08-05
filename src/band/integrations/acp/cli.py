@@ -8,6 +8,9 @@ import logging
 import os
 import sys
 
+from band.config.logs import LogSettings
+from band.logging_config import LogStream
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,9 +52,9 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)",
+        help="Logging level (env: BAND_LOG_LEVEL, default: INFO)",
     )
 
     return parser.parse_args(args)
@@ -66,7 +69,12 @@ async def main(args: argparse.Namespace | None = None) -> None:
     if args is None:
         args = parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level))
+    # Only an explicit CLI flag overrides BAND_LOG_*; omitted lets env win.
+    # The stream is not negotiable: stdout is the JSON-RPC transport, so a log
+    # line written there corrupts the editor's ACP session.
+    LogSettings.create(
+        log_level=args.log_level, log_stream=LogStream.STDERR
+    ).configure()
 
     if not args.agent_id:
         raise ValueError("Agent ID is required. Use --agent-id or set BAND_AGENT_ID.")
