@@ -111,6 +111,7 @@ def _merge_consecutive_roles(messages: StrandsMessages) -> StrandsMessages:
     user and assistant, and room history routinely produces same-role
     neighbours: two peers speaking in a row, or a peer's turn landing behind
     the tool results it waited for.
+
     """
     merged: StrandsMessages = []
     for message in messages:
