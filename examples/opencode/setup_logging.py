@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-import logging
+from band import LogLevel, LogSettings, chatty_logger_levels
+from band.logging_config import LogStream
 
-from band import configure_logging
+
+class OpencodeLogSettings(LogSettings):
+    """Stdout stream; root follows the application level."""
+
+    log_stream: LogStream = LogStream.STDOUT
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def setup_logging(level: LogLevel | None = None) -> None:
     """Configure logging for examples."""
-    configure_logging(
-        level=level,
-        stream="stdout",
-        root_level=level,
-        extra_loggers={"httpx": logging.WARNING},
+    settings = OpencodeLogSettings.create(log_level=level)
+    settings.for_application().configure(
+        extra_loggers=chatty_logger_levels("WARNING"),
     )

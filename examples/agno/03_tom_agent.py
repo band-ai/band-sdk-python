@@ -42,7 +42,7 @@ from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
 
-from band import Agent
+from band import LogSettings, Agent
 from band.adapters import AgnoAdapter
 from band.core.types import AdapterFeatures, Emit
 
@@ -52,12 +52,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_tom_prompt
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
+    LogSettings().for_application().configure()
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise ValueError("ANTHROPIC_API_KEY environment variable is required")

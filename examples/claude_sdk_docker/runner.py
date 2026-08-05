@@ -28,6 +28,7 @@ from typing import Any
 
 import yaml
 
+from band import LogSettings
 from band.core.types import AdapterFeatures, Emit
 
 # Global flag for graceful shutdown
@@ -45,11 +46,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0  # seconds
 MAX_RETRY_DELAY = 60.0  # seconds
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -148,6 +144,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the agent from YAML configuration."""
+    LogSettings().for_application().configure()
     global _shutdown_event
     _shutdown_event = asyncio.Event()
 

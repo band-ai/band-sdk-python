@@ -467,16 +467,20 @@ def _build_pydantic_ai_config() -> AdapterConfig:
             "model": _PYDANTIC_AI_INJECTED_MODEL,
             "system_prompt": _default_from_init(PydanticAIAdapter, "system_prompt"),
             "custom_section": _default_from_init(PydanticAIAdapter, "custom_section"),
+            # None, so the agent inherits whatever Agent.instrument_all() the host set.
+            "instrument": _default_from_init(PydanticAIAdapter, "instrument"),
         },
         custom_kwargs={
             "model": "anthropic:claude-sonnet-4-5-20250929",
             "system_prompt": "You are a helpful bot.",
             "custom_section": "Be concise.",
+            "instrument": True,
         },
         custom_expected={
             "model": "anthropic:claude-sonnet-4-5-20250929",
             "system_prompt": "You are a helpful bot.",
             "custom_section": "Be concise.",
+            "instrument": True,
         },
         skip_on_started_conformance=True,  # on_started creates real OpenAI client; tested in test_pydantic_ai_adapter
     )

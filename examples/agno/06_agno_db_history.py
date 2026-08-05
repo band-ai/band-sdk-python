@@ -44,11 +44,10 @@ from agno.db.in_memory import InMemoryDb
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
 
-from band import Agent
+from band import LogSettings, Agent
 from band.adapters import AgnoAdapter
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +62,7 @@ def get_required_env(name: str) -> str:
 def load_environment() -> tuple[str, str]:
     """Load env vars, validate credentials, and return (ws_url, rest_url)."""
     load_dotenv()
+    LogSettings().for_application().configure()
 
     get_required_env("ANTHROPIC_API_KEY")
     ws_url = get_required_env("BAND_WS_URL")

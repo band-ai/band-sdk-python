@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import logging
-
-from band import configure_logging
+from band import LogLevel, LogSettings
 
 
-def setup_logging(level: int = logging.INFO) -> None:
-    """Configure logging to show band + slack-sdk logs, mute noisy deps."""
-    configure_logging(
-        level,
-        extra_loggers={"slack_sdk": level},
-    )
+def setup_logging(level: LogLevel | None = None) -> None:
+    """Configure logging to show band + slack_sdk logs, hiding other noisy dependencies."""
+    settings = LogSettings.create(log_level=level)
+    settings.configure(extra_loggers={"slack_sdk": settings.log_level})

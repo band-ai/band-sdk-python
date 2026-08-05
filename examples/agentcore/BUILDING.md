@@ -315,7 +315,7 @@ See [`README.md`](README.md) for the full step-by-step.
    `/aws/bedrock-agentcore/runtimes/<runtime-id>/runtime-logs`. Look
    for the lifecycle log lines (`Claiming msg`, `Drained N stale
    messages`) the container emits at INFO.
-2. **Bridge logs locally**: `LOG_LEVEL=DEBUG` shows WS event delivery
+2. **Bridge logs locally**: `BAND_LOG_LEVEL=DEBUG` shows WS event delivery
    and forward attempts.
 3. **Smoke-test the container directly** via `boto3.invoke_agent_runtime`
    with a non-message event (e.g. `room_added`). The container should

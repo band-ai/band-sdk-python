@@ -32,17 +32,16 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 
+from setup_logging import setup_logging
 from band import Agent
 from band.adapters import AnthropicAdapter
 from band.integrations.slack import SlackAdapter, SlackApp
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+# The shared setup, not a bare LogSettings(): this driver exists to debug the
+# bridge, and slack_sdk's own INFO diagnostics are half of what there is to see.
+setup_logging()
 
 
 async def main() -> None:
