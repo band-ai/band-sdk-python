@@ -29,7 +29,6 @@ dependencies = [
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
     "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
-    "python-dateutil>=2.9.0.post0",
 ]
 
 [project.optional-dependencies]

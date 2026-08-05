@@ -127,3 +127,27 @@ class TestMonitoringNotice:
         assert result["keptBriefing"] is True, (
             "clearing the notice must not drop the cached briefing with it"
         )
+
+
+class TestPersistentWatchFailure:
+    def test_a_watch_that_keeps_failing_backs_off_instead_of_hot_looping(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """A deleted room or a revoked key fails the wait immediately, not
+        after its timeout — left unbounded that turns the 250ms happy-path
+        restart into several tool calls a second, forever."""
+        delays = behaviour["persistentWatchFailure"]["delays"]
+
+        assert len(delays) > 1, "need at least two retries to see it grow"
+        assert delays == sorted(delays), "each retry must wait at least as long"
+        assert delays[1] > delays[0], "the second retry must back off, not repeat"
+
+    def test_it_gives_up_rather_than_retrying_forever(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """Backing off slower is not enough on its own: a permanently dead
+        room must not be polled for as long as Desktop stays open."""
+        result = behaviour["persistentWatchFailure"]
+
+        assert result["gaveUp"] is True
+        assert result["status"].startswith("Live updates stopped")

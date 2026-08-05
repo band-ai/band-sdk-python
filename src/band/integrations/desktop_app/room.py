@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
-from dateutil.parser import isoparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from band.core.types import MessageType
@@ -23,11 +22,15 @@ def bare_handle(value: str | None) -> str:
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
-    """Validate the room-view timestamp, treating naive values as UTC."""
+    """Validate the room-view timestamp, treating naive values as UTC.
+
+    Only ever fed the resume cursor this module itself emits (`resume_token`
+    below), so stdlib parsing of that self-generated ISO 8601 shape is enough.
+    """
     if not value:
         return None
     try:
-        parsed = isoparse(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

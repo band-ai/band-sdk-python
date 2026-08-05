@@ -119,13 +119,20 @@ function mountView(source) {
     room: () => byId("room").textContent,
     hidden: id => byId(id).hidden,
     diagnostics: () => byId("events").textContent,
+    status: () => byId("status").textContent,
     toolCall: name => waiting("tools/call", item => item.params.name === name),
     contextUpdates: () =>
       sent.filter(item => item.method === "ui/update-model-context"),
     click: id => byId(id).click(),
-    // The RPC deadlines share this queue, so only the short restart delay runs.
-    tick: () => {
-      for (const timer of timers.splice(0).filter(item => item.delayMs <= 1000)) {
+    // The most recently scheduled timer's delay, e.g. the watch loop's next
+    // restart — later than any RPC deadline queued earlier for the same call.
+    scheduledDelay: () => timers.at(-1)?.delayMs,
+    // The RPC deadlines share this queue, so by default only the short
+    // restart delay runs; a caller driving a backoff past 1000ms raises the
+    // ceiling explicitly (firing a stale, already-settled RPC deadline here
+    // is a harmless no-op — its promise was already resolved or rejected).
+    tick: (maxDelayMs = 1000) => {
+      for (const timer of timers.splice(0).filter(item => item.delayMs <= maxDelayMs)) {
         timer.callback();
       }
     }
@@ -332,6 +339,36 @@ const SCENARIOS = {
     return {
       context: view.contextUpdates().at(-1).params.content[0].text,
       diagnostics: view.diagnostics()
+    };
+  },
+
+  /** A watch that keeps failing (a deleted room, a revoked key) must back off
+   * between retries instead of hot-looping, and eventually give up rather
+   * than poll a dead room until Desktop closes. */
+  async persistentWatchFailure(source) {
+    const view = await open(
+      source,
+      "room-a",
+      transcript("room-a", [], "2026-01-01T00:00:01Z")
+    );
+
+    const delays = [];
+    for (let round = 0; round < 12; round += 1) {
+      const watch = view.toolCall("band_wait_for_room_event");
+      if (!watch) break;
+      view.refuse(watch, { code: -1, message: "boom" });
+      await view.settle();
+      // Once it gives up, no retry is scheduled: stop before reading a delay
+      // that would only reflect this round's already-settled RPC deadline.
+      if (view.status().startsWith("Live updates stopped")) break;
+      delays.push(view.scheduledDelay());
+      view.tick(60000);
+    }
+
+    return {
+      delays,
+      gaveUp: !view.toolCall("band_wait_for_room_event"),
+      status: view.status()
     };
   }
 };

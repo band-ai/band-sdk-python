@@ -93,6 +93,13 @@
     maxWatchS: 15,
     requestTimeoutMs: 15000,
     watchRestartDelayMs: 250,
+    // A wait that fails immediately (a deleted room, a revoked key) must not
+    // retry at the happy-path cadence forever — back off exponentially from
+    // watchRestartDelayMs, capped here, and give up after watchGiveUpAfter
+    // consecutive failures (~60s of tapering retries) rather than poll a dead
+    // room until Desktop closes.
+    watchMaxRestartDelayMs: 30000,
+    watchGiveUpAfter: 8,
     contextMessages: 30,
     contextMessageChars: 2000
   };
@@ -497,6 +504,9 @@
 
   let watching = false;
   let stopped = false;
+  /** Consecutive failed watches; reset by a tick that succeeds. Drives the
+   * backoff and the give-up threshold below. */
+  let consecutiveFailures = 0;
   /** @type {Promise<void>} */
   let ingesting = Promise.resolve();
 
@@ -583,6 +593,7 @@
   async function watchRoom() {
     if (!chatId || watching || stopped) return;
     watching = true;
+    let failed = false;
     try {
       /** @type {ToolResult} */
       const result = await request("tools/call", {
@@ -609,14 +620,30 @@
       if (payload?.event_received) eventCount += 1;
       renderDiagnostics();
       if (!stopped) await ingest(payload);
+      consecutiveFailures = 0;
     } catch (error) {
+      failed = true;
+      consecutiveFailures += 1;
       if (!stopped) {
-        setStatus("Live event wait failed", true);
+        if (consecutiveFailures >= TUNING.watchGiveUpAfter) {
+          stopped = true;
+          setStatus("Live updates stopped after repeated errors", true);
+        } else {
+          setStatus("Live event wait failed", true);
+        }
         log("error", { stage: "wait-for-room-event", detail: String(error) });
       }
     } finally {
       watching = false;
-      if (!stopped) window.setTimeout(watchRoom, TUNING.watchRestartDelayMs);
+      if (!stopped) {
+        const delay = failed
+          ? Math.min(
+              TUNING.watchRestartDelayMs * 2 ** consecutiveFailures,
+              TUNING.watchMaxRestartDelayMs
+            )
+          : TUNING.watchRestartDelayMs;
+        window.setTimeout(watchRoom, delay);
+      }
     }
   }
 

@@ -394,13 +394,12 @@ def monitor_summary(
     elif not event.pending_requests:
         headline = (f"{len(event.messages)} new message(s), none addressed to you.",)
     else:
-        addressed = "; ".join(
-            f"{item.sender_name or 'a peer'}: {item.content}"
-            for item in event.pending_requests
-        )
+        # Sender and content live structurally on pending_requests already
+        # (part of the transcript this summary accompanies); echoing them into
+        # this instruction-shaped prose would duplicate untrusted peer text
+        # into the channel the model most readily acts on.
         headline = (
-            f"{len(event.pending_requests)} new Band message(s) address you: "
-            f"{addressed}.",
+            f"{len(event.pending_requests)} new Band message(s) address you.",
             "Answer them in the room now as the connected agent.",
         )
     return " ".join(filter(None, (*headline, resume, event.transport.warning)))
