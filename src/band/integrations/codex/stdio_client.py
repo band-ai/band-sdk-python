@@ -10,6 +10,8 @@ import shutil
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
+from band.core.exceptions import BandConnectionError
+
 from .rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,7 @@ class CodexStdioClient(BaseJsonRpcClient):
             )
         except FileNotFoundError as exc:
             binary = self.command[0] if self.command else "codex"
-            raise FileNotFoundError(
+            raise BandConnectionError(
                 f"Codex CLI binary not found: '{binary}'. "
                 "Install it (`npm install -g @openai/codex`), authenticate "
                 "(`codex login`), or configure CodexAdapterConfig.codex_command."

@@ -68,10 +68,10 @@ def make_agno_agent() -> Callable[..., MagicMock]:
         agent.tools = []
         resp = response if response is not None else RunOutput()
         if events is None:
-            # Non-streaming path (Emit.EXECUTION off): `await agent.arun(...)`.
+            # Non-streaming path (Emit.TOOL_CALLS off): `await agent.arun(...)`.
             agent.arun = AsyncMock(return_value=resp)
         else:
-            # Streaming path (Emit.EXECUTION on): the adapter iterates
+            # Streaming path (Emit.TOOL_CALLS on): the adapter iterates
             # `agent.arun(stream=True, ...)`, which yields the run events then the
             # final RunOutput. A bare MagicMock returns an async iterator without
             # awaiting, matching how the adapter consumes the stream.

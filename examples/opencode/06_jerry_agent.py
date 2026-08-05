@@ -57,8 +57,6 @@ async def main() -> None:
     async with Agent.from_config(
         "jerry_agent",
         adapter=adapter,
-        ws_url=settings.band_ws_url,
-        rest_url=settings.band_rest_url,
     ) as agent:
         await agent.run_forever()
 

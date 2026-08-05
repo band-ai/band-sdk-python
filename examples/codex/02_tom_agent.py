@@ -31,7 +31,6 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add parent directory to path for prompts import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -55,24 +54,13 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
-
-    codex_cwd: str = ""
-    codex_model: str = ""
-
-
 async def main() -> None:
     load_dotenv()
-    settings = Settings()
 
+    # cwd/model self-source from CODEX_CWD/CODEX_MODEL when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport="stdio",
-            cwd=settings.codex_cwd or os.getcwd(),
-            model=settings.codex_model or None,
             personality="none",
             custom_section=generate_tom_prompt("Tom"),
             include_base_instructions=True,

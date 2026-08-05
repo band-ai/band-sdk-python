@@ -534,11 +534,11 @@ class CrewAIFlowCustomTools:
         tools: AgentToolsProtocol,
         features: AdapterFeatures,
     ) -> None:
-        from band.integrations.crewai import EmitExecutionReporter
+        from band.integrations.crewai import EmitToolCallsReporter
 
         self._custom_tools = custom_tools
         self._tools = tools
-        self._reporter = EmitExecutionReporter(features)
+        self._reporter = EmitToolCallsReporter(features)
 
     def __dir__(self) -> list[str]:
         return sorted({*super().__dir__(), *self._custom_tools})

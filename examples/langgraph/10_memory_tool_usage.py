@@ -39,19 +39,8 @@ configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def get_required_env(name: str) -> str:
-    """Return a required environment variable or raise a clear error."""
-    value = os.getenv(name)
-    if not value:
-        raise ValueError(f"{name} environment variable is required")
-    return value
-
-
 async def main() -> None:
     load_dotenv()
-
-    ws_url = get_required_env("BAND_WS_URL")
-    rest_url = get_required_env("BAND_REST_URL")
 
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
@@ -72,8 +61,6 @@ async def main() -> None:
     async with Agent.from_config(
         "memory_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 

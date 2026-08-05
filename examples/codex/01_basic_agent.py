@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -63,14 +62,7 @@ class Settings(BaseSettings):
     )
 
     agent_key: str = "darter"
-    codex_transport: str = "stdio"
-    codex_ws_url: str = "ws://127.0.0.1:8765"
     codex_role: str = ""
-    codex_model: str = ""
-    codex_cwd: str = ""
-    codex_approval_policy: str = "never"
-    codex_approval_mode: str = "manual"
-    codex_turn_task_markers: bool = False
 
 
 async def main() -> None:
@@ -78,9 +70,6 @@ async def main() -> None:
     settings = Settings()
 
     agent_key = settings.agent_key
-    codex_transport = settings.codex_transport
-    if codex_transport not in {"stdio", "ws"}:
-        raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
 
     # Load role prompt from file if CODEX_ROLE is set
     codex_role = settings.codex_role
@@ -95,27 +84,22 @@ async def main() -> None:
                 "Role '%s' specified but no prompt file at %s", codex_role, prompt_file
             )
 
+    # transport/codex_ws_url/model/cwd/approval_policy/approval_mode/
+    # emit_turn_task_markers all self-source from CODEX_* env vars (see module
+    # docstring) when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            transport=codex_transport,  # type: ignore[arg-type]  # str from env, validated at runtime
-            codex_ws_url=settings.codex_ws_url,
-            model=settings.codex_model or None,
-            cwd=settings.codex_cwd or os.getcwd(),
-            approval_policy=settings.codex_approval_policy,
-            approval_mode=settings.codex_approval_mode,  # type: ignore[arg-type]  # str from env, validated at runtime
             personality="pragmatic",
             custom_section=custom_section,
             include_base_instructions=True,
-            emit_turn_task_markers=settings.codex_turn_task_markers,
             fallback_send_agent_text=True,
         ),
         emit=Emit.TASK_EVENTS,
     )
 
     logger.info(
-        "Starting Codex agent: agent_key=%s transport=%s role=%s",
+        "Starting Codex agent: agent_key=%s role=%s",
         agent_key,
-        codex_transport,
         codex_role or "none",
     )
     async with Agent.from_config(

@@ -1,6 +1,6 @@
 """Guards: examples and docs must use the current adapter construction surface.
 
-Three retired patterns are cheap to reintroduce by copy-pasting an old example,
+Four retired patterns are cheap to reintroduce by copy-pasting an old example,
 and nothing else would catch them (``examples/`` is excluded from the
 markdown-docs CI run, and example scripts are not imported by the unit suite):
 
@@ -15,6 +15,12 @@ markdown-docs CI run, and example scripts are not imported by the unit suite):
   Letta/Opencode config-boolean variants). Adapters take ``emit=``/
   ``capabilities=``/... directly now (see ``FeatureKwargs``); ``Emit.EXECUTION``
   was renamed ``Emit.TOOL_CALLS`` in the same change.
+* ``Agent.from_config()``/``Agent.create()`` given ``ws_url=``/``rest_url=``
+  explicitly. Both still resolve them internally (explicit arg > env >
+  production default) — an example threading a settings field through as a
+  kwarg re-requires env vars the SDK would otherwise resolve on its own, and
+  a literal ``os.getenv("BAND_WS_URL")`` token check can't catch that indirect
+  form.
 """
 
 from __future__ import annotations
@@ -36,6 +42,15 @@ FORBIDDEN_CONSTRUCTOR_KWARGS: dict[str, frozenset[str]] = {
     "CopilotACPAdapterConfig": frozenset({"rest_url"}),
     "ParlantAdapter": frozenset({"additional_tools"}),
 }
+
+# Agent.from_config()/Agent.create() resolve BAND_WS_URL/BAND_REST_URL
+# themselves (explicit arg > env > production default). Unlike the classes
+# above, ws_url/rest_url aren't retired parameters — examples must simply omit
+# them. Checked via AST rather than a URL_BOILERPLATE_TOKENS string, since the
+# leak here is indirect (a settings object's field threaded in as a kwarg),
+# not a literal os.getenv(...) call.
+PLATFORM_URL_ENTRY_POINTS = frozenset({"from_config", "create"})
+PLATFORM_URL_KWARGS = frozenset({"ws_url", "rest_url"})
 
 # Parlant server plumbing that customer-facing code must never touch — the
 # adapter owns ports/server/tool wiring. (SDK internals and the E2E toolkit
@@ -133,15 +148,24 @@ def test_example_uses_current_construction_surface(path: Path) -> None:
         if not isinstance(node, ast.Call):
             continue
         name = _call_name(node)
+        used = {kw.arg for kw in node.keywords if kw.arg}
+
         forbidden = FORBIDDEN_CONSTRUCTOR_KWARGS.get(name or "")
-        if not forbidden:
-            continue
-        used = {kw.arg for kw in node.keywords if kw.arg} & forbidden
-        assert not used, (
-            f"{path}:{node.lineno}: {name}({', '.join(sorted(used))}=...) — "
-            "retired parameter(s); Band credentials flow once via Agent, and "
-            "the runtime injects the platform connection into the adapter"
-        )
+        if forbidden:
+            hit = used & forbidden
+            assert not hit, (
+                f"{path}:{node.lineno}: {name}({', '.join(sorted(hit))}=...) — "
+                "retired parameter(s); Band credentials flow once via Agent, and "
+                "the runtime injects the platform connection into the adapter"
+            )
+
+        if name in PLATFORM_URL_ENTRY_POINTS:
+            hit = used & PLATFORM_URL_KWARGS
+            assert not hit, (
+                f"{path}:{node.lineno}: {name}({', '.join(sorted(hit))}=...) — "
+                "Agent resolves BAND_WS_URL/BAND_REST_URL itself; omit ws_url/"
+                "rest_url (or use band.config.PlatformSettings)"
+            )
 
 
 @pytest.mark.parametrize(

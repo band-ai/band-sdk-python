@@ -22,7 +22,7 @@ from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.integrations.crewai import (
     CrewAIToolContext,
-    EmitExecutionReporter,
+    EmitToolCallsReporter,
     ReplyTracker,
     build_band_crewai_tools,
 )
@@ -260,7 +260,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         """
         return build_band_crewai_tools(
             get_context=self._get_context,
-            reporter=EmitExecutionReporter(self.features),
+            reporter=EmitToolCallsReporter(self.features),
             features=self.features,
             custom_tools=self._custom_tools,
             fallback_loop=self._tool_loop,

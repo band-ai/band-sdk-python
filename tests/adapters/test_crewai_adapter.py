@@ -1416,11 +1416,11 @@ class TestExecutionReporting:
     async def test_report_tool_call_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in EmitExecutionReporter.report_call should not propagate."""
-        from band.integrations.crewai import EmitExecutionReporter
+        """send_event 403 in EmitToolCallsReporter.report_call should not propagate."""
+        from band.integrations.crewai import EmitToolCallsReporter
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
-        reporter = EmitExecutionReporter(adapter.features)
+        reporter = EmitToolCallsReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
@@ -1430,11 +1430,11 @@ class TestExecutionReporting:
     async def test_report_tool_result_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in EmitExecutionReporter.report_result should not propagate."""
-        from band.integrations.crewai import EmitExecutionReporter
+        """send_event 403 in EmitToolCallsReporter.report_result should not propagate."""
+        from band.integrations.crewai import EmitToolCallsReporter
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
-        reporter = EmitExecutionReporter(adapter.features)
+        reporter = EmitToolCallsReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise

@@ -168,11 +168,17 @@ async def _stop_server(
 async def _close_startup_context(server: p.Server, exc: BaseException) -> None:
     startup_cm = getattr(server, "_startup_context_manager", None)
     if startup_cm is None:
+        logger.warning(
+            "Parlant server has no %s attribute; skipping its cleanup "
+            "(parlant internals may have changed)",
+            "_startup_context_manager",
+        )
         return
     try:
         await startup_cm.__aexit__(type(exc), exc, exc.__traceback__)
     except BaseException:
-        # It may already have unwound itself. The server-owned exit stack below is
+        # BaseException, not Exception: must also swallow CancelledError, since
+        # it may already have unwound itself. The server-owned exit stack below is
         # independent and remains safe to close.
         pass
 
@@ -180,6 +186,11 @@ async def _close_startup_context(server: p.Server, exc: BaseException) -> None:
 async def _close_exit_stack(server: p.Server) -> None:
     exit_stack = getattr(server, "_exit_stack", None)
     if exit_stack is None:
+        logger.warning(
+            "Parlant server has no %s attribute; skipping its cleanup "
+            "(parlant internals may have changed)",
+            "_exit_stack",
+        )
         return
     try:
         await exit_stack.aclose()

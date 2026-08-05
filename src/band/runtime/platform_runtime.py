@@ -85,7 +85,13 @@ class PlatformRuntime:
 
     @property
     def connection(self) -> PlatformConnection:
-        """Platform coordinates for injection into the adapter (see Agent.start)."""
+        """Platform coordinates for injection into the adapter (see Agent.start).
+
+        Builds from this instance's own fields rather than delegating to
+        ``self._link.to_platform_connection()``: unlike those fields, ``_link``
+        is only set once ``initialize()`` has run, so delegating would need a
+        None-guard for any caller reading this before startup completes.
+        """
         return PlatformConnection(
             agent_id=self._agent_id,
             api_key=self._api_key,

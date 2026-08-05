@@ -67,7 +67,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from band import Agent
-from band.config import PlatformSettings, load_agent_config
+from band.config import load_agent_config
 from band.core.types import Emit
 from band.platform.event import ContactRequestReceivedEvent, ContactEvent
 from band.runtime.contact_tools import ContactTools
@@ -225,8 +225,6 @@ User: "add john as a contact"
 async def run_langgraph_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     custom_section: str,
     logger: logging.Logger,
 ) -> None:
@@ -247,8 +245,6 @@ async def run_langgraph_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -256,8 +252,6 @@ async def run_langgraph_agent(
 async def run_pydantic_ai_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
@@ -301,8 +295,6 @@ async def run_pydantic_ai_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=contact_config,
     ) as agent:
         await agent.run_forever()
@@ -311,8 +303,6 @@ async def run_pydantic_ai_agent(
 async def run_anthropic_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
@@ -342,8 +332,6 @@ async def run_anthropic_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=contact_config,
     ) as agent:
         await agent.run_forever()
@@ -352,8 +340,6 @@ async def run_anthropic_agent(
 async def run_claude_sdk_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str | None,
     fallback_model: str | None,
     custom_section: str,
@@ -390,8 +376,6 @@ async def run_claude_sdk_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=contact_config,
     ) as agent:
         await agent.run_forever()
@@ -400,8 +384,6 @@ async def run_claude_sdk_agent(
 async def run_parlant_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
@@ -430,8 +412,6 @@ async def run_parlant_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -439,8 +419,6 @@ async def run_parlant_agent(
 async def run_crewai_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     custom_section: str,
     enable_streaming: bool,
@@ -463,8 +441,6 @@ async def run_crewai_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -472,8 +448,6 @@ async def run_crewai_agent(
 async def run_codex_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     custom_section: str,
     codex_transport: str,
     codex_ws_url: str,
@@ -521,8 +495,6 @@ async def run_codex_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -530,8 +502,6 @@ async def run_codex_agent(
 async def run_pydantic_ai_contacts_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -558,8 +528,6 @@ async def run_pydantic_ai_contacts_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -567,8 +535,6 @@ async def run_pydantic_ai_contacts_agent(
 async def run_contacts_auto_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -613,8 +579,6 @@ When you see system messages about new contacts, acknowledge them to the user.""
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=config,
     ) as agent:
         await agent.run_forever()
@@ -623,8 +587,6 @@ When you see system messages about new contacts, acknowledge them to the user.""
 async def run_contacts_hub_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -671,8 +633,6 @@ Actions available:
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=config,
     ) as agent:
         await agent.run_forever()
@@ -681,8 +641,6 @@ Actions available:
 async def run_contacts_broadcast_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     model: str,
     logger: logging.Logger,
 ) -> None:
@@ -720,8 +678,6 @@ Acknowledge these updates to the user when you see them.
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=config,
     ) as agent:
         await agent.run_forever()
@@ -730,8 +686,6 @@ Acknowledge these updates to the user when you see them.
 async def run_a2a_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     a2a_url: str,
     enable_debug: bool,
     logger: logging.Logger,
@@ -754,8 +708,6 @@ async def run_a2a_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -763,8 +715,6 @@ async def run_a2a_agent(
 async def run_a2a_gateway_agent(
     agent_id: str,
     api_key: str,
-    rest_url: str,
-    ws_url: str,
     gateway_port: int,
     enable_debug: bool,
     logger: logging.Logger,
@@ -798,8 +748,6 @@ async def run_a2a_gateway_agent(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     ) as agent:
         await agent.run_forever()
 
@@ -1024,11 +972,6 @@ Examples:
     if args.agent is None:
         args.agent = default_agents.get(args.example, "simple_agent")
 
-    # Platform URLs: BAND_REST_URL / BAND_WS_URL env or production defaults
-    platform = PlatformSettings()
-    rest_url = platform.BAND_REST_URL
-    ws_url = platform.BAND_WS_URL
-
     # Load agent credentials
     try:
         agent_id, api_key = load_agent_config(args.agent)
@@ -1037,8 +980,6 @@ Examples:
 
     logger.info("Agent: %s (%s)", args.agent, agent_id)
     logger.info("Example: %s", args.example)
-    logger.info("REST URL: %s", rest_url)
-    logger.info("WS URL: %s", ws_url)
 
     # Build contact config if specified
     contact_config = build_contact_config(args.contacts, logger)
@@ -1061,8 +1002,6 @@ Examples:
             await run_langgraph_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 custom_section=args.custom_section,
                 logger=logger,
             )
@@ -1070,8 +1009,6 @@ Examples:
             await run_pydantic_ai_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1082,8 +1019,6 @@ Examples:
             await run_pydantic_ai_contacts_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1091,8 +1026,6 @@ Examples:
             await run_contacts_auto_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1100,8 +1033,6 @@ Examples:
             await run_contacts_hub_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1109,8 +1040,6 @@ Examples:
             await run_contacts_broadcast_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 logger=logger,
             )
@@ -1118,8 +1047,6 @@ Examples:
             await run_anthropic_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1130,8 +1057,6 @@ Examples:
             await run_claude_sdk_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 fallback_model=args.fallback_model,
                 custom_section=args.custom_section,
@@ -1144,8 +1069,6 @@ Examples:
             await run_parlant_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1155,8 +1078,6 @@ Examples:
             await run_crewai_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
@@ -1185,8 +1106,6 @@ Examples:
             await run_codex_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 custom_section=codex_custom,
                 codex_transport=args.codex_transport,
                 codex_ws_url=args.codex_ws_url,
@@ -1204,8 +1123,6 @@ Examples:
             await run_a2a_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 a2a_url=args.a2a_url,
                 enable_debug=args.debug,
                 logger=logger,
@@ -1214,8 +1131,6 @@ Examples:
             await run_a2a_gateway_agent(
                 agent_id=agent_id,
                 api_key=api_key,
-                rest_url=rest_url,
-                ws_url=ws_url,
                 gateway_port=args.gateway_port,
                 enable_debug=args.debug,
                 logger=logger,

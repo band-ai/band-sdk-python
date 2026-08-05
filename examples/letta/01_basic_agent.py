@@ -84,11 +84,7 @@ class ExampleSettings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
-    letta_api_key: str | None = None  # LETTA_API_KEY (required for Letta Cloud)
-    letta_project: str | None = None  # LETTA_PROJECT
     letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
-    letta_embedding: str | None = None  # LETTA_EMBEDDING
     letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str | None = None  # MCP_SERVER_URL (external band-mcp)
 
@@ -111,16 +107,12 @@ async def main() -> None:
 
     # Create adapter — defaults to Letta Cloud (https://api.letta.com).
     # For self-hosted, set LETTA_BASE_URL=http://localhost:8283
+    #
+    # base_url/provider_key/project/embedding self-source from
+    # LETTA_BASE_URL/LETTA_API_KEY/LETTA_PROJECT/LETTA_EMBEDDING when omitted.
     adapter = LettaAdapter(
         config=LettaAdapterConfig(
-            base_url=settings.letta_base_url,
-            # Required for Letta Cloud, optional for self-hosted
-            provider_key=settings.letta_api_key,
-            # Letta Cloud project scoping (optional)
-            project=settings.letta_project,
             model=settings.letta_model,
-            # Required by Letta's Docker server on agent create
-            embedding=settings.letta_embedding,
             # MCP tool path (self-hosted unless MCP_SERVER_URL is set)
             mcp=mcp_config,
             custom_section="You are a helpful assistant. Be concise and friendly.",

@@ -80,6 +80,13 @@ logger = logging.getLogger(__name__)
 class CopilotSDKAdapterConfig:
     """Runtime configuration for Copilot SDK adapter sessions.
 
+    Stays a plain dataclass rather than adopting ``pydantic_settings.BaseSettings``
+    like CodexAdapterConfig/LettaAdapterConfig/OpencodeAdapterConfig: ``provider``
+    holds an external SDK type (``ProviderConfig``) and ``ask_user`` a callable,
+    both a poor fit for settings validation — env-var precedent on individual
+    fields (``github_token``, ``base_directory``/``COPILOT_HOME``) doesn't
+    outweigh that.
+
     Attributes:
         model: Copilot model to use (None = Copilot CLI default).
         custom_section: Extra system-prompt section.

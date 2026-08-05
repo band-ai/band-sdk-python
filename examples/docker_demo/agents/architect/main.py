@@ -30,8 +30,6 @@ class Identity(BaseSettings):
 
     agent_id: str
     api_key: str
-    ws_url: str
-    rest_url: str
 
 
 class ArchitectConfig(BaseSettings):
@@ -80,8 +78,6 @@ async def main() -> None:
         adapter=adapter,
         agent_id=identity.agent_id,
         api_key=identity.api_key,
-        ws_url=identity.ws_url,
-        rest_url=identity.rest_url,
     )
     await run_with_graceful_shutdown(agent)
 

@@ -52,6 +52,10 @@ class _FlagEnum(StrEnum):
     """
 
     def __or__(self, other: "Self | frozenset[Self]") -> frozenset[Self]:
+        # Only guards a member on at least one side of `|`. Two already-combined
+        # frozensets of different _FlagEnum subclasses (e.g. `(Emit.A | Emit.B) |
+        # (Capability.C | Capability.D)`) are both plain `frozenset` by then, so
+        # `frozenset.__or__` runs instead and this guard never sees them.
         if isinstance(other, frozenset):
             combined = frozenset(other) | {self}
         elif isinstance(other, _FlagEnum):

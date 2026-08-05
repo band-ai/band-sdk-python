@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -126,3 +127,30 @@ async def test_pre_ready_setup_failure_closes_both_resource_stacks(monkeypatch):
     server = EvaluationFailureServer.instances[-1]
     server._startup_context_manager.__aexit__.assert_awaited_once()
     server._exit_stack.aclose.assert_awaited_once()
+
+
+async def test_missing_private_attrs_logs_warning_instead_of_silent_noop(
+    monkeypatch, caplog
+):
+    class NoPrivateAttrsServer(StubServer):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(**kwargs)
+            del self._exit_stack
+            del self._startup_context_manager
+
+        async def __aexit__(self, exc_type, exc_value, _tb):
+            if exc_value is not None:
+                self.events.append("abort")
+                return False
+            self.events.append("evaluations")
+            raise RuntimeError("evaluation failed")
+
+    monkeypatch.setattr(server_module.p, "Server", NoPrivateAttrsServer)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError, match="evaluation failed"):
+            async with running_parlant_server():
+                pass
+
+    assert "_startup_context_manager" in caplog.text
+    assert "_exit_stack" in caplog.text
