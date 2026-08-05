@@ -502,6 +502,14 @@ resolves each in a separate fork.
 
 ## Environment Variables
 
+When running examples, live probes, integration checks, or provisioning
+against a real Band platform, load these from the repo-root `.env.test` —
+not ad-hoc `.env` copies, shell leftovers, or invented values — and never
+print secret values from it. Example-local `.env` files (e.g.
+`examples/**/.env`) may still hold Docker/`GITHUB_TOKEN` config, but Band
+agent keys and platform URLs should stay aligned with `.env.test` /
+`agent_config.yaml` rather than a second source of truth.
+
 - `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
 - `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
 - `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages (the only Band key the baseline toolkit needs — it provisions its own agents)
@@ -708,6 +716,21 @@ test, where the markdown-docs run actually executes it.
 
 ## Pre-Commit Checklist
 
+Before running the commands below, re-read your own diff once against the
+Coding Standards above — including code you just wrote this session, not only
+code you started from. The two rules that get skipped under time pressure:
+
+- **Single source of truth**: a literal, magic string, or multi-line block
+  re-typed in more than one place (a second copy you just wrote counts) instead
+  of one `StrEnum` / constant / small helper every site references.
+- **Intent-oriented code**: a raw comprehension or dict-poke standing in for a
+  small, intent-named helper — e.g. `[e for e in tools.events_sent if
+  e["message_type"] == "x"]` repeated at each call site instead of one
+  `events_of_type(tools, "x")`.
+
+Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
+these, so this step is the only gate for them.
+
 ```bash
 uv run ruff check .
 uv run ruff format .
@@ -837,10 +860,7 @@ Examples:
 
 ### Pre-Commit Checklist
 
-- Run tests before committing
-- Run linting and formatting
-- Ensure type checking passes
-- Review changes with `git diff`
+See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.
 
 ### Code Review
 
