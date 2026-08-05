@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,11 @@ from band import (
 )
 from band.logging_config import JSON_LOGGER_REQUIREMENT, OTEL_CORRELATION_FIELDS
 from tests.logsupport import restored_logging
+
+requires_posix_modes = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows tracks only the read-only bit; POSIX modes are not observable",
+)
 
 
 def test_configure_logging_signature_matches_builder() -> None:
@@ -269,8 +275,10 @@ def test_rotation_rolls_over_and_keeps_the_requested_backups(tmp_path: Path) -> 
     assert log_file.stat().st_size <= 200
     # A rollover replaces the live file, so a mode set once at configure time
     # protects only the first generation — and a long-lived agent's newest log
-    # is the one holding the most room content.
-    assert [mode(path) for path in sorted(tmp_path.iterdir())] == ["0o600"] * 3
+    # is the one holding the most room content. (POSIX-only: Windows has no
+    # owner-only mode to observe.)
+    if sys.platform != "win32":
+        assert [mode(path) for path in sorted(tmp_path.iterdir())] == ["0o600"] * 3
 
 
 def test_per_logger_level_reaches_the_file_too(tmp_path: Path) -> None:
@@ -363,6 +371,7 @@ def test_configure_logging_creates_parent_directory(tmp_path: Path) -> None:
     assert "written to file" in log_file.read_text()
 
 
+@requires_posix_modes
 def test_band_creates_its_log_directories_and_file_owner_only(tmp_path: Path) -> None:
     """Band logs message content at DEBUG, so a log file can hold room content.
 
@@ -380,6 +389,7 @@ def test_band_creates_its_log_directories_and_file_owner_only(tmp_path: Path) ->
     assert mode(log_file) == "0o600"
 
 
+@requires_posix_modes
 def test_paths_band_did_not_create_keep_the_modes_they_have(tmp_path: Path) -> None:
     """Hardening reaches only what Band creates; the rest is the operator's.
 

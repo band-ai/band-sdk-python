@@ -141,8 +141,11 @@ class OwnerOnlyCreate:
             pass  # Not ours to re-mode; the handler opens it as it finds it.
         else:
             # The creation mode is masked by umask and fchmod is not, so the
-            # pair lands on 0600 whatever the host process set.
-            os.fchmod(descriptor, LOG_FILE_MODE)
+            # pair lands on 0600 whatever the host process set. Windows has no
+            # fchmod before 3.13 and honors only the read-only bit anyway, so
+            # there the creation mode is the whole (best-effort) story.
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, LOG_FILE_MODE)
             os.close(descriptor)
         return super()._open()  # type: ignore[misc]
 
