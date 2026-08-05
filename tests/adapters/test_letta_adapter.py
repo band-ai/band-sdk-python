@@ -7,6 +7,7 @@ in ``test_letta_mcp.py``; the shared mock factories in ``lettakit.py``.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -55,6 +56,14 @@ class TestLettaAdapterInit:
         )
         adapter = LettaAdapter(config=config)
         assert adapter.config is config
+
+    def test_no_leaked_adapter_config_env_vars(self) -> None:
+        """tests/conftest.py's isolated_adapter_config_env must keep a leaked
+        .env.test (or another test's leftover) from ever reaching here."""
+        leaked = [
+            k for k in os.environ if k.startswith(("CODEX_", "LETTA_", "OPENCODE_"))
+        ]
+        assert leaked == [], f"leaked adapter-config env vars: {leaked}"
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from typing import Any
@@ -226,6 +227,13 @@ async def _wait_for_pending_approval(
 
 class TestCodexAdapter:
     def test_config_defaults_are_low_noise_and_manual_approval(self) -> None:
+        # These defaults only hold because tests/conftest.py's isolated_adapter_config_env
+        # keeps a leaked .env.test (or another test's leftover) from ever reaching here.
+        leaked = [
+            k for k in os.environ if k.startswith(("CODEX_", "LETTA_", "OPENCODE_"))
+        ]
+        assert leaked == [], f"leaked adapter-config env vars: {leaked}"
+
         config = CodexAdapterConfig()
         assert config.emit_turn_task_markers is False
         assert config.approval_mode == "manual"
