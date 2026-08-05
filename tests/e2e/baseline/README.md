@@ -560,12 +560,18 @@ the `dev` extra but are split out for isolation.
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
 | `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI`, auth via `GITHUB_TOKEN`) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
+| `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
 
 `backends` folds codex + opencode into one job (both install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
 one backend failing to come up can redden the other's cells (the per-adapter report
 still shows which). `google` gets its own lane so Google free-tier rate-limit
-flakiness is isolated; `letta` stands alone for the live Letta server its job stands up.
+flakiness is isolated; `letta` stands alone for the live Letta server its job stands up;
+`parlant` stands alone because its own venv can't share a resolved environment with
+`pydantic_ai` (unlike every other split above, this one is a packaging conflict, not
+an isolation choice) — see `deps.py`'s `LANE_EXTRAS` seed comment for why `ci_lanes()`
+has to special-case it in (parlant registers no matrix adapter, so nothing would
+otherwise place this lane).
 
 **The knob:** `BAND_E2E_LANE=<lane id>`. Scheduling is *derived*: a test's lane is the
 home lane of **all** the frameworks it touches — a matrix cell's adapter (plus its

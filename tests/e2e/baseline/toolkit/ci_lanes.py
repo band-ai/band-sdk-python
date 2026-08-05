@@ -69,7 +69,12 @@ def ci_lanes() -> tuple[CILane, ...]:
     """
     # include_pending: a pending adapter still defines its lane (the CI job exists)
     # even though the matrix runs no cells for it.
-    by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: []}
+    # Lane.PARLANT is seeded the same way: parlant is deliberately not a registered
+    # matrix adapter (see smoke/adapters/test_parlant.py's own docstring), so no
+    # adapter's `requires` will ever place it here — without this seed the lane
+    # would never appear, and its manually `@lane`-pinned smoke would have nowhere
+    # to run.
+    by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: [], Lane.PARLANT: []}
     for spec in specs(include_pending=True):  # stable id order
         by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
     return tuple(

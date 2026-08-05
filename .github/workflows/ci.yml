@@ -163,6 +163,63 @@ jobs:
           src/band/integrations/crewai/
 
 
+  test-parlant:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.12']
+      fail-fast: false
+
+    # Use bash on every OS so the multiline pytest and pyrefly commands stay
+    # identical across Linux and Windows.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Configure git to use HTTPS for GitHub
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install parlant dependencies
+      run: uv sync --locked --extra dev-parlant
+
+    - name: Run parlant tests
+      env:
+        # dev-parlant venv lacks langgraph/anthropic-adapter/pydantic-ai/etc.;
+        # tolerate missing framework configs instead of failing fast.
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+      # Only the tests that *need* this venv. Every other parlant test fakes the
+      # package through sys.modules, so the `test` job above already runs it and
+      # a second pass here would add no signal — just a path to forget.
+      # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
+      run: |
+        uv run pytest \
+          tests/integrations/parlant/test_tools.py \
+          tests/framework_conformance/ -k parlant
+
+    - name: Pyrefly check (parlant sources)
+      run: |
+        uv run pyrefly check \
+          src/band/adapters/parlant.py \
+          src/band/converters/parlant.py \
+          src/band/integrations/parlant/
+
+
   packaging:
     runs-on: ubuntu-latest
     steps:
