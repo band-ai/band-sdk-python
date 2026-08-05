@@ -12,9 +12,11 @@ plumbing as every other baseline test.
 
 This module ``importorskip``s parlant, so it skips cleanly where parlant isn't
 installed — e.g. the ``crewai`` lane, whose ``dev-crewai`` venv conflicts with
-parlant. That is a *structural* absence (a venv that deliberately can't hold both),
-the same class of skip the matrix's lane scoping performs, not the
-"missing key = misconfiguration" case the fail-loud policy targets.
+parlant, or any lane run with a plain ``dev`` venv (parlant now needs its own
+``dev-parlant`` extra — see pyproject ``[tool.uv] conflicts``). That is a
+*structural* absence (a venv that deliberately can't hold both), the same class of
+skip the matrix's lane scoping performs, not the "missing key = misconfiguration"
+case the fail-loud policy targets.
 
 Run with:
     E2E_TESTS_ENABLED=true uv run pytest \\
@@ -46,9 +48,11 @@ _SHORT = "You are a friendly assistant in a chat room. Reply in one short senten
 
 
 # Parlant isn't in the adapter registry (NON_AGENT_ADAPTERS), so the lane selector
-# can't derive its home lane and would run it in every lane. Pin it to core (whose
-# dev extra hosts parlant + OpenAI) explicitly.
-@lane(Lane.CORE)
+# can't derive its home lane and would run it in every lane. Pin it to its own
+# parlant lane (dev-parlant extra — split from core since parlant's griffe/
+# griffelib transitive deps collide with pydantic-ai's, which core's dev extra
+# hosts) explicitly.
+@lane(Lane.PARLANT)
 @requires(
     Dep.OPENAI
 )  # running_parlant_server uses the OpenAI NLP service (OPENAI_API_KEY)

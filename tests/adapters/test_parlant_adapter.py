@@ -624,14 +624,34 @@ class TestResponseWaitBudget:
     can't reliably reproduce it, but driving the wait loop directly can.
     """
 
-    @staticmethod
-    def _agent_event(message: str, offset: int, tags: list[str] | None = None):
-        """A Parlant AI-agent MESSAGE event as the wait loop reads it."""
-        from parlant.core.sessions import EventKind, EventSource
+    _MESSAGE_KIND = "message"
+    _AI_AGENT_SOURCE = "ai_agent"
 
+    @pytest.fixture(autouse=True)
+    def _fake_parlant_sessions(self):
+        """Fake the two modules ``_process_agent_response`` lazily imports.
+
+        Every test in this class drives that method, so — unlike the rest of the
+        file, which fakes a different combination per test — one shared, class-wide
+        fake is the natural fit here.
+        """
+        with patch.dict(
+            sys.modules,
+            {
+                "parlant.core.sessions": MagicMock(
+                    EventKind=MagicMock(MESSAGE=self._MESSAGE_KIND),
+                    EventSource=MagicMock(AI_AGENT=self._AI_AGENT_SOURCE),
+                ),
+                "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
+            },
+        ):
+            yield
+
+    def _agent_event(self, message: str, offset: int, tags: list[str] | None = None):
+        """A Parlant AI-agent MESSAGE event as the wait loop reads it."""
         event = MagicMock()
-        event.kind = EventKind.MESSAGE
-        event.source = EventSource.AI_AGENT
+        event.kind = self._MESSAGE_KIND
+        event.source = self._AI_AGENT_SOURCE
         event.offset = offset
         event.data = {"message": message, "tags": tags or []}
         return event

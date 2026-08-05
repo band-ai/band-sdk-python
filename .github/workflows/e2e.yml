@@ -58,6 +58,7 @@ on:
           - google
           - backends
           - letta
+          - parlant
       os:
         description: "OS to run on (all = Linux + Windows)."
         type: choice
@@ -188,9 +189,10 @@ jobs:
       # @pytest.mark.timeout(extra=...). See tests/e2e/baseline/conftest.py.
       # The registry scopes which adapters run in this lane.
       BAND_E2E_LANE: ${{ matrix.lane }}
-      # The dev-crewai venv lacks the other frameworks; tolerate missing framework
-      # configs there instead of failing fast (mirrors ci.yml's crewai job).
-      BAND_ALLOW_MISSING_FRAMEWORKS: ${{ matrix.extra == 'dev-crewai' && '1' || '0' }}
+      # The dev-crewai and dev-parlant venvs each lack the other frameworks;
+      # tolerate missing framework configs there instead of failing fast (mirrors
+      # ci.yml's crewai and parlant jobs).
+      BAND_ALLOW_MISSING_FRAMEWORKS: ${{ (matrix.extra == 'dev-crewai' || matrix.extra == 'dev-parlant') && '1' || '0' }}
       # Secrets carry an E2E_ prefix in GitHub (so they're clearly scoped to this
       # workflow), but the code reads the unprefixed names — the mapping happens
       # here: the env var keeps its code-expected name, the secret is prefixed.
