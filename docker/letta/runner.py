@@ -48,6 +48,7 @@ except ImportError:
     )
 
 from band.config.loader import load_agent_config
+from band.config.logs import LogSettings
 from band.core.types import Emit
 
 # Global flag for graceful shutdown
@@ -58,10 +59,6 @@ MAX_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 LettaMode = Literal["per_room", "shared"]
@@ -144,6 +141,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """Run the Letta agent from YAML configuration."""
+    LogSettings().for_application().configure()
     global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
     _shutdown_event = asyncio.Event()
 

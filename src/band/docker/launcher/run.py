@@ -13,6 +13,9 @@ import logging
 import os
 from pathlib import Path
 
+from band.config.logs import LogSettings
+from band.docker.launcher.bootstrap import bootstrap_repository
+from band.logging_config import FormatStyle, LoggingStyle
 from band.docker.launcher.config import (
     AGENT_HOME,
     DEFAULT_CONFIG_FILENAME,
@@ -21,7 +24,6 @@ from band.docker.launcher.config import (
     resolve_agent_id,
     resolve_endpoints,
 )
-from band.docker.launcher.bootstrap import bootstrap_repository
 from band.docker.launcher.credentials import resolve_credentials
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.launch import ResolvedLaunch
@@ -146,29 +148,24 @@ def execute(launch: ResolvedLaunch) -> None:
     os.execve(str(interpreter), [str(interpreter), str(launch.entrypoint)], child_env)
 
 
-def launcher_formatter() -> logging.Formatter:
-    """The one shape of every launcher diagnostic line, on every handler:
-    str.format-style fields with ISO 8601 timestamps."""
-    return logging.Formatter(
-        "{asctime} {name} {levelname} {message}",
-        datefmt="%Y-%m-%dT%H:%M:%S%z",
-        style="{",
+def configure_logging(*, log_file: Path | None = None) -> None:
+    """Apply launcher logging: console now, optional file after path resolution.
+
+    The console stream is left to ``BAND_LOG_STREAM``. Nothing reads this
+    process's stdout — it logs and then execs the customer entrypoint — so
+    unlike band-acp and band-trigger, whose stdout carries JSON-RPC frames and
+    command output, there is no protocol here to protect from a log line.
+    """
+    settings = LogSettings.create(
+        log_file=log_file,
+        log_console_style=LoggingStyle.STANDARD,
+        log_file_style=LoggingStyle.STANDARD,
     )
-
-
-def configure_logging() -> None:
-    """Stream diagnostics to stderr (the startup dispatcher's log)."""
-    handler = logging.StreamHandler()
-    handler.setFormatter(launcher_formatter())
-    logging.basicConfig(level=logging.INFO, handlers=[handler])
-
-
-def add_log_file(log_path: Path) -> None:
-    """Mirror diagnostics into the configured runtime log directory."""
-    log_path.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(log_path / "launcher.log")
-    handler.setFormatter(launcher_formatter())
-    logging.getLogger().addHandler(handler)
+    settings.for_application().configure(
+        fmt="{asctime} {name} {levelname} {message}",
+        fmt_style=FormatStyle.BRACE,
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+    )
 
 
 def main() -> None:
@@ -182,7 +179,7 @@ def main() -> None:
     os.environ["HOME"] = AGENT_HOME
     try:
         launch = resolve_launch()
-        add_log_file(launch.log_path)
+        configure_logging(log_file=launch.log_path / "launcher.log")
         execute(launch)
     except LaunchError as exc:
         logger.error("Launch failed: %s", exc)

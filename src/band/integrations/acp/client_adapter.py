@@ -38,6 +38,7 @@ from band.integrations.mcp.backends import (
     create_band_mcp_backend,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
+from band.integrations.acp.types import ACPToolCall
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.formatters import messages_before
 from band.runtime.mcp_server import LocalMCPServer
@@ -270,12 +271,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             **kwargs: object,
         ) -> dict[str, object]:
             del kwargs
-            tool_name = getattr(tool_call, "title", None) or getattr(
-                tool_call,
-                "name",
-                "unknown",
-            )
-            tool_call_id = getattr(tool_call, "tool_call_id", "")
+            call = ACPToolCall.from_acp(tool_call)
 
             # Auto-approve by selecting one of the agent's offered allow options;
             # an ACP grant must reference an offered optionId (not a bare
@@ -284,7 +280,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
             logger.info(
                 "Permission request: tool=%s, session=%s, room=%s, option=%s",
-                tool_name,
+                call.name,
                 session_id,
                 room_id,
                 option_id,
@@ -299,8 +295,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # the tool then executes, its own real tool_call/tool_result narrate
             # it like any other tool (no pair needed).
             await emitter.open_permission(
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
+                call=call,
                 session_id=session_id,
                 outcome="cancelled",
             )

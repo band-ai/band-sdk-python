@@ -32,18 +32,17 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import logging
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters import AnthropicAdapter
 from band.integrations.slack import SlackAdapter, SlackApp
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
+# slack_sdk raised alongside band, not a bare LogSettings().configure(): this
+# driver exists to debug the bridge, and slack_sdk's own INFO diagnostics are
+# half of what there is to see.
+_log_settings = LogSettings()
+_log_settings.configure(extra_loggers={"slack_sdk": _log_settings.log_level})
 
 
 class Settings(BaseSettings):

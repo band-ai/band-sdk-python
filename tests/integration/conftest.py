@@ -52,7 +52,6 @@ from tests.conftest_integration import (
     send_user_mention,
     wait_until,
 )
-
 # NOTE: pytestmark in conftest.py is NOT applied to collected tests.
 # The 120s timeout is applied via pytest_collection_modifyitems below.
 

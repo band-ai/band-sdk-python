@@ -19,6 +19,8 @@ import os
 import sys
 from pathlib import Path
 
+from band import LogSettings
+
 # Add parent directory to path for direct script execution
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -33,20 +35,16 @@ from a2a.server.tasks import (
     InMemoryTaskStore,
 )
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
-
 from agent import OrchestratorAgent
 from agent_executor import OrchestratorAgentExecutor
+from dotenv import load_dotenv
 from remote_agent import GatewayClient
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
 
 

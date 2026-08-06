@@ -15,6 +15,7 @@ try:
     from strands.hooks import HookProvider, HookRegistry
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
+    from strands.models.openai import OpenAIModel
     from strands.types.tools import (
         AgentTool,
         ToolGenerator,
@@ -96,6 +97,20 @@ def _result_text(result: ToolResult) -> str:
             case {"json": value}:
                 parts.append(_format_tool_output(value))
     return "\n".join(parts)
+
+
+def _openai_history(messages: StrandsMessages) -> StrandsMessages:
+    """Keep tool results ahead of text in Strands' OpenAI serialization."""
+    normalized: StrandsMessages = []
+    for message in messages:
+        tool_results = [block for block in message["content"] if "toolResult" in block]
+        other = [block for block in message["content"] if "toolResult" not in block]
+        if tool_results and other:
+            normalized.append({"role": message["role"], "content": tool_results})
+            normalized.append({"role": message["role"], "content": other})
+        else:
+            normalized.append(message)
+    return normalized
 
 
 def _input_schema(input_model: type[BaseModel]) -> dict[str, Any]:
@@ -426,6 +441,8 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> StrandsMessages:
         """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
+            if isinstance(self.model, OpenAIModel):
+                history = _openai_history(history)
             self._message_history[room_id] = list(history)
             if history:
                 logger.debug("Room %s: rehydrated %s message(s)", room_id, len(history))

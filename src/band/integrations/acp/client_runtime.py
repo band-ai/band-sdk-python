@@ -17,7 +17,13 @@ from band.integrations.acp.client_profiles import (
     ACPClientProfile,
     NoopACPClientProfile,
 )
-from band.integrations.acp.types import ChunkType, CollectedChunk, ToolStatus
+from band.integrations.acp.types import (
+    ACPToolCall,
+    ACPToolResult,
+    ChunkType,
+    CollectedChunk,
+    ToolStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +266,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         # when the call reaches a terminal status (see _ingest_tool_result). Reset
         # per turn in reset_session.
         self._result_chunks: dict[str, dict[str, CollectedChunk]] = {}
+        # ACP reports a result as a separate frame containing only the call id.
+        # Keep the originating call here, where result folding already happens, so
+        # a finalized result remains a complete typed lifecycle event.
+        self._tool_calls: dict[str, dict[str, ACPToolCall]] = {}
         self._emitted_results: dict[str, set[str]] = {}
         # An open text/thought run being coalesced until the next boundary, and the
         # per-session live sink that finalized chunks are posted to, in order.
@@ -276,9 +286,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self, session_id: str, update: object, **kwargs: object
     ) -> None:
         del kwargs
-        chunk = self._chunk_from_update(update)
-        if chunk is not None:
-            async with self._session_lock(session_id):
+        async with self._session_lock(session_id):
+            chunk = self._chunk_from_update(update)
+            if chunk is not None:
                 await self._ingest(session_id, chunk)
 
     def _chunk_from_update(self, update: object) -> CollectedChunk | None:
@@ -313,17 +323,18 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         )
 
     def _tool_call_chunk(self, update: object) -> CollectedChunk:
-        tool_call_id = getattr(update, "tool_call_id", "")
-        title = getattr(update, "title", "")
+        raw_input = getattr(update, "raw_input", None)
+        call = ACPToolCall.from_acp(update)
         metadata = {
-            "tool_call_id": tool_call_id,
-            "raw_input": getattr(update, "raw_input", None),
+            "tool_call_id": call.tool_call_id,
+            "raw_input": raw_input,
             "status": getattr(update, "status", ToolStatus.IN_PROGRESS),
         }
         return CollectedChunk(
             chunk_type=ChunkType.TOOL_CALL,
-            content=title,
+            content=call.name,
             metadata=metadata,
+            tool=call,
         )
 
     def _tool_result_chunk(self, update: object) -> CollectedChunk:
@@ -381,6 +392,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         finalizes when the call reaches a terminal status. Finalizing a chunk both
         buffers it (for get_collected_chunks) and posts it to the sink, in order.
         """
+        if isinstance(chunk.tool, ACPToolCall) and chunk.tool.tool_call_id:
+            self._tool_calls.setdefault(session_id, {})[chunk.tool.tool_call_id] = (
+                chunk.tool
+            )
         if chunk.chunk_type in self._COALESCED_CHUNK_TYPES:
             open_run = self._open_runs.get(session_id)
             if open_run is not None and open_run.chunk_type == chunk.chunk_type:
@@ -411,6 +426,14 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         be correlated, so it stands alone.
         """
         call_id = str(chunk.metadata.get("tool_call_id", ""))
+        call = self._tool_calls.get(session_id, {}).get(call_id)
+        if call is None:
+            call = ACPToolCall(tool_call_id=call_id, name="unknown", arguments={})
+        chunk.tool = ACPToolResult(
+            call=call,
+            output=chunk.content,
+            status=chunk.metadata.get("status"),
+        )
         if not call_id:
             await self._finalize(session_id, chunk)
             return
@@ -472,6 +495,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             best.from_raw,
             best.echo,
         )
+        if isinstance(canonical.tool, ACPToolResult):
+            canonical.tool.output = canonical.content
+            canonical.tool.status = canonical.metadata.get("status")
 
     async def _finalize(self, session_id: str, chunk: CollectedChunk) -> None:
         """Buffer a finalized chunk and post it to the session's live sink, if any.
@@ -557,6 +583,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self._session_chunks.pop(session_id, None)
         self._permission_handlers.pop(session_id, None)
         self._result_chunks.pop(session_id, None)
+        self._tool_calls.pop(session_id, None)
         self._emitted_results.pop(session_id, None)
         self._open_runs.pop(session_id, None)
         self._sinks.pop(session_id, None)

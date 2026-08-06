@@ -38,6 +38,11 @@ def make_platform_message(
     )
 
 
+def events_of_type(tools: FakeAgentTools, message_type: str) -> list[dict[str, Any]]:
+    """Events of ``message_type`` captured on ``tools.events_sent``."""
+    return [e for e in tools.events_sent if e["message_type"] == message_type]
+
+
 class ToolSchemaFakeTools(FakeAgentTools):
     def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
@@ -1893,12 +1898,8 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2016,9 +2017,7 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_result_events) == 1
         result_data = json.loads(tool_result_events[0]["content"])
         assert result_data["name"] == "fail"
@@ -2147,12 +2146,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2217,12 +2212,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2279,9 +2270,7 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         call_data = json.loads(tool_call_events[0]["content"])
         assert call_data["name"] == "file_edit"
@@ -2333,12 +2322,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2394,12 +2379,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2410,6 +2391,58 @@ class TestItemCompletedForwarding:
 
         result_data = json.loads(tool_result_events[0]["content"])
         assert result_data["output"] == "{}"
+
+    @pytest.mark.asyncio
+    async def test_item_completed_collabAgentToolCall_non_text_list_result_preserves_data(
+        self,
+    ) -> None:
+        """A non-text list result is dumped as JSON, not collapsed to "completed"."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "collabAgentToolCall",
+                        "id": "collab-2",
+                        "tool": "delegate",
+                        "result": [1, 2, 3],
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == "[1, 2, 3]"
 
     @pytest.mark.asyncio
     async def test_item_completed_mcpToolCall_emits_tool_events(self) -> None:
@@ -2459,12 +2492,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2474,6 +2503,69 @@ class TestItemCompletedForwarding:
 
         result_data = json.loads(tool_result_events[0]["content"])
         assert "127.0.0.1 localhost" in result_data["output"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_mcpToolCall_non_text_list_result_preserves_data(
+        self,
+    ) -> None:
+        """A non-text list result (e.g. an MCP image content block) is dumped as
+        JSON, not collapsed to the generic "completed" status.
+
+        Unlike thought extraction and ``dynamicToolCall``, a tool-call result is
+        real data even when it isn't textual — ``_stringify_tool_output`` must
+        use its ``raw_fallback`` mode here so nothing is silently discarded.
+        """
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "mcp-2",
+                        "server": "filesystem",
+                        "tool": "read_image",
+                        "arguments": {},
+                        "result": [
+                            {"type": "image", "data": "abc123", "mimeType": "image/png"}
+                        ],
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] != "completed"
+        assert "image/png" in result_data["output"]
 
     @pytest.mark.asyncio
     async def test_item_completed_dynamicToolCall_emits_tool_events(self) -> None:
@@ -2523,12 +2615,8 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
-        tool_result_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_result"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
+        tool_result_events = events_of_type(tools, "tool_result")
         assert len(tool_call_events) == 1
         assert len(tool_result_events) == 1
 
@@ -2540,6 +2628,66 @@ class TestItemCompletedForwarding:
         result_data = json.loads(tool_result_events[0]["content"])
         assert "print('hello')" in result_data["output"]
         assert result_data["tool_call_id"] == "dyn-1"
+
+    @pytest.mark.asyncio
+    async def test_item_completed_dynamicToolCall_non_text_list_result_falls_back_to_status(
+        self,
+    ) -> None:
+        """A result list with no extractable text falls through to the status default.
+
+        ``_stringify_tool_output`` skips a list that yields no text parts and
+        tries the next candidate field rather than dumping the uninformative
+        list as JSON (the same skip-and-continue behavior thought extraction
+        relies on to avoid placeholders).
+        """
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "callId": "dyn-2",
+                        "tool": "count_files",
+                        "arguments": {},
+                        "result": [1, 2, 3],
+                        "status": "completed",
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == "completed"
 
     @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
@@ -2589,12 +2737,177 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        thought_events = [
-            e for e in tools.events_sent if e["message_type"] == "thought"
-        ]
+        thought_events = events_of_type(tools, "thought")
         assert len(thought_events) == 1
         assert "Analyzing the codebase structure" in thought_events[0]["content"]
         assert "Identified key files to modify" in thought_events[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_dict_summary_text_emits_thought(self) -> None:
+        """Reasoning summary entries shaped as {text: ...} use stringify SSOT."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-dict",
+                        "summary": [
+                            {"type": "summary_text", "text": "Weighing the tradeoffs"},
+                            {"type": "summary_text", "text": "Choosing the safer joke"},
+                        ],
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit={Emit.THOUGHTS},
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = events_of_type(tools, "thought")
+        assert len(thought_events) == 1
+        assert "Weighing the tradeoffs" in thought_events[0]["content"]
+        assert "Choosing the safer joke" in thought_events[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_item_completed_empty_reasoning_summary_skips_thought(self) -> None:
+        """Empty reasoning summaries must not post a '(reasoning)' placeholder."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-empty",
+                        "summary": [],
+                    }
+                },
+            ),
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-blank",
+                        "summary": ["", "  "],
+                    }
+                },
+            ),
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "reasoning",
+                        "id": "reason-none",
+                        "summary": None,
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit={Emit.THOUGHTS},
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = events_of_type(tools, "thought")
+        assert thought_events == []
+
+    @pytest.mark.asyncio
+    async def test_item_completed_empty_plan_text_skips_thought(self) -> None:
+        """Empty plan text must not post a '(plan)' placeholder."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {"item": {"type": "plan", "id": "plan-empty", "text": ""}},
+            ),
+            _event_notification(
+                "item/completed",
+                {"item": {"type": "plan", "id": "plan-blank", "text": "   "}},
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit={Emit.THOUGHTS},
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        thought_events = events_of_type(tools, "thought")
+        assert thought_events == []
 
     @pytest.mark.asyncio
     async def test_item_completed_skipped_when_reporting_disabled(self) -> None:
@@ -2719,9 +3032,7 @@ class TestItemCompletedForwarding:
         # agentMessage text should still be sent as the final message
         assert any(msg["content"] == "All tests pass!" for msg in tools.messages_sent)
         # commandExecution should also be forwarded as tool events
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
 
     @pytest.mark.asyncio
@@ -2770,13 +3081,63 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         call_data = json.loads(tool_call_events[0]["content"])
         assert call_data["name"] == "web_search"
         assert call_data["args"]["query"] == "python asyncio tutorial"
+
+    @pytest.mark.asyncio
+    async def test_item_completed_webSearch_non_text_list_action_preserves_data(
+        self,
+    ) -> None:
+        """A non-text list action is dumped as JSON, not collapsed to "completed"."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "webSearch",
+                        "id": "ws-2",
+                        "query": "python asyncio tutorial",
+                        "action": [{"url": "https://example.com"}],
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_result_events = events_of_type(tools, "tool_result")
+        assert len(tool_result_events) == 1
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert result_data["output"] == '[{"url": "https://example.com"}]'
 
     @pytest.mark.asyncio
     async def test_item_completed_metadata_includes_codex_ids(self) -> None:
@@ -2824,9 +3185,7 @@ class TestItemCompletedForwarding:
             room_id="room-1",
         )
 
-        tool_call_events = [
-            e for e in tools.events_sent if e["message_type"] == "tool_call"
-        ]
+        tool_call_events = events_of_type(tools, "tool_call")
         assert len(tool_call_events) == 1
         meta = tool_call_events[0]["metadata"]
         assert meta["codex_room_id"] == "room-1"
@@ -3464,7 +3823,7 @@ class TestHistoryInjection:
             room_id="room-1",
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         assert "Something went wrong" in error_events[0]["content"]
 
@@ -3639,7 +3998,7 @@ class TestStructuredErrors:
             room_id="room-1",
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         meta = error_events[0]["metadata"]
         assert meta["codex_error_type"] == "ContextWindowExceeded"
@@ -3687,7 +4046,7 @@ class TestStructuredErrors:
             room_id="room-1",
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         assert error_events[0]["metadata"]["codex_error_type"] == "UsageLimitExceeded"
         assert (
@@ -3738,7 +4097,7 @@ class TestStructuredErrors:
             room_id="room-1",
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         assert error_events[0]["content"] == "Codex error: Something failed"
         assert "codex_error_type" not in error_events[0]["metadata"]
@@ -5042,6 +5401,24 @@ class TestCodexTypes:
             "item/fileChange/requestApproval", {"reason": "update"}
         )
         assert key == ""
+
+    def test_codex_item_type_fully_classified(self) -> None:
+        """Every ``CodexItemType`` lands in exactly one of the adapter's three
+        buckets: tool-like, thought-like, or the skipped user/agent messages.
+
+        A new item type added to the enum without also updating one of these
+        sets currently falls through to a silent ``logger.debug`` — no room
+        event, no test failure. This test is the guard: it fails loudly the
+        moment the partition stops being exhaustive.
+        """
+        from band.adapters.codex import _TOOL_ITEM_TYPES, _THOUGHT_ITEM_TYPES
+        from band.integrations.codex.types import CodexItemType
+
+        message_types = {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
+        classified = _TOOL_ITEM_TYPES | _THOUGHT_ITEM_TYPES | message_types
+
+        assert classified == set(CodexItemType)
+        assert not (_TOOL_ITEM_TYPES & _THOUGHT_ITEM_TYPES)
 
 
 class TestSessionAutoApproval:

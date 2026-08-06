@@ -94,7 +94,7 @@ async def main() -> None:
             include_base_instructions=True,
             fallback_send_agent_text=True,
         ),
-        emit=Emit.TASK_EVENTS,
+        emit={Emit.TASK_EVENTS, Emit.THOUGHTS},
     )
 
     logger.info(

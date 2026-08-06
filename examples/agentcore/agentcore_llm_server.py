@@ -52,24 +52,13 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band import LogSettings
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
-
-class LogSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        extra="ignore", case_sensitive=False, env_ignore_empty=True
-    )
-
-    log_level: str = "INFO"
-
-
-logging.basicConfig(
-    level=getattr(logging, LogSettings().log_level.upper(), logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
+LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
 
 
@@ -100,7 +89,7 @@ def _build_adapter(settings: Settings) -> AnthropicAdapter:
     emit = Emit.TOOL_CALLS if settings.emit_execution else ()
     return AnthropicAdapter(
         model=settings.anthropic_model,
-        api_key=settings.anthropic_api_key,
+        provider_key=settings.anthropic_api_key,
         prompt=settings.system_prompt or None,
         emit=emit,
     )

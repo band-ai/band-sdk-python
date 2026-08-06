@@ -44,11 +44,10 @@ from agno.models.anthropic import Claude
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +63,7 @@ class Settings(BaseSettings):
 
 async def main() -> None:
     load_dotenv()
+    LogSettings().for_application().configure()
     settings = Settings()
 
     db = InMemoryDb()

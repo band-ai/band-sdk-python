@@ -7,21 +7,26 @@ This file contains PydanticAI-specific behavior: agent creation, tool registrati
 stream event handling, execution reporting, and custom tools.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 from pydantic_ai import (
+    Agent,
     AgentRunResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstrumentationSettings,
     RunContext,
     UnexpectedModelBehavior,
 )
@@ -428,6 +433,168 @@ class TestInitialization:
         result = await adapter._create_agent().run("go", deps=MagicMock())
 
         assert result.output is None
+
+
+class TraceCapture(NamedTuple):
+    """A tracer wired to memory, plus the settings that route an agent into it."""
+
+    provider: TracerProvider
+    settings: InstrumentationSettings
+    exporter: InMemorySpanExporter
+
+    def operations(self) -> list[str]:
+        """The exported spans' operation names (``chat``, ``invoke_agent``, ...).
+
+        The full span name carries the model and agent, which the assertions here
+        don't care about — the question is only whether the run was traced.
+        """
+        return [span.name.split()[0] for span in self.exporter.get_finished_spans()]
+
+
+@pytest.fixture
+def trace_capture() -> Iterator[TraceCapture]:
+    """Host-owned tracer pipeline, exporting to memory instead of a collector."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    try:
+        yield TraceCapture(
+            provider=provider,
+            settings=InstrumentationSettings(tracer_provider=provider),
+            exporter=exporter,
+        )
+    finally:
+        provider.shutdown()
+
+
+@pytest.fixture
+def instrument_all_restored() -> Iterator[None]:
+    """Undo ``Agent.instrument_all()``; it is process-wide state on the class."""
+    previous = Agent._instrument_default
+    try:
+        yield
+    finally:
+        Agent.instrument_all(previous)
+
+
+def _reply(text: str) -> FunctionModel:
+    """A model that answers in plain text, so a run needs no network or tools."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    return FunctionModel(respond)
+
+
+class TestInstrumentation:
+    """Tests for the ``instrument`` pass-through to pydantic-ai.
+
+    Band creates no TracerProvider and no exporter: the host owns the pipeline and
+    hands the agent an ``InstrumentationSettings`` (or flips ``Agent.instrument_all``).
+    """
+
+    def test_settings_route_the_run_into_the_host_tracer(
+        self, trace_capture: TraceCapture, mock_tools
+    ):
+        """Explicit settings trace the model call and the agent run."""
+        adapter = PydanticAIAdapter(
+            model=_reply("ok"),  # type: ignore[arg-type]  # real Agent, no network
+            instrument=trace_capture.settings,
+        )
+        adapter.agent_name = "TestBot"
+
+        adapter._create_agent().run_sync("hello", deps=mock_tools)
+
+        assert trace_capture.operations() == ["chat", "invoke_agent"]
+
+    def test_true_traces_through_the_ambient_provider(
+        self,
+        trace_capture: TraceCapture,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_tools,
+    ):
+        """``True`` is the shorthand for a host that published its providers.
+
+        pydantic-ai resolves the ambient ``TracerProvider`` when it builds the
+        default settings, so this only traces in a process that set one — which
+        is why examples/opentelemetry hands over settings instead.
+        """
+        monkeypatch.setattr(
+            "pydantic_ai.models.instrumented.get_tracer_provider",
+            lambda: trace_capture.provider,
+        )
+        adapter = PydanticAIAdapter(
+            model=_reply("ok"),  # type: ignore[arg-type]  # real Agent, no network
+            instrument=True,
+        )
+        adapter.agent_name = "TestBot"
+
+        adapter._create_agent().run_sync("hello", deps=mock_tools)
+
+        assert trace_capture.operations() == ["chat", "invoke_agent"]
+
+    def test_default_inherits_instrument_all(
+        self, trace_capture: TraceCapture, instrument_all_restored, mock_tools
+    ):
+        """Passing nothing leaves the host's process-wide choice in force."""
+        Agent.instrument_all(trace_capture.settings)
+        adapter = PydanticAIAdapter(
+            model=_reply("ok"),  # type: ignore[arg-type]  # real Agent, no network
+        )
+        adapter.agent_name = "TestBot"
+
+        adapter._create_agent().run_sync("hello", deps=mock_tools)
+
+        assert trace_capture.operations() == ["chat", "invoke_agent"]
+
+    def test_false_opts_out_of_instrument_all(
+        self, trace_capture: TraceCapture, instrument_all_restored, mock_tools
+    ):
+        """``False`` is not "unset": it excludes this agent from a traced process."""
+        Agent.instrument_all(trace_capture.settings)
+        adapter = PydanticAIAdapter(
+            model=_reply("ok"),  # type: ignore[arg-type]  # real Agent, no network
+            instrument=False,
+        )
+        adapter.agent_name = "TestBot"
+
+        adapter._create_agent().run_sync("hello", deps=mock_tools)
+
+        assert trace_capture.operations() == []
+
+    def test_instrumented_agent_still_drops_content_null_history(
+        self, trace_capture: TraceCapture, mock_tools
+    ):
+        """Instrumentation must not cost the ProcessHistory capability.
+
+        Both ride on the agent, and an implementation that passed instrumentation
+        as a capability would silently replace the history processor — sending
+        providers the thinking-only response as assistant ``content: null``.
+        """
+        seen: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(list(messages))
+            return ModelResponse(parts=[TextPart(content="ok")])
+
+        adapter = PydanticAIAdapter(
+            model=FunctionModel(respond),  # type: ignore[arg-type]
+            instrument=trace_capture.settings,
+        )
+        adapter.agent_name = "TestBot"
+
+        adapter._create_agent().run_sync(
+            "hello",
+            deps=mock_tools,
+            message_history=[
+                ModelRequest(parts=[UserPromptPart(content="earlier")]),
+                ModelResponse(parts=[ThinkingPart(content="hmm")]),
+            ],
+        )
+
+        (sent_to_model,) = seen
+        assert not [m for m in sent_to_model if isinstance(m, ModelResponse)]
+        assert trace_capture.operations() == ["chat", "invoke_agent"]
 
 
 class TestOnStarted:

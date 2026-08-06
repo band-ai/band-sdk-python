@@ -150,7 +150,7 @@ class TestA2AGatewayContextIdWithPlatform:
 
         Uses session-scoped shared_room to avoid creating new rooms.
         Pre-populates context mapping and participant set so _get_or_create_room()
-        adds the second peer via _ensure_participant without creating a room.
+        adds the second peer via ensure_in_room without creating a room.
         """
         # Get multiple peers
         response = await api_client.agent_api_peers.list_agent_peers()

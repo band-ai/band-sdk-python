@@ -41,25 +41,32 @@ Example (Framework-light pattern):
 """
 
 import logging
-from importlib.metadata import version as _get_version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _get_version
 
 # Composition layer (new pattern)
 from .agent import Agent
+from .config.logs import LogSettings, configure_logging_from_env
+from .core.exceptions import (
+    BandConfigError,
+    BandConnectionError,
+    BandError,
+    BandToolError,
+)
 
 # Core types (v0.3.0)
 from .core.types import AdapterFeatures, Capability, Emit, FeatureKwargs
-from .core.exceptions import (
-    BandError,
-    BandConfigError,
-    BandConnectionError,
-    BandToolError,
-)
 from .logging_config import (
-    LogLevel,
+    CHATTY_LOGGERS,
+    STANDARD_FORMAT,
+    FileStyle,
+    FormatStyle,
     LoggingConfig,
     LoggingStyle,
+    LogLevel,
     LogStream,
     build_logging_config,
+    chatty_logger_levels,
     configure_logging,
 )
 
@@ -68,34 +75,34 @@ from .platform import BandLink, PlatformEvent
 
 # Runtime layer
 from .runtime import (
-    AgentRuntime,
-    RoomPresence,
-    Execution,
-    ExecutionContext,
-    ExecutionHandler,
-    AgentTools,
-    PlatformMessage,
-    AgentConfig,
-    SessionConfig,
-    ConversationContext,
-    render_system_prompt,
-    TOOL_MODELS,
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     CONTACT_TOOL_NAMES,
-    MEMORY_TOOL_NAMES,
     MCP_TOOL_PREFIX,
-    mcp_tool_names,
-    # Formatters
-    format_message_for_llm,
-    format_history_for_llm,
-    build_participants_message,
-    # Trackers
-    ParticipantTracker,
-    MessageRetryTracker,
+    MEMORY_TOOL_NAMES,
+    TOOL_MODELS,
+    AgentConfig,
+    AgentRuntime,
+    AgentTools,
+    ConversationContext,
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
     # Shutdown
     GracefulShutdown,
+    MessageRetryTracker,
+    # Trackers
+    ParticipantTracker,
+    PlatformMessage,
+    RoomPresence,
+    SessionConfig,
+    build_participants_message,
+    format_history_for_llm,
+    # Formatters
+    format_message_for_llm,
+    mcp_tool_names,
+    render_system_prompt,
     run_with_graceful_shutdown,
 )
 
@@ -111,12 +118,19 @@ __all__ = [
     "BandConfigError",
     "BandConnectionError",
     "BandToolError",
+    "FileStyle",
+    "FormatStyle",
+    "CHATTY_LOGGERS",
     "LogLevel",
+    "LogSettings",
     "LoggingConfig",
     "LoggingStyle",
     "LogStream",
+    "STANDARD_FORMAT",
     "build_logging_config",
+    "chatty_logger_levels",
     "configure_logging",
+    "configure_logging_from_env",
     # Platform
     "BandLink",
     "PlatformEvent",

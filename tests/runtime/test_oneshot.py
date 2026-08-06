@@ -10,11 +10,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from anthropic.types import ToolUseBlock
+from band_rest import (
+    CreateAgentChatMessageResponse,
+    GetAgentChatContextResponse,
+    GetAgentChatContextResponseMetadata,
+    MessageSentResponse,
+)
+from pydantic import BaseModel, Field
 
-from band.core.types import PlatformConnection
+from band.adapters.anthropic import AnthropicAdapter
+from band.runtime.formatters import build_participants_message
 from band.runtime.oneshot import (
     OneShotEnvelopeError,
     OneShotInvoker,
@@ -22,146 +31,50 @@ from band.runtime.oneshot import (
     _lookup_sender_name,
     _parse_inserted_at,
 )
+from tests.runtime.conftest import ctx_item, make_link_mock, platform_msg
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers local to this file. The BandLink/REST fakes (make_link_mock,
+# platform_msg, ctx_item) live in tests/runtime/conftest.py — shared with
+# other tests/runtime files, real band_rest model instances rather than bare
+# MagicMocks.
 # ---------------------------------------------------------------------------
-
-
-def _make_participant_mock(p: dict[str, Any]) -> MagicMock:
-    """Build a participant mock. ``name`` must be set after construction —
-    passing ``name=`` to MagicMock() sets the mock's identity, not its
-    ``.name`` attribute.
-    """
-    mock = MagicMock(id=p["id"], type=p["type"], handle=p.get("handle"))
-    mock.name = p["name"]
-    return mock
-
-
-def _platform_msg(
-    msg_id: str, *, sender_type: str = "User", sender_id: str = "user-1"
-) -> MagicMock:
-    """Stand-in for a PlatformMessage from get_next_message. The drain loop
-    reads ``id``, ``sender_type``, and ``sender_id``.
-    """
-    m = MagicMock()
-    m.id = msg_id
-    m.sender_type = sender_type
-    m.sender_id = sender_id
-    return m
-
-
-def _ctx_item(
-    msg_id: str,
-    *,
-    content: str = "hi",
-    sender_id: str = "user-1",
-    sender_type: str = "User",
-    sender_name: str = "Alice",
-) -> MagicMock:
-    """A context item as returned by get_agent_chat_context. Real string
-    attributes so context_item_to_dict + format_history_for_llm don't choke.
-    """
-    item = MagicMock()
-    item.id = msg_id
-    item.content = content
-    item.sender_id = sender_id
-    item.sender_type = sender_type
-    item.sender_name = sender_name
-    item.message_type = "user"
-    item.metadata = {}
-    item.inserted_at = "2026-05-21T10:00:00Z"
-    return item
-
-
-def _make_link_mock(
-    participants: list[dict[str, Any]] | None = None,
-    history_items: list[Any] | None = None,
-    next_messages: list[MagicMock | None] | None = None,
-    *,
-    agent_name: str = "TestBot",
-    agent_description: str = "a test agent",
-) -> MagicMock:
-    """Build a fake BandLink.
-
-    ``next_messages`` controls successive ``get_next_message`` returns; once
-    exhausted, all further calls return ``None``. The identity endpoint is
-    stubbed so ``startup()`` succeeds.
-    """
-    link = MagicMock()
-    link.api_key = "test-api-key"
-    link.rest_url = "https://app.band.ai"
-    link.ws_url = "wss://app.band.ai/api/v1/socket/websocket"
-    link.to_platform_connection = MagicMock(
-        side_effect=lambda agent_id: PlatformConnection(
-            agent_id=agent_id,
-            api_key=link.api_key,
-            rest_url=link.rest_url,
-            ws_url=link.ws_url,
-        )
-    )
-
-    # Identity (for startup()).
-    agent_me = MagicMock()
-    agent_me.name = agent_name
-    agent_me.description = agent_description
-    identity_response = MagicMock()
-    identity_response.data = agent_me
-    link.rest.agent_api_identity.get_agent_me = AsyncMock(
-        return_value=identity_response
-    )
-
-    # Participants.
-    participants_response = MagicMock()
-    participants_response.data = [
-        _make_participant_mock(p) for p in (participants or [])
-    ] or None
-    link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
-        return_value=participants_response
-    )
-
-    # History / context.
-    context_response = MagicMock()
-    context_response.data = history_items or []
-    link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
-        return_value=context_response
-    )
-
-    # Lifecycle markers.
-    sequence = list(next_messages or [])
-
-    async def _get_next(*_args: Any, **_kwargs: Any) -> MagicMock | None:
-        return sequence.pop(0) if sequence else None
-
-    link.get_next_message = AsyncMock(side_effect=_get_next)
-    link.mark_processing = AsyncMock()
-    link.mark_processed = AsyncMock()
-    link.mark_failed = AsyncMock()
-    link.disconnect = AsyncMock()
-    return link
 
 
 def _make_adapter_mock() -> MagicMock:
+    """A fake adapter that records the AgentInput it was run with as a plain
+    ``received_input`` attribute — reading that is what a test should assert
+    on, rather than reaching into ``on_event.call_args.args[0]``. Still an
+    AsyncMock underneath, so ``on_event.assert_awaited_once()`` etc. keep
+    working unchanged.
+    """
     adapter = MagicMock()
+    adapter.received_input = None
+
+    async def _capture(inp: Any) -> None:
+        adapter.received_input = inp
+
     adapter.on_started = AsyncMock()
-    adapter.on_event = AsyncMock()
+    adapter.on_event = AsyncMock(side_effect=_capture)
     adapter.on_cleanup = AsyncMock()
     return adapter
 
 
 async def _make_invoker(
     link: MagicMock,
-    adapter: MagicMock | None = None,
+    adapter: MagicMock | AnthropicAdapter | None = None,
     *,
     agent_id: str = "agent-1",
     drain_cap: int = 50,
+    history_page_cap: int = 20,
 ) -> OneShotInvoker:
     invoker = OneShotInvoker(
         link=link,
         adapter=adapter or _make_adapter_mock(),
         agent_id=agent_id,
         drain_cap=drain_cap,
+        history_page_cap=history_page_cap,
     )
     await invoker.startup()
     return invoker
@@ -276,7 +189,7 @@ class TestBuildPlatformMessage:
 
 class TestStartup:
     async def test_fetches_metadata_and_primes_adapter(self) -> None:
-        link = _make_link_mock(agent_name="Weather", agent_description="forecasts")
+        link = make_link_mock(agent_name="Weather", agent_description="forecasts")
         adapter = _make_adapter_mock()
         invoker = OneShotInvoker(link=link, adapter=adapter, agent_id="agent-1")
 
@@ -289,7 +202,7 @@ class TestStartup:
         adapter.on_started.assert_awaited_once_with("Weather", "forecasts")
 
     async def test_startup_is_idempotent(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         invoker = OneShotInvoker(link=link, adapter=adapter, agent_id="agent-1")
 
@@ -300,7 +213,7 @@ class TestStartup:
         adapter.on_started.assert_awaited_once()
 
     async def test_handle_event_before_startup_raises(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         invoker = OneShotInvoker(
             link=link, adapter=_make_adapter_mock(), agent_id="agent-1"
         )
@@ -308,7 +221,7 @@ class TestStartup:
             await invoker.handle_event(_msg_body())
 
     async def test_shutdown_disconnects_link(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         invoker = await _make_invoker(link)
         await invoker.shutdown()
         link.disconnect.assert_awaited_once()
@@ -321,7 +234,7 @@ class TestStartup:
 
 class TestHandleEventRouting:
     async def test_non_message_event_returns_ignored(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
 
@@ -338,7 +251,7 @@ class TestHandleEventRouting:
         many rooms. Without on_cleanup on room teardown, per-room caches
         (Anthropic history, Claude SDK sessions, etc.) leak.
         """
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
 
@@ -355,7 +268,7 @@ class TestHandleEventRouting:
         link.get_next_message.assert_not_awaited()
 
     async def test_room_deleted_triggers_adapter_cleanup(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
 
@@ -366,7 +279,7 @@ class TestHandleEventRouting:
         adapter.on_cleanup.assert_awaited_once_with("r1")
 
     async def test_room_removed_falls_back_to_payload_id(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
 
@@ -377,7 +290,7 @@ class TestHandleEventRouting:
         adapter.on_cleanup.assert_awaited_once_with("r-payload")
 
     async def test_room_removed_swallows_cleanup_errors(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         adapter.on_cleanup = AsyncMock(side_effect=RuntimeError("adapter blew up"))
         invoker = await _make_invoker(link, adapter)
@@ -389,7 +302,7 @@ class TestHandleEventRouting:
         assert result["status"] == "cleaned_up"
 
     async def test_missing_room_id_raises_envelope_error(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         invoker = await _make_invoker(link)
         body = {
             "event_type": "message_created",
@@ -400,7 +313,7 @@ class TestHandleEventRouting:
             await invoker.handle_event(body)
 
     async def test_missing_message_id_raises_envelope_error(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         invoker = await _make_invoker(link)
         body = {
             "event_type": "message_created",
@@ -412,7 +325,7 @@ class TestHandleEventRouting:
             await invoker.handle_event(body)
 
     async def test_falls_back_to_payload_chat_room_id(self) -> None:
-        link = _make_link_mock(next_messages=[_platform_msg("msg-1"), None])
+        link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
         invoker = await _make_invoker(link)
         body = {
             "event_type": "message_created",
@@ -437,11 +350,11 @@ class TestHandleEventRouting:
 
 class TestProcessMessage:
     async def test_processes_message(self) -> None:
-        link = _make_link_mock(
+        link = make_link_mock(
             participants=[
                 {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"},
             ],
-            next_messages=[_platform_msg("msg-1"), None],
+            next_messages=[platform_msg("msg-1"), None],
         )
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
@@ -453,7 +366,7 @@ class TestProcessMessage:
         assert result["message_id"] == "msg-1"
 
         adapter.on_event.assert_awaited_once()
-        inp = adapter.on_event.call_args.args[0]
+        inp = adapter.received_input
         assert inp.msg.id == "msg-1"
         assert inp.msg.sender_name == "Alice"
 
@@ -462,7 +375,7 @@ class TestProcessMessage:
         link.mark_failed.assert_not_awaited()
 
     async def test_skips_self_message(self) -> None:
-        link = _make_link_mock()
+        link = make_link_mock()
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
         body = _msg_body(
@@ -480,7 +393,7 @@ class TestProcessMessage:
 
     async def test_skips_when_no_pending(self) -> None:
         """get_next_message returns None — already processed by a sibling."""
-        link = _make_link_mock(next_messages=[None])
+        link = make_link_mock(next_messages=[None])
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
 
@@ -492,7 +405,7 @@ class TestProcessMessage:
         link.mark_processing.assert_not_awaited()
 
     async def test_skips_when_different_message_is_next(self) -> None:
-        link = _make_link_mock(next_messages=[_platform_msg("msg-other")])
+        link = make_link_mock(next_messages=[platform_msg("msg-other")])
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
 
@@ -509,7 +422,7 @@ class TestProcessMessage:
         not be silently treated as ``no_pending`` — that would leave the
         message open on the platform and tell the bridge it was handled.
         """
-        link = _make_link_mock()
+        link = make_link_mock()
         link.get_next_message = AsyncMock(side_effect=RuntimeError("network down"))
         adapter = _make_adapter_mock()
         invoker = await _make_invoker(link, adapter)
@@ -522,7 +435,7 @@ class TestProcessMessage:
         adapter.on_event.assert_not_awaited()
 
     async def test_marks_failed_on_adapter_error(self) -> None:
-        link = _make_link_mock(next_messages=[_platform_msg("msg-1")])
+        link = make_link_mock(next_messages=[platform_msg("msg-1")])
         adapter = _make_adapter_mock()
         adapter.on_event = AsyncMock(side_effect=RuntimeError("LLM crashed"))
         invoker = await _make_invoker(link, adapter)
@@ -536,6 +449,178 @@ class TestProcessMessage:
 
 
 # ---------------------------------------------------------------------------
+# Participant roster surfaced to the model
+#
+# The long-running path treats "no prior roster sent yet" as changed (see
+# ExecutionContext.participants_changed: `_last_participants_sent is None`
+# -> True), so a room's very first message already carries the roster via
+# `participants_msg`. OneShotInvoker has no cross-call state to diff
+# against, so every invocation is that same "first time" case — it should
+# always build and pass the current roster, never a hardcoded None.
+# ---------------------------------------------------------------------------
+
+
+class TestParticipantsSurfaced:
+    async def test_participants_msg_reflects_current_roster(self) -> None:
+        participants = [
+            {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"},
+            {"id": "agent-2", "name": "Bot2", "type": "Agent", "handle": "bot2"},
+        ]
+        link = make_link_mock(
+            participants=participants,
+            next_messages=[platform_msg("msg-1"), None],
+        )
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        await invoker.handle_event(_msg_body())
+
+        adapter.on_event.assert_awaited_once()
+        inp = adapter.received_input
+        assert inp.participants_msg == build_participants_message(participants)
+
+    async def test_participants_msg_none_when_room_has_no_other_participants(
+        self,
+    ) -> None:
+        """Even an empty roster is a deliberate 'no one else here' statement,
+        not an absent one — the model shouldn't have to call a tool to learn
+        it's alone in the room.
+        """
+        link = make_link_mock(
+            participants=[],
+            next_messages=[platform_msg("msg-1"), None],
+        )
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        await invoker.handle_event(_msg_body())
+
+        inp = adapter.received_input
+        assert inp.participants_msg == build_participants_message([])
+
+
+# ---------------------------------------------------------------------------
+# History pagination
+#
+# The real context endpoint paginates with a cursor (``next_cursor`` /
+# ``has_more``); ``page``/``page_size`` are deprecated and scheduled for
+# removal. A room whose history spans more than one page must not silently
+# lose the earlier pages.
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryPagination:
+    async def test_long_running_room_keeps_facts_from_the_start_of_the_conversation(
+        self,
+    ) -> None:
+        """A project channel active long enough to span more than one fetch
+        holds facts the model still needs — the codename set on day one is as
+        relevant as this morning's standup update. Neither should quietly
+        fall out of context just because the room outgrew a single page.
+        """
+        link = make_link_mock(
+            history_pages=[
+                [ctx_item("hist-1", content="the project codename is NIGHTHAWK")],
+                [ctx_item("hist-2", content="today's standup moved to 3pm")],
+            ],
+            next_messages=[platform_msg("msg-1"), None],
+        )
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        result = await invoker.handle_event(_msg_body())
+
+        history_content = [m["content"] for m in adapter.received_input.history.raw]
+        assert "the project codename is NIGHTHAWK" in history_content
+        assert "today's standup moved to 3pm" in history_content
+        assert "history_truncated" not in result
+
+    async def test_room_active_for_months_gets_a_prompt_reply_not_a_full_replay(
+        self,
+    ) -> None:
+        """A room that's been running for months can carry far more history
+        than the retention window holds. The agent still has to answer
+        promptly, so it keeps only the trailing pages rather than replaying
+        the entire backlog on every message — and says so honestly instead
+        of presenting a partial conversation as the whole thing.
+
+        Critically, "partial" must mean the *most recent* days, not the
+        oldest ones — the endpoint is oldest-first with no way to request
+        newest-first, so pagination has to walk to the true end and evict
+        old pages, never stop early and keep the stale ones.
+        """
+        months_of_daily_updates = [
+            [ctx_item(f"hist-{day}", content=f"day {day} update")] for day in range(5)
+        ]
+        link = make_link_mock(
+            history_pages=months_of_daily_updates,
+            next_messages=[platform_msg("msg-1"), None],
+        )
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter, history_page_cap=3)
+
+        result = await invoker.handle_event(_msg_body())
+
+        get_context = link.rest.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == 5  # walked to the true end, not the cap
+
+        history_content = [m["content"] for m in adapter.received_input.history.raw]
+        assert history_content == [
+            "day 2 update",
+            "day 3 update",
+            "day 4 update",
+        ]
+        assert result["history_truncated"] is True
+
+    async def test_first_page_fetch_failure_is_reported_as_truncated(self) -> None:
+        """A page-0 fetch failure is the worst case of "history incomplete" —
+        the LLM runs with zero history instead of some. It must not be
+        reported identically to a fully successful fetch.
+        """
+        link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
+        link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=RuntimeError("context endpoint unavailable")
+        )
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        result = await invoker.handle_event(_msg_body())
+
+        assert adapter.received_input.history.raw == []
+        assert result["history_truncated"] is True
+
+    async def test_has_more_without_a_next_cursor_stops_instead_of_looping(
+        self,
+    ) -> None:
+        """``has_more=True`` with no ``next_cursor`` is a backend contract
+        violation the response type doesn't rule out (``next_cursor`` is
+        ``Optional``). Re-requesting with ``cursor=None`` would just refetch
+        page 0 forever (until the page cap) and duplicate its items — this
+        must instead stop after one page and say so honestly.
+        """
+        link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
+        malformed_response = GetAgentChatContextResponse(
+            data=[ctx_item("hist-1", content="page with a broken cursor contract")],
+            metadata=GetAgentChatContextResponseMetadata(
+                has_more=True,
+                limit=50,
+                next_cursor=None,
+            ),
+        )
+        get_context = AsyncMock(return_value=malformed_response)
+        link.rest.agent_api_context.get_agent_chat_context = get_context
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter, history_page_cap=5)
+
+        result = await invoker.handle_event(_msg_body())
+
+        get_context.assert_awaited_once()
+        history_content = [m["content"] for m in adapter.received_input.history.raw]
+        assert history_content.count("page with a broken cursor contract") == 1
+        assert result["history_truncated"] is True
+
+
+# ---------------------------------------------------------------------------
 # Drain (race fix + self-skip + cap surfacing)
 # ---------------------------------------------------------------------------
 
@@ -545,12 +630,12 @@ class TestDrain:
         """The case drain is for: the LLM saw msg-2 and msg-3 in its history
         snapshot. Drain marks them processed without re-invoking the LLM.
         """
-        link = _make_link_mock(
-            history_items=[_ctx_item("msg-2"), _ctx_item("msg-3")],
+        link = make_link_mock(
+            history_items=[ctx_item("msg-2"), ctx_item("msg-3")],
             next_messages=[
-                _platform_msg("msg-1"),  # claim check
-                _platform_msg("msg-2"),  # drain (in snapshot)
-                _platform_msg("msg-3"),  # drain (in snapshot)
+                platform_msg("msg-1"),  # claim check
+                platform_msg("msg-2"),  # drain (in snapshot)
+                platform_msg("msg-3"),  # drain (in snapshot)
                 None,
             ],
         )
@@ -574,11 +659,11 @@ class TestDrain:
         in seen_ids). Drain must stop and leave it open for the next
         invocation rather than swallowing it without an LLM call.
         """
-        link = _make_link_mock(
-            history_items=[_ctx_item("msg-1")],  # snapshot = msg-1 only
+        link = make_link_mock(
+            history_items=[ctx_item("msg-1")],  # snapshot = msg-1 only
             next_messages=[
-                _platform_msg("msg-1"),  # claim check
-                _platform_msg("msg-2"),  # arrived after snapshot → leave open
+                platform_msg("msg-1"),  # claim check
+                platform_msg("msg-2"),  # arrived after snapshot → leave open
                 None,
             ],
         )
@@ -598,11 +683,11 @@ class TestDrain:
         get_next_message during drain, skip it without marking — parity with
         the SDK's ExecutionContext self-message guard.
         """
-        self_msg = _platform_msg("msg-self", sender_type="Agent", sender_id="agent-1")
-        link = _make_link_mock(
-            history_items=[_ctx_item("msg-1"), _ctx_item("msg-self")],
+        self_msg = platform_msg("msg-self", sender_type="Agent", sender_id="agent-1")
+        link = make_link_mock(
+            history_items=[ctx_item("msg-1"), ctx_item("msg-self")],
             next_messages=[
-                _platform_msg("msg-1"),  # claim check
+                platform_msg("msg-1"),  # claim check
                 self_msg,  # our own message — skip
                 None,
             ],
@@ -624,10 +709,10 @@ class TestDrain:
         """
         # Always return an in-snapshot message so drain never naturally stops;
         # the cap is the only exit.
-        always_stale = _platform_msg("msg-x")
-        link = _make_link_mock(history_items=[_ctx_item("msg-x")])
+        always_stale = platform_msg("msg-x")
+        link = make_link_mock(history_items=[ctx_item("msg-x")])
         link.get_next_message = AsyncMock(
-            side_effect=[_platform_msg("msg-1")]  # claim check
+            side_effect=[platform_msg("msg-1")]  # claim check
             + [always_stale] * 10  # drain keeps finding msg-x
         )
         invoker = await _make_invoker(link, _make_adapter_mock(), drain_cap=3)
@@ -636,3 +721,169 @@ class TestDrain:
 
         assert result["status"] == "done"
         assert result.get("drain_truncated") is True
+
+
+# ---------------------------------------------------------------------------
+# Custom tool dispatch through a real adapter and its real AgentTools.
+# ---------------------------------------------------------------------------
+
+
+class VaultCodeInput(BaseModel):
+    """Look up the vault code for a topic."""
+
+    topic: str = Field(description="Topic to look up")
+
+
+class TestCustomToolDispatch:
+    async def test_custom_tool_result_reaches_the_platform_reply(self) -> None:
+        """The model calls a custom tool it needs to answer, then reports
+        back via the real band_send_message platform tool.
+        """
+        looked_up: list[str] = []
+
+        async def lookup_vault_code(args: VaultCodeInput) -> str:
+            looked_up.append(args.topic)
+            return "vault code is 4471-ECHO"
+
+        link = make_link_mock(
+            participants=[
+                {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"},
+            ],
+            next_messages=[platform_msg("msg-1"), None],
+        )
+        link.rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            return_value=CreateAgentChatMessageResponse(
+                data=MessageSentResponse(id="sent-1", recipients=[], success=True)
+            )
+        )
+
+        adapter = AnthropicAdapter(
+            additional_tools=[(VaultCodeInput, lookup_vault_code)]
+        )
+        invoker = await _make_invoker(link, adapter)
+
+        turn_1 = MagicMock(stop_reason="tool_use")
+        turn_1.content = [
+            ToolUseBlock(
+                type="tool_use", id="call-1", name="vaultcode", input={"topic": "vault"}
+            )
+        ]
+        turn_2 = MagicMock(stop_reason="tool_use")
+        turn_2.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="call-2",
+                name="band_send_message",
+                input={
+                    "content": "The vault code is 4471-ECHO",
+                    "mentions": ["alice"],
+                },
+            )
+        ]
+        turn_3 = MagicMock(stop_reason="end_turn")
+        turn_3.content = []
+
+        with patch.object(
+            adapter, "_call_anthropic", AsyncMock(side_effect=[turn_1, turn_2, turn_3])
+        ):
+            result = await invoker.handle_event(_msg_body())
+
+        assert result["status"] == "done"
+        link.mark_processed.assert_awaited_once_with("room-1", "msg-1")
+        link.mark_failed.assert_not_awaited()
+
+        # Ran directly, not via AgentTools.execute_tool_call.
+        assert looked_up == ["vault"]
+
+        link.rest.agent_api_messages.create_agent_chat_message.assert_awaited_once()
+        sent = link.rest.agent_api_messages.create_agent_chat_message.call_args.kwargs[
+            "message"
+        ]
+        assert "4471-ECHO" in sent.content
+        assert sent.mentions[0].id == "user-1"
+
+
+# ---------------------------------------------------------------------------
+# Tool-call replay across a container crash.
+#
+# OneShotInvoker keeps no state across calls by design, so nothing survives
+# a crash between a tool's side effect and mark_processed — the platform's
+# /next re-serves the same still-"processing" message to whatever container
+# picks it up next, and a fresh adapter instance replays the whole turn from
+# scratch. This documents that as current, real behavior (not a bug this
+# file can fix — see band.runtime.single_instance and
+# band.runtime.claims.MessageClaimRegistry, both of which state the same
+# cross-process boundary is out of the SDK's reach).
+# ---------------------------------------------------------------------------
+
+
+class SendEmailInput(BaseModel):
+    """Send an email to an address."""
+
+    to: str
+
+
+class TestToolCallReplayAcrossCrash:
+    async def test_crash_before_mark_processed_replays_the_tool(self) -> None:
+        sent_emails: list[str] = []
+
+        async def send_email(args: SendEmailInput) -> str:
+            sent_emails.append(args.to)
+            return "sent"
+
+        link = make_link_mock(next_messages=[platform_msg("msg-1")])
+
+        # --- Attempt 1: the tool's side effect fires, then the container
+        # dies before the turn finishes (never reaches mark_processed).
+        adapter_a = AnthropicAdapter(additional_tools=[(SendEmailInput, send_email)])
+        invoker_a = await _make_invoker(link, adapter_a)
+
+        tool_use_email = MagicMock(stop_reason="tool_use")
+        tool_use_email.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="call-1",
+                name="sendemail",
+                input={"to": "boss@example.com"},
+            )
+        ]
+        with (
+            patch.object(
+                adapter_a,
+                "_call_anthropic",
+                AsyncMock(side_effect=[tool_use_email, SystemExit("container killed")]),
+            ),
+            pytest.raises(SystemExit),
+        ):
+            await invoker_a.handle_event(_msg_body())
+
+        assert sent_emails == ["boss@example.com"]
+        link.mark_processed.assert_not_awaited()
+        link.mark_failed.assert_not_awaited()
+
+        # --- Restart: a fresh container, fresh adapter, same still-open
+        # message — /next re-serves it exactly as it would after a crash.
+        link.get_next_message = AsyncMock(side_effect=[platform_msg("msg-1"), None])
+        link.mark_processing.reset_mock()
+        adapter_b = AnthropicAdapter(additional_tools=[(SendEmailInput, send_email)])
+        invoker_b = await _make_invoker(link, adapter_b)
+
+        turn_end = MagicMock(stop_reason="end_turn")
+        turn_end.content = []
+        with patch.object(
+            adapter_b,
+            "_call_anthropic",
+            AsyncMock(side_effect=[tool_use_email, turn_end]),
+        ):
+            result = await invoker_b.handle_event(_msg_body())
+
+        assert result["status"] == "done"
+        link.mark_processed.assert_awaited_once_with("room-1", "msg-1")
+
+        # The email tool fired twice for one logical request — nothing in
+        # OneShotInvoker (or the platform's claim primitives it relies on)
+        # prevents a crash-and-restart from replaying a completed side
+        # effect. Custom tools with real-world side effects need their own
+        # idempotency (e.g. keying on tool arguments), same as any at-least-
+        # once delivery system.
+        assert sent_emails == ["boss@example.com", "boss@example.com"]

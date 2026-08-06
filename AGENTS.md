@@ -475,11 +475,14 @@ To wire a new framework adapter into the matrix, follow
 ## Commands
 
 ```bash
-# Install dependencies (all extras except crewai — see Dependency Conflicts below)
+# Install dependencies (all extras except crewai and parlant — see Dependency Conflicts below)
 uv sync --extra dev
 
 # Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
 uv sync --extra dev-crewai
+
+# Install parlant adapter deps (isolated from dev/crewai/pydantic-ai)
+uv sync --extra dev-parlant
 
 # Run unit tests
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
@@ -522,15 +525,37 @@ environment due to conflicting transitive dependencies:
 This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
 resolves each in a separate fork.
 
+**parlant cannot coexist with pydantic-ai** either, for an unrelated reason: it's a
+namespace collision, not a version ceiling. `parlant` depends on the `griffe`
+distribution; `pydantic-ai-slim` depends on `griffelib` — two different PyPI
+distributions that both install files into the same `griffe` import path.
+Installing both corrupts that path (whichever wheel's files land last wins per
+file, nondeterministic by install order). Also declared via `[tool.uv] conflicts`.
+Separately, `parlant` itself pulls `fastmcp` (a `griffelib` dependency as of
+`fastmcp>=3.2.4`) alongside its own direct `griffe` dependency, so a `[tool.uv]
+constraint-dependencies` entry caps `fastmcp<3.2.4` — otherwise parlant collides
+with itself even with pydantic-ai nowhere in the picture.
+
 **Extras layout:**
-- `dev` — includes all framework deps **except** crewai
+- `dev` — includes all framework deps **except** crewai and parlant
 - `dev-crewai` — includes crewai + test tooling only (no parlant/pydantic-ai)
+- `dev-parlant` — includes parlant + test tooling only (no crewai/pydantic-ai)
 - `crewai` is mutually exclusive with `parlant` and `pydantic-ai` runtime extras
+- `parlant` is mutually exclusive with `pydantic-ai` (the griffe/griffelib clash above)
 
 **For CI:** crewai adapter tests require a separate job/step using
-`uv sync --extra dev-crewai`.
+`uv sync --extra dev-crewai`; parlant adapter tests likewise use
+`uv sync --extra dev-parlant` (`test-parlant` job).
 
 ## Environment Variables
+
+When running examples, live probes, integration checks, or provisioning
+against a real Band platform, load these from the repo-root `.env.test` —
+not ad-hoc `.env` copies, shell leftovers, or invented values — and never
+print secret values from it. Example-local `.env` files (e.g.
+`examples/**/.env`) may still hold Docker/`GITHUB_TOKEN` config, but Band
+agent keys and platform URLs should stay aligned with `.env.test` /
+`agent_config.yaml` rather than a second source of truth.
 
 - `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
 - `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
@@ -551,7 +576,7 @@ resolves each in a separate fork.
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server), `parlant` (`dev-parlant` extra — split from `core` because parlant's griffe/griffelib transitive deps collide with pydantic_ai's; registers no matrix adapter, a bespoke `@lane`-pinned smoke only). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -743,6 +768,21 @@ test, where the markdown-docs run actually executes it.
 
 ## Pre-Commit Checklist
 
+Before running the commands below, re-read your own diff once against the
+Coding Standards above — including code you just wrote this session, not only
+code you started from. The two rules that get skipped under time pressure:
+
+- **Single source of truth**: a literal, magic string, or multi-line block
+  re-typed in more than one place (a second copy you just wrote counts) instead
+  of one `StrEnum` / constant / small helper every site references.
+- **Intent-oriented code**: a raw comprehension or dict-poke standing in for a
+  small, intent-named helper — e.g. `[e for e in tools.events_sent if
+  e["message_type"] == "x"]` repeated at each call site instead of one
+  `events_of_type(tools, "x")`.
+
+Ruff/pyrefly/pytest catch correctness and style; they do not catch either of
+these, so this step is the only gate for them.
+
 ```bash
 uv run ruff check .
 uv run ruff format .
@@ -872,10 +912,7 @@ Examples:
 
 ### Pre-Commit Checklist
 
-- Run tests before committing
-- Run linting and formatting
-- Ensure type checking passes
-- Review changes with `git diff`
+See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not two.
 
 ### Code Review
 

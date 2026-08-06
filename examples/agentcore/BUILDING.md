@@ -223,27 +223,43 @@ same `AgentInput` regardless of which adapter consumes it.
 
 ### Adding custom tools
 
-The SDK supports custom tools via the adapter's `additional_tools` arg:
+The SDK supports custom tools via the adapter's `additional_tools` arg. A
+`CustomToolDef` is a `(InputModel, handler)` pair — a Pydantic model for the
+tool's arguments (its class name minus an optional `Input` suffix, lowercased,
+becomes the tool name) and an async or sync callable that takes a validated
+instance of that model:
 
 ```python
-from band.runtime.custom_tools import CustomToolDef
+from pydantic import BaseModel
 
-custom_tools = [
-    CustomToolDef(
-        name="search_company_db",
-        description="Look up a customer by name",
-        input_schema={...},
-        handler=async_handler,
-    )
-]
+class WeatherInput(BaseModel):
+    """Get the weather for a city."""
+
+    city: str
+
+async def get_weather(args: WeatherInput) -> str:
+    return f"{args.city}: sunny, 22°C"
+
 return AnthropicAdapter(
     ...,
-    additional_tools=custom_tools,
+    additional_tools=[(WeatherInput, get_weather)],
 )
 ```
 
-Custom tool schemas are merged with the SDK's built-in tools and exposed
-to Claude alongside the platform tools.
+Custom tool schemas are merged with the SDK's built-in tools and exposed to
+Claude alongside the platform tools. See
+[`custom_tools_llm_server.py`](custom_tools_llm_server.py) for a full,
+runnable container variant wired this way.
+
+**Make side-effecting tools idempotent.** A container can die between a
+tool call completing and the message being marked processed; the platform
+then re-serves the same message to the next invocation, which replays the
+whole turn — including the tool call — from scratch. `OneShotInvoker` has
+no cross-process state to detect this (same boundary `single_instance.py`
+and `claims.py` document for the long-running path), so a tool that emails,
+charges, or writes to an external system needs its own idempotency (e.g. a
+key derived from the tool's own arguments) if being called twice would
+matter.
 
 ## Common gotchas
 
@@ -315,7 +331,7 @@ See [`README.md`](README.md) for the full step-by-step.
    `/aws/bedrock-agentcore/runtimes/<runtime-id>/runtime-logs`. Look
    for the lifecycle log lines (`Claiming msg`, `Drained N stale
    messages`) the container emits at INFO.
-2. **Bridge logs locally**: `LOG_LEVEL=DEBUG` shows WS event delivery
+2. **Bridge logs locally**: `BAND_LOG_LEVEL=DEBUG` shows WS event delivery
    and forward attempts.
 3. **Smoke-test the container directly** via `boto3.invoke_agent_runtime`
    with a non-message event (e.g. `room_added`). The container should

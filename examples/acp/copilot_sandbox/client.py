@@ -39,13 +39,10 @@ import os
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent
+# Self-contained (a deployment artifact): configure logging inline.
+from band import Agent, LogSettings
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
-# Self-contained (a deployment artifact): configure logging inline.
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +61,7 @@ class Settings(BaseSettings):
 
 async def main() -> None:
     load_dotenv()
+    LogSettings().for_application().configure()
     settings = Settings()
 
     sandbox = settings.sbx_sandbox

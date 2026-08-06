@@ -16,14 +16,17 @@ from uuid import uuid4
 
 import pytest
 
-from band.core.types import PlatformMessage
-from band.integrations.acp.types import ACPSessionState
+from band.core.types import MessageType, PlatformMessage
+from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
+from band.testing import FakeAgentTools
 
 from .acp_toolkit import (
     FakeACPAgent as FakeACPAgent,  # re-exported for tests importing from conftest
 )
 from .acp_toolkit import (
     FakeSpawn,
+    Reply,
     acp_adapter as acp_adapter,  # re-exported
     make_acp_connection as make_acp_connection,  # re-exported
 )
@@ -51,6 +54,59 @@ def fake_agent() -> FakeACPAgent:
     then drive it with ``acp_adapter(fake_agent)``.
     """
     return FakeACPAgent()
+
+
+class ACPEditor:
+    """Drive the ACP server boundary as an editor awaiting a room reply."""
+
+    def __init__(self, client: AsyncMock) -> None:
+        self._client = client
+        self._bridge = BandACPServerAdapter()
+        self._bridge.set_acp_client(client)
+        self._tools = FakeAgentTools()
+        self._room_id: str | None = None
+
+    def awaiting_reply(self, room_id: str) -> ACPEditor:
+        self._room_id = room_id
+        self._bridge._pending_prompts[room_id] = PendingACPPrompt(session_id=room_id)
+        return self
+
+    async def forward_tool_activity(self, reply: Reply) -> None:
+        if self._room_id is None:
+            raise RuntimeError("Call awaiting_reply() before forwarding room activity")
+
+        for activity in reply.transcript:
+            if activity.message_type not in {
+                MessageType.TOOL_CALL,
+                MessageType.TOOL_RESULT,
+            }:
+                continue
+            await self._bridge.on_message(
+                make_platform_message(
+                    activity.content,
+                    room_id=self._room_id,
+                    message_type=activity.message_type,
+                ),
+                self._tools,
+                ACPSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id=self._room_id,
+            )
+
+    @property
+    def updates(self) -> list[object]:
+        return [
+            call.kwargs["update"]
+            for call in self._client.session_update.await_args_list
+        ]
+
+
+@pytest.fixture
+def acp_editor(mock_acp_client: AsyncMock) -> ACPEditor:
+    """An ACP editor that can receive a room reply through the server bridge."""
+    return ACPEditor(mock_acp_client)
 
 
 def make_platform_message(
