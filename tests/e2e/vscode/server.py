@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import socket
+
+from tests.ports import reserve_port
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +30,6 @@ READY_TIMEOUT_S = 30.0
 STOP_TIMEOUT_S = 10.0
 
 
-def _reserve_port() -> int:
-    """Take one ephemeral loopback port from the OS, then release it for the server.
-
-    The close→rebind gap is the standard reservation race — acceptable for a
-    single local server (mirrors ``parlant_server._reserve_two_ports``).
-    """
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 class BandMCPServer:
     """Lifecycle of one band-mcp SSE subprocess bound to a stable loopback port."""
 
@@ -52,7 +42,7 @@ class BandMCPServer:
         self._command = command
         self._agent_key = agent_key
         self._base_url = base_url
-        self._port = port or _reserve_port()
+        self._port = port or reserve_port()
         self._process: asyncio.subprocess.Process | None = None
 
     @property
