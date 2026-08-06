@@ -2423,7 +2423,7 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -2545,7 +2545,7 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -2668,7 +2668,7 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -3118,7 +3118,7 @@ class TestItemCompletedForwarding:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()

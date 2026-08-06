@@ -209,6 +209,7 @@ jobs:
       # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
       run: |
         uv run pytest \
+          tests/integrations/parlant/test_server.py \
           tests/integrations/parlant/test_tools.py \
           tests/framework_conformance/ -k parlant
 

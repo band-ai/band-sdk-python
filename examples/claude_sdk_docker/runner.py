@@ -28,6 +28,7 @@ from typing import Any
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band import LogSettings
 from band.core.types import Emit
 
 
@@ -40,7 +41,6 @@ class Settings(BaseSettings):
     workspace: str = ""
     agent_role: str = ""
 
-from band import LogSettings
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None

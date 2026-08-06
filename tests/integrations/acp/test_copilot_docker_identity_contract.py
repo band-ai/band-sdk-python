@@ -58,8 +58,11 @@ def _observe_variant(variant: str) -> VariantIdentity:
         # Spelling differs per variant: colocated compares the .env file's key
         # (what --env-file gave the container), compose the resolved env value.
         client_rejects_mismatched_key=("!= api_key" in client),
+        # Agent.from_config(AGENT_NAME) resolves the identity from the same
+        # agent_config.yaml entry the mismatch check reads — never from ad-hoc
+        # env vars or kwargs.
         client_uses_loaded_identity=(
-            "agent_id=agent_id" in client and "api_key=api_key" in client
+            f'Agent.from_config(\n        "{AGENT_NAME}",' in client
         ),
         client_uses_remote_mcp="inject_band_tools=False" in client,
     )
