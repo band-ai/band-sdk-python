@@ -28,16 +28,17 @@ process never resolves that name.
 
 - Docker + Docker Compose.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
-- A Band **agent** API key (`BAND_AGENT_KEY`, `thnv_a_…` / `band_a_…`) for band-mcp.
-- A configured Band agent named `copilot_acp_agent` for the host client (see the
-  SDK's `Agent.from_config` / `agent_config.yaml`).
+- A configured Band agent named `copilot_acp_agent` in `agent_config.yaml`.
+  Put that agent's `api_key` into `.env` as `BAND_AGENT_KEY` — host and band-mcp
+  must be the same identity (room tools 404 otherwise).
 
 ## Run
 
 ```bash
 cd examples/acp/copilot_docker/compose
-cp .env.example .env      # fill in GITHUB_TOKEN + BAND_AGENT_KEY
-docker compose up --build # starts copilot (:8080) + band-mcp (internal :3000)
+cp .env.example .env
+# Fill GITHUB_TOKEN and BAND_AGENT_KEY (= copilot_acp_agent api_key from agent_config.yaml)
+docker compose up --build
 
 # in another shell, from the repo root:
 uv run examples/acp/copilot_docker/compose/client.py
@@ -77,9 +78,10 @@ and calls Band tools via band-mcp.
   `ALLOWED_HOSTS='["band-mcp:*"]'` (the compose-DNS name Copilot dials). Add your
   own host there if you change the service name, or set
   `ENABLE_DNS_REBINDING_PROTECTION=false` for local experiments.
-- **Auth model.** band-mcp holds one Band identity (its agent key) and MCP clients
-  present **no** credentials. Treat band-mcp as a trusted sidecar — it is not
-  published to the host here. One container = one Band identity.
+- **Auth model.** band-mcp holds one Band identity (`BAND_AGENT_KEY`) and MCP
+  clients present **no** credentials. That key must be the same agent as host
+  `client.py` (`copilot_acp_agent` in `agent_config.yaml`). Treat band-mcp as a
+  trusted sidecar — it is not published to the host here.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a
   stored `copilot login`. A container has no stored login, so set a token env
