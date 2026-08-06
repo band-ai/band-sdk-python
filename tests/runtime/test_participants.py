@@ -45,6 +45,23 @@ class TestMergeParticipant:
         )
         assert refreshed["description"] == "Billing"
 
+    def test_empty_string_never_erases_a_known_field(self):
+        """A source that serializes an unknown field as ``""`` rather than
+        omitting the key (plausible for the participants-list endpoint) must
+        not win the merge — the consumer (``build_participants_message``)
+        treats both ``None`` and ``""`` as absent, so the merge has to match.
+        """
+        existing = participant_snapshot(
+            {"id": "1", "name": "Alice", "type": "User", "description": "Billing"}
+        )
+        refreshed = merge_participant(
+            existing,
+            participant_snapshot(
+                {"id": "1", "name": "Alice", "type": "User", "description": ""}
+            ),
+        )
+        assert refreshed["description"] == "Billing"
+
     def test_fresh_values_win(self):
         existing = participant_snapshot({"id": "1", "name": "Old", "type": "User"})
         refreshed = merge_participant(

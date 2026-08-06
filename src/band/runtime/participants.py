@@ -26,11 +26,13 @@ def merge_participant(
 
     Participant data arrives from sources of unequal fidelity (Peer lookup,
     participant list, WebSocket events, integration hooks), so a source that
-    does not know a field (``None``) must never erase one learned elsewhere.
+    does not know a field must never erase one learned elsewhere. Absence is
+    checked by truthiness, not ``is not None`` — matching the consumer
+    (``build_participants_message``, which itself gates on truthiness), since
+    a source can serialize an unknown field as ``""`` rather than omitting
+    the key (plausible for the participants-list endpoint, precisely the
+    sparse source this merge exists to defend against).
     """
     return {
-        name: (
-            snapshot.get(name) if snapshot.get(name) is not None else existing.get(name)
-        )
-        for name in _PARTICIPANT_FIELDS
+        name: snapshot.get(name) or existing.get(name) for name in _PARTICIPANT_FIELDS
     }
