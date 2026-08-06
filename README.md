@@ -464,7 +464,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
 
-> Install `crewai` in its own environment, apart from `parlant` and `pydantic-ai` — it carries the narrowest transitive pins of the three and the lockfile resolves it in a separate fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for the current pins.
+> `crewai`, `parlant`, and `pydantic-ai` each need their own environment, apart from one another — crewai carries the narrowest transitive pins of the three, and parlant/pydantic-ai separately collide on a shared import path. The lockfile resolves each in its own fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for details.
 
 ### Bridge Adapters
 
@@ -835,6 +835,8 @@ Three extras are resolved separately, because crewai carries the narrowest trans
 | `crewai` + `pydantic-ai` | `pydantic>=2.11.9,<2.13` | pydantic-ai-slim 2.x requires `pydantic>=2.12` |
 
 Today's versions happen to overlap, but crewai's ceilings move with every release. So the lockfile declares these as `[tool.uv] conflicts` and `uv lock` resolves each in a separate fork — no upgrade on one side waits for crewai's ceiling to move. Consequence: install one per environment, because a single `uv sync` can only pick one fork.
+
+`parlant` + `pydantic-ai` are separately resolved too, for an unrelated reason: it's not a version pin, it's a namespace collision. `parlant` depends on the `griffe` distribution; `pydantic-ai-slim` depends on `griffelib` — two different PyPI distributions that both install files into the same `griffe` import path. Installing both in one environment corrupts that path (whichever wheel's files land last wins per file, nondeterministic by install order). Also declared via `[tool.uv] conflicts`, so install `band-sdk[parlant]` and `band-sdk[pydantic-ai]` in separate environments, never together.
 
 ---
 

@@ -98,6 +98,7 @@ class ProvisionedAgent:
     api_key: str
     name: str
     adapter_id: str | None = None
+    description: str = ""
 
 
 def user_rest_client(settings: BaselineSettings) -> AsyncRestClient:
@@ -232,13 +233,21 @@ class ResourceManager:
     def _agent_name(self, label: str) -> str:
         return f"{NAME_PREFIX}{self._run_id}-{label}"
 
-    async def provision_agent(self, label: str) -> ProvisionedAgent:
-        """Register a fresh agent and return its id + own API key."""
+    async def provision_agent(
+        self, label: str, *, description: str | None = None
+    ) -> ProvisionedAgent:
+        """Register a fresh agent and return its id + own API key.
+
+        ``description`` is the Band agent description registered with the platform
+        (default ``E2E baseline test agent ({label})``). Tests that assert on
+        passive-roster description surfacing pass a self-sourced marker here.
+        """
         name = self._agent_name(label)
+        agent_description = description or f"E2E baseline test agent ({label})"
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
                 name=name,
-                description=f"E2E baseline test agent ({label})",
+                description=agent_description,
             )
         )
         agent = response.data.agent
@@ -249,7 +258,12 @@ class ResourceManager:
         )
         self._provisioned_agent_ids.append(agent.id)
         logger.info("Provisioned agent %s (%s)", agent.id, name)
-        return ProvisionedAgent(id=agent.id, api_key=credentials.api_key, name=name)
+        return ProvisionedAgent(
+            id=agent.id,
+            api_key=credentials.api_key,
+            name=name,
+            description=agent_description,
+        )
 
     def peer(self, agent: ProvisionedAgent) -> PeerActor:
         """A ``PeerActor`` to drive ``agent`` as a peer (e.g. the ``Echo`` bounce).

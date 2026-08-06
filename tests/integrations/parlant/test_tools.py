@@ -14,6 +14,13 @@ from band.integrations.parlant.tools import (
     was_message_sent,
 )
 
+try:
+    import parlant.sdk  # noqa: F401
+
+    _PARLANT_INSTALLED = True
+except ImportError:
+    _PARLANT_INSTALLED = False
+
 
 class TestSessionToolsRegistry:
     """Tests for session-keyed tools registry."""
@@ -133,8 +140,18 @@ class TestDeprecatedFunctions:
         assert result is None
 
 
+@pytest.mark.skipif(
+    not _PARLANT_INSTALLED, reason="needs the real parlant SDK (dev-parlant venv)"
+)
 class TestCreateParlantTools:
-    """Tests for create_parlant_tools() function."""
+    """Tests for create_parlant_tools() function.
+
+    Real parlant, not mocked: ``create_parlant_tools`` builds its tools with the
+    real ``@p.tool`` decorator, which introspects each function's signature/
+    docstring into a real ``Tool.parameters`` schema — the schema shape *is* what
+    these tests verify, so faking the decorator would test the fake, not the
+    integration.
+    """
 
     def test_returns_list_of_tools(self):
         """Should return list of tool entries when Parlant is installed."""
@@ -258,8 +275,15 @@ class TestCreateParlantTools:
         assert "band_respond_contact_request" in tool_names
 
 
+@pytest.mark.skipif(
+    not _PARLANT_INSTALLED, reason="needs the real parlant SDK (dev-parlant venv)"
+)
 class TestParlantToolFunctions:
-    """Tests for individual Parlant tool functions."""
+    """Tests for individual Parlant tool functions.
+
+    Drives the real tools built by ``create_parlant_tools`` (see that class's
+    docstring for why this needs real parlant, not a fake).
+    """
 
     def setup_method(self):
         """Clear registry and set up mocks before each test."""

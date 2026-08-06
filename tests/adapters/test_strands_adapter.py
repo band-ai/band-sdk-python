@@ -8,7 +8,7 @@ usage, and cleanup.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, cast
@@ -16,18 +16,26 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel
 
+from tests.strandskit import text, tool_call, tool_result
+
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from strands import tool as strands_tool  # noqa: E402
+from strands.models.openai import OpenAIModel  # noqa: E402
+from strands.types.content import Messages  # noqa: E402
 from strands.types.exceptions import EventLoopException  # noqa: E402
+from strands.types.streaming import StreamEvent  # noqa: E402
+from strands.types.tools import ToolChoice, ToolSpec  # noqa: E402
 
 from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
     AdapterFeatures,
+    AgentInput,
     Capability,
     Emit,
+    HistoryProvider,
     PlatformMessage,
     TurnUsage,
 )
@@ -305,6 +313,97 @@ class TestPromptConfiguration:
 
         assert adapter._system_prompt is not None
         assert "Keep replies concise." in adapter._system_prompt
+
+
+class TestOpenAIRehydration:
+    """Cold-boot history remains valid when it reaches OpenAI."""
+
+    _HISTORY = [
+        tool_call("calc", {"expr": "2+2"}, "call-1"),
+        text("also, hello"),
+        tool_result("calc", "4", "call-1"),
+    ]
+
+    class RecordingOpenAIModel(OpenAIModel):
+        """Run the real OpenAI serializer, then answer from the offline model."""
+
+        def __init__(self) -> None:
+            super().__init__(client_args={"api_key": "test"}, model_id="gpt-4o-mini")
+            self.requests: list[list[dict[str, Any]]] = []
+            self._scripted = ScriptedStrandsModel([SEND_TURN])
+
+        async def stream(
+            self,
+            messages: Messages,
+            tool_specs: list[ToolSpec] | None = None,
+            system_prompt: str | None = None,
+            *,
+            tool_choice: ToolChoice | None = None,
+            **kwargs: Any,
+        ) -> AsyncGenerator[StreamEvent, None]:
+            self.requests.append(self.format_request_messages(messages, system_prompt))
+            async for event in self._scripted.stream(
+                messages,
+                tool_specs,
+                system_prompt,
+                tool_choice=tool_choice,
+                **kwargs,
+            ):
+                yield event
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "history_converter",
+        [None, StrandsHistoryConverter()],
+        ids=["default-converter", "custom-converter"],
+    )
+    async def test_openai_serialization_keeps_the_tool_result_adjacent(
+        self, history_converter, tools
+    ):
+        model = self.RecordingOpenAIModel()
+        adapter = StrandsAdapter(
+            model=model,
+            history_converter=history_converter,
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        await adapter.on_event(
+            AgentInput(
+                msg=_make_msg(ROOM),
+                tools=cast("AgentToolsProtocol", tools),
+                history=HistoryProvider(raw=self._HISTORY),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id=ROOM,
+            )
+        )
+
+        tool_call_index = next(
+            index
+            for index, message in enumerate(model.requests[0])
+            if "tool_calls" in message
+        )
+        assert model.requests[0][tool_call_index : tool_call_index + 3] == [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "arguments": '{"expr": "2+2"}',
+                            "name": "calc",
+                        },
+                        "id": "call-1",
+                        "type": "function",
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "4"},
+            {
+                "role": "user",
+                "content": [{"text": "[Alice]: also, hello", "type": "text"}],
+            },
+        ]
 
 
 class TestOnMessage:

@@ -40,16 +40,22 @@ Example usage::
 from __future__ import annotations
 
 import logging
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.link import BandLink
 from band.runtime.context_serialization import context_item_to_dict
-from band.runtime.formatters import format_history_for_llm, replace_uuid_mentions
+from band.runtime.formatters import (
+    build_participants_message,
+    format_history_for_llm,
+    replace_uuid_mentions,
+)
 from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
@@ -59,6 +65,22 @@ logger = logging.getLogger(__name__)
 # messages for a single agent in normal operation; if it does, surface it via
 # ``drain_truncated`` rather than draining indefinitely.
 DEFAULT_DRAIN_CAP = 50
+
+# Items per page when following the context endpoint's cursor pagination.
+DEFAULT_HISTORY_LIMIT = 50
+
+# How many of the most recent pages of history to retain per invocation. The
+# context endpoint is oldest-first with no way to request newest-first (see
+# ``_fetch_history``), so pagination always walks to the true end regardless
+# of this value — it only bounds memory/what reaches the LLM, never causes
+# the newest messages to be dropped in favor of older ones.
+DEFAULT_HISTORY_PAGE_CAP = 20
+
+# Absolute ceiling on pagination round-trips per invocation, independent of
+# how many pages are retained (``DEFAULT_HISTORY_PAGE_CAP``). Guards against
+# a backend that never reports ``has_more=False`` — hitting this is a
+# backend contract violation, not a real conversation length.
+DEFAULT_HISTORY_FETCH_CEILING = 500
 
 
 class OneShotEnvelopeError(ValueError):
@@ -80,6 +102,8 @@ class OneShotInvoker:
         agent_id: This container's Band agent identity (used for
             self-message filtering and the adapter's runtime identity).
         drain_cap: Defensive ceiling on the drain loop. Default 50.
+        history_page_cap: How many of the most recent pages of history to
+            retain per invocation. Default 20.
     """
 
     def __init__(
@@ -89,11 +113,13 @@ class OneShotInvoker:
         adapter: FrameworkAdapter | SimpleAdapter,
         agent_id: str,
         drain_cap: int = DEFAULT_DRAIN_CAP,
+        history_page_cap: int = DEFAULT_HISTORY_PAGE_CAP,
     ) -> None:
         self._link = link
         self._adapter = adapter
         self._agent_id = agent_id
         self._drain_cap = drain_cap
+        self._history_page_cap = history_page_cap
         self._agent_name: str = ""
         self._agent_description: str = ""
         self._started = False
@@ -274,7 +300,7 @@ class OneShotInvoker:
             sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
 
             msg = _build_platform_message(payload, room_id, sender_name, participants)
-            history, seen_ids = await self._fetch_history(
+            history, seen_ids, history_truncated = await self._fetch_history(
                 room_id,
                 exclude_message_id=msg.id,
                 participants=participants,
@@ -290,7 +316,12 @@ class OneShotInvoker:
                 msg=msg,
                 tools=tools,
                 history=HistoryProvider(raw=history),
-                participants_msg=None,
+                # OneShotInvoker has no cross-call state to diff the roster
+                # against, so every invocation is "first time" from that
+                # perspective — the same condition under which the
+                # long-running path itself sends the roster (see
+                # ExecutionContext.participants_changed).
+                participants_msg=build_participants_message(participants),
                 contacts_msg=None,
                 is_session_bootstrap=True,
                 room_id=room_id,
@@ -374,6 +405,8 @@ class OneShotInvoker:
             result["drained"] = drained
         if drain_truncated:
             result["drain_truncated"] = True
+        if history_truncated:
+            result["history_truncated"] = True
         return result
 
     # --- REST helpers ---
@@ -400,15 +433,7 @@ class OneShotInvoker:
             return []
         if not response.data:
             return []
-        return [
-            {
-                "id": p.id,
-                "name": p.name,
-                "type": p.type,
-                "handle": getattr(p, "handle", None),
-            }
-            for p in response.data
-        ]
+        return [participant_snapshot(p.model_dump()) for p in response.data]
 
     async def _fetch_history(
         self,
@@ -416,24 +441,72 @@ class OneShotInvoker:
         *,
         exclude_message_id: str | None,
         participants: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], set[str]]:
+    ) -> tuple[list[dict[str, Any]], set[str], bool]:
         """Fetch room history formatted for the LLM, plus the set of message
         ids the LLM will see. The id set scopes the drain loop so it never
         swallows a message that arrived after this snapshot.
+
+        Follows the endpoint's cursor pagination (``next_cursor``/
+        ``has_more``) to the true end of the room's history — the endpoint
+        is oldest-first with no ``sort_order``/``before`` parameter, so
+        stopping early would keep the oldest pages and drop the newest ones,
+        including the turns the triggering message is replying to. Retains
+        only the trailing ``self._history_page_cap`` pages in memory; the
+        third return value reports whether any earlier pages were evicted
+        (or a mid-pagination fetch failure left history incomplete).
         """
-        try:
-            response = await self._link.rest.agent_api_context.get_agent_chat_context(
-                chat_id=room_id,
-                page=1,
-                page_size=50,
-                request_options=DEFAULT_REQUEST_OPTIONS,
-            )
-        except Exception:
+        pages: deque[list[Any]] = deque(maxlen=self._history_page_cap)
+        cursor: str | None = None
+        fetched_pages = 0
+        truncated = False
+        for page_num in range(DEFAULT_HISTORY_FETCH_CEILING):
+            try:
+                response = (
+                    await self._link.rest.agent_api_context.get_agent_chat_context(
+                        chat_id=room_id,
+                        cursor=cursor,
+                        limit=DEFAULT_HISTORY_LIMIT,
+                        request_options=DEFAULT_REQUEST_OPTIONS,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to fetch history for room %s (page %d)",
+                    room_id,
+                    page_num,
+                    exc_info=True,
+                )
+                if page_num == 0:
+                    return [], set(), True
+                truncated = True
+                break
+            pages.append(response.data or [])
+            fetched_pages += 1
+            if not response.metadata.has_more:
+                break
+            cursor = response.metadata.next_cursor
+            if cursor is None:
+                logger.warning(
+                    "has_more=True but no next_cursor for room %s (page %d) — "
+                    "stopping pagination",
+                    room_id,
+                    page_num,
+                )
+                truncated = True
+                break
+        else:
+            truncated = True
             logger.warning(
-                "Failed to fetch history for room %s", room_id, exc_info=True
+                "Hit history fetch ceiling (%d) for room %s — backend never "
+                "reported has_more=False",
+                DEFAULT_HISTORY_FETCH_CEILING,
+                room_id,
             )
-            return [], set()
-        items = response.data or []
+
+        if fetched_pages > self._history_page_cap:
+            truncated = True
+
+        items = [item for page in pages for item in page]
         seen_ids = {item.id for item in items if getattr(item, "id", None)}
         raw_messages = [context_item_to_dict(item) for item in items]
         history = (
@@ -444,7 +517,7 @@ class OneShotInvoker:
             )
             or []
         )
-        return history, seen_ids
+        return history, seen_ids, truncated
 
 
 # --- Module-level helpers (no state, easy to unit-test) ---

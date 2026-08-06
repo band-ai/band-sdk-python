@@ -1,41 +1,28 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[anthropic]>=1.2.0,<2.0.0",
+#   "band-sdk[anthropic]",
 #   "fastapi>=0.110",
 #   "uvicorn>=0.29",
+#   "pydantic>=2",
 # ]
+#
+# [tool.uv.sources]
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
-"""AgentCore container that runs the Band SDK per invocation.
+"""AgentCore container variant with a custom tool wired in.
 
-The bridge (dumb pipe) forwards raw Band WS events to this container over
-HTTP. On each POST /invocations the container hands the forwarded event to the
-SDK's :class:`OneShotInvoker`, which reconstructs a typed message, fetches
-participants + history via REST, runs the adapter's LLM tool loop, and honors
-the platform's lifecycle markers (claim / processed / failed / drain) so
-concurrent invocations don't duplicate work.
+Same shape as ``agentcore_llm_server.py`` (see that file for the full
+lifecycle/transport walkthrough). The only difference is ``_build_adapter``
+passing ``additional_tools`` — see BUILDING.md's "Adding custom tools"
+section.
 
-Each invocation is one-shot — no per-room state is kept across calls. The SDK
-owns all the lifecycle logic; this file is just the AgentCore Runtime transport
-(``/ping`` + ``/invocations``) and env-driven adapter construction.
-
-Environment variables:
-    BAND_AGENT_ID — agent's Band identity (required)
-    BAND_API_KEY  — Band REST API key (required)
-    ANTHROPIC_API_KEY — Anthropic API key for the LLM loop (required)
-    BAND_WS_URL   — defaults to wss://app.band.ai/api/v1/socket/websocket
-                       (unused by the container; reserved for SDK consistency)
-    BAND_REST_URL — defaults to https://app.band.ai
-    ANTHROPIC_MODEL  — defaults to claude-sonnet-4-5-20250929
-    SYSTEM_PROMPT    — optional custom system prompt for the adapter
-    EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
-                       events; set "false" to silence them
-    PORT             — defaults to 8080 (AgentCore Runtime contract)
+Environment variables: same as ``agentcore_llm_server.py``.
 
 Run locally::
 
     BAND_AGENT_ID=... BAND_API_KEY=... ANTHROPIC_API_KEY=... \\
-        uv run python examples/agentcore/agentcore_llm_server.py
+        uv run python examples/agentcore/custom_tools_llm_server.py
 """
 
 from __future__ import annotations
@@ -48,14 +35,17 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel
 
-from band import LogSettings
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, Emit
 from band.platform.link import BandLink
 from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
-LogSettings().for_application().configure()
+logging.basicConfig(
+    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -66,13 +56,18 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
-    """Build the AnthropicAdapter from env config.
+class WeatherInput(BaseModel):
+    """Get the weather for a city."""
 
-    Enables ``Emit.EXECUTION`` by default so every tool_call and tool_result
-    is posted to the room as a platform event (visible in the Band UI).
-    Set ``EMIT_EXECUTION=false`` to disable.
-    """
+    city: str
+
+
+async def get_weather(args: WeatherInput) -> str:
+    """Deterministic stand-in for a real weather API."""
+    return f"{args.city}: sunny, 22°C"
+
+
+def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
     model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
     system_prompt = os.environ.get("SYSTEM_PROMPT")
     emit_execution = os.environ.get("EMIT_EXECUTION", "true").lower() in (
@@ -88,12 +83,12 @@ def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
         provider_key=anthropic_api_key,
         prompt=system_prompt,
         features=AdapterFeatures(emit=emit),
+        additional_tools=[(WeatherInput, get_weather)],
     )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize link + adapter + invoker; prime the adapter."""
     agent_id = _require_env("BAND_AGENT_ID")
     api_key = _require_env("BAND_API_KEY")
     anthropic_api_key = _require_env("ANTHROPIC_API_KEY")
@@ -124,25 +119,11 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/ping")
 async def ping() -> dict[str, str]:
-    """AgentCore Runtime health probe."""
     return {"status": "Healthy"}
 
 
 @app.post("/invocations")
 async def invocations(request: Request) -> dict[str, Any]:
-    """Process one forwarded event from the bridge.
-
-    Body shape (from bridge_core.bridge.AgentRunner._serialize_event)::
-
-        {
-          "event_type": "message_created" | "room_added" | ...,
-          "agent_id": "<recipient agent id>",
-          "room_id": "<chat room id or null>",
-          "payload": {...},   # Pydantic model_dump of the event payload
-          "raw": {...},
-          "forwarded_at": "ISO-8601"
-        }
-    """
     invoker: OneShotInvoker = app.state.invoker
     body = await request.json()
     try:

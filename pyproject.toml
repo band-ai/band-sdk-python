@@ -154,9 +154,14 @@ strands = [
     "strands-agents[openai]>=1.40,<2",
 ]
 
-# dev extra includes ALL framework deps for testing EXCEPT crewai, which is
-# declared conflicting with both parlant and pydantic-ai (see tool.uv.conflicts).
-# To run crewai tests, install with: uv sync --extra dev-crewai
+# dev extra includes ALL framework deps for testing EXCEPT crewai and parlant.
+# crewai is declared conflicting with both parlant and pydantic-ai (pydantic +
+# opentelemetry ceilings); parlant is declared conflicting with pydantic-ai
+# because their `griffe`/`griffelib` transitive deps are two different PyPI
+# distributions that install into the same `griffe` import path — installing
+# both corrupts that path (which file wins is install-order dependent). See
+# tool.uv.conflicts. To run crewai tests: uv sync --extra dev-crewai. To run
+# parlant tests: uv sync --extra dev-parlant.
 dev = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
@@ -194,9 +199,6 @@ dev = [
     "uvicorn>=0.32.0",
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
-    # Include parlant for testing (see the parlant extra for why >=3.3.2)
-    "parlant>=3.3.2",
-    "werkzeug>=3.1.6",
     # Include ACP deps for testing
     "agent-client-protocol>=0.9.0",
     "mcp>=1.25.0,<2",
@@ -265,6 +267,34 @@ dev-crewai = [
     "pyrefly>=0.18.0",
 ]
 
+# Parlant-only dev extra for testing the parlant adapter in isolation. Declared
+# conflicting with pydantic-ai (see the dev extra's comment for why), so one uv
+# sync resolves either this extra or dev/pydantic-ai, never both.
+dev-parlant = [
+    "pydantic-settings>=2.0.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+    "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
+    "pytest-timeout>=2.4.0",
+    "band-testing-python==0.1.4",
+    "httpx>=0.24.0",
+    # Parlant and its deps (see the parlant extra for why >=3.3.2)
+    "parlant>=3.3.2",
+    "openai>=2.0.0",
+    "werkzeug>=3.1.6",
+    # Anthropic client: the baseline E2E conftest imports it at module load and
+    # the LLM judge needs it. A thin client (pydantic <3), so no parlant conflict.
+    "anthropic>=0.75.0",
+    # Pretty E2E test output
+    "rich>=13.0.0",
+    # Development tools
+    "ruff>=0.8.0",
+    "pyrefly>=0.18.0",
+]
+
 [project.scripts]
 band-acp = "band.integrations.acp.cli:entry_point"
 band-room-view = "band.integrations.desktop_app.cli:entry_point"
@@ -309,6 +339,16 @@ markers = [
 # pre-release opt-in inherited by `band-sdk[google_adk]` consumers.
 constraint-dependencies = [
     "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
+    # parlant pulls fastmcp unconditionally (only a floor: fastmcp>=3.2.0) and
+    # griffe directly. fastmcp 3.2.4 (2026-04-14) added its own dependency on
+    # griffelib — a *different* PyPI distribution that installs files into the
+    # same `griffe` import path griffe itself uses, so parlant's own dependency
+    # tree pulls both distributions into one `griffe/` directory regardless of
+    # any other extra (e.g. pydantic-ai). fastmcp 3.2.0-3.2.3 have no griffe/
+    # griffelib dependency at all, so capping below 3.2.4 keeps parlant on a
+    # single, uncorrupted `griffe`. Resolution-only: nothing under src/band
+    # depends on fastmcp directly.
+    "fastmcp>=3.2.0,<3.2.4",
 ]
 
 # Ensure uv.lock stays installable on the platforms we use locally and in CI
@@ -325,6 +365,13 @@ required-environments = [
 # pydantic-ai-slim 2.x requires pydantic>=2.12 and parlant requires
 # opentelemetry-sdk>=1.37. Declaring the extras as conflicting lets uv resolve each
 # side in its own fork instead of forcing one shared pin that satisfies everyone.
+#
+# parlant is separately resolved apart from pydantic-ai for an unrelated reason:
+# parlant depends on the `griffe` distribution and pydantic-ai-slim depends on
+# `griffelib` — two different PyPI distributions that both install files into the
+# same `griffe` import path. Installing both corrupts that path (whichever wheel's
+# files land last wins per file, nondeterministic by install order), so they must
+# never share a resolved environment either.
 conflicts = [
     [
         { extra = "crewai" },
@@ -335,12 +382,24 @@ conflicts = [
         { extra = "pydantic-ai" },
     ],
     [
+        { extra = "parlant" },
+        { extra = "pydantic-ai" },
+    ],
+    [
         { extra = "dev" },
         { extra = "crewai" },
     ],
     [
         { extra = "dev" },
+        { extra = "parlant" },
+    ],
+    [
+        { extra = "dev" },
         { extra = "dev-crewai" },
+    ],
+    [
+        { extra = "dev" },
+        { extra = "dev-parlant" },
     ],
     [
         { extra = "dev-crewai" },
@@ -349,6 +408,18 @@ conflicts = [
     [
         { extra = "dev-crewai" },
         { extra = "pydantic-ai" },
+    ],
+    [
+        { extra = "dev-crewai" },
+        { extra = "dev-parlant" },
+    ],
+    [
+        { extra = "dev-parlant" },
+        { extra = "pydantic-ai" },
+    ],
+    [
+        { extra = "dev-parlant" },
+        { extra = "crewai" },
     ],
 ]
 

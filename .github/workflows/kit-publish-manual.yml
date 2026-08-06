@@ -57,6 +57,9 @@ jobs:
       cancel-in-progress: false
       queue: max
     uses: ./.github/workflows/kit-publish.yml
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     with:
       ref: ${{ inputs.ref }}
       version: ${{ inputs.version }}

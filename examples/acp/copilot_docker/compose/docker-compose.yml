@@ -14,7 +14,7 @@ services:
       context: .
       dockerfile: Dockerfile.band-mcp
     environment:
-      # band-mcp acts as ONE Band identity (an agent key: thnv_a_… / band_a_…).
+      # band-mcp acts as ONE Band identity (an agent key: band_a_…).
       # The MCP client (Copilot) sends no credentials, so keep this service off the
       # host network — it is a trusted sidecar reachable only within the compose net.
       BAND_AGENT_KEY: ${BAND_AGENT_KEY:?set BAND_AGENT_KEY in .env}

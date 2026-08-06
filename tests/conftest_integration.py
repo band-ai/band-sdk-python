@@ -30,16 +30,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from dotenv import load_dotenv
 from band_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
 from band_rest.core.api_error import ApiError
 from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
 from band_rest.types import ChatMessageRequestMentionsItem, ParticipantRequest
+from dotenv import load_dotenv
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
 
+from tests.integration.participants import ensure_in_room, ensure_participant
 from tests.paths import ENV_TEST_FILE
 
 if TYPE_CHECKING:
@@ -359,25 +360,6 @@ async def shared_user_peer(
 # =============================================================================
 
 
-async def _ensure_participant(
-    api_client: AsyncRestClient,
-    chat_id: str,
-    participant_id: str,
-    role: str = "member",
-) -> None:
-    """Add a participant to a room if not already present."""
-    response = await api_client.agent_api_participants.list_agent_chat_participants(
-        chat_id
-    )
-    existing_ids = {p.id for p in (response.data or [])}
-    if participant_id not in existing_ids:
-        await api_client.agent_api_participants.add_agent_chat_participant(
-            chat_id,
-            participant=ParticipantRequest(participant_id=participant_id, role=role),
-        )
-        logger.info("Added participant %s to room %s", participant_id, chat_id)
-
-
 async def is_room_alive(api_client: AsyncRestClient, chat_id: str) -> bool:
     """Check whether a room is usable (not deleted) by fetching its details."""
     try:
@@ -463,7 +445,7 @@ async def shared_room(
 
     # Ensure User peer is a participant
     if shared_user_peer is not None:
-        await _ensure_participant(session_api_client, chat_id, shared_user_peer.id)
+        await ensure_participant(session_api_client, chat_id, shared_user_peer.id)
 
     return chat_id
 
@@ -513,11 +495,11 @@ async def shared_multi_agent_room(
         )
         chat_id = create_response.data.id
         logger.info("Created new shared_multi_agent_room: %s", chat_id)
-        await _ensure_participant(session_api_client, chat_id, agent2_id)
+        await ensure_in_room(session_api_client, chat_id, agent2_id)
 
     # Ensure User peer is present
     if shared_user_peer is not None:
-        await _ensure_participant(session_api_client, chat_id, shared_user_peer.id)
+        await ensure_participant(session_api_client, chat_id, shared_user_peer.id)
 
     return chat_id
 

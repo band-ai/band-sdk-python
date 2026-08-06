@@ -200,11 +200,11 @@ the registries stay in lockstep — same pattern as CI:
 ## One-time Docker Hub setup
 
 1. Org `bandhq` on Hub; public repos `band-python-kit` and `band-python-kit-image`.
-2. Secrets on the `release` environment: `DOCKERHUB_USERNAME` and
-   `DOCKERHUB_TOKEN`. For an organization access token (OAT), username must be
-   the org name (`bandhq`), not a personal Hub user. The called jobs in
-   `kit-publish.yml` declare `environment: release`, so callers do not pass
-   these secrets; keeping them environment-only avoids duplicate credentials.
+2. Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. For an
+   organization access token (OAT), username must be the org name (`bandhq`),
+   not a personal Hub user. Every caller passes only these two secrets to
+   `kit-publish.yml`; its jobs still declare `environment: release` as the
+   deployment gate.
 
 ## One-time GHCR setup
 

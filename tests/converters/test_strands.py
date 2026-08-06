@@ -15,55 +15,7 @@ import pytest
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
-
-
-def _tool_call(name: str, args: dict, call_id: str) -> dict:
-    return {
-        "role": "assistant",
-        "content": json.dumps({"name": name, "args": args, "tool_call_id": call_id}),
-        "message_type": "tool_call",
-    }
-
-
-def _tool_result(name: str, output: str, call_id: str, is_error: bool = False) -> dict:
-    return {
-        "role": "assistant",
-        "content": json.dumps(
-            {
-                "name": name,
-                "output": output,
-                "tool_call_id": call_id,
-                "is_error": is_error,
-            }
-        ),
-        "message_type": "tool_result",
-    }
-
-
-def _text(content: str, sender: str = "Alice", role: str = "user") -> dict:
-    return {
-        "role": role,
-        "content": content,
-        "sender_name": sender,
-        "message_type": "text",
-    }
-
-
-def _outline(messages: list[dict]) -> list[str]:
-    """Render each message as ``role: block(id)`` for readable assertions."""
-
-    def describe(block: dict) -> str:
-        if "toolUse" in block:
-            return f"toolUse({block['toolUse']['toolUseId']})"
-        if "toolResult" in block:
-            result = block["toolResult"]
-            return f"toolResult({result['toolUseId']}, {result['status']})"
-        return f"text({block['text']})"
-
-    return [
-        f"{message['role']}: {' '.join(describe(b) for b in message['content'])}"
-        for message in messages
-    ]
+from tests.strandskit import outline, text, tool_call, tool_result  # noqa: E402
 
 
 class TestToolEventFormat:
@@ -72,8 +24,8 @@ class TestToolEventFormat:
 
         result = converter.convert(
             [
-                _tool_call("band_send_message", {"content": "hi"}, "call-1"),
-                _tool_result("band_send_message", "sent", "call-1"),
+                tool_call("band_send_message", {"content": "hi"}, "call-1"),
+                tool_result("band_send_message", "sent", "call-1"),
             ]
         )
 
@@ -95,8 +47,8 @@ class TestToolEventFormat:
 
         result = converter.convert(
             [
-                _tool_call("search", {"q": "x"}, "call-1"),
-                _tool_result("search", "found it", "call-1"),
+                tool_call("search", {"q": "x"}, "call-1"),
+                tool_result("search", "found it", "call-1"),
             ]
         )
 
@@ -118,8 +70,8 @@ class TestToolEventFormat:
 
         result = converter.convert(
             [
-                _tool_call("search", {}, "call-1"),
-                _tool_result("search", "boom", "call-1", is_error=True),
+                tool_call("search", {}, "call-1"),
+                tool_result("search", "boom", "call-1", is_error=True),
             ]
         )
 
@@ -132,10 +84,10 @@ class TestBatching:
 
         result = converter.convert(
             [
-                _tool_call("a", {}, "call-a"),
-                _tool_call("b", {}, "call-b"),
-                _tool_result("a", "ra", "call-a"),
-                _tool_result("b", "rb", "call-b"),
+                tool_call("a", {}, "call-a"),
+                tool_call("b", {}, "call-b"),
+                tool_result("a", "ra", "call-a"),
+                tool_result("b", "rb", "call-b"),
             ]
         )
 
@@ -161,13 +113,13 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("band_send_message", {"content": "hi"}, "call-1"),
-                _text("hi", sender="Bot", role="assistant"),
-                _tool_result("band_send_message", "sent", "call-1"),
+                tool_call("band_send_message", {"content": "hi"}, "call-1"),
+                text("hi", sender="Bot", role="assistant"),
+                tool_result("band_send_message", "sent", "call-1"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-1)",
             "user: toolResult(call-1, success)",
         ]
@@ -177,13 +129,13 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("calc", {"expr": "2+2"}, "call-1"),
-                _text("also, hello"),
-                _tool_result("calc", "4", "call-1"),
+                tool_call("calc", {"expr": "2+2"}, "call-1"),
+                text("also, hello"),
+                tool_result("calc", "4", "call-1"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-1)",
             "user: toolResult(call-1, success) text([Alice]: also, hello)",
         ]
@@ -198,15 +150,15 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("a", {}, "call-a"),
-                _text("also, hello"),
-                _tool_call("b", {}, "call-b"),
-                _tool_result("a", "ra", "call-a"),
-                _tool_result("b", "rb", "call-b"),
+                tool_call("a", {}, "call-a"),
+                text("also, hello"),
+                tool_call("b", {}, "call-b"),
+                tool_result("a", "ra", "call-a"),
+                tool_result("b", "rb", "call-b"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-a) toolUse(call-b)",
             "user: toolResult(call-a, success) toolResult(call-b, success) "
             "text([Alice]: also, hello)",
@@ -217,12 +169,12 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("calc", {}, "call-1"),
-                _text("still there?"),
+                tool_call("calc", {}, "call-1"),
+                text("still there?"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-1)",
             "user: toolResult(call-1, error) text([Alice]: still there?)",
         ]
@@ -238,13 +190,13 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _text("please send it"),
-                _tool_result("band_send_message", "sent", "call-lost"),
-                _text("thanks"),
+                text("please send it"),
+                tool_result("band_send_message", "sent", "call-lost"),
+                text("thanks"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "user: text([Alice]: please send it)",
             "assistant: toolUse(call-lost)",
             "user: toolResult(call-lost, success) text([Alice]: thanks)",
@@ -261,16 +213,16 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("a", {}, "call-a"),
-                _tool_call("b", {}, "call-b"),
-                _tool_result("a", "ra", "call-a"),
-                _tool_call("c", {}, "call-c"),
-                _tool_result("b", "rb", "call-b"),
-                _tool_result("c", "rc", "call-c"),
+                tool_call("a", {}, "call-a"),
+                tool_call("b", {}, "call-b"),
+                tool_result("a", "ra", "call-a"),
+                tool_call("c", {}, "call-c"),
+                tool_result("b", "rb", "call-b"),
+                tool_result("c", "rc", "call-c"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-a) toolUse(call-b) toolUse(call-c)",
             "user: toolResult(call-a, success) toolResult(call-b, success) "
             "toolResult(call-c, success)",
@@ -281,13 +233,13 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("a", {}, "call-a"),
-                _tool_call("b", {}, "call-b"),
-                _tool_result("a", "ra", "call-a"),
+                tool_call("a", {}, "call-a"),
+                tool_call("b", {}, "call-b"),
+                tool_result("a", "ra", "call-a"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-a) toolUse(call-b)",
             "user: toolResult(call-b, error) toolResult(call-a, success)",
         ]
@@ -297,13 +249,13 @@ class TestToolPairIntegrity:
 
         result = converter.convert(
             [
-                _tool_call("calc", {}, "call-1"),
-                _tool_result("calc", "4", "call-1"),
-                _text("the answer is 4", sender="Bot", role="assistant"),
+                tool_call("calc", {}, "call-1"),
+                tool_result("calc", "4", "call-1"),
+                text("the answer is 4", sender="Bot", role="assistant"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "assistant: toolUse(call-1)",
             "user: toolResult(call-1, success)",
             "assistant: text(the answer is 4)",
@@ -316,26 +268,26 @@ class TestRoleAlternation:
     def test_consecutive_speakers_become_one_turn(self):
         converter = StrandsHistoryConverter(agent_name="Bot")
 
-        result = converter.convert([_text("one"), _text("two", sender="Bob")])
+        result = converter.convert([text("one"), text("two", sender="Bob")])
 
-        assert _outline(result) == ["user: text([Alice]: one) text([Bob]: two)"]
+        assert outline(result) == ["user: text([Alice]: one) text([Bob]: two)"]
 
     def test_every_transcript_alternates(self):
         converter = StrandsHistoryConverter(agent_name="Bot")
 
         result = converter.convert(
             [
-                _text("one"),
-                _text("two", sender="Bob"),
-                _text("on it", sender="Bot", role="assistant"),
-                _tool_call("calc", {}, "call-1"),
-                _text("hurry up"),
-                _tool_result("calc", "4", "call-1"),
-                _text("done", sender="Bot", role="assistant"),
+                text("one"),
+                text("two", sender="Bob"),
+                text("on it", sender="Bot", role="assistant"),
+                tool_call("calc", {}, "call-1"),
+                text("hurry up"),
+                tool_result("calc", "4", "call-1"),
+                text("done", sender="Bot", role="assistant"),
             ]
         )
 
-        assert _outline(result) == [
+        assert outline(result) == [
             "user: text([Alice]: one) text([Bob]: two)",
             "assistant: text(on it) toolUse(call-1)",
             "user: toolResult(call-1, success) text([Alice]: hurry up)",

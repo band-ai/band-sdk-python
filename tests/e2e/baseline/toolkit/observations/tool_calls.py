@@ -34,7 +34,11 @@ from typing import Any, ClassVar
 from band_rest import ChatMessage
 
 from band.core.types import MessageType
-from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
+from band.runtime.tools import (
+    CONTACT_TOOL_NAMES,
+    MEMORY_TOOL_NAMES,
+    READ_ONLY_TOOL_NAMES,
+)
 
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -78,6 +82,26 @@ if {tool.value for tool in ContactTool} != set(CONTACT_TOOL_NAMES):
     raise ValueError(
         "ContactTool drifted from band.runtime.tools.CONTACT_TOOL_NAMES: "
         f"{set(CONTACT_TOOL_NAMES) ^ {tool.value for tool in ContactTool}}"
+    )
+
+
+class RosterTool(StrEnum):
+    """Canonical roster-reading platform-tool names (see CLAUDE.md chat tools).
+
+    Validated as a subset of the SDK's ``READ_ONLY_TOOL_NAMES`` at import
+    (below) — the closest SDK-owned vocabulary containing them — so a rename
+    in ``band.runtime.tools`` fails loudly here instead of letting a
+    ``calls.fired(...)`` guard go vacuously green.
+    """
+
+    GET_PARTICIPANTS = "band_get_participants"
+    LOOKUP_PEERS = "band_lookup_peers"
+
+
+if not {tool.value for tool in RosterTool} <= set(READ_ONLY_TOOL_NAMES):
+    raise ValueError(
+        "RosterTool drifted from band.runtime.tools.READ_ONLY_TOOL_NAMES: "
+        f"{({tool.value for tool in RosterTool}) - set(READ_ONLY_TOOL_NAMES)}"
     )
 
 
