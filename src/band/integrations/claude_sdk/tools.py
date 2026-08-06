@@ -320,33 +320,15 @@ def create_band_mcp_server(agent: Any) -> Any:
 
     def get_tools(room_id: str) -> AgentTools:
         execution = _execution_for(room_id)
-        participants = execution.participants if execution else []
-        agent_id = execution.agent_id if execution else None
-        return AgentTools(room_id, agent.link.rest, participants, agent_id=agent_id)
+        if execution is None:
+            return AgentTools(room_id, agent.link.rest, [])
+        # Context-bound tools sync participant changes (add/remove/refresh)
+        # into the ExecutionContext themselves, with the full field set the
+        # passive roster needs — no result-hook bookkeeping required.
+        return AgentTools.from_context(execution)
 
     def get_participant_handles(room_id: str) -> list[str]:
         return get_tools(room_id).available_mention_handles()
-
-    def tool_result_hook(tool_name: str, room_id: str, result: Any) -> None:
-        execution = _execution_for(room_id)
-        if execution is None:
-            return
-
-        if tool_name == "band_add_participant" and isinstance(result, dict):
-            participant_id = result.get("id")
-            participant_name = result.get("name")
-            if participant_id and participant_name:
-                execution.add_participant(
-                    {
-                        "id": participant_id,
-                        "name": participant_name,
-                        "type": "Agent",
-                    }
-                )
-
-        if tool_name == "band_remove_participant" and isinstance(result, dict):
-            if participant_id := result.get("id"):
-                execution.remove_participant(str(participant_id))
 
     tool_definitions = [
         definition
@@ -357,7 +339,6 @@ def create_band_mcp_server(agent: Any) -> Any:
         tool_definitions=tool_definitions,
         get_tools=get_tools,
         get_participant_handles=get_participant_handles,
-        tool_result_hook=tool_result_hook,
     )
     server = create_band_sdk_mcp_server(sdk_tools)
 

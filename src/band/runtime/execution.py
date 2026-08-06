@@ -29,6 +29,7 @@ from typing import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.participants import merge_participant, participant_snapshot
 from band.client.streaming import DeliveryStatus
 from band.platform.event import (
     MessageEvent,
@@ -271,7 +272,7 @@ class ExecutionContext:
         self._context_cache: ConversationContext | None = None
         self._context_hydrated = False
 
-        # Participant tracking (simplified from ParticipantTracker)
+        # Participant tracking
         self._participants: list[dict[str, Any]] = []
         self._participants_loaded = False
         self._last_participants_sent: list[dict[str, Any]] | None = None
@@ -683,24 +684,27 @@ class ExecutionContext:
 
     # --- Participant management ---
 
-    def add_participant(self, participant: dict) -> bool:
+    def add_participant(self, participant: dict[str, Any]) -> bool:
         """
-        Add participant (from WebSocket event).
+        Add or refresh a participant (from a WebSocket event or a tool's
+        REST resync).
+
+        An existing id is merged field-by-field rather than skipped or
+        replaced: a field learned after the participant was first tracked
+        (e.g. a description that arrives via a later REST fetch) reaches the
+        roster, while a sparser source (e.g. a WS payload without description)
+        cannot erase what an earlier source already knew.
 
         Returns:
-            True if added, False if duplicate
+            True if newly added, False if it already existed (and was refreshed)
         """
-        if any(p.get("id") == participant.get("id") for p in self._participants):
-            return False
+        snapshot = participant_snapshot(participant)
+        for index, existing in enumerate(self._participants):
+            if existing.get("id") == snapshot.get("id"):
+                self._participants[index] = merge_participant(existing, snapshot)
+                return False
 
-        self._participants.append(
-            {
-                "id": participant.get("id"),
-                "name": participant.get("name"),
-                "type": participant.get("type"),
-                "handle": participant.get("handle"),
-            }
-        )
+        self._participants.append(snapshot)
         logger.debug(
             "ExecutionContext %s: Added participant %s",
             self.room_id,
@@ -721,14 +725,31 @@ class ExecutionContext:
         ]
         return len(self._participants) < before
 
+    def set_participants(self, participants: list[dict[str, Any]]) -> None:
+        """Replace the roster from an authoritative snapshot (a REST list).
+
+        Membership follows the snapshot exactly — stale entries drop out —
+        while fields merge per id, so a source that omits a field (e.g. the
+        participants list endpoint carries no description) cannot erase one
+        learned elsewhere.
+        """
+        existing_by_id = {p.get("id"): p for p in self._participants}
+        self._participants = [
+            merge_participant(existing_by_id.get(snapshot.get("id"), {}), snapshot)
+            for snapshot in (participant_snapshot(p) for p in participants)
+        ]
+
     def participants_changed(self) -> bool:
-        """Check if participants changed since last mark_participants_sent()."""
+        """Check if membership or any tracked field changed since the last
+        mark_participants_sent() — an id-only diff would miss a participant
+        refreshed in place (e.g. a description learned after it first joined)."""
         if self._last_participants_sent is None:
             return True
 
-        last_ids = {p.get("id") for p in self._last_participants_sent}
-        current_ids = {p.get("id") for p in self._participants}
-        return last_ids != current_ids
+        def by_id(participants: list[dict[str, Any]]) -> dict[Any, dict[str, Any]]:
+            return {p.get("id"): p for p in participants}
+
+        return by_id(self._last_participants_sent) != by_id(self._participants)
 
     def mark_participants_sent(self) -> None:
         """Mark current participants as sent to LLM."""
@@ -773,15 +794,7 @@ class ExecutionContext:
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             if response.data:
-                self._participants = [
-                    {
-                        "id": p.id,
-                        "name": p.name,
-                        "type": p.type,
-                        "handle": getattr(p, "handle", None),
-                    }
-                    for p in response.data
-                ]
+                self.set_participants([p.model_dump() for p in response.data])
             self._participants_loaded = True
         except Exception as e:
             logger.warning(

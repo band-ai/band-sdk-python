@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -432,15 +433,7 @@ class OneShotInvoker:
             return []
         if not response.data:
             return []
-        return [
-            {
-                "id": p.id,
-                "name": p.name,
-                "type": p.type,
-                "handle": getattr(p, "handle", None),
-            }
-            for p in response.data
-        ]
+        return [participant_snapshot(p.model_dump()) for p in response.data]
 
     async def _fetch_history(
         self,
