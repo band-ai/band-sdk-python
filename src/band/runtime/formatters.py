@@ -126,13 +126,14 @@ def format_history_for_llm(
 # A participant description is agent/user-authored, not platform-controlled, so
 # it lands in every other participant's system prompt unsanctioned. Collapsing
 # it to one line stops it from injecting fake extra roster entries or spoofing
-# the trailing "IMPORTANT:" instruction line below; the length cap keeps one
-# description from dominating the roster message.
+# the trailing "IMPORTANT:" instruction line below; collapsing double quotes
+# keeps the value from closing the roster line's own quoting early; the length
+# cap keeps one description from dominating the roster message.
 _MAX_PARTICIPANT_DESCRIPTION_LENGTH = 200
 
 
 def _sanitize_participant_description(description: str) -> str:
-    single_line = " ".join(description.split())
+    single_line = " ".join(description.split()).replace('"', "'")
     if len(single_line) > _MAX_PARTICIPANT_DESCRIPTION_LENGTH:
         single_line = single_line[: _MAX_PARTICIPANT_DESCRIPTION_LENGTH - 1].rstrip()
         single_line = f"{single_line}…"
