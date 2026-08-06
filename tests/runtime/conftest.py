@@ -39,6 +39,7 @@ def make_participant(p: dict[str, Any]) -> ChatParticipant:
         name=p["name"],
         type=p["type"],
         handle=p.get("handle"),
+        description=p.get("description"),
         role="member",
         status="active",
     )

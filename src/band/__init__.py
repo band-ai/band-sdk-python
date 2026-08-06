@@ -92,8 +92,6 @@ from .runtime import (
     # Shutdown
     GracefulShutdown,
     MessageRetryTracker,
-    # Trackers
-    ParticipantTracker,
     PlatformMessage,
     RoomPresence,
     SessionConfig,
@@ -162,7 +160,6 @@ __all__ = [
     "format_history_for_llm",
     "build_participants_message",
     # Runtime - Trackers
-    "ParticipantTracker",
     "MessageRetryTracker",
     # Runtime - Shutdown
     "GracefulShutdown",

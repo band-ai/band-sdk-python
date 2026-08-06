@@ -352,6 +352,16 @@ ROSTER_PROBE = (
 )
 
 
+# Passive-roster description probe: the markers live only in peers' registered
+# descriptions (never in this prompt), so quoting them without tools proves the
+# always-injected participants list carried those descriptions.
+PASSIVE_ROSTER_DESCRIPTIONS_PROBE = (
+    "Without calling any tools, look only at the room participants list already "
+    "in your context. Quote the description of every agent participant other "
+    "than yourself. Include each agent's name next to their description."
+)
+
+
 def invite_instruction(peer_name: str, peer_id: str) -> str:
     """Drive the agent to add a peer to the room via band_add_participant (only).
     Mirrors the ``add agent (id ...)`` phrasing of the recruitment collab test."""
