@@ -72,8 +72,27 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def _is_mcp_content(data: Any) -> bool:
+    """True when a tool result is already an MCP content payload."""
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("content"), list)
+        and all(
+            isinstance(block, dict) and "type" in block for block in data["content"]
+        )
+    )
+
+
 def _make_result(data: Any) -> dict[str, Any]:
-    """Format tool result for Claude SDK MCP responses."""
+    """Format tool result for Claude SDK MCP responses.
+
+    A result that is already MCP-shaped passes through untouched — that is
+    how a tool returns non-text content (an ``image`` block reaches the model
+    as vision input; json-dumping it here would demote it to base64 prose).
+    Everything else is wrapped as a single text block, as before.
+    """
+    if _is_mcp_content(data):
+        return data
     return {"content": [{"type": "text", "text": json.dumps(data, default=str)}]}
 
 
@@ -246,6 +265,12 @@ def _build_custom_sdk_tool(
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
     schema = _build_sdk_schema(input_model, include_room_id=include_room_id)
+    # ``room_id`` is normally a schema-injected extra the model must echo so
+    # the bridge can resolve the room — it is not part of the tool's own
+    # contract, so it gets stripped before validation. A tool that declares
+    # ``room_id`` as a real field opts out of the strip: for it, dropping the
+    # key would make validation fail on every call.
+    declares_room_id = "room_id" in input_model.model_fields
 
     @tool(
         tool_name,
@@ -254,7 +279,10 @@ def _build_custom_sdk_tool(
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
-            tool_args = {k: v for k, v in args.items() if k != "room_id"}
+            if declares_room_id:
+                tool_args = dict(args)
+            else:
+                tool_args = {k: v for k, v in args.items() if k != "room_id"}
             result = await execute_custom_tool(tool_def, tool_args)
             return _make_result(result)
         except Exception as error:

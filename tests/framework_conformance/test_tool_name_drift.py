@@ -23,6 +23,7 @@ import re
 import pytest
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from band.runtime.tools import (
+    FILE_TOOL_NAMES,
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
@@ -92,7 +93,9 @@ class TestClaudeSDKAdapterToolDrift:
     def test_shared_builder_covers_all_tools(self):
         """Every Band tool should be buildable for the Claude SDK adapter."""
         sdk_tools = build_band_sdk_tools(
-            tool_definitions=iter_tool_definitions(include_memory=True),
+            tool_definitions=iter_tool_definitions(
+                include_memory=True, include_files=True
+            ),
             get_tools=lambda _room_id: None,
         )
         found = {tool.name for tool in sdk_tools}
@@ -247,8 +250,11 @@ class TestParlantToolDrift:
 class TestToolRegistryConsistency:
     """Verify the derived sets are consistent with TOOL_MODELS."""
 
-    def test_all_equals_base_plus_memory(self):
-        assert ALL_TOOL_NAMES == BASE_TOOL_NAMES | MEMORY_TOOL_NAMES
+    def test_all_equals_base_plus_memory_plus_files(self):
+        assert ALL_TOOL_NAMES == BASE_TOOL_NAMES | MEMORY_TOOL_NAMES | FILE_TOOL_NAMES
+
+    def test_no_overlap_base_files(self):
+        assert not (BASE_TOOL_NAMES & FILE_TOOL_NAMES)
 
     def test_base_equals_chat_plus_contact(self):
         assert BASE_TOOL_NAMES == CHAT_TOOL_NAMES | CONTACT_TOOL_NAMES

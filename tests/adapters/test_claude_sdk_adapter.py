@@ -691,11 +691,14 @@ class TestBandTools:
             "duplicate entries in BAND_MEMORY_TOOLS"
         )
 
-    def test_band_all_tools_combines_base_and_memory(self):
-        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
+    def test_band_all_tools_combines_base_memory_and_files(self):
+        """BAND_ALL_TOOLS combines base, memory and file tools without duplicates."""
+        from band.adapters.claude_sdk import BAND_FILE_TOOLS
         from band.runtime.tools import mcp_tool_names
 
-        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert set(BAND_ALL_TOOLS) == (
+            set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS) | set(BAND_FILE_TOOLS)
+        )
         assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
         assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
             "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "

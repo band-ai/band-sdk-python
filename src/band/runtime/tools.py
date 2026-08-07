@@ -6,7 +6,10 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import re
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
@@ -238,6 +241,50 @@ class SendEventInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )
+
+
+class ListRoomFilesInput(BaseModel):
+    """List files recently shared in this chat room, newest first.
+
+    Use this when someone mentions a file ("this file", "the file I sent")
+    to find its file_id before reading it with band_read_room_file. You only
+    see files from messages that @mentioned you — if a file is missing, ask
+    the sender to @mention you with it.
+    """
+
+
+class ReadRoomFileInput(BaseModel):
+    """Read a file shared in this chat room.
+
+    Text files return their content. Images are shown to you directly — you
+    can see them. Other binary formats return a description of the file.
+    """
+
+    file_id: str = Field(
+        ...,
+        description="The file id, from band_list_room_files or a message's attachments",
+    )
+
+
+class SendRoomFileInput(BaseModel):
+    """Create a small text file and share it in this chat room.
+
+    The file is uploaded and attached to a new message from you. Messages
+    require a mention, so pass the handle of whoever you're replying to.
+    Prefer this over pasting a wall of text when sharing something you wrote
+    (a plan, a list, a report).
+    """
+
+    filename: str = Field(..., description="Name for the file, e.g. plan.txt")
+    text_content: str = Field(..., description="The file's text content")
+    mention: str = Field(
+        ...,
+        description=(
+            "Handle of the participant to address. For users: @<username>. "
+            "For agents: @<username>/<agent-name>."
+        ),
+    )
+    message: str = Field("", description="Optional message text to accompany the file")
 
 
 class AddParticipantInput(BaseModel):
@@ -760,7 +807,7 @@ BAND_MCP_SERVER_NAME = "band"
 # is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
 # still match.
 ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {"band_send_message", "create_agent_chat_message"}
+    {"band_send_message", "create_agent_chat_message", "band_send_room_file"}
 )
 
 
@@ -820,6 +867,21 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         name="band_send_event",
         input_model=SendEventInput,
         method_name="send_event",
+    ),
+    "band_list_room_files": ToolDefinition(
+        name="band_list_room_files",
+        input_model=ListRoomFilesInput,
+        method_name="list_room_files",
+    ),
+    "band_read_room_file": ToolDefinition(
+        name="band_read_room_file",
+        input_model=ReadRoomFileInput,
+        method_name="read_room_file",
+    ),
+    "band_send_room_file": ToolDefinition(
+        name="band_send_room_file",
+        input_model=SendRoomFileInput,
+        method_name="send_room_file",
     ),
     "band_add_participant": ToolDefinition(
         name="band_add_participant",
@@ -1103,6 +1165,38 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# File tools - explicitly listed for the same reason as contacts: gating by
+# name must never depend on a substring heuristic.
+FILE_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_list_room_files",
+        "band_read_room_file",
+        "band_send_room_file",
+    }
+)
+
+# Inline cap for text files read into a turn: enough for notes and log
+# excerpts, small enough that one file can't blow out the context window.
+_FILE_TEXT_INLINE_LIMIT = 16_384
+
+# Images up to this size are handed to the model as vision input; larger
+# ones get described instead. Vision cost scales with pixels, and anything a
+# chat participant drags in sits comfortably under this.
+_FILE_IMAGE_INLINE_LIMIT = 3 * 1024 * 1024
+
+_FILE_TEXTLIKE_PREFIXES = ("text/", "application/json", "application/xml")
+
+
+def _filename_from_disposition(header: str | None) -> str | None:
+    """Extract the filename from a Content-Disposition header, if any."""
+    if not header:
+        return None
+    match = re.search(r'filename\*?=(?:"([^"]+)"|([^;]+))', header)
+    if not match:
+        return None
+    return (match.group(1) or match.group(2)).strip()
+
+
 # Read-only / informational agent tools - explicitly listed (not derived by a
 # name heuristic) because misclassifying a write tool as read-only would weaken
 # the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
@@ -1117,6 +1211,8 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
         "band_list_contact_requests",
         "band_list_memories",
         "band_get_memory",
+        "band_list_room_files",
+        "band_read_room_file",
     }
 )
 
@@ -1251,21 +1347,22 @@ if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
         f"{HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
     )
 
-BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
+BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES - FILE_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
 MCP_TOOL_PREFIX: str = "mcp__band__"
 
 # AdapterFeatures category for each platform tool name. Shared across adapters
-# so include_categories filtering is consistent (chat/contacts/memory).
+# so include_categories filtering is consistent (chat/contacts/memory/files).
 _TOOL_CATEGORIES: dict[str, str] = {
     **{name: "chat" for name in CHAT_TOOL_NAMES},
     **{name: "contacts" for name in CONTACT_TOOL_NAMES},
     **{name: "memory" for name in MEMORY_TOOL_NAMES},
+    **{name: "files" for name in FILE_TOOL_NAMES},
 }
 
 
 def get_band_tool_category(name: str) -> str | None:
-    """Return the AdapterFeatures category ("chat"/"contacts"/"memory") for a tool."""
+    """Return the AdapterFeatures category ("chat"/"contacts"/"memory"/"files") for a tool."""
     return _TOOL_CATEGORIES.get(name)
 
 
@@ -1400,6 +1497,7 @@ def iter_tool_definitions(
     surface: Literal["agent", "human"] | None = "agent",
     include_memory: bool = False,
     include_contacts: bool = True,
+    include_files: bool = False,
 ) -> list[ToolDefinition]:
     """Return built-in tool definitions with optional category filtering.
 
@@ -1429,6 +1527,10 @@ def iter_tool_definitions(
             ``Capability.CONTACTS``. The hub-room execution path always
             forces this to True regardless of adapter preference (see
             ``AgentTools.get_tool_schemas`` HUB_ROOM auto-enable rule).
+        include_files: Include room file tools (list/read/send). Default
+            False — gated behind ``Capability.FILES`` because the platform
+            endpoints they call require a deployment with file storage
+            configured; on one without it every call fails.
     """
     excluded: set[str] = set()
     if not include_memory:
@@ -1437,6 +1539,8 @@ def iter_tool_definitions(
     if not include_contacts:
         excluded |= CONTACT_TOOL_NAMES
         excluded |= HUMAN_CONTACT_TOOL_NAMES
+    if not include_files:
+        excluded |= FILE_TOOL_NAMES
 
     results: list[ToolDefinition] = []
     for definition in TOOL_DEFINITIONS.values():
@@ -1731,6 +1835,189 @@ class AgentTools(AgentToolsProtocol):
         if not response.data:
             raise RuntimeError("Failed to send event - no response data")
         return response.data
+
+    # --- File tools ---
+    #
+    # The generated REST client does not expose the agent file endpoints yet,
+    # so these tools speak to them through the client's own transport (same
+    # base URL, auth headers, connection pool). Once the generated client
+    # grows an agent files resource, migrate these calls onto it.
+
+    def _files_transport(self) -> tuple[Any, str, dict[str, str]]:
+        """Raw httpx client + base URL + auth headers from the REST client."""
+        wrapper = self.rest._client_wrapper
+        return (
+            wrapper.httpx_client.httpx_client,
+            wrapper.get_base_url().rstrip("/"),
+            wrapper.get_headers(),
+        )
+
+    async def list_room_files(self) -> str:
+        """List files shared in this room via messages addressed to this agent.
+
+        The agent message index is delivery-scoped and filtered by delivery
+        status. Two views matter and neither alone is enough: the message
+        that triggered the current turn sits in ``processing`` until the turn
+        ends, while everything older is ``processed``. ``pending`` and the
+        unfiltered view cover not-yet-claimed backlog.
+        """
+        http, base, headers = self._files_transport()
+        entries: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for query in (
+            "?limit=50&status=processing",
+            "?limit=50&status=processed",
+            "?limit=50&status=pending",
+            "?limit=50",
+        ):
+            response = await http.get(
+                f"{base}/api/v1/agent/chats/{self.room_id}/messages{query}",
+                headers=headers,
+            )
+            response.raise_for_status()
+            for message in response.json().get("data", []):
+                if message.get("id") not in seen:
+                    seen.add(message.get("id"))
+                    entries.append(message)
+
+        rows: list[str] = []
+        for message in reversed(entries):
+            for attachment in message.get("attachments") or []:
+                sender = message.get("sender_name") or message.get("sender_type") or "?"
+                excerpt = (message.get("content") or "").replace("\n", " ")[:60]
+                # Descriptor object on current platform builds; bare id on
+                # older ones.
+                if isinstance(attachment, dict):
+                    rows.append(
+                        f"file_id={attachment.get('id')} "
+                        f"name={attachment.get('name')} "
+                        f"type={attachment.get('content_type')} "
+                        f"bytes={attachment.get('bytes')} "
+                        f'from={sender} message="{excerpt}"'
+                    )
+                else:
+                    rows.append(
+                        f'file_id={attachment} from={sender} message="{excerpt}"'
+                    )
+        if not rows:
+            return (
+                "No files found. You only see files from messages that "
+                "@mentioned you — ask the sender to @mention you with the file."
+            )
+        return "Files in this room, newest first:\n" + "\n".join(rows[:10])
+
+    async def read_room_file(self, file_id: str) -> Any:
+        """Read a room file: text inline, images as vision input, rest described.
+
+        Images come back as an MCP-shaped content dict (an ``image`` block
+        plus a ``text`` block) so bridges that forward MCP content give the
+        model actual vision input rather than base64 prose.
+        """
+        http, base, headers = self._files_transport()
+        response = await http.get(
+            f"{base}/api/v1/agent/chats/{self.room_id}/files/{file_id}",
+            headers=headers,
+        )
+        if response.status_code == 404:
+            return (
+                "No such file in this room "
+                "(check the file_id with band_list_room_files)."
+            )
+        response.raise_for_status()
+
+        content_type = (
+            response.headers.get("content-type", "application/octet-stream")
+            .split(";")[0]
+            .strip()
+        )
+        name = (
+            _filename_from_disposition(response.headers.get("content-disposition"))
+            or file_id
+        )
+        size = len(response.content)
+
+        if content_type.startswith(_FILE_TEXTLIKE_PREFIXES):
+            text = response.content[:_FILE_TEXT_INLINE_LIMIT].decode(
+                "utf-8", errors="replace"
+            )
+            clipped = " (clipped)" if size > _FILE_TEXT_INLINE_LIMIT else ""
+            return f"{name} ({content_type}, {size} bytes){clipped}:\n{text}"
+
+        if content_type.startswith("image/") and size <= _FILE_IMAGE_INLINE_LIMIT:
+            return {
+                "content": [
+                    {
+                        "type": "image",
+                        "data": base64.standard_b64encode(response.content).decode(
+                            "ascii"
+                        ),
+                        "mimeType": content_type,
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"The image above is {name} ({content_type}, "
+                            f"{size} bytes). Describe what you see in it."
+                        ),
+                    },
+                ]
+            }
+
+        return (
+            f"{name} is a binary file ({content_type}, {size} bytes) — you "
+            "can't view this format, but you can tell the room its name, "
+            "type and size."
+        )
+
+    async def send_room_file(
+        self,
+        filename: str,
+        text_content: str,
+        mention: str,
+        message: str = "",
+    ) -> str:
+        """Upload a text file and attach it to a new message in this room.
+
+        The mention is resolved client-side against the cached participants
+        (same as ``send_message``), so this works against platforms that
+        don't resolve handles server-side.
+
+        Raises:
+            ValueError: If the mention handle is not found in participants.
+        """
+        http, base, headers = self._files_transport()
+        body = text_content.encode("utf-8")
+        resolved = self._resolve_mentions([mention])
+
+        upload = await http.put(
+            f"{base}/api/v1/agent/chats/{self.room_id}/files",
+            headers={
+                **headers,
+                "content-type": "text/plain",
+                "x-file-name": filename,
+                "x-file-sha256": hashlib.sha256(body).hexdigest(),
+            },
+            content=body,
+        )
+        upload.raise_for_status()
+        file_id = upload.json()["data"]["id"]
+
+        handle = resolved[0].get("handle", mention).lstrip("@")
+        text = message or f"sharing {filename}"
+        post = await http.post(
+            f"{base}/api/v1/agent/chats/{self.room_id}/messages",
+            headers=headers,
+            json={
+                "message": {
+                    "content": f"@{handle} {text}",
+                    "mentions": resolved,
+                    "attachment_ids": [file_id],
+                }
+            },
+        )
+        post.raise_for_status()
+        logger.debug("Shared file %s (%s) in room %s", filename, file_id, self.room_id)
+        return f"Shared {filename} (file_id={file_id}) in the room."
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         """
@@ -2455,6 +2742,7 @@ class AgentTools(AgentToolsProtocol):
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]] | list["ToolParam"]:
         """
         Get tool schemas in provider-specific format.
@@ -2490,6 +2778,7 @@ class AgentTools(AgentToolsProtocol):
         for definition in iter_tool_definitions(
             include_memory=include_memory,
             include_contacts=effective_include_contacts,
+            include_files=include_files,
         ):
             schema = definition.input_model.model_json_schema()
             # Remove Pydantic-specific keys

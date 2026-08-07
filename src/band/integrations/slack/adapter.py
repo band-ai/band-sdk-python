@@ -220,12 +220,14 @@ class _SlackTeeingTools(AgentTools):
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]] | list[Any]:
         """Return the base schemas plus our ``slack_send_message`` entry."""
         base = super().get_tool_schemas(
             format,
             include_memory=include_memory,
             include_contacts=include_contacts,
+            include_files=include_files,
         )
         if format == "openai":
             slack_schema: dict[str, Any] = {
