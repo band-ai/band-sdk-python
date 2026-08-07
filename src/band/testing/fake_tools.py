@@ -78,6 +78,7 @@ class FakeAgentTools:
         self._hub_room_id = hub_room_id
         self.messages_sent: list[dict[str, Any]] = []
         self.events_sent: list[dict[str, Any]] = []
+        self.files_shared: list[dict[str, Any]] = []
         self._participants: list[dict[str, Any]] = participants or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
         # Seeds are validated and canonicalized at seed time (not list time),
@@ -358,6 +359,45 @@ class FakeAgentTools:
                 memory["status"] = status
                 return deepcopy(memory)
         raise RuntimeError(f"Failed to {action} memory - no response data")
+
+    async def list_room_files(self) -> str:
+        """List files recorded by ``send_room_file``, newest first."""
+        if not self.files_shared:
+            return (
+                "No files found. You only see files from messages that "
+                "@mentioned you — ask the sender to @mention you with the file."
+            )
+        rows = [
+            f"file_id={f['id']} name={f['filename']} from={f['mention']}"
+            for f in reversed(self.files_shared)
+        ]
+        return "Files in this room, newest first:\n" + "\n".join(rows)
+
+    async def read_room_file(self, file_id: str) -> Any:
+        """Return a shared file's text, mirroring the real inline format."""
+        for f in self.files_shared:
+            if f["id"] == file_id:
+                text = f["text_content"]
+                return f"{f['filename']} (text/plain, {len(text)} bytes):\n{text}"
+        return (
+            "No such file in this room (check the file_id with band_list_room_files)."
+        )
+
+    async def send_room_file(
+        self, filename: str, text_content: str, mention: str, message: str = ""
+    ) -> str:
+        """Record the share and answer like the real tool."""
+        file_id = f"file-{len(self.files_shared)}"
+        self.files_shared.append(
+            {
+                "id": file_id,
+                "filename": filename,
+                "text_content": text_content,
+                "mention": mention,
+                "message": message,
+            }
+        )
+        return f"Shared {filename} (file_id={file_id}) in the room."
 
     @property
     def memory_contents(self) -> list[str]:

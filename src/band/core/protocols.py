@@ -122,8 +122,23 @@ class AgentToolsProtocol(Protocol):
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]] | list["ToolParam"]:
         """Get tool schemas in provider-specific format (openai/anthropic)."""
+        ...
+
+    async def list_room_files(self) -> str:
+        """List files shared in this room, newest first."""
+        ...
+
+    async def read_room_file(self, file_id: str) -> Any:
+        """Read a room file: text inline, images as MCP content, rest described."""
+        ...
+
+    async def send_room_file(
+        self, filename: str, text_content: str, mention: str, message: str = ""
+    ) -> str:
+        """Upload a text file and attach it to a new message in this room."""
         ...
 
     def get_anthropic_tool_schemas(

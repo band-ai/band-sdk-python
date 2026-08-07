@@ -217,7 +217,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -676,6 +676,49 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
             agent.tool(band_archive_memory)
+
+        # Room file tools (opt-in via Capability.FILES)
+        if Capability.FILES in self.features.capabilities:
+
+            async def band_list_room_files(
+                ctx: RunContext[AgentToolsProtocol],
+            ) -> str:
+                try:
+                    return await ctx.deps.list_room_files()
+                except Exception as e:
+                    return f"Error listing room files: {e}"
+
+            band_list_room_files.__doc__ = get_tool_description("band_list_room_files")
+            agent.tool(band_list_room_files)
+
+            async def band_read_room_file(
+                ctx: RunContext[AgentToolsProtocol],
+                file_id: str,
+            ) -> Any:
+                try:
+                    return await ctx.deps.read_room_file(file_id)
+                except Exception as e:
+                    return f"Error reading room file: {e}"
+
+            band_read_room_file.__doc__ = get_tool_description("band_read_room_file")
+            agent.tool(band_read_room_file)
+
+            async def band_send_room_file(
+                ctx: RunContext[AgentToolsProtocol],
+                filename: str,
+                text_content: str,
+                mention: str,
+                message: str = "",
+            ) -> str:
+                try:
+                    return await ctx.deps.send_room_file(
+                        filename, text_content, mention, message
+                    )
+                except Exception as e:
+                    return f"Error sending room file: {e}"
+
+            band_send_room_file.__doc__ = get_tool_description("band_send_room_file")
+            agent.tool(band_send_room_file)
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on
         # the path their signature calls for — pydantic-ai keeps the two apart.

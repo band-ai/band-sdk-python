@@ -52,6 +52,7 @@ class Capability(str, Enum):
 
     MEMORY = "memory"
     CONTACTS = "contacts"
+    FILES = "files"
 
 
 class Emit(str, Enum):
