@@ -65,6 +65,7 @@ from band.runtime.tools import (
     is_terminal_success,
     missing_reply_error,
     serialize_tool_result,
+    describe_tool_result_as_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -696,7 +697,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 file_id: str,
             ) -> Any:
                 try:
-                    return await ctx.deps.read_room_file(file_id)
+                    # pydantic-ai has no MCP content path, so the image
+                    # block would be stringified into the turn as base64.
+                    return describe_tool_result_as_text(
+                        await ctx.deps.read_room_file(file_id)
+                    )
                 except Exception as e:
                     return f"Error reading room file: {e}"
 

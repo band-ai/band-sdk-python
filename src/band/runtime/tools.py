@@ -105,6 +105,47 @@ def _truncate_event_content(content: str) -> str:
     return content[:head_len] + _EVENT_TRUNCATION_MARKER + content[-tail_len:]
 
 
+def describe_tool_result_as_text(result: Any) -> Any:
+    """Render an MCP content result as plain text, dropping binary payloads.
+
+    ``read_room_file`` answers images as MCP content — an ``image`` block plus a
+    ``text`` block — so a bridge that forwards MCP gives the model real vision
+    input. A bridge that does not forward it serializes whatever it is handed,
+    and a base64 image is roughly 4.2 million characters at the inline limit:
+    the model gets no picture, an unusable context, and the bill for both.
+
+    Adapters without a vision path call this instead. The text blocks already
+    name the file, its type and its size, which is the useful half; the image
+    block becomes a line saying the picture could not be shown, so the model can
+    say so rather than pretend it looked.
+
+    Anything that is not MCP content is returned untouched.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    blocks = result.get("content")
+    if not isinstance(blocks, list):
+        return result
+
+    lines: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            lines.append(str(block.get("text", "")))
+        elif block.get("type") == "image":
+            lines.append(
+                f"[an {block.get('mimeType', 'image')} was attached; this "
+                "framework cannot show it to you]"
+            )
+
+    if not lines:
+        return result
+
+    return "\n".join(line for line in lines if line)
+
+
 def _normalize_handle(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
     return value.lstrip("@").lower()
