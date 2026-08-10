@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -37,6 +37,9 @@ def make_agent(
 ) -> tuple[Agent, RecordingAdapter]:
     adapter = RecordingAdapter(AdapterFeatures(capabilities=capabilities))
     runtime = AsyncMock()
+    # Sync on the real runtime; left async it emits a never-awaited warning.
+    runtime.claim_single_instance = Mock()
+    runtime.release_single_instance = Mock()
     runtime.agent_name = "Tester"
     runtime.agent_description = "Asks what the deployment serves"
     runtime.platform_feature_flags = platform_flags
@@ -58,7 +61,9 @@ class TestReadingWhatThePlatformServes:
         assert refused == frozenset({Capability.FILES})
 
     def test_a_capability_the_deployment_serves_is_not_refused(self) -> None:
-        assert capabilities_the_platform_refuses({"ff_file_transfer": True}) == frozenset()
+        assert (
+            capabilities_the_platform_refuses({"ff_file_transfer": True}) == frozenset()
+        )
 
     def test_a_platform_that_never_answered_refuses_nothing(self) -> None:
         """Silence is not a "no", and treating it as one breaks working agents.
@@ -70,7 +75,9 @@ class TestReadingWhatThePlatformServes:
         """
         assert capabilities_the_platform_refuses(None) == frozenset()
 
-    def test_a_platform_that_never_heard_of_the_capability_refuses_nothing(self) -> None:
+    def test_a_platform_that_never_heard_of_the_capability_refuses_nothing(
+        self,
+    ) -> None:
         assert capabilities_the_platform_refuses({"ff_block_user": True}) == frozenset()
 
     def test_every_sdk_capability_the_platform_can_gate_names_its_flag(self) -> None:

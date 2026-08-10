@@ -305,6 +305,23 @@ class AdapterFeatures:
             tuple(include_categories) if include_categories is not None else None,
         )
 
+    def without_capabilities(
+        self, capabilities: Iterable[Capability]
+    ) -> AdapterFeatures:
+        """These settings minus `capabilities`, leaving the rest untouched.
+
+        Used when the deployment serves less than the operator asked for: the
+        capability set is the one seam every adapter's tool gating reads, so
+        removing an entry here removes the tools everywhere at once.
+        """
+        return AdapterFeatures(
+            capabilities=self.capabilities - frozenset(capabilities),
+            emit=self.emit,
+            include_tools=self.include_tools,
+            exclude_tools=self.exclude_tools,
+            include_categories=self.include_categories,
+        )
+
 
 @dataclass(frozen=True)
 class PlatformMessage:
