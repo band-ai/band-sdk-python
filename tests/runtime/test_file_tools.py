@@ -341,3 +341,40 @@ class TestRoomPostingClassification:
             "the reply gate compares against a single tool name instead of the "
             "shared room-posting vocabulary"
         )
+
+
+class TestMissingFileApi:
+    """A platform without the agent file routes is not a missing file.
+
+    Phoenix answers an unrouted path with 404, and read_room_file maps every
+    404 to "no such file in this room". On a deployment where the file API is
+    not present that answer is false for every id the agent tries, so the agent
+    concludes each file is gone rather than that it cannot fetch files at all —
+    and the listing tool, which reads a different endpoint, keeps showing them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_missing_route_is_not_reported_as_a_missing_file(self) -> None:
+        # Phoenix's own 404 body, which carries no FallbackController shape.
+        route_404 = FakeResponse(
+            status_code=404,
+            payload={"errors": {"detail": "Not Found"}},
+        )
+        tools, _ = make_tools([("GET", f"/files/{FILE_ID}", route_404)])
+
+        answer = await tools.read_room_file(FILE_ID)
+
+        assert "band_list_room_files" not in answer
+        assert "file api" in answer.lower() or "not available" in answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_a_real_missing_file_still_points_at_the_listing(self) -> None:
+        file_404 = FakeResponse(
+            status_code=404,
+            payload={"error": {"code": "not_found", "message": "File not found"}},
+        )
+        tools, _ = make_tools([("GET", f"/files/{FILE_ID}", file_404)])
+
+        answer = await tools.read_room_file(FILE_ID)
+
+        assert "band_list_room_files" in answer
