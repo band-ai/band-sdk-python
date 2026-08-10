@@ -1743,11 +1743,16 @@ class AgentTools(AgentToolsProtocol):
         http, base, headers = self._files_transport()
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
+        # sort_order=desc because the index is oldest-first by default: without
+        # it these queries return the FIRST fifty messages ever addressed to
+        # this agent, and reversing a page of the oldest cannot recover the
+        # newest. The platform accepts the parameter on the cursor path, which
+        # is the path `limit` selects.
         for query in (
-            "?limit=50&status=processing",
-            "?limit=50&status=processed",
-            "?limit=50&status=pending",
-            "?limit=50",
+            "?limit=50&sort_order=desc&status=processing",
+            "?limit=50&sort_order=desc&status=processed",
+            "?limit=50&sort_order=desc&status=pending",
+            "?limit=50&sort_order=desc",
         ):
             response = await http.get(
                 f"{base}/api/v1/agent/chats/{self.room_id}/messages{query}",
@@ -1759,8 +1764,11 @@ class AgentTools(AgentToolsProtocol):
                     seen.add(message.get("id"))
                     entries.append(message)
 
+        # Already newest-first from the server, so no reversal: reversing here
+        # would put the oldest of the fetched page at the top and truncation
+        # would then keep the wrong end.
         rows: list[str] = []
-        for message in reversed(entries):
+        for message in entries:
             for attachment in message.get("attachments") or []:
                 sender = message.get("sender_name") or message.get("sender_type") or "?"
                 excerpt = (message.get("content") or "").replace("\n", " ")[:60]
