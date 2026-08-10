@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.platform.link import BandLink
@@ -70,6 +70,7 @@ class PlatformRuntime:
         self._instance_guard: SingleInstanceGuard | None = None
         self._agent_name: str = ""
         self._agent_description: str = ""
+        self._platform_feature_flags: dict[str, Any] | None = None
         self._contact_handler: ContactEventHandler | None = None
         self._pending_broadcasts: list[str] = []
         self._contacts_subscribed: bool = False
@@ -88,6 +89,15 @@ class PlatformRuntime:
     @property
     def agent_description(self) -> str:
         return self._agent_description
+
+    @property
+    def platform_feature_flags(self) -> dict[str, Any] | None:
+        """Optional features this deployment serves, or None if it did not say.
+
+        Answered by the platform during the metadata fetch, so it costs no
+        extra round trip. See `band.runtime.capabilities`.
+        """
+        return self._platform_feature_flags
 
     @property
     def link(self) -> BandLink:
@@ -288,6 +298,9 @@ class PlatformRuntime:
 
         self._agent_name = agent.name
         self._agent_description = agent.description
+        # Platforms older than the capability block send nothing here, which
+        # is not the same answer as "off" — see `band.runtime.capabilities`.
+        self._platform_feature_flags = getattr(agent, "feature_flags", None)
         logger.debug("Fetched metadata for agent: %s", self._agent_name)
 
     @staticmethod
