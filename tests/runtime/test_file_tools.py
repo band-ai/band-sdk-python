@@ -11,6 +11,7 @@ import pytest
 from band.runtime.tools import (
     FILE_TOOL_NAMES,
     AgentTools,
+    describe_tool_result_as_text,
     is_room_posting_tool,
     iter_tool_definitions,
 )
@@ -285,3 +286,33 @@ class TestSendRoomFile:
         with pytest.raises(ValueError):
             await tools.send_room_file("plan.txt", "text", "@nobody")
         assert http.requests == []
+
+
+class TestImageResultsOnNonVisionAdapters:
+    """An image read returns MCP content so bridges can give the model vision.
+
+    Only the Claude bridge forwards that shape. CrewAI json-dumps whatever the
+    tool returns and pydantic-ai stringifies it, so on those adapters the base64
+    payload — up to the 3 MiB inline limit, about 4.2 million characters once
+    encoded — lands in the model's context as prose. The shared tool description
+    tells the model "Images are shown to you directly", which is true on exactly
+    one of the four adapters that now advertise Capability.FILES.
+    """
+
+    def test_text_rendering_keeps_the_description_and_drops_the_payload(self) -> None:
+        image_result = {
+            "content": [
+                {"type": "image", "data": "A" * 4_000_000, "mimeType": "image/png"},
+                {
+                    "type": "text",
+                    "text": "The image above is shot.png (image/png, 3000000 bytes). "
+                    "Describe what you see in it.",
+                },
+            ]
+        }
+
+        rendered = describe_tool_result_as_text(image_result)
+
+        assert "AAAA" not in rendered
+        assert "shot.png" in rendered
+        assert "image/png" in rendered
