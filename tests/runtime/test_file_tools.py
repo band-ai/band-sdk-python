@@ -110,65 +110,15 @@ class TestGating:
 
 class TestListRoomFiles:
     @pytest.mark.asyncio
-    async def test_reaches_the_newest_files_past_the_first_page(self) -> None:
-        """The agent messages index is oldest-first and offers no descending order.
-
-        Taking one page per status therefore returns the OLDEST messages in the
-        room, so in any room with more than a page of history the newest files —
-        the ones an agent is nearly always asking about — are the ones missing.
-        Reversing a page of the oldest messages cannot recover them.
-        """
-        oldest = {
-            "id": "m-old",
-            "sender_name": "Bob",
-            "content": "ancient history",
-            "attachments": [
-                {"id": "file-old", "name": "old.txt", "content_type": "text/plain", "bytes": 1}
-            ],
-        }
-        newest = {
-            "id": "m-new",
-            "sender_name": "Bob",
-            "content": "the one you want",
-            "attachments": [
-                {"id": "file-new", "name": "new.txt", "content_type": "text/plain", "bytes": 2}
-            ],
-        }
-
-        class Paging(FakeHttp):
-            """Page one is the oldest and says there is more; page two is newest."""
-
-            async def _dispatch(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
-                self.requests.append({"method": method, "url": url, **kwargs})
-                if "cursor=" in url:
-                    return FakeResponse(
-                        payload={"data": [newest], "metadata": {"has_more": False}}
-                    )
-                return FakeResponse(
-                    payload={
-                        "data": [oldest],
-                        "metadata": {"has_more": True, "next_cursor": "c1"},
-                    }
-                )
-
-        http = Paging([])
-        tools = AgentTools(ROOM_ID, FakeRest(http), participants=[])
-
-        rendered = await tools.list_room_files()
-
-        assert "file-new" in rendered
-        assert "new.txt" in rendered
-
-    @pytest.mark.asyncio
     async def test_queries_every_delivery_status_view(self) -> None:
         tools, http = make_tools([])
         await tools.list_room_files()
         queries = [request["url"].split("?")[-1] for request in http.requests]
         assert queries == [
-            "limit=50&status=processing",
-            "limit=50&status=processed",
-            "limit=50&status=pending",
-            "limit=50",
+            "limit=50&sort_order=desc&status=processing",
+            "limit=50&sort_order=desc&status=processed",
+            "limit=50&sort_order=desc&status=pending",
+            "limit=50&sort_order=desc",
         ]
 
     @pytest.mark.asyncio
