@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from typing import Any
 
@@ -316,3 +317,27 @@ class TestImageResultsOnNonVisionAdapters:
         assert "AAAA" not in rendered
         assert "shot.png" in rendered
         assert "image/png" in rendered
+
+
+class TestRoomPostingClassification:
+    """A file share posts to the room, so it has to count as a reply.
+
+    ``replied`` gates the adapter's "the agent said nothing this turn" error.
+    Keying it to one tool name means an agent that answers by sharing a file —
+    a real, room-visible response — is reported as having produced no reply,
+    and the room gets a spurious error after a successful share.
+    ``is_room_posting_tool`` already knows better and is the shared vocabulary
+    for exactly this question.
+    """
+
+    def test_the_reply_gate_uses_the_shared_room_posting_vocabulary(self) -> None:
+        from band.integrations.crewai import tools as crewai_tools
+
+        for name in ("band_send_message", "band_send_room_file"):
+            assert is_room_posting_tool(name)
+
+        source = inspect.getsource(crewai_tools._execute_tool)
+        assert "is_room_posting_tool" in source, (
+            "the reply gate compares against a single tool name instead of the "
+            "shared room-posting vocabulary"
+        )
