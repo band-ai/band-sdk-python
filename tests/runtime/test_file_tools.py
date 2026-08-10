@@ -250,8 +250,25 @@ class TestReadRoomFile:
 
     @pytest.mark.asyncio
     async def test_missing_file_points_at_the_listing_tool(self) -> None:
+        # The platform's own shape for this: the file route answers through the
+        # API error view, so a genuine miss carries an "error" object. That body
+        # is what tells a missing FILE apart from a missing file API.
         tools, _ = make_tools(
-            [("GET", f"/files/{FILE_ID}", FakeResponse(status_code=404))]
+            [
+                (
+                    "GET",
+                    f"/files/{FILE_ID}",
+                    FakeResponse(
+                        status_code=404,
+                        payload={
+                            "error": {
+                                "code": "not_found",
+                                "message": "Resource not found",
+                            }
+                        },
+                    ),
+                )
+            ]
         )
         assert "band_list_room_files" in await tools.read_room_file(FILE_ID)
 
