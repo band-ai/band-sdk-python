@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from band.agent import Agent
+from band_rest import AgentMe
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.capabilities import (
@@ -84,6 +85,34 @@ class TestReadingWhatThePlatformServes:
         # The flag key is typed once here and nowhere else; a second spelling
         # elsewhere would fail silently as "capability off".
         assert PLATFORM_CAPABILITY_FLAGS[Capability.FILES] == "ff_file_transfer"
+
+
+class TestTheGeneratedClientCarriesTheAnswer:
+    """The REST client is generated, and it was generated before this field.
+
+    The capability read only works because the generated models accept extra
+    keys. Regenerate them with `extra="forbid"` and the block is dropped in
+    transit: every deployment then looks like one that said nothing, file tools
+    stay advertised against nodes that 404 them, and nothing anywhere errors.
+    """
+
+    def test_a_field_the_client_predates_survives_the_model(self) -> None:
+        agent = AgentMe.model_validate(
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "name": "Capability Probe",
+                "handle": "eric/probe",
+                "description": "Asks what this deployment serves",
+                "owner_uuid": "7fa85f64-5717-4562-b3fc-2c963f66afa6",
+                "inserted_at": "2026-08-10T10:30:00Z",
+                "updated_at": "2026-08-10T10:30:00Z",
+                "feature_flags": {"ff_file_transfer": False},
+            }
+        )
+
+        flags = getattr(agent, "feature_flags", None)
+
+        assert capabilities_the_platform_refuses(flags) == frozenset({Capability.FILES})
 
 
 class TestDroppingRefusedCapabilities:
