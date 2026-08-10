@@ -72,6 +72,31 @@ through untouched.
 - `band_supersede_memory`: Mark memory as superseded (soft delete)
 - `band_archive_memory`: Archive memory (hide but preserve)
 
+### Room File Tools
+- `band_list_room_files`: List files shared in messages addressed to this agent
+- `band_read_room_file`: Read a file (text inline, images as vision input)
+- `band_send_room_file`: Attach a file to a message the agent posts
+
+### Capability negotiation
+
+`Capability.FILES` is the *operator* saying "this agent may use files". It
+cannot say "this deployment has them" — one SDK build talks to the SaaS node,
+to an on-prem node whose licence grants room files and to one whose licence
+does not, and only the last 404s the file endpoints. So the SDK asks.
+
+`GET /api/v1/agent/me` answers with a `feature_flags` block under the same
+`ff_*` keys the web app and JAM read from their own boot payload (one
+vocabulary, three clients). `PlatformRuntime` keeps the answer from the
+metadata fetch it already performs, and `Agent.start()` removes any refused
+capability from the adapter's `AdapterFeatures` **before** `on_started` — every
+adapter builds its tool list there, and `features.capabilities` is the single
+seam they all read, so one prune hides the tools in every framework at once.
+
+Only an explicit `false` refuses. A platform that answers nothing is not saying
+no — it may predate the flag while still serving the endpoints, so treating
+silence as a refusal would take working tools away. See
+`src/band/runtime/capabilities.py`.
+
 ## REST Client API Pattern
 
 The SDK uses Fern-generated REST client with property-based namespace API:
