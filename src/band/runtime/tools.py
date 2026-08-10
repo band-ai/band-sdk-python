@@ -146,6 +146,33 @@ def describe_tool_result_as_text(result: Any) -> Any:
     return "\n".join(line for line in lines if line)
 
 
+# Phoenix answers an unrouted path with 404 too, so "file not found" and "this
+# platform has no file API" arrive identically. Telling them apart matters: the
+# second is true for every id the agent will ever try, and answering it with
+# "check the file_id" sends the agent back to the listing tool — which reads a
+# different endpoint and keeps showing the files — for an endless retry.
+#
+# The discriminator is the body. Every real answer from the file routes goes
+# through the API's error view and carries an "error" object; the framework's
+# own not-found does not.
+def _describe_404(response: Any) -> str:
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - a non-JSON body is equally undiagnostic
+        payload = None
+
+    routed = isinstance(payload, dict) and isinstance(payload.get("error"), dict)
+    if routed:
+        return (
+            "No such file in this room (check the file_id with band_list_room_files)."
+        )
+
+    return (
+        "This platform build has no agent file API, so files cannot be read "
+        "here. Ask the sender to paste what you need, and do not retry."
+    )
+
+
 def _normalize_handle(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
     return value.lstrip("@").lower()
@@ -239,6 +266,12 @@ class ToolDefinition:
 # --- Tool input models (single source of truth for schemas) ---
 
 
+# What "a small text file" means for the tool that writes one. Unbounded, a
+# model could materialise megabytes of string, encode it, and hold both copies
+# before the platform's own cap ever answered.
+_SEND_TEXT_MAX_CHARS = 262_144
+
+
 class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
@@ -310,7 +343,14 @@ class SendRoomFileInput(BaseModel):
     """
 
     filename: str = Field(..., description="Name for the file, e.g. plan.txt")
-    text_content: str = Field(..., description="The file's text content")
+    text_content: str = Field(
+        ...,
+        max_length=_SEND_TEXT_MAX_CHARS,
+        description=(
+            "The file's text content. This tool is for small text files; the "
+            "content is held in memory and uploaded whole."
+        ),
+    )
     mention: str = Field(
         ...,
         description=(
@@ -1847,10 +1887,7 @@ class AgentTools(AgentToolsProtocol):
             headers=headers,
         )
         if response.status_code == 404:
-            return (
-                "No such file in this room "
-                "(check the file_id with band_list_room_files)."
-            )
+            return _describe_404(response)
         response.raise_for_status()
 
         content_type = (
