@@ -73,6 +73,7 @@ from band.runtime.tools import (
     is_terminal_success,
     serialize_tool_result,
     describe_tool_result_as_text,
+    is_room_posting_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -316,7 +317,11 @@ def _execute_tool(
                     tool_name, succeeded=True, custom_terminal=custom_terminal
                 ):
                     context.reply_tracker.tool_executed = True
-                if tool_name == _SEND_MESSAGE_TOOL:
+                # Any tool that posts to the room counts as replying, not
+                # just band_send_message: an agent that answers by sharing a
+                # file has answered, and reporting 'no reply' after a
+                # successful share puts a spurious error in the room.
+                if is_room_posting_tool(tool_name):
                     context.reply_tracker.replied = True
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
