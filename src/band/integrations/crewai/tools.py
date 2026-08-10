@@ -54,6 +54,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     append_available_mention_handles,
+    describe_tool_result_as_text,
     get_tool_description,
     is_terminal_success,
     platform_args_schema,
@@ -882,7 +883,11 @@ def _make_platform_tools(
                 await reporter.report_call(
                     tools, "band_read_room_file", {"file_id": file_id}
                 )
-                result = await tools.read_room_file(file_id)
+                # CrewAI json-dumps whatever it is handed, so the MCP image
+                # block would arrive as base64 prose rather than vision.
+                result = describe_tool_result_as_text(
+                    await tools.read_room_file(file_id)
+                )
                 await reporter.report_result(tools, "band_read_room_file", result)
                 return serialize_success_result(result)
 
