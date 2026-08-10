@@ -85,6 +85,43 @@ class TestInitialization:
         assert Capability.MEMORY in adapter.features.capabilities
 
 
+class TestFileToolGating:
+    """The FILES capability is what puts the three room-file tools in front of
+    the model, so the gate itself needs a test: without one, deleting the
+    capability check leaves every suite green while the tools ship to agents
+    that never asked for them.
+    """
+
+    def test_file_tools_are_absent_by_default(self):
+        from band.core.types import Capability
+        from band.runtime.tools import FILE_TOOL_NAMES, iter_tool_definitions
+
+        adapter = ClaudeSDKAdapter()
+
+        assert Capability.FILES not in adapter.features.capabilities
+        names = {d.name for d in iter_tool_definitions()}
+        assert not (FILE_TOOL_NAMES & names)
+
+    def test_the_capability_is_what_exposes_them(self):
+        from band.core.types import Capability
+        from band.runtime.tools import FILE_TOOL_NAMES, iter_tool_definitions
+
+        from band.core.types import AdapterFeatures
+
+        adapter = ClaudeSDKAdapter(
+            features=AdapterFeatures(capabilities={Capability.FILES})
+        )
+
+        assert Capability.FILES in adapter.features.capabilities
+        names = {
+            d.name
+            for d in iter_tool_definitions(
+                include_files=Capability.FILES in adapter.features.capabilities
+            )
+        }
+        assert FILE_TOOL_NAMES <= names
+
+
 class TestOnStarted:
     """Tests for on_started() method."""
 
