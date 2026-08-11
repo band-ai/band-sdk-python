@@ -249,6 +249,26 @@ class TestReadRoomFile:
         assert "cupboard" in result
 
     @pytest.mark.asyncio
+    async def test_a_clipped_text_file_does_not_split_a_character(self) -> None:
+        """The inline cap counts bytes; the excerpt is read as characters.
+
+        A file of multi-byte text — anything not written in English, or any
+        log with a checkmark in it — has no reason to put a character boundary
+        exactly on the cap, so cutting there leaves a broken byte the decoder
+        turns into U+FFFD. The model then reads a corrupted last character as
+        if it were content.
+        """
+        # Each of these is three bytes; the cap falls one byte into one.
+        body = "✓".encode() * 20_000
+        response = FakeResponse(content=body, headers={"content-type": "text/plain"})
+        tools, _ = make_tools([("GET", f"/files/{FILE_ID}", response)])
+
+        result = await tools.read_room_file(FILE_ID)
+
+        assert "(clipped)" in result
+        assert "�" not in result
+
+    @pytest.mark.asyncio
     async def test_image_returns_mcp_vision_content(self) -> None:
         response = FakeResponse(
             content=b"\x89PNG fake bytes",
