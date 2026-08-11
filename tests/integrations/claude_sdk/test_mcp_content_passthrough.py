@@ -33,6 +33,14 @@ class TestMakeResultPassthrough:
         result = _make_result(lookalike)
         assert result["content"][0]["type"] == "text"
 
+    def test_an_empty_content_list_is_not_mistaken_for_mcp(self) -> None:
+        # A payload that merely happens to carry a "content" key. Passed
+        # through, it reaches the model as a tool result with nothing in it
+        # and everything else the payload said is lost.
+        lookalike = {"content": [], "rows": 0}
+        result = _make_result(lookalike)
+        assert json.loads(result["content"][0]["text"]) == lookalike
+
 
 class EchoRoomInput(BaseModel):
     """Echo tool that declares room_id as a real field."""
