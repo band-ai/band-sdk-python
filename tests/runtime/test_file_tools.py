@@ -97,6 +97,11 @@ def make_tools(
     return tools, http
 
 
+def schema_name(schema: dict[str, Any]) -> str:
+    """The tool name, from either provider's schema shape."""
+    return schema.get("name") or schema["function"]["name"]
+
+
 class TestGating:
     def test_file_tools_are_off_by_default(self) -> None:
         names = {d.name for d in iter_tool_definitions()}
@@ -108,6 +113,24 @@ class TestGating:
 
     def test_send_room_file_counts_as_a_room_post(self) -> None:
         assert is_room_posting_tool("band_send_room_file")
+
+    @pytest.mark.parametrize("helper", ["anthropic", "openai"])
+    def test_the_typed_schema_helpers_gate_files_like_every_other_caller(
+        self, helper: str
+    ) -> None:
+        """The typed helpers are the front door for the anthropic and gemini
+        adapters. Without the switch they cannot express what the capability
+        decided, so an adapter granted FILES still gets no file tools and one
+        that was refused them has no gate of its own to fail closed on.
+        """
+        tools, _ = make_tools([])
+        get_schemas = getattr(tools, f"get_{helper}_tool_schemas")
+
+        def names(**kwargs: bool) -> set[str]:
+            return {schema_name(schema) for schema in get_schemas(**kwargs)}
+
+        assert not (FILE_TOOL_NAMES & names())
+        assert FILE_TOOL_NAMES <= names(include_files=True)
 
 
 class TestListRoomFiles:
