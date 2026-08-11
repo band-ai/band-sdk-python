@@ -673,6 +673,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Room file tools (opt-in via Capability.FILES)
         if Capability.FILES in self.features.capabilities:
 
+            @platform_tool
             async def band_list_room_files(
                 ctx: RunContext[AgentToolsProtocol],
             ) -> str:
@@ -681,9 +682,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing room files: {e}"
 
-            band_list_room_files.__doc__ = get_tool_description("band_list_room_files")
             agent.tool(band_list_room_files)
 
+            @platform_tool
             async def band_read_room_file(
                 ctx: RunContext[AgentToolsProtocol],
                 file_id: str,
@@ -697,9 +698,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error reading room file: {e}"
 
-            band_read_room_file.__doc__ = get_tool_description("band_read_room_file")
             agent.tool(band_read_room_file)
 
+            @platform_tool
             async def band_send_room_file(
                 ctx: RunContext[AgentToolsProtocol],
                 filename: str,
@@ -714,7 +715,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error sending room file: {e}"
 
-            band_send_room_file.__doc__ = get_tool_description("band_send_room_file")
             agent.tool(band_send_room_file)
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on

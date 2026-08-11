@@ -31,7 +31,7 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 if TYPE_CHECKING:
     from crewai.tools import BaseTool
@@ -863,7 +863,7 @@ def _make_platform_tools(
     class ListRoomFilesTool(BaseTool):
         name: str = "band_list_room_files"
         description: str = get_tool_description("band_list_room_files")
-        args_schema: Type[BaseModel] = _ListRoomFilesInput
+        args_schema: type[BaseModel] = _ListRoomFilesInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **_kwargs: Any) -> Any:
@@ -878,7 +878,7 @@ def _make_platform_tools(
     class ReadRoomFileTool(BaseTool):
         name: str = "band_read_room_file"
         description: str = get_tool_description("band_read_room_file")
-        args_schema: Type[BaseModel] = _ReadRoomFileInput
+        args_schema: type[BaseModel] = _ReadRoomFileInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -901,7 +901,7 @@ def _make_platform_tools(
     class SendRoomFileTool(BaseTool):
         name: str = "band_send_room_file"
         description: str = get_tool_description("band_send_room_file")
-        args_schema: Type[BaseModel] = _SendRoomFileInput
+        args_schema: type[BaseModel] = _SendRoomFileInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
