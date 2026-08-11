@@ -121,6 +121,25 @@ class TestFileToolGating:
         }
         assert FILE_TOOL_NAMES <= names
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("granted", [False, True])
+    async def test_the_backend_the_model_talks_to_honours_the_gate(self, granted):
+        """The two tests above re-derive the tool list themselves, so they pin
+        the registry rather than this adapter: deleting the capability check in
+        _create_mcp_backend leaves both green. What decides what the model can
+        call is the MCP backend's own allowed-tool list, so assert on that.
+        """
+        from band.core.types import AdapterFeatures, Capability
+        from band.runtime.tools import FILE_TOOL_NAMES, mcp_tool_names
+
+        features = (
+            AdapterFeatures(capabilities={Capability.FILES}) if granted else None
+        )
+        backend = await ClaudeSDKAdapter(features=features)._create_mcp_backend()
+
+        file_tools = set(mcp_tool_names(FILE_TOOL_NAMES))
+        assert (file_tools <= set(backend.allowed_tools)) is granted
+
 
 class TestOnStarted:
     """Tests for on_started() method."""
