@@ -73,13 +73,18 @@ def __getattr__(name: str) -> Any:
 
 
 def _is_mcp_content(data: Any) -> bool:
-    """True when a tool result is already an MCP content payload."""
+    """True when a tool result is already an MCP content payload.
+
+    The shape is a non-empty list of blocks, each tagged with a ``type``. An
+    empty list is not it: a payload that merely happens to carry a ``content``
+    key would otherwise pass through as a tool result with nothing in it, and
+    everything else the payload said would be lost on the way to the model.
+    """
+    blocks = data.get("content") if isinstance(data, dict) else None
     return (
-        isinstance(data, dict)
-        and isinstance(data.get("content"), list)
-        and all(
-            isinstance(block, dict) and "type" in block for block in data["content"]
-        )
+        isinstance(blocks, list)
+        and bool(blocks)
+        and all(isinstance(block, dict) and "type" in block for block in blocks)
     )
 
 
