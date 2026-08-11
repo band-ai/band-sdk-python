@@ -132,9 +132,7 @@ class TestFileToolGating:
         from band.core.types import AdapterFeatures, Capability
         from band.runtime.tools import FILE_TOOL_NAMES, mcp_tool_names
 
-        features = (
-            AdapterFeatures(capabilities={Capability.FILES}) if granted else None
-        )
+        features = AdapterFeatures(capabilities={Capability.FILES}) if granted else None
         backend = await ClaudeSDKAdapter(features=features)._create_mcp_backend()
 
         file_tools = set(mcp_tool_names(FILE_TOOL_NAMES))
