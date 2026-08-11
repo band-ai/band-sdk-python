@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -406,6 +407,34 @@ class TestMissingFileApi:
 
         assert "band_list_room_files" not in answer
         assert "file api" in answer.lower() or "not available" in answer.lower()
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_404_body_says_so_without_quoting_it(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Which of the two 404s this is comes from the body, so a body that
+        will not parse is the one case the answer is a guess. Silently guessing
+        leaves an operator with an agent claiming the deployment has no file API
+        and nothing to explain why. The body itself stays out of the log: this
+        is the file-download response, so it can be the file.
+        """
+
+        class UnreadableBody(FakeResponse):
+            def json(self) -> Any:
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        response = UnreadableBody(
+            status_code=404, content=b"\x89PNG confidential pixels"
+        )
+        tools, _ = make_tools([("GET", f"/files/{FILE_ID}", response)])
+
+        with caplog.at_level(logging.WARNING):
+            answer = await tools.read_room_file(FILE_ID)
+
+        assert "band_list_room_files" not in answer
+        logged = "\n".join(record.getMessage() for record in caplog.records)
+        assert "ValueError" in logged
+        assert "confidential" not in logged
 
     @pytest.mark.asyncio
     async def test_a_real_missing_file_still_points_at_the_listing(self) -> None:
