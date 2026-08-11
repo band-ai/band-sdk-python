@@ -158,7 +158,18 @@ def describe_tool_result_as_text(result: Any) -> Any:
 def _describe_404(response: Any) -> str:
     try:
         payload = response.json()
-    except Exception:  # noqa: BLE001 - a non-JSON body is equally undiagnostic
+    except Exception as error:  # noqa: BLE001 - any unreadable body lands here
+        # A body that will not parse is the one case where the answer below is
+        # a guess, so say which body it was and why it could not be read. The
+        # body itself is never logged: this is the file-download response, so
+        # it may well be the file.
+        logger.warning(
+            "Could not read the body of a 404 from %s (%s: %s); "
+            "answering as if this platform has no agent file API",
+            getattr(response, "url", "the file endpoint"),
+            type(error).__name__,
+            error,
+        )
         payload = None
 
     routed = isinstance(payload, dict) and isinstance(payload.get("error"), dict)
