@@ -7,6 +7,7 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 from __future__ import annotations
 
 import base64
+import codecs
 import hashlib
 import logging
 import re
@@ -1279,6 +1280,20 @@ _FILE_IMAGE_INLINE_LIMIT = 3 * 1024 * 1024
 _FILE_TEXTLIKE_PREFIXES = ("text/", "application/json", "application/xml")
 
 
+def _decode_utf8_head(data: bytes, limit: int) -> str:
+    """Decode at most *limit* bytes of text, clipping between characters.
+
+    The cap counts bytes and the excerpt is read as characters, so a plain
+    slice can land inside a multi-byte one; decoding that stump ends the
+    excerpt in a replacement character the model reads as content. The
+    incremental decoder holds an incomplete trailing sequence back instead,
+    so the clip falls on a character boundary. Bytes that are invalid rather
+    than merely unfinished still become replacement characters, since those
+    are what the file actually says.
+    """
+    return codecs.getincrementaldecoder("utf-8")("replace").decode(data[:limit])
+
+
 def _filename_from_disposition(header: str | None) -> str | None:
     """Extract the filename from a Content-Disposition header, if any."""
     if not header:
@@ -2034,9 +2049,7 @@ class AgentTools(AgentToolsProtocol):
         size = len(response.content)
 
         if content_type.startswith(_FILE_TEXTLIKE_PREFIXES):
-            text = response.content[:_FILE_TEXT_INLINE_LIMIT].decode(
-                "utf-8", errors="replace"
-            )
+            text = _decode_utf8_head(response.content, _FILE_TEXT_INLINE_LIMIT)
             clipped = " (clipped)" if size > _FILE_TEXT_INLINE_LIMIT else ""
             return f"{name} ({content_type}, {size} bytes){clipped}:\n{text}"
 
