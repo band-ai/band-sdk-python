@@ -2781,6 +2781,7 @@ class AgentTools(AgentToolsProtocol):
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list["ToolParam"]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         return cast(
@@ -2789,6 +2790,7 @@ class AgentTools(AgentToolsProtocol):
                 "anthropic",
                 include_memory=include_memory,
                 include_contacts=include_contacts,
+                include_files=include_files,
             ),
         )
 
@@ -2797,6 +2799,7 @@ class AgentTools(AgentToolsProtocol):
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]]:
         """Get tool schemas in OpenAI format (strongly typed)."""
         return cast(
@@ -2805,6 +2808,7 @@ class AgentTools(AgentToolsProtocol):
                 "openai",
                 include_memory=include_memory,
                 include_contacts=include_contacts,
+                include_files=include_files,
             ),
         )
 

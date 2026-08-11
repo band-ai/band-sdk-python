@@ -411,6 +411,7 @@ class FakeAgentTools:
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -419,6 +420,7 @@ class FakeAgentTools:
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -427,6 +429,7 @@ class FakeAgentTools:
         *,
         include_memory: bool = False,
         include_contacts: bool = True,
+        include_files: bool = False,
     ) -> list[dict[str, Any]]:
         return []
 
