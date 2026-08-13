@@ -8,9 +8,8 @@
 # happened, say so explicitly rather than let the digest quietly disagree with the
 # baseline-green commit status posted earlier in this job.
 #
-# Reads REPO / RUN_URL / PASSED / MATRIX_OK / SHA / ISSUE_NUMBER from the
-# environment. INTEGRATIONS_MENTIONS may be unset (the mention-resolution step is
-# continue-on-error) — the "cc" line is simply omitted then.
+# Reads REPO / RUN_URL / PASSED / MATRIX_OK / SHA / ISSUE_NUMBER /
+# INTEGRATIONS_MENTIONS from the environment.
 set -euo pipefail
 
 : "${REPO:?REPO is required}"
@@ -19,6 +18,7 @@ set -euo pipefail
 : "${MATRIX_OK:?MATRIX_OK is required}"
 : "${SHA:?SHA is required}"
 : "${ISSUE_NUMBER:?ISSUE_NUMBER is required}"
+: "${INTEGRATIONS_MENTIONS:?INTEGRATIONS_MENTIONS is required}"
 
 body_file="$(mktemp)"
 {
@@ -39,10 +39,8 @@ body_file="$(mktemp)"
   fi
   echo
   echo "Commit \`$SHA\` · [full grid & logs]($RUN_URL)"
-  if [ -n "${INTEGRATIONS_MENTIONS:-}" ]; then
-    echo
-    echo "cc $INTEGRATIONS_MENTIONS"
-  fi
+  echo
+  echo "cc $INTEGRATIONS_MENTIONS"
 } > "$body_file"
 
 gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body-file "$body_file"
