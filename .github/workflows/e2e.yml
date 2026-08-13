@@ -364,8 +364,10 @@ jobs:
       run:
         shell: bash
     outputs:
-      # Consumed by mark-baseline to decide the baseline-green commit status.
+      # Consumed by mark-baseline to decide the baseline-green commit status and the
+      # nightly digest's header/warning.
       passed: ${{ steps.verdict.outputs.ok }}
+      matrix_ok: ${{ needs.e2e.result == 'success' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -409,7 +411,7 @@ jobs:
         set +e
         uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
           --out artifacts/scorecard.json --markdown artifacts/scorecard.md \
-          --expected-lanes "$EXPECTED_LANES"
+          --summary artifacts/gate-summary.md --expected-lanes "$EXPECTED_LANES"
         code=$?
         set -e
         [ "$code" -eq 0 ] && echo "passed=true" >> "$GITHUB_OUTPUT" || echo "passed=false" >> "$GITHUB_OUTPUT"
@@ -432,6 +434,7 @@ jobs:
         path: |
           artifacts/scorecard.json
           artifacts/scorecard.md
+          artifacts/gate-summary.md
         if-no-files-found: ignore
 
     # Combines the per-cell gate with a backstop the cell-level grid can't see on its
@@ -472,10 +475,8 @@ jobs:
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
-    if: >-
-      always() &&
-      (github.event_name == 'schedule' ||
-       (github.event.inputs.lane == 'all' && github.event.inputs.os == 'all'))
+    # TEMP for a live notification-delivery test — revert before merge.
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       statuses: write
@@ -488,6 +489,7 @@ jobs:
       REPO: ${{ github.repository }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       PASSED: ${{ needs.scorecard.outputs.passed }}
+      MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
     steps:
     - name: Download the merged scorecard
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -526,23 +528,35 @@ jobs:
         fi
         echo "number=$number" >> "$GITHUB_OUTPUT"
 
+    # A polished, email-safe digest — not the wide adapter×test grid (that stays in
+    # the step summary + artifact, where it renders full-width and looks fine). The
+    # header is built here from $PASSED (the job's combined verdict, including the
+    # matrix-leg backstop), never from the cell-level digest file alone: a leg that
+    # crashed outright and reported nothing can flip the real verdict to red in a way
+    # the cell grid can't see (ScorecardRow carries no OS dimension) — so if that
+    # happened, say so explicitly rather than let the digest quietly disagree with
+    # the baseline-green commit status posted above.
     - name: Post the night's scorecard and sync open/closed state
       run: |
         body_file="$(mktemp)"
         {
           if [ "$PASSED" = "true" ]; then
-            echo "**Nightly baseline: green** on \`${{ github.sha }}\`."
+            echo "🟢 **Nightly baseline: PASS**"
           else
-            echo "**Nightly baseline: red** on \`${{ github.sha }}\`."
+            echo "🔴 **Nightly baseline: FAIL**"
           fi
           echo
-          echo "Run: $RUN_URL"
-          echo
-          if [ -f artifacts/scorecard.md ]; then
-            cat artifacts/scorecard.md
-          else
-            echo "(no scorecard was produced this run)"
+          if [ "$MATRIX_OK" != "true" ]; then
+            echo "⚠️ At least one lane/OS leg crashed outright and reported nothing (see the e2e job) — the counts below only cover what actually reported."
+            echo
           fi
+          if [ -f artifacts/gate-summary.md ]; then
+            cat artifacts/gate-summary.md
+          else
+            echo "_No scorecard was produced this run — every lane failed before session end._"
+          fi
+          echo
+          echo "Commit \`${{ github.sha }}\` · [full grid & logs]($RUN_URL)"
           echo
           echo "cc @band-ai/integrations"
         } > "$body_file"

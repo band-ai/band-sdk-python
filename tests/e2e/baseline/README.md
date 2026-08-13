@@ -718,13 +718,23 @@ suite a required PR check (explicitly out of scope; INT-810 owns PR-level gating
 Tier-1) — only this thin status lookup is required on every PR, so the cost stays
 negligible for the 99% of PRs that aren't the release PR.
 
-**Nightly digest:** the same job also comments that night's full scorecard (pass or
-fail) on one persistent issue (matched by title, not a label — "Nightly baseline
-results"), reopening it on red and closing it on green so its state also reads
-"currently red/green" at a glance. The comment mentions `@band-ai/integrations` —
-GitHub's own mention-notification delivery emails each member per their own account
-settings, so there's no mailer to stand up and no email address this repo ever has
-to see or store.
+**Nightly digest:** the same job also comments a compact digest (pass or fail) on one
+persistent issue (matched by title, not a label — "Nightly baseline results"),
+reopening it on red and closing it on green so its state also reads "currently
+red/green" at a glance. The comment mentions `@band-ai/integrations` — GitHub's own
+mention-notification delivery emails each member per their own account settings, so
+there's no mailer to stand up and no email address this repo ever has to see or
+store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the wide
+adapter×test grid — a real run spans every registered adapter (15+ columns as of
+this writing) across all lanes, which is fine full-width in the step summary but
+turns into an unreadable wall in a notification email. It's counts + only the
+problem cells (failing / missing, listed separately), plus a link back to the run
+for the full grid. Its PASS/FAIL header is built by the workflow from the job's
+combined verdict (`$PASSED`), not read off the cell-level digest — a matrix-leg crash
+the cell grid can't see (no OS dimension on `ScorecardRow`) can flip that verdict in
+a way the digest content alone wouldn't show, so the workflow says so explicitly
+when it happens rather than let the email quietly disagree with the `baseline-green`
+commit status.
 
 ## Letta lane
 
