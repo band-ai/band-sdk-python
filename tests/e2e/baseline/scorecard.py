@@ -261,21 +261,26 @@ def _cell_lines(rows: tuple[ScorecardRow, ...]) -> list[str]:
 
 
 def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
-    """Counts + only the problem cells — no header, no wide grid.
+    """A counts table + only the problem cells — no header, no wide grid.
 
     The email-safe half of :func:`gate_summary`: a full adapter×test grid reads fine
     in a GitHub Actions step summary (full width, GitHub's own renderer) but turns
     into a cramped, unreadable wall in a notification email, so this deliberately
-    leaves it out — a caller wanting the full picture links to the run instead.
-    Also deliberately carries no PASS/FAIL header: a matrix-leg crash the cell-level
-    grid can't see (no OS dimension on `ScorecardRow`) can override `result.ok`'s
-    verdict, so a caller with that broader context should render its own header
-    rather than trust one built from cell data alone.
+    leaves it out — a caller wanting the full picture links to the run instead. The
+    counts render as a small GFM table (not a "·"-joined line): GitHub's notification
+    email renders plain GFM — tables, bold, bullets — the same as the web UI, just
+    with no `<style>`/inline-CSS support, so a table is the highest-fidelity "glance"
+    layout available without a custom HTML email. Also deliberately carries no
+    PASS/FAIL header: a matrix-leg crash the cell-level grid can't see (no OS
+    dimension on `ScorecardRow`) can override `result.ok`'s verdict, so a caller with
+    that broader context should render its own header rather than trust one built
+    from cell data alone.
     """
     counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
     lines = [
-        f"{counts['pass']} passed · {counts['fail']} failed · "
-        f"{counts['na']} N/A · {counts['skip']} skipped"
+        "| Passed | Failed | N/A | Skipped |",
+        "| --- | --- | --- | --- |",
+        f"| {counts['pass']} | {counts['fail']} | {counts['na']} | {counts['skip']} |",
     ]
     if result.failing:
         lines += ["", "**Failing**", *_cell_lines(result.failing)]

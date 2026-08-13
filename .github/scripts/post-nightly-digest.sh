@@ -8,6 +8,12 @@
 # happened, say so explicitly rather than let the digest quietly disagree with the
 # baseline-green commit status posted earlier in this job.
 #
+# The header is bold text *and* a shields.io badge image, not the image alone:
+# GitHub's comment/email renderer has no `<style>`/inline-CSS support (sanitized
+# out), so a colored badge is the only way to get real green/red pixels instead of
+# an emoji — but many mail clients block remote images by default, so the bold
+# emoji+text line is what's guaranteed to render even with images off.
+#
 # Reads REPO / RUN_URL / PASSED / MATRIX_OK / SHA / ISSUE_NUMBER /
 # INTEGRATIONS_MENTIONS from the environment.
 set -euo pipefail
@@ -23,8 +29,10 @@ set -euo pipefail
 body_file="$(mktemp)"
 {
   if [ "$PASSED" = "true" ]; then
+    echo "![Nightly baseline: PASS](https://img.shields.io/badge/nightly%20baseline-PASS-success)"
     echo "🟢 **Nightly baseline: PASS**"
   else
+    echo "![Nightly baseline: FAIL](https://img.shields.io/badge/nightly%20baseline-FAIL-critical)"
     echo "🔴 **Nightly baseline: FAIL**"
   fi
   echo
