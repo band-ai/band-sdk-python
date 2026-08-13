@@ -1,8 +1,0 @@
-name: tmp timeout probe
-on: push
-jobs:
-  probe:
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: sleep 120
