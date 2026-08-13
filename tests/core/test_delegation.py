@@ -169,6 +169,58 @@ class TestParseDelegationValue:
         assert parse_delegation_value(3.14) is None
 
 
+class TestMessageMetadataWireBoundary:
+    """The WS wire type carries the envelope as a typed field, and the typed
+    field must stay tolerant: the REST backlog path re-wraps raw dicts with
+    ``MessageMetadata(**metadata)`` (execution.py), so a malformed envelope
+    must not fail the whole metadata parse (I3)."""
+
+    def test_wire_metadata_types_the_envelope(self):
+        metadata = MessageMetadata.model_validate(
+            {"mentions": [], "status": "sent", "delegation": make_envelope_dict()}
+        )
+
+        assert isinstance(metadata.delegation, DelegationEnvelope)
+        assert metadata.delegation.originator is not None
+        assert metadata.delegation.originator.handle == "alice.asker"
+
+    def test_absent_envelope_defaults_to_none(self):
+        assert MessageMetadata(mentions=[], status="sent").delegation is None
+
+    def test_rewrap_kwargs_path_tolerates_a_malformed_envelope(self):
+        """Mirrors ExecutionContext._process_claimed_backlog_message, which
+        constructs ``MessageMetadata(**metadata)`` from platform dicts."""
+        metadata = MessageMetadata(
+            **{"mentions": [], "status": "sent", "delegation": "junk"}
+        )
+
+        assert metadata.delegation is None
+
+    def test_rewrap_kwargs_path_tolerates_junk_version(self):
+        envelope = make_envelope_dict()
+        envelope["version"] = "not-an-int"
+
+        metadata = MessageMetadata(
+            **{"mentions": [], "status": "sent", "delegation": envelope}
+        )
+
+        assert metadata.delegation is None
+
+    def test_model_dump_then_rewrap_keeps_the_envelope(self):
+        """The backlog cycle dumps the WS model to a dict and re-wraps it;
+        the envelope must survive that round trip."""
+        original = MessageMetadata.model_validate(
+            {"mentions": [], "status": "sent", "delegation": make_envelope_dict()}
+        )
+
+        rewrapped = MessageMetadata(**original.model_dump())
+
+        assert rewrapped.delegation is not None
+        assert rewrapped.delegation.message_id == ENVELOPE_MESSAGE_ID
+        assert rewrapped.delegation.originator is not None
+        assert rewrapped.delegation.originator.uuid == ORIGINATOR_UUID
+
+
 class TestEnvelopeIsReadOnly:
     """I2: handler code gets a read-only view — the envelope is platform-
     authored and nothing in the SDK writes through it."""
