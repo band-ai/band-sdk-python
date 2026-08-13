@@ -2523,9 +2523,10 @@ def _resolved_entity_missing_id(error: ParsingError) -> dict[str, Any] | None:
     (only_error,) = errors
     if only_error["type"] != "missing" or only_error["loc"] != ("data", "id"):
         return None
-    body = error.body
-    entity = body.get("data") if isinstance(body, dict) else None
-    return cast(dict[str, Any], entity) if isinstance(entity, dict) else None
+    # For a missing nested field, pydantic's error "input" is the parent
+    # dict being validated — here the response's "data" entity itself.
+    entity = only_error["input"]
+    return entity if isinstance(entity, dict) else None
 
 
 class HumanTools:
