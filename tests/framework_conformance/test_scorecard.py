@@ -31,11 +31,14 @@ from tests.e2e.baseline.agents import (
 from tests.e2e.baseline.scorecard import (
     ScorecardCollector,
     ScorecardRow,
+    gate,
+    gate_summary,
     merge,
     na_rows,
     outcome_row,
     to_markdown,
 )
+from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 
 
 # --- ExcludedAdapter: a reason is mandatory -----------------------------------------
@@ -216,6 +219,56 @@ def test_merge_prefers_real_outcome_over_skip_and_keeps_na() -> None:
 def test_merge_leaves_a_never_run_cell_visible_as_skip() -> None:
     merged = merge([[ScorecardRow("t", "letta", "skip", "lane")]])
     assert merged[0].status == "skip"
+
+
+# --- gate: pass/fail verdict from a merged grid --------------------------------------
+
+# Two distinct lanes with at least one adapter each, read off the real registry rather
+# than hand-picked ids — a gate case only needs "two different homes", not which ones.
+_LANE_A, _LANE_B = [lane for lane in ci_lanes() if lane.adapters][:2]
+_ADAPTER_A = str(_LANE_A.adapters[0])
+_ADAPTER_B = str(_LANE_B.adapters[0])
+
+
+def test_gate_fails_on_a_fail_cell() -> None:
+    row = ScorecardRow("t", _ADAPTER_A, "fail")
+    result = gate([row], frozenset({str(_LANE_A.id)}))
+    assert result.ok is False
+    assert result.failing == (row,)
+    assert result.missing == ()
+
+
+def test_gate_ignores_a_skip_cell_whose_lane_is_out_of_scope() -> None:
+    row = ScorecardRow("t", _ADAPTER_B, "skip", "lane 'core'")
+    result = gate([row], frozenset({str(_LANE_A.id)}))
+    assert result.ok is True
+
+
+def test_gate_fails_a_skip_cell_whose_lane_was_expected_to_run() -> None:
+    row = ScorecardRow("t", _ADAPTER_A, "skip", "lane 'core'")
+    result = gate([row], frozenset({str(_LANE_A.id)}))
+    assert result.ok is False
+    assert result.missing == (row,)
+
+
+def test_gate_passes_pass_and_na_cells() -> None:
+    rows = [
+        ScorecardRow("t", _ADAPTER_A, "pass"),
+        ScorecardRow("t", _ADAPTER_B, "na", "no usage"),
+    ]
+    result = gate(rows, frozenset({str(_LANE_A.id), str(_LANE_B.id)}))
+    assert result.ok is True
+
+
+def test_gate_summary_reports_totals_and_names_the_culprit() -> None:
+    rows = [
+        ScorecardRow("t", _ADAPTER_A, "pass"),
+        ScorecardRow("t", _ADAPTER_B, "fail"),
+    ]
+    result = gate(rows, frozenset({str(_LANE_A.id), str(_LANE_B.id)}))
+    summary = gate_summary(result, rows)
+    assert "GATE: FAIL" in summary
+    assert _ADAPTER_B in summary
 
 
 def test_to_markdown_renders_grid_and_na_reasons() -> None:

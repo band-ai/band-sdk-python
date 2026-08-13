@@ -11,10 +11,12 @@ code comment. This module makes the full grid observable:
   collected cell from its test report — exact ``nodeid`` keys, no junit-name scraping.
 * :func:`merge` unions the per-lane scorecards CI emits (each lane runs only its own
   cells; the rest are ``skip``) into one grid.
+* :func:`gate` turns a merged grid into a pass/fail verdict for CI: any ``fail`` cell,
+  or any ``skip`` cell whose home lane was expected to run this invocation, reddens it.
 
 The pieces are pure functions so they unit-test without a live platform; the conftest is
 a thin hook delegate, and ``python -m tests.e2e.baseline.scorecard merge`` is the
-post-run CI step that folds the lanes together.
+post-run CI step that folds the lanes together and gates on the result.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -30,6 +33,7 @@ from typing import Literal
 import pytest
 
 from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
+from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +182,58 @@ def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:
     return sorted(best.values(), key=lambda row: (row.test, row.adapter))
 
 
+@dataclass(frozen=True)
+class GateResult:
+    """CI's pass/fail verdict on a merged scorecard.
+
+    ``failing`` is every ``fail`` cell. ``missing`` is a ``skip`` cell whose home lane
+    (from the registry's ``ci_lanes()`` — the same adapter→lane partition the "CI lanes"
+    docs describe) was expected to run this invocation but reported nothing for it, e.g.
+    a lane job that crashed before writing its scorecard fragment. A ``skip`` cell whose
+    home lane wasn't expected this run (an out-of-scope lane on a scoped dispatch) is
+    neither — it is simply not evaluated.
+    """
+
+    ok: bool
+    failing: tuple[ScorecardRow, ...]
+    missing: tuple[ScorecardRow, ...]
+
+
+def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult:
+    """Decide whether a merged scorecard is green, given which lanes ran this time.
+
+    ``expected_lanes`` is the set of lane ids this invocation selected (the full
+    registry for a nightly/full-matrix run, or just the chosen lane for a scoped
+    dispatch) — never inferred from the rows themselves, so an intentionally
+    out-of-scope lane's cells can never be mistaken for a silent failure.
+    """
+    home_lane = {str(a): str(cl.id) for cl in ci_lanes() for a in cl.adapters}
+    failing = tuple(r for r in rows if r.status == "fail")
+    missing = tuple(
+        r
+        for r in rows
+        if r.status == "skip" and home_lane.get(r.adapter) in expected_lanes
+    )
+    return GateResult(ok=not failing and not missing, failing=failing, missing=missing)
+
+
+def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
+    """A one-line verdict + totals, meant to sit above the markdown grid."""
+    counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
+    verdict = "PASS" if result.ok else "FAIL"
+    line = (
+        f"**GATE: {verdict}** — {counts['pass']} passed, {counts['fail']} failed, "
+        f"{counts['na']} N/A, {counts['skip']} skipped"
+    )
+    if not result.ok:
+        culprits = sorted(
+            f"`{r.test.rsplit('::', 1)[-1]}`/`{r.adapter}`"
+            for r in (*result.failing, *result.missing)
+        )
+        line += "\n\nFailing cells: " + ", ".join(culprits)
+    return line + "\n"
+
+
 def write_json(rows: list[ScorecardRow], path: str | Path) -> None:
     """Write ``rows`` as a JSON array to ``path`` (creating parent dirs)."""
     out = Path(path)
@@ -219,25 +275,45 @@ def to_markdown(rows: list[ScorecardRow]) -> str:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact."""
+    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact and gate on it."""
     parser = argparse.ArgumentParser(prog="scorecard")
     sub = parser.add_subparsers(dest="cmd", required=True)
     merge_cmd = sub.add_parser("merge", help="union per-lane scorecards into one grid")
     merge_cmd.add_argument("inputs", nargs="+", help="per-lane scorecard JSON files")
     merge_cmd.add_argument("--out", required=True, help="combined scorecard.json path")
     merge_cmd.add_argument("--markdown", help="also write a markdown grid to this path")
+    merge_cmd.add_argument(
+        "--expected-lanes",
+        required=True,
+        help="comma-separated lane ids this invocation selected (every registry lane "
+        "for a full nightly run, or just the dispatched lane) — used to gate on "
+        "missing cells",
+    )
     args = parser.parse_args(argv)
 
     rows = merge(_load(path) for path in args.inputs)
     write_json(rows, args.out)
+    known_lanes = {str(lane.id) for lane in ci_lanes()}
+    expected_lanes = frozenset(args.expected_lanes.split(","))
+    if unknown := expected_lanes - known_lanes:
+        parser.error(
+            f"--expected-lanes names unknown lane id(s) {sorted(unknown)}; "
+            f"known lanes: {sorted(known_lanes)}"
+        )
+    result = gate(rows, expected_lanes)
     if args.markdown:
-        Path(args.markdown).write_text(to_markdown(rows))
+        Path(args.markdown).write_text(
+            gate_summary(result, rows) + "\n" + to_markdown(rows)
+        )
     logger.info(
-        "scorecard: %d cells from %d lane file(s) -> %s",
+        "scorecard: %d cells from %d lane file(s) -> %s (gate: %s)",
         len(rows),
         len(args.inputs),
         args.out,
+        "PASS" if result.ok else "FAIL",
     )
+    if not result.ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
