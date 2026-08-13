@@ -398,6 +398,27 @@ kwargs = {"action": "approve", "request_id": "..."}
 await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 ```
 
+## Workarounds for band-client-rest Bugs
+
+`band-client-rest` is pinned exactly (`pyproject.toml`, e.g. `==0.0.26`). Before
+writing a workaround, check whether a newer release already fixes it upstream:
+
+- `pip index versions band-client-rest`, then diff the relevant model/method
+  (`uv pip install band-client-rest==<newer> --target /tmp/check`).
+- Already fixed upstream → bump the pin. Default action, not a suggestion.
+  Only write a workaround after confirming the bump is actually blocked (cite
+  the blocker: failing CI, unresolved conflict) — "inconvenient" isn't one.
+- Still needed → tie it to the pin: comment naming the exact version where
+  it stops being reachable, so it's not silently dead code after the next bump.
+- A test against the real dependency (not a stubbed exception) doubles as
+  that tripwire. Check the CI status is real, though — a grouped Dependabot
+  bump can fail at collection from an unrelated package first, hiding it.
+
+Example (PR #531): a `resolve_handle` workaround for missing `data.id` was
+scoped to `0.0.10`. `0.0.15` already dropped the `id` field from
+`ResolvedEntity` upstream. Bumped straight to `0.0.26`, deleted the
+workaround — no version guard needed once the fix is already upstream.
+
 ## Code Structure
 
 ```

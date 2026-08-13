@@ -39,6 +39,7 @@ from band_rest import (
     Peer,
     UnauthorizedError,
 )
+from band_rest.core import ParsingError
 from band_rest.core.request_options import RequestOptions
 from band_rest.types import ChatMessageRequestMentionsItem
 
@@ -71,6 +72,7 @@ __all__ = [
     "ListAgentPeersResponse",
     "ListAgentPeersResponseMetadata",
     "NotFoundError",
+    "ParsingError",
     "Peer",
     "UnauthorizedError",
     "RequestOptions",
