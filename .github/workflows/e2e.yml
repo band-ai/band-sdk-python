@@ -453,16 +453,19 @@ jobs:
   # Marks the tested commit baseline-green/red (release-gate.yml reads this to decide
   # whether the release-please PR may merge) and posts that night's scorecard as a
   # comment on one persistent tracking issue — reopened on red, closed on green, so its
-  # state also reflects "currently red/green" at a glance. Mentioning @band-ai/integrations
-  # on every comment rides GitHub's own mention-notification delivery (each member's own
-  # account, own email) instead of standing up a mailer with its own credentials. Only a
-  # full-matrix run marks the commit and posts: a scoped dispatch (one lane and/or one OS)
-  # only exercised part of the matrix and has nothing meaningful to say about the rest.
+  # state also reflects "currently red/green" at a glance. Individually mentioning
+  # INTEGRATIONS_MENTIONS on every comment rides GitHub's own mention-notification
+  # delivery (each member's own account, own email) instead of standing up a mailer
+  # with its own credentials. Only a full-matrix run marks the commit and posts: a
+  # scoped dispatch (one lane and/or one OS) only exercised part of the matrix and has
+  # nothing meaningful to say about the rest.
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
-    # TEMP for a live notification-delivery test — revert before merge.
-    if: always()
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event.inputs.lane == 'all' && github.event.inputs.os == 'all'))
     runs-on: ubuntu-latest
     permissions:
       statuses: write
@@ -476,6 +479,13 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       PASSED: ${{ needs.scorecard.outputs.passed }}
       MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
+      # Individual @username mentions, not the @band-ai/integrations team handle —
+      # verified live that a bot-authored (secrets.GITHUB_TOKEN) team mention does not
+      # reliably fan out a per-member notification, even with every member's own
+      # "Participating/@mentions" setting correctly on. Individual mentions are the
+      # mechanism every notification-dependent bot relies on. Hand-maintained (the
+      # team is small, low churn); update alongside band-ai/integrations membership.
+      INTEGRATIONS_MENTIONS: "@nir-singher-band @amit-gazal-band @bandzalkin @AlexanderZ-Band"
     steps:
     # continue-on-error: the commit status below is the more important of the two
     # things this job does (it's what release-gate.yml reads) and depends only on
@@ -506,7 +516,7 @@ jobs:
 
     # One persistent issue (tracked by title, not a label — no pre-provisioned label
     # to keep in sync) is the running nightly digest: every full-matrix run comments
-    # the night's scorecard on it, pass or fail, so @band-ai/integrations gets a
+    # the night's scorecard on it, pass or fail, so INTEGRATIONS_MENTIONS gets a
     # GitHub notification (and, per each member's own settings, an email) every night
     # — not just on a red run.
     - name: Find or create the nightly results issue
@@ -522,7 +532,7 @@ jobs:
           --jq '[.[] | select(.title == "Nightly baseline results")][0].number // empty')
         if [ -z "$number" ]; then
           url=$(gh issue create --repo "$REPO" --title "Nightly baseline results" \
-            --body "Running log of nightly baseline E2E results. @band-ai/integrations")
+            --body "Running log of nightly baseline E2E results. $INTEGRATIONS_MENTIONS")
           number=${url##*/}
         fi
         echo "number=$number" >> "$GITHUB_OUTPUT"
@@ -557,7 +567,7 @@ jobs:
           echo
           echo "Commit \`${{ github.sha }}\` · [full grid & logs]($RUN_URL)"
           echo
-          echo "cc @band-ai/integrations"
+          echo "cc $INTEGRATIONS_MENTIONS"
         } > "$body_file"
         gh issue comment "${{ steps.issue.outputs.number }}" --repo "$REPO" --body-file "$body_file"
         if [ "$PASSED" = "true" ]; then
