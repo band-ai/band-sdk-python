@@ -398,6 +398,32 @@ kwargs = {"action": "approve", "request_id": "..."}
 await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 ```
 
+## Workarounds for band-client-rest Bugs
+
+`band-client-rest` is pinned exactly (`pyproject.toml`, e.g. `==0.0.10`) — a
+newer version may already fix the platform/SDK contract mismatch you're about
+to work around. Before writing a workaround for behavior you saw from the
+pinned version, check whether a newer `band-client-rest` release already fixes
+it upstream:
+
+- Check available versions: `pip index versions band-client-rest` (or the
+  package's changelog/repo).
+- Diff the relevant model/method against the newer version (e.g.
+  `uv pip install band-client-rest==<newer> --target /tmp/check` then read the
+  model) rather than assuming the bug persists.
+- If the bug is already fixed upstream, prefer bumping the pin (if otherwise
+  safe) over adding a workaround.
+- If a workaround is still needed (pin can't move yet), tie it to the pin
+  explicitly: a comment on the workaround naming the exact newer version where
+  it stops being reachable, so it isn't silently dead code (or forgotten
+  cleanup) after the next bump.
+
+Caught in PR #531 review: a `resolve_handle` workaround for a missing
+`data.id` field was written against `band-client-rest==0.0.10` only. Reviewer
+tested `0.0.26` live against `app.band.ai` and found the platform contract fix
+already shipped there (`ResolvedEntity` no longer declares `id`), making the
+workaround's exception branch unreachable on that version.
+
 ## Code Structure
 
 ```
