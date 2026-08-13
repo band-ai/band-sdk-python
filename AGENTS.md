@@ -417,12 +417,21 @@ it upstream:
   explicitly: a comment on the workaround naming the exact newer version where
   it stops being reachable, so it isn't silently dead code (or forgotten
   cleanup) after the next bump.
+- A test that reproduces the workaround against the real dependency (not a
+  stubbed exception) can double as that tripwire — it fails loud once the pin
+  moves past the fix. But this only works if CI actually reaches it: a grouped
+  Dependabot bump can fail at collection from an unrelated package in the same
+  group before any test runs, silently hiding the tripwire's failure. Check
+  the actual bump PR's CI status, not just that a tripwire test exists.
 
 Caught in PR #531 review: a `resolve_handle` workaround for a missing
 `data.id` field was written against `band-client-rest==0.0.10` only. Reviewer
 tested `0.0.26` live against `app.band.ai` and found the platform contract fix
 already shipped there (`ResolvedEntity` no longer declares `id`), making the
-workaround's exception branch unreachable on that version.
+workaround's exception branch unreachable on that version. The open grouped
+bump PR that would move the pin past 0.0.26 fails at pytest collection from an
+unrelated `agent-client-protocol` import break in the same group — a live
+example of the tripwire caveat above.
 
 ## Code Structure
 

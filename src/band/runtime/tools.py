@@ -2515,6 +2515,15 @@ def _resolved_entity_missing_id(error: ParsingError) -> dict[str, Any] | None:
     unchanged. The entity itself comes from ``error.body`` — the raw response
     JSON the raw client already captured — rather than pydantic's internal
     per-error ``"input"``, so this stays correct across pydantic versions.
+
+    Dead code once the ``band-client-rest`` pin moves past 0.0.26: that
+    release's ``ResolvedEntity`` no longer declares ``id``, so this
+    ``ValidationError`` is never raised. Delete this function and the
+    ``except ParsingError`` branch in ``resolve_handle`` at that point —
+    ``test_resolve_handle_degrades_when_api_omits_id`` fails loud as a
+    reminder, but only if CI reaches that test (a grouped dependency bump
+    that also breaks something unrelated can fail at collection first and
+    mask it — check for that before assuming this workaround is still live).
     """
     if not isinstance(error.cause, ValidationError):
         return None
