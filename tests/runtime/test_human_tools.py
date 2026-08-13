@@ -22,7 +22,8 @@ REST is faked with ``unittest.mock.AsyncMock``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -264,19 +265,20 @@ async def test_resolve_handle_passes_handle() -> None:
     rest.human_api_contacts.resolve_handle.assert_awaited_once_with(handle="@alice")
 
 
-def _rest_client_over(
+@asynccontextmanager
+async def _rest_client_over(
     handler: Callable[[httpx.Request], httpx.Response],
-) -> AsyncRestClient:
+) -> AsyncIterator[AsyncRestClient]:
     """A real ``band_rest.AsyncRestClient`` whose HTTP boundary is a fake
     transport instead of the network, so response-parsing errors (like the
     ``ValidationError`` -> ``ParsingError`` wrapping in
     ``raw_client.resolve_handle``) are raised by the real dependency rather
     than simulated.
     """
-    return AsyncRestClient(
-        api_key="test-key",
-        httpx_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as httpx_client:
+        yield AsyncRestClient(api_key="test-key", httpx_client=httpx_client)
 
 
 @pytest.mark.asyncio
@@ -298,9 +300,8 @@ async def test_resolve_handle_degrades_when_api_omits_id() -> None:
             },
         )
 
-    rest = _rest_client_over(handler)
-
-    result = await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
+    async with _rest_client_over(handler) as rest:
+        result = await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
 
     assert result["data"] == {
         "handle": "nir/mcp-test",
@@ -323,10 +324,9 @@ async def test_resolve_handle_reraises_unrelated_parsing_error() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
 
-    rest = _rest_client_over(handler)
-
-    with pytest.raises(ParsingError):
-        await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
+    async with _rest_client_over(handler) as rest:
+        with pytest.raises(ParsingError):
+            await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
 
 
 @pytest.mark.asyncio

@@ -2512,21 +2512,18 @@ def _resolved_entity_missing_id(error: ParsingError) -> dict[str, Any] | None:
     raw client raises (wrapping the underlying ``pydantic.ValidationError``)
     against API v1.10.0, which omits ``id`` from resolve-handle responses.
     Returns None for any other parsing failure, so callers re-raise those
-    unchanged.
+    unchanged. The entity itself comes from ``error.body`` — the raw response
+    JSON the raw client already captured — rather than pydantic's internal
+    per-error ``"input"``, so this stays correct across pydantic versions.
     """
-    cause = error.cause
-    if not isinstance(cause, ValidationError):
+    if not isinstance(error.cause, ValidationError):
         return None
-    errors = cause.errors()
-    if len(errors) != 1:
-        return None
-    (only_error,) = errors
-    if only_error["type"] != "missing" or only_error["loc"] != ("data", "id"):
-        return None
-    # For a missing nested field, pydantic's error "input" is the parent
-    # dict being validated — here the response's "data" entity itself.
-    entity = only_error["input"]
-    return entity if isinstance(entity, dict) else None
+    match error.cause.errors():
+        case [{"type": "missing", "loc": ("data", "id")}]:
+            entity = error.body.get("data") if isinstance(error.body, dict) else None
+            return entity if isinstance(entity, dict) else None
+        case _:
+            return None
 
 
 class HumanTools:
@@ -2688,7 +2685,13 @@ class HumanTools:
         )
 
     async def resolve_handle(self, handle: str) -> Any:
-        """Look up an entity by handle."""
+        """Look up an entity by handle.
+
+        Returns the ``ResolveHandleResponse`` Fern model normally. If the
+        platform omits ``data.id`` (a known SDK/API contract mismatch),
+        returns a plain ``{"data": ..., "warning": ...}`` dict instead —
+        callers should not assume attribute access on the result.
+        """
         logger.debug("Resolving handle: %s", handle)
         try:
             return await self.rest.human_api_contacts.resolve_handle(handle=handle)
