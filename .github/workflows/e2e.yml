@@ -364,15 +364,9 @@ jobs:
       if: steps.verdict.outputs.ok != 'true'
       run: exit 1
 
-  # Marks the tested commit baseline-green/red (release-gate.yml reads this to decide
-  # whether the release-please PR may merge) and posts that night's scorecard as a
-  # comment on one persistent tracking issue — reopened on red, closed on green, so its
-  # state also reflects "currently red/green" at a glance. Mentioning the
-  # band-ai/integrations roster (.github/integrations-team.txt) on every comment rides
-  # GitHub's own mention-notification delivery (each member's own account, own email)
-  # instead of standing up a mailer with its own credentials. Only a full-matrix run
-  # marks the commit and posts: a scoped dispatch (one lane and/or one OS) only
-  # exercised part of the matrix and has nothing meaningful to say about the rest.
+  # Only a full matrix may certify the commit and update the canonical nightly issue:
+  # its state means the entire baseline is green/red. Scoped manual runs report through
+  # the separate job below, so their limited coverage can never affect release gating.
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
@@ -382,6 +376,7 @@ jobs:
        (github.event.inputs.lane == 'all' && github.event.inputs.os == 'all'))
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       statuses: write
       issues: write
     defaults:
@@ -395,6 +390,9 @@ jobs:
       PASSED: ${{ needs.scorecard.outputs.passed }}
       MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
     steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
     # continue-on-error: the commit status below is the more important of the two
     # things this job does (it's what release-gate.yml reads) and depends only on
     # $PASSED/$MATRIX_OK (job outputs, already resolved) — never on this download
@@ -423,19 +421,71 @@ jobs:
       id: mentions
       run: .github/scripts/read-integrations-mentions.sh
 
-    # One persistent issue (tracked by title, not a label — no pre-provisioned label
-    # to keep in sync) is the running nightly digest: every full-matrix run comments
-    # the night's scorecard on it, pass or fail, so the resolved roster gets a
-    # GitHub notification (and, per each member's own settings, an email) every
-    # night — not just on a red run.
+    # One persistent issue is the canonical full-matrix digest; its open/closed state
+    # reflects the current full baseline only.
     - name: Find or create the nightly results issue
       id: issue
       env:
-        INTEGRATIONS_MENTIONS: ${{ steps.mentions.outputs.mentions }}
-      run: .github/scripts/find-or-create-nightly-issue.sh
+        ISSUE_TITLE: Nightly baseline results
+        ISSUE_BODY: Running log of nightly baseline E2E results. ${{ steps.mentions.outputs.mentions }}
+      run: .github/scripts/find-or-create-tracking-issue.sh
 
     - name: Post the night's scorecard and sync open/closed state
       env:
         ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
-        INTEGRATIONS_MENTIONS: ${{ steps.mentions.outputs.mentions }}
-      run: .github/scripts/post-nightly-digest.sh
+        REPORT_LABEL: Nightly baseline
+        RECIPIENTS: ${{ steps.mentions.outputs.mentions }}
+        SYNC_ISSUE_STATE: "true"
+      run: .github/scripts/post-baseline-digest.sh
+
+  # A scoped dispatch is useful evidence for its requester, but is never evidence of
+  # the complete release baseline. Report it in its own thread and mention only the
+  # initiating user; GitHub then delivers the normal mention notification/email based
+  # on that user's settings without broadcasting exploratory runs to the whole team.
+  report-scoped-run:
+    name: report scoped E2E
+    needs: scorecard
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.lane != 'all' || github.event.inputs.os != 'all')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
+      PASSED: ${{ needs.scorecard.outputs.passed }}
+      MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
+      RECIPIENTS: "@${{ github.triggering_actor }}"
+      SCOPE_NOTICE: "Selected scope: lane=${{ github.event.inputs.lane }}, os=${{ github.event.inputs.os }}. This is not a full baseline and does not affect the release gate or nightly baseline state."
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Download the merged scorecard
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: scorecard
+        path: artifacts
+        if-no-files-found: warn
+
+    - name: Find or create the manual results issue
+      id: issue
+      env:
+        ISSUE_TITLE: Manual E2E results
+        ISSUE_BODY: Running log of scoped manual baseline E2E results. These reports do not certify the full release baseline.
+      run: .github/scripts/find-or-create-tracking-issue.sh
+
+    - name: Post the scoped scorecard
+      env:
+        ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        REPORT_LABEL: Manual E2E (scoped)
+        SYNC_ISSUE_STATE: "false"
+      run: .github/scripts/post-baseline-digest.sh

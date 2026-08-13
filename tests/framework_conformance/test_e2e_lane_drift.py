@@ -11,12 +11,24 @@ fails loudly on every PR, not only on a manual workflow dispatch.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
+import yaml
+
 from tests.e2e.baseline.toolkit.ci_lanes import (
     assert_workflow_lane_gates_known,
     assert_workflow_lane_options_match_registry,
     ci_lanes,
     workflow_lane_gate_ids,
 )
+
+
+_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "e2e.yml"
+
+
+def _workflow_jobs() -> dict[str, Any]:
+    return yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
 
 
 def test_workflow_lane_gates_reference_only_known_lanes() -> None:
@@ -36,3 +48,30 @@ def test_workflow_lane_extraction_is_not_vacuous() -> None:
 def test_workflow_lane_options_match_registry() -> None:
     """The dispatch ``lane`` dropdown lists exactly the registry lanes plus ``all``."""
     assert_workflow_lane_options_match_registry()
+
+
+def test_baseline_certification_checks_out_before_running_repo_scripts() -> None:
+    """The independent status job must have the repository scripts it invokes."""
+    job = _workflow_jobs()["mark-baseline"]
+    steps = job["steps"]
+    checkout = next(
+        i for i, step in enumerate(steps) if step["name"] == "Checkout code"
+    )
+    status = next(
+        i
+        for i, step in enumerate(steps)
+        if step["name"] == "Mark the commit baseline-green or baseline-red"
+    )
+
+    assert job["permissions"]["contents"] == "read"
+    assert checkout < status
+
+
+def test_scoped_manual_runs_report_without_certifying_the_baseline() -> None:
+    """A partial run has a requester-only report path, separate from release state."""
+    job = _workflow_jobs()["report-scoped-run"]
+
+    assert "workflow_dispatch" in job["if"]
+    assert "github.triggering_actor" in job["env"]["RECIPIENTS"]
+    assert "does not affect the release gate" in job["env"]["SCOPE_NOTICE"]
+    assert job["permissions"]["contents"] == "read"
