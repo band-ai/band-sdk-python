@@ -31,6 +31,7 @@ from tests.e2e.baseline.agents import (
 from tests.e2e.baseline.scorecard import (
     ScorecardCollector,
     ScorecardRow,
+    digest_body,
     gate,
     gate_summary,
     merge,
@@ -269,6 +270,36 @@ def test_gate_summary_reports_totals_and_names_the_culprit() -> None:
     summary = gate_summary(result, rows)
     assert "GATE: FAIL" in summary
     assert _ADAPTER_B in summary
+
+
+# --- digest_body: the email-safe half of gate_summary (no header, no grid) ----------
+
+
+def test_digest_body_all_clear_has_no_problem_sections() -> None:
+    rows = [ScorecardRow("t", _ADAPTER_A, "pass"), ScorecardRow("t", _ADAPTER_B, "na")]
+    result = gate(rows, frozenset({str(_LANE_A.id), str(_LANE_B.id)}))
+    body = digest_body(result, rows)
+    assert "1 passed" in body
+    assert "Failing" not in body
+    assert "Missing" not in body
+
+
+def test_digest_body_lists_failing_and_missing_separately() -> None:
+    failing = ScorecardRow("t", _ADAPTER_A, "fail")
+    missing = ScorecardRow("t", _ADAPTER_B, "skip", "lane 'core'")
+    result = gate([failing, missing], frozenset({str(_LANE_A.id), str(_LANE_B.id)}))
+    body = digest_body(result, [failing, missing])
+    assert "**Failing**" in body
+    assert f"`{_ADAPTER_A}`" in body.split("**Missing**")[0]
+    assert "**Missing** (lane ran, no result)" in body
+    assert f"`{_ADAPTER_B}`" in body.split("**Missing**")[1]
+
+
+def test_digest_body_never_renders_a_grid() -> None:
+    rows = [ScorecardRow("t", _ADAPTER_A, "fail")]
+    result = gate(rows, frozenset({str(_LANE_A.id)}))
+    body = digest_body(result, rows)
+    assert "| test |" not in body
 
 
 def test_to_markdown_renders_grid_and_na_reasons() -> None:

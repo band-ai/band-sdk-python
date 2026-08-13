@@ -234,6 +234,37 @@ def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
     return line + "\n"
 
 
+def _cell_lines(rows: tuple[ScorecardRow, ...]) -> list[str]:
+    return [
+        f"- `{r.test.rsplit('::', 1)[-1]}` / `{r.adapter}`"
+        for r in sorted(rows, key=lambda r: (r.test, r.adapter))
+    ]
+
+
+def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
+    """Counts + only the problem cells — no header, no wide grid.
+
+    The email-safe half of :func:`gate_summary`: a full adapter×test grid reads fine
+    in a GitHub Actions step summary (full width, GitHub's own renderer) but turns
+    into a cramped, unreadable wall in a notification email, so this deliberately
+    leaves it out — a caller wanting the full picture links to the run instead.
+    Also deliberately carries no PASS/FAIL header: a matrix-leg crash the cell-level
+    grid can't see (no OS dimension on `ScorecardRow`) can override `result.ok`'s
+    verdict, so a caller with that broader context should render its own header
+    rather than trust one built from cell data alone.
+    """
+    counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
+    lines = [
+        f"{counts['pass']} passed · {counts['fail']} failed · "
+        f"{counts['na']} N/A · {counts['skip']} skipped"
+    ]
+    if result.failing:
+        lines += ["", "**Failing**", *_cell_lines(result.failing)]
+    if result.missing:
+        lines += ["", "**Missing** (lane ran, no result)", *_cell_lines(result.missing)]
+    return "\n".join(lines) + "\n"
+
+
 def write_json(rows: list[ScorecardRow], path: str | Path) -> None:
     """Write ``rows`` as a JSON array to ``path`` (creating parent dirs)."""
     out = Path(path)
@@ -283,6 +314,11 @@ def main(argv: list[str] | None = None) -> None:
     merge_cmd.add_argument("--out", required=True, help="combined scorecard.json path")
     merge_cmd.add_argument("--markdown", help="also write a markdown grid to this path")
     merge_cmd.add_argument(
+        "--summary",
+        help="also write the email-safe digest (counts + only the problem cells, no "
+        "grid — see digest_body) to this path",
+    )
+    merge_cmd.add_argument(
         "--expected-lanes",
         required=True,
         help="comma-separated lane ids this invocation selected (every registry lane "
@@ -305,6 +341,8 @@ def main(argv: list[str] | None = None) -> None:
         Path(args.markdown).write_text(
             gate_summary(result, rows) + "\n" + to_markdown(rows)
         )
+    if args.summary:
+        Path(args.summary).write_text(digest_body(result, rows))
     logger.info(
         "scorecard: %d cells from %d lane file(s) -> %s (gate: %s)",
         len(rows),
