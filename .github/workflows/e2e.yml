@@ -360,13 +360,12 @@ jobs:
   # Marks the tested commit baseline-green/red (release-gate.yml reads this to decide
   # whether the release-please PR may merge) and posts that night's scorecard as a
   # comment on one persistent tracking issue — reopened on red, closed on green, so its
-  # state also reflects "currently red/green" at a glance. Mentioning the live
-  # band-ai/integrations roster on every comment rides GitHub's own mention-
-  # notification delivery (each member's own account, own email) instead of standing
-  # up a mailer with its own credentials — see resolve-integrations-mentions.sh. Only
-  # a full-matrix run marks the commit and posts: a scoped dispatch (one lane and/or
-  # one OS) only exercised part of the matrix and has nothing meaningful to say about
-  # the rest.
+  # state also reflects "currently red/green" at a glance. Mentioning the
+  # band-ai/integrations roster (.github/integrations-team.txt) on every comment rides
+  # GitHub's own mention-notification delivery (each member's own account, own email)
+  # instead of standing up a mailer with its own credentials. Only a full-matrix run
+  # marks the commit and posts: a scoped dispatch (one lane and/or one OS) only
+  # exercised part of the matrix and has nothing meaningful to say about the rest.
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
@@ -406,25 +405,22 @@ jobs:
     - name: Mark the commit baseline-green or baseline-red
       run: .github/scripts/mark-commit-status.sh
 
-    # Resolves band-ai/integrations' current roster into @mentions at run time (see
-    # .github/scripts/resolve-integrations-mentions.sh for why this needs a
-    # dedicated read:org PAT rather than the default GITHUB_TOKEN, and why team
-    # mentions don't work here). continue-on-error: true — this only feeds the
-    # digest's "cc" line, never the commit status marked above; a missing/stale
-    # ORG_READ_TOKEN must not silently skip posting the digest itself (the same
-    # class of bug the artifact-download step above guards against).
-    - name: Resolve integrations team mentions
+    # .github/integrations-team.txt (one GitHub username per line) is kept as a
+    # plain data file, not inline here, so updating band-ai/integrations
+    # membership never means editing workflow YAML. Individual @username
+    # mentions, not the @band-ai/integrations team handle — verified live that a
+    # bot-authored (secrets.GITHUB_TOKEN) team mention does not reliably fan out
+    # a per-member notification, even with every member's own settings correctly
+    # configured.
+    - name: Read integrations mentions list
       id: mentions
-      continue-on-error: true
-      env:
-        ORG_READ_TOKEN: ${{ secrets.E2E_GITHUB_ORG_READ_TOKEN }}
-      run: .github/scripts/resolve-integrations-mentions.sh
+      run: .github/scripts/read-integrations-mentions.sh
 
     # One persistent issue (tracked by title, not a label — no pre-provisioned label
     # to keep in sync) is the running nightly digest: every full-matrix run comments
-    # the night's scorecard on it, pass or fail, mentioning the resolved roster (if
-    # any) so they get a GitHub notification — and, per each member's own settings,
-    # an email — every night, not just on a red run.
+    # the night's scorecard on it, pass or fail, so the resolved roster gets a
+    # GitHub notification (and, per each member's own settings, an email) every
+    # night — not just on a red run.
     - name: Find or create the nightly results issue
       id: issue
       env:

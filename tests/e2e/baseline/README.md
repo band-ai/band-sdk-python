@@ -738,20 +738,15 @@ negligible for the 99% of PRs that aren't the release PR.
 persistent issue (matched by title, not a label — "Nightly baseline results"),
 reopening it on red and closing it on green so its state also reads "currently
 red/green" at a glance. The comment individually mentions each `band-ai/integrations`
-member, resolved live from the team's actual roster
-(`.github/scripts/resolve-integrations-mentions.sh`) rather than hand-maintained in
-the workflow — verified live that a bot-authored `@org/team` mention does not reliably
-fan out a per-member notification, even with every member's own settings correctly
-configured, so individual mentions are what actually delivers. Resolving the roster
-needs its own PAT with only `read:org` (secret `E2E_GITHUB_ORG_READ_TOKEN`): the
-default Actions `GITHUB_TOKEN` is repo-scoped and can't call the team-members
-endpoint, which only accepts an org-member-authenticated token. That step runs
-`continue-on-error: true` — a missing/stale token degrades the digest to no "cc" line,
-never blocks the `baseline-green` commit status or the digest posting itself.
-GitHub's own mention-notification delivery emails each resolved member per their own
-account settings, so there's no mailer to stand up and no email address this repo ever
-has to see or store. The digest (`digest_body` in `scorecard.py`) is deliberately *not*
-the wide adapter×test grid — a real run spans every registered adapter (15+ columns as of
+member, listed in `.github/integrations-team.txt` (one GitHub username per line) —
+verified live that a bot-authored `@org/team` mention does not reliably fan out a
+per-member notification, even with every member's own settings correctly configured,
+so individual mentions are what actually delivers. The roster lives in that plain data
+file rather than inline in the workflow so updating membership never means editing
+YAML. GitHub's own mention-notification delivery emails each one per their own account
+settings, so there's no mailer to stand up and no email address this repo ever has to
+see or store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the
+wide adapter×test grid — a real run spans every registered adapter (15+ columns as of
 this writing) across all lanes, which is fine full-width in the step summary but
 turns into an unreadable wall in a notification email. It's counts + only the
 problem cells (failing / missing, listed separately), plus a link back to the run
