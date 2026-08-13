@@ -121,57 +121,11 @@ jobs:
         SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
         # The dispatch `os` input; defaults to 'all' (Linux + Windows).
         SELECTED_OS: ${{ github.event.inputs.os || 'all' }}
-      run: |
-        uv run python - <<'PY' >> "$GITHUB_OUTPUT"
-        import json
-        import os
-        from tests.e2e.baseline.toolkit.adapters import (
-            assert_registry_covers_discovered,
-        )
-        from tests.e2e.baseline.toolkit.ci_lanes import (
-            assert_every_adapter_has_a_ci_home,
-            assert_workflow_lane_gates_known,
-            ci_lanes,
-        )
-        # Fail before any test runs if the registry or lane partition has drifted.
-        assert_registry_covers_discovered()
-        assert_every_adapter_has_a_ci_home()
-        # Fail if a `matrix.lane ==` gate below names a lane the registry no longer
-        # emits (its step would silently never run).
-        assert_workflow_lane_gates_known()
-        lanes = list(ci_lanes())
-        # The registry stays authoritative: a chosen lane must be one it emits, so
-        # a stale dropdown option fails loudly here instead of running nothing.
-        selected = os.environ.get("SELECTED_LANE") or "all"
-        known = {lane.id for lane in lanes}
-        if selected != "all" and selected not in known:
-            raise SystemExit(
-                f"Requested lane {selected!r} is not one the registry emits "
-                f"(known: {sorted(known)}). Pick 'all' or a known lane."
-            )
-        # OS is a workflow concern (runner image), not a registry fact: every lane
-        # runs on each selected OS. `runner` is the runs-on image; `os` is the short
-        # id surfaced in the job name.
-        runners = {"ubuntu": "ubuntu-latest", "windows": "windows-latest"}
-        selected_os = os.environ.get("SELECTED_OS") or "all"
-        if selected_os != "all" and selected_os not in runners:
-            raise SystemExit(
-                f"Requested os {selected_os!r} is not known "
-                f"(known: {sorted(runners)}). Pick 'all', 'ubuntu', or 'windows'."
-            )
-        oses = list(runners) if selected_os == "all" else [selected_os]
-        # A lane that can only run on Linux (its backend has no Windows story —
-        # ``LINUX_ONLY_LANES``, surfaced as ``lane.linux_only``) contributes no
-        # windows cell, so a full-matrix dispatch never emits a cell that can't run.
-        include = [
-            {"lane": lane.id, "extra": lane.extra, "os": osid, "runner": runners[osid]}
-            for lane in lanes
-            if selected == "all" or lane.id == selected
-            for osid in oses
-            if not (osid == "windows" and lane.linux_only)
-        ]
-        print("lanes=" + json.dumps({"include": include}))
-        PY
+        # `python <file>` puts the file's own directory on sys.path, not the repo
+        # root — unlike the stdin (`python -`) form this replaces, which got cwd for
+        # free. PYTHONPATH makes `tests.e2e.baseline...` importable the same way.
+        PYTHONPATH: .
+      run: uv run python .github/scripts/emit-lane-matrix.py >> "$GITHUB_OUTPUT"
 
   e2e:
     name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
@@ -284,39 +238,18 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
-    # Flaky-prone tests already self-rerun per-test via flaky_model/flaky_infra (see
-    # tests/e2e/baseline/flaky.py) with an explicit, audited policy. This is a coarser
-    # backstop on top of that: if the lane's first pass has any failure at all, rerun
-    # only the failed nodeids once (`--last-failed`) before the scorecard is written —
-    # absorbing a whole-lane transient (e.g. a rate-limit window) without weakening
-    # detection of a real bug, which fails the rerun too.
-    #
-    # Each attempt writes its OWN scorecard file (under artifacts/attempts/, outside
-    # the artifacts/scorecard-*.json glob the merge step consumes): `--last-failed`
-    # restricts the retry's pytest session to only the failed nodeids, so its
-    # ScorecardCollector never sees — and would otherwise silently drop on a plain
-    # overwrite — every cell that passed on attempt 1. `scorecard.py overlay` folds
-    # the retry's rows over the original's (last attempt always wins per cell,
-    # regardless of pass/fail rank) into the one file the rest of the job expects.
+    # Retries the lane once (`--last-failed`) on any failure before finalizing its
+    # scorecard — see .github/scripts/run-baseline-e2e.sh for the full rationale,
+    # including why it deliberately does not `set -e`. Invoked via `bash` explicitly:
+    # this step runs on windows-latest too (only the letta lane is Linux-only), and a
+    # directly executed .sh there depends on the exec bit surviving checkout and Git
+    # Bash resolving the shebang (see the codex step's comment above).
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       env:
         ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
         ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
-      run: |
-        mkdir -p artifacts/attempts
-        BAND_E2E_SCORECARD_JSON="$ATTEMPT1" uv run pytest tests/e2e/baseline/ -v -s --no-cov
-        code=$?
-        if [ $code -ne 0 ]; then
-          BAND_E2E_SCORECARD_JSON="$ATTEMPT2" uv run pytest tests/e2e/baseline/ -v -s --no-cov --last-failed
-          code=$?
-        fi
-        if [ -f "$ATTEMPT2" ]; then
-          uv run python -m tests.e2e.baseline.scorecard overlay "$ATTEMPT1" "$ATTEMPT2" --out "$FINAL"
-        elif [ -f "$ATTEMPT1" ]; then
-          cp "$ATTEMPT1" "$FINAL"
-        fi
-        exit $code
+      run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
@@ -386,21 +319,7 @@ jobs:
       id: merge
       env:
         EXPECTED_LANES: ${{ steps.expected-lanes.outputs.lanes }}
-      run: |
-        shopt -s nullglob
-        files=(artifacts/scorecard-*.json)
-        if [ ${#files[@]} -eq 0 ]; then
-          echo "::error::no lane scorecards to merge — every lane failed before session end"
-          echo "passed=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-        set +e
-        uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
-          --out artifacts/scorecard.json --markdown artifacts/scorecard.md \
-          --summary artifacts/gate-summary.md --expected-lanes "$EXPECTED_LANES"
-        code=$?
-        set -e
-        [ "$code" -eq 0 ] && echo "passed=true" >> "$GITHUB_OUTPUT" || echo "passed=false" >> "$GITHUB_OUTPUT"
+      run: .github/scripts/merge-scorecard.sh
 
     # Readable on the run page without downloading the artifact.
     - name: Write step summary
@@ -423,28 +342,16 @@ jobs:
           artifacts/gate-summary.md
         if-no-files-found: ignore
 
-    # Combines the per-cell gate with a backstop the cell-level grid can't see on its
-    # own: a whole OS leg of an expected lane crashing before it writes any scorecard
-    # fragment at all (ScorecardRow carries no OS dimension, so a passing same-lane
-    # different-OS leg could otherwise hide it). needs.e2e.result is 'failure' if any
-    # matrix leg failed outright, regardless of scorecard content.
+    # See .github/scripts/compute-gate-verdict.sh for why this combines the per-cell
+    # merge gate with a whole-matrix-leg backstop instead of trusting either alone.
     - name: Compute gate verdict
       id: verdict
       if: always()
-      run: |
-        merge_ok="${{ steps.merge.outputs.passed }}"
-        matrix_ok="${{ needs.e2e.result == 'success' }}"
-        if [ "$matrix_ok" != "true" ]; then
-          echo "::error::e2e matrix result was '${{ needs.e2e.result }}' — at least one lane/OS leg failed outright (see the e2e job)."
-        fi
-        if [ "$merge_ok" != "true" ]; then
-          echo "::error::scorecard gate failed — see the step summary above for failing cells."
-        fi
-        if [ "$merge_ok" = "true" ] && [ "$matrix_ok" = "true" ]; then
-          echo "ok=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "ok=false" >> "$GITHUB_OUTPUT"
-        fi
+      env:
+        MERGE_OK: ${{ steps.merge.outputs.passed }}
+        MATRIX_OK: ${{ needs.e2e.result == 'success' }}
+        E2E_RESULT: ${{ needs.e2e.result }}
+      run: .github/scripts/compute-gate-verdict.sh
 
     - name: Fail the job on a red verdict
       if: steps.verdict.outputs.ok != 'true'
@@ -453,12 +360,13 @@ jobs:
   # Marks the tested commit baseline-green/red (release-gate.yml reads this to decide
   # whether the release-please PR may merge) and posts that night's scorecard as a
   # comment on one persistent tracking issue — reopened on red, closed on green, so its
-  # state also reflects "currently red/green" at a glance. Individually mentioning
-  # INTEGRATIONS_MENTIONS on every comment rides GitHub's own mention-notification
-  # delivery (each member's own account, own email) instead of standing up a mailer
-  # with its own credentials. Only a full-matrix run marks the commit and posts: a
-  # scoped dispatch (one lane and/or one OS) only exercised part of the matrix and has
-  # nothing meaningful to say about the rest.
+  # state also reflects "currently red/green" at a glance. Mentioning the live
+  # band-ai/integrations roster on every comment rides GitHub's own mention-
+  # notification delivery (each member's own account, own email) instead of standing
+  # up a mailer with its own credentials — see resolve-integrations-mentions.sh. Only
+  # a full-matrix run marks the commit and posts: a scoped dispatch (one lane and/or
+  # one OS) only exercised part of the matrix and has nothing meaningful to say about
+  # the rest.
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
@@ -477,15 +385,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
       PASSED: ${{ needs.scorecard.outputs.passed }}
       MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
-      # Individual @username mentions, not the @band-ai/integrations team handle —
-      # verified live that a bot-authored (secrets.GITHUB_TOKEN) team mention does not
-      # reliably fan out a per-member notification, even with every member's own
-      # "Participating/@mentions" setting correctly on. Individual mentions are the
-      # mechanism every notification-dependent bot relies on. Hand-maintained (the
-      # team is small, low churn); update alongside band-ai/integrations membership.
-      INTEGRATIONS_MENTIONS: "@nir-singher-band @amit-gazal-band @bandzalkin @AlexanderZ-Band"
     steps:
     # continue-on-error: the commit status below is the more important of the two
     # things this job does (it's what release-gate.yml reads) and depends only on
@@ -502,76 +404,35 @@ jobs:
         if-no-files-found: warn
 
     - name: Mark the commit baseline-green or baseline-red
-      run: |
-        if [ "$PASSED" = "true" ]; then
-          state=success
-          description="Nightly baseline green"
-        else
-          state=failure
-          description="Nightly baseline red — see the run for failing cells"
-        fi
-        gh api "repos/$REPO/statuses/${{ github.sha }}" \
-          -f state="$state" -f context="baseline-green" \
-          -f description="$description" -f target_url="$RUN_URL"
+      run: .github/scripts/mark-commit-status.sh
+
+    # Resolves band-ai/integrations' current roster into @mentions at run time (see
+    # .github/scripts/resolve-integrations-mentions.sh for why this needs a
+    # dedicated read:org PAT rather than the default GITHUB_TOKEN, and why team
+    # mentions don't work here). continue-on-error: true — this only feeds the
+    # digest's "cc" line, never the commit status marked above; a missing/stale
+    # ORG_READ_TOKEN must not silently skip posting the digest itself (the same
+    # class of bug the artifact-download step above guards against).
+    - name: Resolve integrations team mentions
+      id: mentions
+      continue-on-error: true
+      env:
+        ORG_READ_TOKEN: ${{ secrets.E2E_GITHUB_ORG_READ_TOKEN }}
+      run: .github/scripts/resolve-integrations-mentions.sh
 
     # One persistent issue (tracked by title, not a label — no pre-provisioned label
     # to keep in sync) is the running nightly digest: every full-matrix run comments
-    # the night's scorecard on it, pass or fail, so INTEGRATIONS_MENTIONS gets a
-    # GitHub notification (and, per each member's own settings, an email) every night
-    # — not just on a red run.
+    # the night's scorecard on it, pass or fail, mentioning the resolved roster (if
+    # any) so they get a GitHub notification — and, per each member's own settings,
+    # an email — every night, not just on a red run.
     - name: Find or create the nightly results issue
       id: issue
-      run: |
-        # --search is a fuzzy match (any issue whose title merely contains these
-        # words); the select() re-filters for an exact title so an unrelated issue
-        # can never get picked up. `// empty` (not the default `null`) is required —
-        # jq -r on a missing .[0].number prints the literal string "null", which
-        # `[ -z ... ]` below would not treat as empty.
-        number=$(gh issue list --repo "$REPO" --state all \
-          --search 'Nightly baseline results in:title' --json number,title \
-          --jq '[.[] | select(.title == "Nightly baseline results")][0].number // empty')
-        if [ -z "$number" ]; then
-          url=$(gh issue create --repo "$REPO" --title "Nightly baseline results" \
-            --body "Running log of nightly baseline E2E results. $INTEGRATIONS_MENTIONS")
-          number=${url##*/}
-        fi
-        echo "number=$number" >> "$GITHUB_OUTPUT"
+      env:
+        INTEGRATIONS_MENTIONS: ${{ steps.mentions.outputs.mentions }}
+      run: .github/scripts/find-or-create-nightly-issue.sh
 
-    # A polished, email-safe digest — not the wide adapter×test grid (that stays in
-    # the step summary + artifact, where it renders full-width and looks fine). The
-    # header is built here from $PASSED (the job's combined verdict, including the
-    # matrix-leg backstop), never from the cell-level digest file alone: a leg that
-    # crashed outright and reported nothing can flip the real verdict to red in a way
-    # the cell grid can't see (ScorecardRow carries no OS dimension) — so if that
-    # happened, say so explicitly rather than let the digest quietly disagree with
-    # the baseline-green commit status posted above.
     - name: Post the night's scorecard and sync open/closed state
-      run: |
-        body_file="$(mktemp)"
-        {
-          if [ "$PASSED" = "true" ]; then
-            echo "🟢 **Nightly baseline: PASS**"
-          else
-            echo "🔴 **Nightly baseline: FAIL**"
-          fi
-          echo
-          if [ "$MATRIX_OK" != "true" ]; then
-            echo "⚠️ At least one lane/OS leg crashed outright and reported nothing (see the e2e job) — the counts below only cover what actually reported."
-            echo
-          fi
-          if [ -f artifacts/gate-summary.md ]; then
-            cat artifacts/gate-summary.md
-          else
-            echo "_No scorecard was produced this run — every lane failed before session end._"
-          fi
-          echo
-          echo "Commit \`${{ github.sha }}\` · [full grid & logs]($RUN_URL)"
-          echo
-          echo "cc $INTEGRATIONS_MENTIONS"
-        } > "$body_file"
-        gh issue comment "${{ steps.issue.outputs.number }}" --repo "$REPO" --body-file "$body_file"
-        if [ "$PASSED" = "true" ]; then
-          gh issue close "${{ steps.issue.outputs.number }}" --repo "$REPO" 2>/dev/null || true
-        else
-          gh issue reopen "${{ steps.issue.outputs.number }}" --repo "$REPO" 2>/dev/null || true
-        fi
+      env:
+        ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        INTEGRATIONS_MENTIONS: ${{ steps.mentions.outputs.mentions }}
+      run: .github/scripts/post-nightly-digest.sh
