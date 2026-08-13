@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 
-from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS, ParsingError
+from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.runtime.participants import participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
@@ -2506,35 +2506,6 @@ class AgentTools(AgentToolsProtocol):
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
 
-def _resolved_entity_missing_id(error: ParsingError) -> dict[str, Any] | None:
-    """Extract the entity dict from a ``resolve_handle`` ``ParsingError`` whose
-    sole cause is a missing ``data.id`` — the shape band-client-rest 0.0.10's
-    raw client raises (wrapping the underlying ``pydantic.ValidationError``)
-    against API v1.10.0, which omits ``id`` from resolve-handle responses.
-    Returns None for any other parsing failure, so callers re-raise those
-    unchanged. The entity itself comes from ``error.body`` — the raw response
-    JSON the raw client already captured — rather than pydantic's internal
-    per-error ``"input"``, so this stays correct across pydantic versions.
-
-    Dead code once the ``band-client-rest`` pin moves past 0.0.26: that
-    release's ``ResolvedEntity`` no longer declares ``id``, so this
-    ``ValidationError`` is never raised. Delete this function and the
-    ``except ParsingError`` branch in ``resolve_handle`` at that point —
-    ``test_resolve_handle_degrades_when_api_omits_id`` fails loud as a
-    reminder, but only if CI reaches that test (a grouped dependency bump
-    that also breaks something unrelated can fail at collection first and
-    mask it — check for that before assuming this workaround is still live).
-    """
-    if not isinstance(error.cause, ValidationError):
-        return None
-    match error.cause.errors():
-        case [{"type": "missing", "loc": ("data", "id")}]:
-            entity = error.body.get("data") if isinstance(error.body, dict) else None
-            return entity if isinstance(entity, dict) else None
-        case _:
-            return None
-
-
 class HumanTools:
     """User-scoped tools for Band platform interaction.
 
@@ -2694,30 +2665,9 @@ class HumanTools:
         )
 
     async def resolve_handle(self, handle: str) -> Any:
-        """Look up an entity by handle.
-
-        Returns the ``ResolveHandleResponse`` Fern model normally. If the
-        platform omits ``data.id`` (a known SDK/API contract mismatch),
-        returns a plain ``{"data": ..., "warning": ...}`` dict instead —
-        callers should not assume attribute access on the result.
-        """
+        """Look up an entity by handle."""
         logger.debug("Resolving handle: %s", handle)
-        try:
-            return await self.rest.human_api_contacts.resolve_handle(handle=handle)
-        except ParsingError as e:
-            entity = _resolved_entity_missing_id(e)
-            if entity is None:
-                raise
-            logger.warning(
-                "resolve_handle response for %s omitted data.id "
-                "(SDK/API contract mismatch); returning entity without id",
-                handle,
-            )
-            return {
-                "data": entity,
-                "warning": "Platform did not return an id for this handle; "
-                "use the handle itself to reference this entity.",
-            }
+        return await self.rest.human_api_contacts.resolve_handle(handle=handle)
 
     async def remove_my_contact(
         self,

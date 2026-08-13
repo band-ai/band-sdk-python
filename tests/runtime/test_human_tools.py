@@ -282,14 +282,12 @@ async def _rest_client_over(
 
 
 @pytest.mark.asyncio
-async def test_resolve_handle_degrades_when_api_omits_id() -> None:
-    """API v1.10.0 omits ``id`` from a successful resolve-handle response,
-    which band-client-rest 0.0.10's ``ResolveHandleResponse`` requires. The
-    raw client wraps that ``ValidationError`` into a ``ParsingError`` before
-    it reaches ``HumanTools`` — reproduced here via a faked HTTP transport
-    (not a stubbed method) so the fix is proven against the real boundary
-    that raises it. Checks the tool degrades to the entity data instead of
-    raising.
+async def test_resolve_handle_succeeds_when_api_omits_id() -> None:
+    """API v1.10.0 omits ``id`` from a successful resolve-handle response.
+    ``band-client-rest`` 0.0.15+ dropped the required ``id`` field from
+    ``ResolvedEntity``, so this now parses cleanly into the typed
+    ``ResolveHandleResponse`` — reproduced here via a faked HTTP transport
+    (not a stubbed method) so the fix is proven against the real boundary.
     """
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -303,16 +301,10 @@ async def test_resolve_handle_degrades_when_api_omits_id() -> None:
     async with _rest_client_over(handler) as rest:
         result = await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
 
-    assert result["data"] == {
-        "handle": "nir/mcp-test",
-        "name": "mcp-test",
-        "type": "Agent",
-    }
-    assert "id" not in result["data"]
-    # The degraded payload tells the caller why id is absent and what to
-    # use instead, so an LLM consumer doesn't guess or fabricate one.
-    assert "id" in result["warning"]
-    assert "handle" in result["warning"]
+    assert result.data.handle == "nir/mcp-test"
+    assert result.data.name == "mcp-test"
+    assert result.data.type == "Agent"
+    assert not hasattr(result.data, "id")
 
 
 @pytest.mark.asyncio
