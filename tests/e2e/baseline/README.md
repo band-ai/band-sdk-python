@@ -737,8 +737,11 @@ negligible for the 99% of PRs that aren't the release PR.
 **Nightly digest:** the same job also comments a compact digest (pass or fail) on one
 persistent issue (matched by title, not a label — "Nightly baseline results"),
 reopening it on red and closing it on green so its state also reads "currently
-red/green" at a glance. The comment mentions `@band-ai/integrations` — GitHub's own
-mention-notification delivery emails each member per their own account settings, so
+red/green" at a glance. The comment individually mentions each `band-ai/integrations`
+member (`INTEGRATIONS_MENTIONS` in `e2e.yml`, hand-maintained — verified live that a
+bot-authored `@org/team` mention does not reliably fan out a per-member notification,
+even with every member's own settings correctly configured) — GitHub's own
+mention-notification delivery emails each one per their own account settings, so
 there's no mailer to stand up and no email address this repo ever has to see or
 store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the wide
 adapter×test grid — a real run spans every registered adapter (15+ columns as of
