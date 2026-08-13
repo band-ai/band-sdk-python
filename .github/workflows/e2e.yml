@@ -369,7 +369,10 @@ jobs:
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
-    if: always() # TEMP: live-test the digest formatting on a scoped dispatch, revert after
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event.inputs.lane == 'all' && github.event.inputs.os == 'all'))
     runs-on: ubuntu-latest
     permissions:
       statuses: write
