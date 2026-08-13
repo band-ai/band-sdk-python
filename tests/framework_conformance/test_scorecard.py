@@ -305,7 +305,8 @@ def test_digest_body_all_clear_has_no_problem_sections() -> None:
     rows = [ScorecardRow("t", _ADAPTER_A, "pass"), ScorecardRow("t", _ADAPTER_B, "na")]
     result = gate(rows, frozenset({str(_LANE_A.id), str(_LANE_B.id)}))
     body = digest_body(result, rows)
-    assert "1 passed" in body
+    assert "| Passed | Failed | N/A | Skipped |" in body
+    assert "| 1 | 0 | 1 | 0 |" in body
     assert "Failing" not in body
     assert "Missing" not in body
 

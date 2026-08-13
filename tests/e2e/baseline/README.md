@@ -748,9 +748,14 @@ settings, so there's no mailer to stand up and no email address this repo ever h
 see or store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the
 wide adapter×test grid — a real run spans every registered adapter (15+ columns as of
 this writing) across all lanes, which is fine full-width in the step summary but
-turns into an unreadable wall in a notification email. It's counts + only the
-problem cells (failing / missing, listed separately), plus a link back to the run
-for the full grid. Its PASS/FAIL header is built by the workflow from the job's
+turns into an unreadable wall in a notification email. It's a small GFM counts table
+(Passed/Failed/N-A/Skipped) plus only the problem cells (failing / missing, listed
+separately), plus a link back to the run for the full grid — GitHub's comment/email
+renderer sanitizes out `<style>`/inline CSS, so plain GFM (tables, bold, bullets) is
+the ceiling for styling here; `post-nightly-digest.sh` also adds a shields.io
+PASS/FAIL badge image alongside the bold emoji+text header (the bold text is the
+guaranteed-to-render fallback for mail clients that block remote images by default).
+Its PASS/FAIL header is built by the workflow from the job's
 combined verdict (`$PASSED`), not read off the cell-level digest — a matrix-leg crash
 the cell grid can't see (no OS dimension on `ScorecardRow`) can flip that verdict in
 a way the digest content alone wouldn't show, so the workflow says so explicitly
