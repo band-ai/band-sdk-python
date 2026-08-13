@@ -1,7 +1,8 @@
 name: Release baseline gate
 
 # A narrow, PR-triggered check — not a blanket "E2E is a required PR check" (that
-# stays explicitly out of scope; Tier-1 already gates PRs per INT-810). It is an
+# stays explicitly out of scope; PR-level gating is already covered by the existing
+# required Tier-1 checks, which run fast and without a live platform). It is an
 # instant no-op for every ordinary PR and only does real work for the standing
 # release-please PR (head branch release-please--branches--main--components--*): it
 # reads the `baseline-green` commit status the nightly e2e.yml run posts (its
@@ -46,11 +47,18 @@ jobs:
         if [ "$EVENT_NAME" = "merge_group" ]; then
           # The queue's temp ref embeds the PR number: gh-readonly-queue/<base>/pr-<n>-<sha>.
           pr_number=$(echo "$MERGE_GROUP_HEAD_REF" | sed -E 's#.*/pr-([0-9]+)-.*#\1#')
+          case "$pr_number" in
+            ''|*[!0-9]*)
+              # The ref didn't match the expected shape — treat as "not the release
+              # PR" rather than calling `gh pr view` with garbage and hard-failing
+              # every PR's merge-queue entry over a format this check doesn't own.
+              echo "Could not read a PR number from merge_group head_ref '$MERGE_GROUP_HEAD_REF' — nothing to gate."
+              exit 0
+              ;;
+          esac
           head_ref=$(gh pr view "$pr_number" --repo "$REPO" --json headRefName --jq '.headRefName')
-          base_sha="$MERGE_GROUP_BASE_SHA"
         else
           head_ref="$PR_HEAD_REF"
-          base_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha')
         fi
 
         case "$head_ref" in
@@ -61,6 +69,15 @@ jobs:
             exit 0
             ;;
         esac
+
+        # Only reached for the release-please PR — the base-sha lookup (an API call
+        # every ordinary PR would otherwise pay for above) happens now, not before
+        # the head_ref check.
+        if [ "$EVENT_NAME" = "merge_group" ]; then
+          base_sha="$MERGE_GROUP_BASE_SHA"
+        else
+          base_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha')
+        fi
 
         state=$(gh api "repos/$REPO/commits/$base_sha/statuses" \
           --jq 'map(select(.context == "baseline-green")) | .[0].state // "pending"')
