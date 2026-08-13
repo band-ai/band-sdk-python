@@ -302,10 +302,16 @@ async def test_resolve_handle_degrades_when_api_omits_id() -> None:
 
     result = await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
 
-    assert result == {
-        "data": {"handle": "nir/mcp-test", "name": "mcp-test", "type": "Agent"}
+    assert result["data"] == {
+        "handle": "nir/mcp-test",
+        "name": "mcp-test",
+        "type": "Agent",
     }
     assert "id" not in result["data"]
+    # The degraded payload tells the caller why id is absent and what to
+    # use instead, so an LLM consumer doesn't guess or fabricate one.
+    assert "id" in result["warning"]
+    assert "handle" in result["warning"]
 
 
 @pytest.mark.asyncio

@@ -2701,7 +2701,11 @@ class HumanTools:
                 "(SDK/API contract mismatch); returning entity without id",
                 handle,
             )
-            return {"data": entity}
+            return {
+                "data": entity,
+                "warning": "Platform did not return an id for this handle; "
+                "use the handle itself to reference this entity.",
+            }
 
     async def remove_my_contact(
         self,
