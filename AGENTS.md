@@ -400,46 +400,24 @@ await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 
 ## Workarounds for band-client-rest Bugs
 
-`band-client-rest` is pinned exactly (`pyproject.toml`, e.g. `==0.0.26`) — a
-newer version may already fix the platform/SDK contract mismatch you're about
-to work around. Before writing a workaround for behavior you saw from the
-pinned version, check whether a newer `band-client-rest` release already fixes
-it upstream:
+`band-client-rest` is pinned exactly (`pyproject.toml`, e.g. `==0.0.26`). Before
+writing a workaround, check whether a newer release already fixes it upstream:
 
-- Check available versions: `pip index versions band-client-rest` (or the
-  package's changelog/repo).
-- Diff the relevant model/method against the newer version (e.g.
-  `uv pip install band-client-rest==<newer> --target /tmp/check` then read the
-  model) rather than assuming the bug persists.
-- If the bug is already fixed upstream, bump the pin (if otherwise safe)
-  instead of adding a workaround — this is the default action, not a
-  suggestion to weigh. Only write a workaround after actually attempting the
-  bump and confirming it's blocked (cite the blocker: a failing CI status on
-  the bump PR/commit, an unresolved conflicting dependency, etc.) — "bumping
-  looks inconvenient" is not a blocker.
-- If a workaround is still needed (pin genuinely can't move yet, per the
-  confirmed blocker above), tie it to the pin explicitly: a comment on the
-  workaround naming the exact newer version where it stops being reachable,
-  so it isn't silently dead code (or forgotten cleanup) after the next bump.
-- A test that reproduces the workaround against the real dependency (not a
-  stubbed exception) can double as that tripwire — it fails loud once the pin
-  moves past the fix. But this only works if CI actually reaches it: a grouped
-  Dependabot bump can fail at collection from an unrelated package in the same
-  group before any test runs, silently hiding the tripwire's failure. Check
-  the actual bump PR's CI status, not just that a tripwire test exists.
+- `pip index versions band-client-rest`, then diff the relevant model/method
+  (`uv pip install band-client-rest==<newer> --target /tmp/check`).
+- Already fixed upstream → bump the pin. Default action, not a suggestion.
+  Only write a workaround after confirming the bump is actually blocked (cite
+  the blocker: failing CI, unresolved conflict) — "inconvenient" isn't one.
+- Still needed → tie it to the pin: comment naming the exact version where
+  it stops being reachable, so it's not silently dead code after the next bump.
+- A test against the real dependency (not a stubbed exception) doubles as
+  that tripwire. Check the CI status is real, though — a grouped Dependabot
+  bump can fail at collection from an unrelated package first, hiding it.
 
-Caught in PR #531 review: a `resolve_handle` workaround for a missing
-`data.id` field was written against `band-client-rest==0.0.10` only. Reviewer
-tested `0.0.26` live against `app.band.ai` and found the platform contract fix
-already shipped there — `band-client-rest` dropped the required `id` field
-from `ResolvedEntity` in `0.0.15`, so `0.0.26`'s typed `ResolveHandleResponse`
-parses cleanly with no error. Resolution: bumped the pin straight to `0.0.26`
-and deleted the workaround (and its degrade-path test) instead of tying it to
-a version guard — this is the "already fixed upstream" branch above, not the
-"workaround still needed" one. The separate grouped Dependabot bump PR that
-would also move `band-client-rest` fails at pytest collection from an
-unrelated `agent-client-protocol` import break in the same group; that PR is
-tracked independently and was left untouched.
+Example (PR #531): a `resolve_handle` workaround for missing `data.id` was
+scoped to `0.0.10`. `0.0.15` already dropped the `id` field from
+`ResolvedEntity` upstream. Bumped straight to `0.0.26`, deleted the
+workaround — no version guard needed once the fix is already upstream.
 
 ## Code Structure
 
