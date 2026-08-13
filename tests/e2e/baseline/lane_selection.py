@@ -34,12 +34,12 @@ from tests.e2e.baseline.agents import (
     PerAdapter,
     WithAdapters,
 )
-from tests.e2e.baseline.toolkit.ci_lanes import CILane, ci_lanes, hosting_lanes
-
-
-def _lane_of(lanes: list[CILane]) -> dict[str, str]:
-    """Flatten the registry's lane partition to an adapter-id -> home-lane-id map."""
-    return {str(adapter): str(cl.id) for cl in lanes for adapter in cl.adapters}
+from tests.e2e.baseline.toolkit.ci_lanes import (
+    CILane,
+    adapter_home_lanes,
+    ci_lanes,
+    hosting_lanes,
+)
 
 
 def item_frameworks(item: pytest.Item) -> frozenset[str]:
@@ -133,7 +133,7 @@ def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
         return
     lanes = ci_lanes()
     _require_known_lane(lane, lanes)
-    lane_of = _lane_of(lanes)
+    lane_of = adapter_home_lanes()
     for item in items:
         reason = _lane_skip_reason(item, lane, lane_of)
         if reason is not None:
@@ -162,7 +162,7 @@ def assert_every_item_is_schedulable(items: list[pytest.Item]) -> None:
     Runs in every collection — lane-scoped or not — so drift fails before CI.
     Single-framework and same-home tests never trip it.
     """
-    lane_of = _lane_of(ci_lanes())
+    lane_of = adapter_home_lanes()
     offenders: list[str] = []
     for item in items:
         homes = _home_lanes(item, lane_of)

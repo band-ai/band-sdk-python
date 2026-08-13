@@ -686,6 +686,22 @@ scorecard fragment (`ScorecardRow` carries no OS dimension) — the `scorecard` 
 final "Compute gate verdict" step backstops that by also failing whenever
 `needs.e2e.result != 'success'`.
 
+That backstop is also the *only* net for a bespoke `@lane`-pinned smoke (parlant,
+and the non-`@per_adapter` tests in `backends`/`letta`) — this is a pre-existing
+property of the scorecard module, not something this gate changes: `outcome_row`
+only recognizes a nodeid whose `[…]` parametrization is a registered adapter id
+(`_ADAPTER_IDS`), so a bespoke smoke never produces a `ScorecardRow` at all and is
+structurally invisible to the cell-level grid. It is still covered — just at the
+coarser matrix-leg granularity, not the per-cell one the grid markets.
+
+A subtlety worth calling out for on-call: once `release-gate.yml` has recorded a
+*failure* for a given main commit, GitHub does not automatically re-check it just
+because a later nightly run posts a fresh green `baseline-green` status for that same
+commit — a required check's completed run is final until something re-triggers it
+(a new commit, or a manual "re-run failed jobs" on the release PR). This is ordinary
+GitHub required-check behavior, not a gap specific to this workflow; if the release
+PR is stuck red after main has actually gone green, re-run the check by hand.
+
 **Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
 
 1. **Per-test** (`flaky.py`, already existed before this policy): `flaky_model`

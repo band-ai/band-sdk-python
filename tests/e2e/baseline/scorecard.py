@@ -33,7 +33,7 @@ from typing import Literal
 import pytest
 
 from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
-from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
+from tests.e2e.baseline.toolkit.ci_lanes import adapter_home_lanes, known_lane_ids
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,25 @@ def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:
     return sorted(best.values(), key=lambda row: (row.test, row.adapter))
 
 
+def overlay(
+    base: list[ScorecardRow], override: list[ScorecardRow]
+) -> list[ScorecardRow]:
+    """Layer a retry attempt's rows over the original run's, unconditionally.
+
+    Unlike :func:`merge` (which unions *sibling lanes* and must let a real outcome
+    outrank a benign ``skip``), this is for two *sequential* attempts of the *same*
+    lane: ``--last-failed`` restricts the retry to only the nodeids that failed the
+    first time, so its process's :class:`ScorecardCollector` never sees — and would
+    otherwise silently drop — every cell that passed on the first attempt. Rank-based
+    merging would also get a genuine fix backwards (a first-attempt ``fail`` outranks
+    a retry's ``pass``). Here the retry's row for a cell always wins when present;
+    the original row survives untouched for every cell the retry didn't touch.
+    """
+    rows = {(row.test, row.adapter): row for row in base}
+    rows.update({(row.test, row.adapter): row for row in override})
+    return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
+
+
 @dataclass(frozen=True)
 class GateResult:
     """CI's pass/fail verdict on a merged scorecard.
@@ -207,7 +226,7 @@ def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult
     dispatch) — never inferred from the rows themselves, so an intentionally
     out-of-scope lane's cells can never be mistaken for a silent failure.
     """
-    home_lane = {str(a): str(cl.id) for cl in ci_lanes() for a in cl.adapters}
+    home_lane = adapter_home_lanes()
     failing = tuple(r for r in rows if r.status == "fail")
     missing = tuple(
         r
@@ -305,37 +324,17 @@ def to_markdown(rows: list[ScorecardRow]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main(argv: list[str] | None = None) -> None:
-    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact and gate on it."""
-    parser = argparse.ArgumentParser(prog="scorecard")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    merge_cmd = sub.add_parser("merge", help="union per-lane scorecards into one grid")
-    merge_cmd.add_argument("inputs", nargs="+", help="per-lane scorecard JSON files")
-    merge_cmd.add_argument("--out", required=True, help="combined scorecard.json path")
-    merge_cmd.add_argument("--markdown", help="also write a markdown grid to this path")
-    merge_cmd.add_argument(
-        "--summary",
-        help="also write the email-safe digest (counts + only the problem cells, no "
-        "grid — see digest_body) to this path",
-    )
-    merge_cmd.add_argument(
-        "--expected-lanes",
-        required=True,
-        help="comma-separated lane ids this invocation selected (every registry lane "
-        "for a full nightly run, or just the dispatched lane) — used to gate on "
-        "missing cells",
-    )
-    args = parser.parse_args(argv)
-
-    rows = merge(_load(path) for path in args.inputs)
-    write_json(rows, args.out)
-    known_lanes = {str(lane.id) for lane in ci_lanes()}
+def _merge_cmd(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    known_lanes = known_lane_ids()
     expected_lanes = frozenset(args.expected_lanes.split(","))
     if unknown := expected_lanes - known_lanes:
         parser.error(
             f"--expected-lanes names unknown lane id(s) {sorted(unknown)}; "
             f"known lanes: {sorted(known_lanes)}"
         )
+
+    rows = merge(_load(path) for path in args.inputs)
+    write_json(rows, args.out)
     result = gate(rows, expected_lanes)
     if args.markdown:
         Path(args.markdown).write_text(
@@ -352,6 +351,53 @@ def main(argv: list[str] | None = None) -> None:
     )
     if not result.ok:
         sys.exit(1)
+
+
+def _overlay_cmd(args: argparse.Namespace) -> None:
+    rows = overlay(_load(args.base), _load(args.override))
+    write_json(rows, args.out)
+    logger.info("scorecard: overlaid %d cell(s) -> %s", len(rows), args.out)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact and gate on
+    it, or ``overlay`` a same-lane retry attempt onto its original run."""
+    parser = argparse.ArgumentParser(prog="scorecard")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    merge_cmd = sub.add_parser("merge", help="union per-lane scorecards into one grid")
+    merge_cmd.add_argument("inputs", nargs="+", help="per-lane scorecard JSON files")
+    merge_cmd.add_argument("--out", required=True, help="combined scorecard.json path")
+    merge_cmd.add_argument("--markdown", help="also write a markdown grid to this path")
+    merge_cmd.add_argument(
+        "--summary",
+        help="also write the email-safe digest (counts + only the problem cells, no "
+        "grid — see digest_body) to this path",
+    )
+    merge_cmd.add_argument(
+        "--expected-lanes",
+        required=True,
+        help="comma-separated lane ids this invocation selected (every registry lane "
+        "for a full nightly run, or just the dispatched lane) — used to gate on "
+        "missing cells",
+    )
+
+    overlay_cmd = sub.add_parser(
+        "overlay",
+        help="layer a same-lane retry attempt's rows over its original attempt "
+        "(see overlay() — not a rank-based merge across lanes)",
+    )
+    overlay_cmd.add_argument("base", help="the original attempt's scorecard JSON")
+    overlay_cmd.add_argument("override", help="the retry attempt's scorecard JSON")
+    overlay_cmd.add_argument(
+        "--out", required=True, help="combined scorecard JSON path"
+    )
+
+    args = parser.parse_args(argv)
+    if args.cmd == "merge":
+        _merge_cmd(args, parser)
+    else:
+        _overlay_cmd(args)
 
 
 if __name__ == "__main__":

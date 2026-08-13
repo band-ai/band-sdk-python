@@ -37,6 +37,7 @@ from tests.e2e.baseline.scorecard import (
     merge,
     na_rows,
     outcome_row,
+    overlay,
     to_markdown,
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
@@ -220,6 +221,31 @@ def test_merge_prefers_real_outcome_over_skip_and_keeps_na() -> None:
 def test_merge_leaves_a_never_run_cell_visible_as_skip() -> None:
     merged = merge([[ScorecardRow("t", "letta", "skip", "lane")]])
     assert merged[0].status == "skip"
+
+
+# --- overlay: a same-lane retry attempt replaces, not ranks, against the original ---
+
+
+def test_overlay_retry_result_wins_even_when_lower_ranked() -> None:
+    # A rank-based merge would keep the original 'fail' over the retry's 'pass'
+    # (fail outranks pass) — overlay must not, since the retry is the real outcome.
+    base = [ScorecardRow("t", "anthropic", "fail")]
+    retry = [ScorecardRow("t", "anthropic", "pass")]
+    result = overlay(base, retry)
+    assert result == [ScorecardRow("t", "anthropic", "pass")]
+
+
+def test_overlay_keeps_untouched_cells_from_the_original_attempt() -> None:
+    # --last-failed restricts the retry to only the failed nodeids; a cell the retry
+    # never mentions must survive from the original attempt, not vanish.
+    base = [
+        ScorecardRow("t", "anthropic", "pass"),
+        ScorecardRow("t", "crewai", "fail"),
+    ]
+    retry = [ScorecardRow("t", "crewai", "pass")]
+    result = {(r.test, r.adapter): r for r in overlay(base, retry)}
+    assert result[("t", "anthropic")].status == "pass"
+    assert result[("t", "crewai")].status == "pass"
 
 
 # --- gate: pass/fail verdict from a merged grid --------------------------------------

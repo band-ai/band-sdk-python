@@ -228,8 +228,9 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
       # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
       # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
-      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py.
-      BAND_E2E_SCORECARD_JSON: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
+      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py. Set per
+      # invocation (not here) by the run step below, since a retry attempt needs its
+      # own path — see that step's comment.
 
     steps:
     - name: Checkout code
@@ -288,12 +289,34 @@ jobs:
     # backstop on top of that: if the lane's first pass has any failure at all, rerun
     # only the failed nodeids once (`--last-failed`) before the scorecard is written —
     # absorbing a whole-lane transient (e.g. a rate-limit window) without weakening
-    # detection of a real bug, which fails the rerun too. The scorecard collector's
-    # "last write wins" already documents this as the intended semantics.
+    # detection of a real bug, which fails the rerun too.
+    #
+    # Each attempt writes its OWN scorecard file (under artifacts/attempts/, outside
+    # the artifacts/scorecard-*.json glob the merge step consumes): `--last-failed`
+    # restricts the retry's pytest session to only the failed nodeids, so its
+    # ScorecardCollector never sees — and would otherwise silently drop on a plain
+    # overwrite — every cell that passed on attempt 1. `scorecard.py overlay` folds
+    # the retry's rows over the original's (last attempt always wins per cell,
+    # regardless of pass/fail rank) into the one file the rest of the job expects.
     - name: Run baseline E2E (lane ${{ matrix.lane }})
+      env:
+        ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
+        ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
+        FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
       run: |
-        uv run pytest tests/e2e/baseline/ -v -s --no-cov || \
-        uv run pytest tests/e2e/baseline/ -v -s --no-cov --last-failed
+        mkdir -p artifacts/attempts
+        BAND_E2E_SCORECARD_JSON="$ATTEMPT1" uv run pytest tests/e2e/baseline/ -v -s --no-cov
+        code=$?
+        if [ $code -ne 0 ]; then
+          BAND_E2E_SCORECARD_JSON="$ATTEMPT2" uv run pytest tests/e2e/baseline/ -v -s --no-cov --last-failed
+          code=$?
+        fi
+        if [ -f "$ATTEMPT2" ]; then
+          uv run python -m tests.e2e.baseline.scorecard overlay "$ATTEMPT1" "$ATTEMPT2" --out "$FINAL"
+        elif [ -f "$ATTEMPT1" ]; then
+          cp "$ATTEMPT1" "$FINAL"
+        fi
+        exit $code
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
@@ -454,7 +477,14 @@ jobs:
       PASSED: ${{ needs.scorecard.outputs.passed }}
       MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
     steps:
+    # continue-on-error: the commit status below is the more important of the two
+    # things this job does (it's what release-gate.yml reads) and depends only on
+    # $PASSED/$MATRIX_OK (job outputs, already resolved) — never on this download
+    # succeeding. A transient artifact-service hiccup here must not silently skip it;
+    # the downstream steps already fall back gracefully when the scorecard files
+    # never arrive (e.g. "No scorecard was produced this run").
     - name: Download the merged scorecard
+      continue-on-error: true
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
         name: scorecard
@@ -482,8 +512,14 @@ jobs:
     - name: Find or create the nightly results issue
       id: issue
       run: |
+        # --search is a fuzzy match (any issue whose title merely contains these
+        # words); the select() re-filters for an exact title so an unrelated issue
+        # can never get picked up. `// empty` (not the default `null`) is required —
+        # jq -r on a missing .[0].number prints the literal string "null", which
+        # `[ -z ... ]` below would not treat as empty.
         number=$(gh issue list --repo "$REPO" --state all \
-          --search 'Nightly baseline results in:title' --json number --jq '.[0].number')
+          --search 'Nightly baseline results in:title' --json number,title \
+          --jq '[.[] | select(.title == "Nightly baseline results")][0].number // empty')
         if [ -z "$number" ]; then
           url=$(gh issue create --repo "$REPO" --title "Nightly baseline results" \
             --body "Running log of nightly baseline E2E results. @band-ai/integrations")

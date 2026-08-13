@@ -107,6 +107,17 @@ def assert_every_adapter_has_a_ci_home() -> None:
         )
 
 
+def known_lane_ids() -> frozenset[str]:
+    """Every registered lane id, as strings — the one place a caller validates a lane
+    id (a CLI arg, a workflow dispatch input) against the registry."""
+    return frozenset(str(cl.id) for cl in ci_lanes())
+
+
+def adapter_home_lanes() -> dict[str, str]:
+    """Flatten the registry's lane partition to an adapter-id -> home-lane-id map."""
+    return {str(adapter): str(cl.id) for cl in ci_lanes() for adapter in cl.adapters}
+
+
 def hosting_lanes(home_lanes: frozenset[str]) -> frozenset[str]:
     """CI lane ids whose ``uv`` extra can install *every* framework whose home lane is
     in ``home_lanes`` — empty if none can (the frameworks need incompatible extras, e.g.
@@ -119,14 +130,13 @@ def hosting_lanes(home_lanes: frozenset[str]) -> frozenset[str]:
     correct given crewai is the only venv conflict, and derived purely from
     ``lane_extra`` + the home-lane partition (no hand-maintained table).
     """
-    lanes = ci_lanes()
     if not home_lanes:
-        return frozenset(str(cl.id) for cl in lanes)
+        return known_lane_ids()
     extras = {lane_extra(Lane(home)) for home in home_lanes}
     if len(extras) != 1:  # frameworks need incompatible extras — no lane hosts them all
         return frozenset()
     (extra,) = extras
-    return frozenset(str(cl.id) for cl in lanes if cl.extra == extra)
+    return frozenset(str(cl.id) for cl in ci_lanes() if cl.extra == extra)
 
 
 # The e2e workflow (REPO_ROOT is the single source of the checkout-depth assumption).
@@ -149,7 +159,7 @@ def assert_workflow_lane_gates_known(workflow_path: Path = _E2E_WORKFLOW) -> Non
     run. This guard ties the workflow's lane gates back to the registry so that
     drift fails loudly (in the unit suite and the workflow's ``lanes`` job) instead.
     """
-    known = {str(cl.id) for cl in ci_lanes()}
+    known = known_lane_ids()
     unknown = workflow_lane_gate_ids(workflow_path) - known
     if unknown:
         raise AssertionError(
@@ -183,7 +193,7 @@ def assert_workflow_lane_options_match_registry(
     ``selected not in known`` check (which only fires when someone picks the bad
     option), this runs in the unit suite, so drift fails on every PR.
     """
-    expected = {str(cl.id) for cl in ci_lanes()} | {"all"}
+    expected = known_lane_ids() | {"all"}
     options = workflow_lane_options(workflow_path)
     missing = expected - options
     stale = options - expected
