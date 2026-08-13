@@ -764,7 +764,7 @@ turns into an unreadable wall in a notification email. It's a small GFM counts t
 (Passed/Failed/N-A/Skipped) plus only the problem cells (failing / missing, listed
 separately), plus a link back to the run for the full grid — GitHub's comment/email
 renderer sanitizes out `<style>`/inline CSS, so plain GFM (tables, bold, bullets) is
-the ceiling for styling here; `post-nightly-digest.sh` also adds a shields.io
+the ceiling for styling here; `post-baseline-digest.sh` also adds a shields.io
 PASS/FAIL badge image alongside the bold emoji+text header (the bold text is the
 guaranteed-to-render fallback for mail clients that block remote images by default).
 Its PASS/FAIL header is built by the workflow from the job's
@@ -774,13 +774,20 @@ a way the digest content alone wouldn't show, so the workflow says so explicitly
 when it happens rather than let the email quietly disagree with the `baseline-green`
 commit status.
 
-**Local preview:** `scripts/preview-nightly-digest.sh [pass|fail]` posts a real
-comment to the tracking issue in seconds, without waiting on a full E2E run — it
-fabricates a tiny scorecard and drives the exact same
-`.github/scripts/{read-integrations-mentions,find-or-create-nightly-issue,
-post-nightly-digest}.sh` chain `mark-baseline` uses, so the preview can never drift
-from what CI actually posts. It posts for real (reopens/closes the actual issue,
-pings the roster), so use it sparingly.
+**Scoped manual reports:** a manual dispatch that selects one lane and/or OS posts the
+same compact digest to a separate `Manual E2E results` issue and mentions only the
+person who initiated it. Its header names the selected scope and explicitly says it
+does not certify the full baseline; it never writes `baseline-green` or changes the
+canonical nightly issue's state. The requester also receives GitHub's normal workflow
+completion notification when enabled.
+
+**Local preview:** `scripts/preview-baseline-digest.sh [pass|fail] [nightly|manual]`
+posts a real comment in seconds without waiting on E2E. It fabricates a tiny scorecard
+and drives the same `.github/scripts/{find-or-create-tracking-issue,
+post-baseline-digest}.sh` path CI uses, so formatting cannot drift. `nightly` (the
+default) pings the roster and changes the canonical issue state; `manual` mentions
+only the current GitHub user and leaves both the release state and nightly issue alone.
+Use either sparingly.
 
 ## Letta lane
 
