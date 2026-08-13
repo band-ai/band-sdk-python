@@ -103,6 +103,13 @@ class TestExecutionContextConstruction:
 
         assert ctx.is_llm_initialized is False
 
+    def test_init_no_delegation(self, mock_link, mock_handler):
+        """The identity envelope (INT-992) starts absent; the preprocessor
+        sets it per message."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+
+        assert ctx.delegation is None
+
 
 class TestExecutionContextProtocol:
     """Test that ExecutionContext implements Execution protocol."""
