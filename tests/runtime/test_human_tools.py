@@ -22,13 +22,16 @@ REST is faked with ``unittest.mock.AsyncMock``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from band_rest import AsyncRestClient
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, ParsingError
 from band.runtime.tools import HumanTools
 
 
@@ -259,6 +262,65 @@ async def test_resolve_handle_passes_handle() -> None:
 
     await HumanTools(rest).resolve_handle(handle="@alice")
     rest.human_api_contacts.resolve_handle.assert_awaited_once_with(handle="@alice")
+
+
+def _rest_client_over(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> AsyncRestClient:
+    """A real ``band_rest.AsyncRestClient`` whose HTTP boundary is a fake
+    transport instead of the network, so response-parsing errors (like the
+    ``ValidationError`` -> ``ParsingError`` wrapping in
+    ``raw_client.resolve_handle``) are raised by the real dependency rather
+    than simulated.
+    """
+    return AsyncRestClient(
+        api_key="test-key",
+        httpx_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_handle_degrades_when_api_omits_id() -> None:
+    """API v1.10.0 omits ``id`` from a successful resolve-handle response,
+    which band-client-rest 0.0.10's ``ResolveHandleResponse`` requires. The
+    raw client wraps that ``ValidationError`` into a ``ParsingError`` before
+    it reaches ``HumanTools`` — reproduced here via a faked HTTP transport
+    (not a stubbed method) so the fix is proven against the real boundary
+    that raises it. Checks the tool degrades to the entity data instead of
+    raising.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {"handle": "nir/mcp-test", "name": "mcp-test", "type": "Agent"}
+            },
+        )
+
+    rest = _rest_client_over(handler)
+
+    result = await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
+
+    assert result == {
+        "data": {"handle": "nir/mcp-test", "name": "mcp-test", "type": "Agent"}
+    }
+    assert "id" not in result["data"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_handle_reraises_unrelated_parsing_error() -> None:
+    """Only the known missing-``data.id`` shape is degraded; any other
+    response-parsing failure must still surface to the caller.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    rest = _rest_client_over(handler)
+
+    with pytest.raises(ParsingError):
+        await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
 
 
 @pytest.mark.asyncio
