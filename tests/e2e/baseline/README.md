@@ -659,16 +659,72 @@ CI a queryable N-A instead of a silent gap.
   report, keyed by exact nodeid — no junit scraping), out-of-lane cells as `skip`, and
   the `@per_adapter` exclusions as `na` with their reasons. Empty (the local default)
   emits nothing.
-- **CI folds the lanes together.** Each `e2e` lane writes its own slice to
-  `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final `scorecard` job merges
-  them (`python -m tests.e2e.baseline.scorecard merge … --out … --markdown …`) into one
-  `artifacts/scorecard.json` (+ a markdown grid). A cell runs in exactly one lane, so the
-  union keeps its real outcome over the `skip`s and never clobbers an `na`. The job
-  *reports* the matrix; it does not gate on it.
+- **CI folds the lanes together and gates on the result.** Each `e2e` lane writes its
+  own slice to `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final
+  `scorecard` job merges them (`python -m tests.e2e.baseline.scorecard merge … --out …
+  --markdown … --expected-lanes …`) into one `artifacts/scorecard.json` (+ a markdown
+  grid, also written to the run's step summary). A cell runs in exactly one lane, so
+  the union keeps its real outcome over the `skip`s and never clobbers an `na`.
 
-The logic (`na_rows` / `outcome_row` / `merge`) lives in `scorecard.py` as pure functions
-(unit-tested in `tests/framework_conformance/test_scorecard.py`); the conftest is a thin
-`pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
+The logic (`na_rows` / `outcome_row` / `merge` / `gate`) lives in `scorecard.py` as pure
+functions (unit-tested in `tests/framework_conformance/test_scorecard.py`); the
+conftest is a thin `pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
+
+### CI gating & flake policy
+
+The suite runs nightly (`e2e.yml`'s `schedule:` cron), full lane × OS matrix,
+unattended. A `workflow_dispatch` with the default `lane: all` / `os: all` reproduces
+that run exactly — it is not a lesser "manual mode." Only a *scoped* dispatch (one
+lane and/or one OS) skips the parts below that assume the full matrix ran.
+
+**Fail-loud rule** (`gate()` in `scorecard.py`): a `fail` cell reddens the run. A
+`skip` cell reddens it too, but only if its home lane (from `ci_lanes()` — see "CI
+lanes" above) was one of this invocation's `--expected-lanes`; a `skip` from a lane
+that was never selected this run is simply out of scope. `na` (+ reason) always
+passes. A cell-level gate can't see a whole OS leg of an expected lane producing *zero*
+scorecard fragment (`ScorecardRow` carries no OS dimension) — the `scorecard` job's
+final "Compute gate verdict" step backstops that by also failing whenever
+`needs.e2e.result != 'success'`.
+
+**Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
+
+1. **Per-test** (`flaky.py`, already existed before this policy): `flaky_model`
+   reruns a test whose failure can be genuine LLM non-determinism (an `AssertionError`
+   is retried too — a capable model's bad moment); `flaky_infra` reruns only
+   non-assertion failures (timeouts, cold starts) and lets an `AssertionError` fail
+   loud immediately, since that's a real bug. Every flaky-prone test carries an
+   explicit kind + reason (`assert_flaky_is_classified` rejects a raw
+   `@pytest.mark.flaky`).
+2. **Per-lane** (`e2e.yml`'s run step): if the lane's first pytest invocation has any
+   failure at all, it reruns only the failed nodeids once (`--last-failed`) before the
+   scorecard is written. This absorbs a whole-lane transient (e.g. a rate-limit
+   window) that per-test taxonomy wouldn't catch on its own; a genuine bug still fails
+   the rerun and reddens the gate (`ScorecardCollector`'s "last write wins" is exactly
+   this rerun's final report being the cell's real outcome).
+
+No time-boxed automatic override is layered on top of either — a lane stuck failing
+on a real provider outage does not silently start passing after N nights. The
+deliberate manual-override path is the `main-branch-protection` ruleset's existing
+`OrganizationAdmin` bypass actor, used the same way any other required-check override
+would be.
+
+**`baseline-green` + the release gate:** on a full-matrix run, `e2e.yml`'s
+`mark-baseline` job posts a `baseline-green` commit status (success/failure) on the
+tested commit. `.github/workflows/release-gate.yml` is a separate, narrow,
+PR-triggered check: an instant no-op for every ordinary PR, and for the standing
+release-please PR it reads that `baseline-green` status for main's tip and fails the
+PR's check until it's green. This is *not* the same thing as making the whole E2E
+suite a required PR check (explicitly out of scope; INT-810 owns PR-level gating via
+Tier-1) — only this thin status lookup is required on every PR, so the cost stays
+negligible for the 99% of PRs that aren't the release PR.
+
+**Nightly digest:** the same job also comments that night's full scorecard (pass or
+fail) on one persistent issue (matched by title, not a label — "Nightly baseline
+results"), reopening it on red and closing it on green so its state also reads
+"currently red/green" at a glance. The comment mentions `@band-ai/integrations` —
+GitHub's own mention-notification delivery emails each member per their own account
+settings, so there's no mailer to stand up and no email address this repo ever has
+to see or store.
 
 ## Letta lane
 

@@ -1,0 +1,71 @@
+name: Release baseline gate
+
+# A narrow, PR-triggered check — not a blanket "E2E is a required PR check" (that
+# stays explicitly out of scope; Tier-1 already gates PRs per INT-810). It is an
+# instant no-op for every ordinary PR and only does real work for the standing
+# release-please PR (head branch release-please--branches--main--components--*): it
+# reads the `baseline-green` commit status the nightly e2e.yml run posts (its
+# mark-baseline job) for the release PR's base commit, and fails unless that status
+# is green. That is what actually blocks the release-please PR from merging until a
+# full nightly baseline run has vouched for main.
+#
+# Both triggers mirror ci.yml's required checks: `pull_request` for immediate
+# feedback while the PR is open, `merge_group` so the check also reports against the
+# merge queue's temporary merge commit — without it the queue would wait forever once
+# this job's name is added as a required status check.
+#
+# Registered as a required status check on main-branch-protection under the context
+# "release-baseline-gate" (this job's name) — a live ruleset setting, not a file in
+# this repo.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+  statuses: read
+  pull-requests: read
+
+jobs:
+  release-baseline-gate:
+    name: release-baseline-gate
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check the release-please PR's baseline-green status
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_HEAD_REF: ${{ github.head_ref }}
+        MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+      run: |
+        if [ "$EVENT_NAME" = "merge_group" ]; then
+          # The queue's temp ref embeds the PR number: gh-readonly-queue/<base>/pr-<n>-<sha>.
+          pr_number=$(echo "$MERGE_GROUP_HEAD_REF" | sed -E 's#.*/pr-([0-9]+)-.*#\1#')
+          head_ref=$(gh pr view "$pr_number" --repo "$REPO" --json headRefName --jq '.headRefName')
+          base_sha="$MERGE_GROUP_BASE_SHA"
+        else
+          head_ref="$PR_HEAD_REF"
+          base_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha')
+        fi
+
+        case "$head_ref" in
+          release-please--branches--main*)
+            ;;
+          *)
+            echo "Not the release-please PR (head: $head_ref) — nothing to gate."
+            exit 0
+            ;;
+        esac
+
+        state=$(gh api "repos/$REPO/commits/$base_sha/statuses" \
+          --jq 'map(select(.context == "baseline-green")) | .[0].state // "pending"')
+        echo "main @ $base_sha — baseline-green: $state"
+        if [ "$state" != "success" ]; then
+          echo "::error::main (@ $base_sha) is not baseline-green (status: $state) — waiting on a green nightly baseline run before the release PR can merge."
+          exit 1
+        fi

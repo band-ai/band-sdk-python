@@ -1,9 +1,18 @@
 name: E2E (baseline)
 
-# Manually triggered live end-to-end run of the baseline toolkit suite. These
-# tests provision real agents against a real Band platform and call real model
-# providers, so they are not run on every PR (cost + external state); trigger
-# them on demand from the Actions tab.
+# Live end-to-end run of the baseline toolkit suite: runs nightly, unattended, over
+# the full lane x OS matrix. A green full-matrix run marks the tested commit
+# baseline-green (the `mark-baseline` job below); `release-gate.yml` reads that mark
+# to decide whether the standing release-please PR may merge — see
+# tests/e2e/baseline/README.md's "CI gating & flake policy" for the full design.
+# These tests provision real agents against a real Band platform and call real model
+# providers, so they are not run on every PR (cost + external state) — only on the
+# nightly schedule or on demand from the Actions tab.
+#
+# A `workflow_dispatch` with the default `lane: all` / `os: all` reproduces the
+# nightly run exactly, including marking the commit baseline-green/red — it is not a
+# lesser "manual mode". Only a *scoped* dispatch (one lane and/or one OS) skips the
+# mark, since it only exercises part of the matrix.
 #
 # Lanes are DERIVED FROM THE REGISTRY, not hand-listed here. The `lanes` job
 # imports the adapter registry and emits one CI lane per `ci_lanes()` entry; the
@@ -47,6 +56,12 @@ name: E2E (baseline)
 # keeps a red lane from blocking the others.
 
 on:
+  # Nightly, full lane x OS matrix, unattended — an off-peak UTC minute (not :00) to
+  # avoid GitHub's top-of-hour scheduling thundering herd. `lanes`/`e2e` resolve
+  # `github.event.inputs` as empty on a schedule event, which already falls back to
+  # 'all'/'all' (the full matrix) — no separate schedule-only code path needed.
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       lane:
@@ -272,10 +287,17 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
-    # Flaky reply-latency tests opt into reruns per-test via @pytest.mark.flaky;
-    # the run itself stays plain so only those tests are retried, not the lane.
+    # Flaky-prone tests already self-rerun per-test via flaky_model/flaky_infra (see
+    # tests/e2e/baseline/flaky.py) with an explicit, audited policy. This is a coarser
+    # backstop on top of that: if the lane's first pass has any failure at all, rerun
+    # only the failed nodeids once (`--last-failed`) before the scorecard is written —
+    # absorbing a whole-lane transient (e.g. a rate-limit window) without weakening
+    # detection of a real bug, which fails the rerun too. The scorecard collector's
+    # "last write wins" already documents this as the intended semantics.
     - name: Run baseline E2E (lane ${{ matrix.lane }})
-      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
+      run: |
+        uv run pytest tests/e2e/baseline/ -v -s --no-cov || \
+        uv run pytest tests/e2e/baseline/ -v -s --no-cov --last-failed
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
@@ -330,17 +352,20 @@ jobs:
           artifacts/environment-*.json
         if-no-files-found: ignore
 
-  # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A).
-  # `if: always()` so a failed lane still yields a scorecard; this job reports the
-  # matrix, it does not gate on it (gating policy is tracked separately).
+  # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A)
+  # and gate on it. `if: always()` so a failed lane still yields a scorecard and a
+  # verdict — the run must go red, not silently green, when a lane crashed outright.
   scorecard:
-    name: scorecard (merge lanes)
-    needs: e2e
+    name: scorecard (merge + gate)
+    needs: [lanes, e2e]
     if: always()
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
+    outputs:
+      # Consumed by mark-baseline to decide the baseline-green commit status.
+      passed: ${{ steps.verdict.outputs.ok }}
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -358,16 +383,46 @@ jobs:
         path: artifacts
         merge-multiple: true
 
+    # The lane ids this invocation actually selected (every registry lane for a full
+    # 'all' run, or just the dispatched one) — the gate's notion of "in scope", never
+    # inferred from the merged rows themselves.
+    - name: Resolve expected lanes for this run
+      id: expected-lanes
+      env:
+        LANES_JSON: ${{ needs.lanes.outputs.lanes }}
+      run: |
+        lanes=$(echo "$LANES_JSON" | jq -r '[.include[].lane] | unique | join(",")')
+        echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
+
     - name: Merge into one scorecard
+      id: merge
+      env:
+        EXPECTED_LANES: ${{ steps.expected-lanes.outputs.lanes }}
       run: |
         shopt -s nullglob
         files=(artifacts/scorecard-*.json)
         if [ ${#files[@]} -eq 0 ]; then
-          echo "no lane scorecards to merge (all lanes failed before session end)"
+          echo "::error::no lane scorecards to merge — every lane failed before session end"
+          echo "passed=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
+        set +e
         uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
-          --out artifacts/scorecard.json --markdown artifacts/scorecard.md
+          --out artifacts/scorecard.json --markdown artifacts/scorecard.md \
+          --expected-lanes "$EXPECTED_LANES"
+        code=$?
+        set -e
+        [ "$code" -eq 0 ] && echo "passed=true" >> "$GITHUB_OUTPUT" || echo "passed=false" >> "$GITHUB_OUTPUT"
+
+    # Readable on the run page without downloading the artifact.
+    - name: Write step summary
+      if: always()
+      run: |
+        if [ -f artifacts/scorecard.md ]; then
+          cat artifacts/scorecard.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "no scorecard produced" >> "$GITHUB_STEP_SUMMARY"
+        fi
 
     - name: Upload scorecard
       if: always()
@@ -378,3 +433,122 @@ jobs:
           artifacts/scorecard.json
           artifacts/scorecard.md
         if-no-files-found: ignore
+
+    # Combines the per-cell gate with a backstop the cell-level grid can't see on its
+    # own: a whole OS leg of an expected lane crashing before it writes any scorecard
+    # fragment at all (ScorecardRow carries no OS dimension, so a passing same-lane
+    # different-OS leg could otherwise hide it). needs.e2e.result is 'failure' if any
+    # matrix leg failed outright, regardless of scorecard content.
+    - name: Compute gate verdict
+      id: verdict
+      if: always()
+      run: |
+        merge_ok="${{ steps.merge.outputs.passed }}"
+        matrix_ok="${{ needs.e2e.result == 'success' }}"
+        if [ "$matrix_ok" != "true" ]; then
+          echo "::error::e2e matrix result was '${{ needs.e2e.result }}' — at least one lane/OS leg failed outright (see the e2e job)."
+        fi
+        if [ "$merge_ok" != "true" ]; then
+          echo "::error::scorecard gate failed — see the step summary above for failing cells."
+        fi
+        if [ "$merge_ok" = "true" ] && [ "$matrix_ok" = "true" ]; then
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Fail the job on a red verdict
+      if: steps.verdict.outputs.ok != 'true'
+      run: exit 1
+
+  # Marks the tested commit baseline-green/red (release-gate.yml reads this to decide
+  # whether the release-please PR may merge) and posts that night's scorecard as a
+  # comment on one persistent tracking issue — reopened on red, closed on green, so its
+  # state also reflects "currently red/green" at a glance. Mentioning @band-ai/integrations
+  # on every comment rides GitHub's own mention-notification delivery (each member's own
+  # account, own email) instead of standing up a mailer with its own credentials. Only a
+  # full-matrix run marks the commit and posts: a scoped dispatch (one lane and/or one OS)
+  # only exercised part of the matrix and has nothing meaningful to say about the rest.
+  mark-baseline:
+    name: mark baseline-green
+    needs: scorecard
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event.inputs.lane == 'all' && github.event.inputs.os == 'all'))
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      issues: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      PASSED: ${{ needs.scorecard.outputs.passed }}
+    steps:
+    - name: Download the merged scorecard
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: scorecard
+        path: artifacts
+        if-no-files-found: warn
+
+    - name: Mark the commit baseline-green or baseline-red
+      run: |
+        if [ "$PASSED" = "true" ]; then
+          state=success
+          description="Nightly baseline green"
+        else
+          state=failure
+          description="Nightly baseline red — see the run for failing cells"
+        fi
+        gh api "repos/$REPO/statuses/${{ github.sha }}" \
+          -f state="$state" -f context="baseline-green" \
+          -f description="$description" -f target_url="$RUN_URL"
+
+    # One persistent issue (tracked by title, not a label — no pre-provisioned label
+    # to keep in sync) is the running nightly digest: every full-matrix run comments
+    # the night's scorecard on it, pass or fail, so @band-ai/integrations gets a
+    # GitHub notification (and, per each member's own settings, an email) every night
+    # — not just on a red run.
+    - name: Find or create the nightly results issue
+      id: issue
+      run: |
+        number=$(gh issue list --repo "$REPO" --state all \
+          --search 'Nightly baseline results in:title' --json number --jq '.[0].number')
+        if [ -z "$number" ]; then
+          url=$(gh issue create --repo "$REPO" --title "Nightly baseline results" \
+            --body "Running log of nightly baseline E2E results. @band-ai/integrations")
+          number=${url##*/}
+        fi
+        echo "number=$number" >> "$GITHUB_OUTPUT"
+
+    - name: Post the night's scorecard and sync open/closed state
+      run: |
+        body_file="$(mktemp)"
+        {
+          if [ "$PASSED" = "true" ]; then
+            echo "**Nightly baseline: green** on \`${{ github.sha }}\`."
+          else
+            echo "**Nightly baseline: red** on \`${{ github.sha }}\`."
+          fi
+          echo
+          echo "Run: $RUN_URL"
+          echo
+          if [ -f artifacts/scorecard.md ]; then
+            cat artifacts/scorecard.md
+          else
+            echo "(no scorecard was produced this run)"
+          fi
+          echo
+          echo "cc @band-ai/integrations"
+        } > "$body_file"
+        gh issue comment "${{ steps.issue.outputs.number }}" --repo "$REPO" --body-file "$body_file"
+        if [ "$PASSED" = "true" ]; then
+          gh issue close "${{ steps.issue.outputs.number }}" --repo "$REPO" 2>/dev/null || true
+        else
+          gh issue reopen "${{ steps.issue.outputs.number }}" --repo "$REPO" 2>/dev/null || true
+        fi
