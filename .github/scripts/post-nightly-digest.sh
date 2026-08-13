@@ -3,8 +3,9 @@
 # the step summary + artifact, where it renders full-width and looks fine). The
 # header is built from $PASSED (the job's combined verdict, including the
 # matrix-leg backstop), never from the cell-level digest file alone: a leg that
-# crashed outright and reported nothing can flip the real verdict to red in a way
-# the cell grid can't see (ScorecardRow carries no OS dimension) — so if that
+# failed, crashed, or timed out (each lane is capped at timeout-minutes in
+# e2e.yml's e2e job) and reported nothing can flip the real verdict to red in a
+# way the cell grid can't see (ScorecardRow carries no OS dimension) — so if that
 # happened, say so explicitly rather than let the digest quietly disagree with the
 # baseline-green commit status posted earlier in this job.
 #
@@ -37,7 +38,7 @@ body_file="$(mktemp)"
   fi
   echo
   if [ "$MATRIX_OK" != "true" ]; then
-    echo "⚠️ At least one lane/OS leg crashed outright and reported nothing (see the e2e job) — the counts below only cover what actually reported."
+    echo "⚠️ At least one lane/OS leg failed, crashed, or timed out (each lane is capped at 120 minutes) before reporting anything — see the e2e job for which and why. The counts below only cover what actually reported."
     echo
   fi
   if [ -f artifacts/gate-summary.md ]; then

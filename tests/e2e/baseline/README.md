@@ -724,6 +724,18 @@ deliberate manual-override path is the `main-branch-protection` ruleset's existi
 `OrganizationAdmin` bypass actor, used the same way any other required-check override
 would be.
 
+**Per-leg timeout:** `e2e.yml`'s `e2e` job carries `timeout-minutes: 120` — without
+it, GitHub's own default (360 minutes) is the only ceiling on a genuinely stuck leg.
+Observed live: three real multi-agent-collaboration tests each burned their full
+rerun budget (attempt + 2 retries, ~6 minutes each) before failing, ~40 minutes for
+just those three, so 120 leaves real headroom above realistic worst-case slowness
+while still bounding a true hang. Verified live that GitHub reports a
+`timeout-minutes` kill as conclusion `cancelled`, not `failure` — `MATRIX_OK` in
+`compute-gate-verdict.sh` only checks equality with `success`, so a timeout reddens
+the gate the same as an outright failure with no extra handling, and the nightly
+digest's warning line names "failed, crashed, or timed out" explicitly rather than
+only "crashed."
+
 **`baseline-green` + the release gate:** on a full-matrix run, `e2e.yml`'s
 `mark-baseline` job posts a `baseline-green` commit status (success/failure) on the
 tested commit. `.github/workflows/release-gate.yml` is a separate, narrow,
@@ -761,6 +773,14 @@ the cell grid can't see (no OS dimension on `ScorecardRow`) can flip that verdic
 a way the digest content alone wouldn't show, so the workflow says so explicitly
 when it happens rather than let the email quietly disagree with the `baseline-green`
 commit status.
+
+**Local preview:** `scripts/preview-nightly-digest.sh [pass|fail]` posts a real
+comment to the tracking issue in seconds, without waiting on a full E2E run — it
+fabricates a tiny scorecard and drives the exact same
+`.github/scripts/{read-integrations-mentions,find-or-create-nightly-issue,
+post-nightly-digest}.sh` chain `mark-baseline` uses, so the preview can never drift
+from what CI actually posts. It posts for real (reopens/closes the actual issue,
+pings the roster), so use it sparingly.
 
 ## Letta lane
 
