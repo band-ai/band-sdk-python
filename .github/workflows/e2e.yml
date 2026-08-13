@@ -133,6 +133,12 @@ jobs:
     name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
     runs-on: ${{ matrix.runner }}
+    # Without this, GitHub's own default (360 minutes) is the only ceiling on a
+    # genuinely stuck leg — observed live: three real multi-agent-collaboration
+    # tests each burned their full rerun budget (attempt + 2 retries, ~6 min each)
+    # before failing, ~40 minutes for just those three. This caps a leg well
+    # short of the platform default while leaving headroom above that.
+    timeout-minutes: 120
     # Per-(lane, OS) concurrency: a new dispatch cancels only the matching
     # lane+OS still running, never the whole matrix — so one lane can be
     # re-run in isolation. (See the note above the jobs block.)
@@ -310,7 +316,8 @@ jobs:
 
   # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A)
   # and gate on it. `if: always()` so a failed lane still yields a scorecard and a
-  # verdict — the run must go red, not silently green, when a lane crashed outright.
+  # verdict — the run must go red, not silently green, when a lane failed,
+  # crashed, or timed out outright.
   scorecard:
     name: scorecard (merge + gate)
     needs: [lanes, e2e]
