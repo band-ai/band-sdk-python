@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
+from band.core.delegation import parse_delegation
 from band.runtime.types import PlatformMessage
 from band_rest.core.api_error import ApiError
 
@@ -675,6 +676,9 @@ class BandLink:
             message_type=item.message_type,
             metadata=item.metadata or {},
             created_at=item.inserted_at or datetime.now(timezone.utc),
+            # Typed view of the platform's identity envelope (INT-992);
+            # tolerant — a malformed envelope becomes None, never a raise.
+            delegation=parse_delegation(item.metadata),
         )
 
     async def get_stale_processing_messages(
@@ -721,6 +725,7 @@ class BandLink:
                             message_type=item.message_type,
                             metadata=item.metadata or {},
                             created_at=item.inserted_at or datetime.now(timezone.utc),
+                            delegation=parse_delegation(item.metadata),
                         )
                     )
 

@@ -221,6 +221,84 @@ class TestMessageMetadataWireBoundary:
         assert rewrapped.delegation.originator.uuid == ORIGINATOR_UUID
 
 
+class TestFormatForLlmNeverRendersTheEnvelope:
+    """I1 regression across BOTH PlatformMessage classes: the SDK has two
+    (band.core.types for adapters, band.runtime.types for MessageHandlers) and
+    neither may render envelope content for a delegated message — their
+    ``format_for_llm`` stays name + content only."""
+
+    def _assert_clean(self, rendered: str) -> None:
+        assert rendered == "[Bob Broker]: delegated ask"
+        for leaked in (
+            "delegation",
+            "alice.asker",
+            "Alice Asker",
+            ORIGINATOR_UUID,
+            ENVELOPE_MESSAGE_ID,
+        ):
+            assert leaked not in rendered
+
+    def test_core_platform_message_format_for_llm_is_clean(self):
+        from datetime import datetime, timezone
+
+        from band.core.types import PlatformMessage as CorePlatformMessage
+
+        msg = CorePlatformMessage(
+            id="msg-1",
+            room_id="room-1",
+            content="delegated ask",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="Bob Broker",
+            message_type="text",
+            metadata={"delegation": make_envelope_dict(), "status": "sent"},
+            created_at=datetime.now(timezone.utc),
+        )
+
+        self._assert_clean(msg.format_for_llm())
+
+    def test_runtime_platform_message_format_for_llm_is_clean(self):
+        from datetime import datetime, timezone
+
+        from band.runtime.types import PlatformMessage as RuntimePlatformMessage
+
+        msg = RuntimePlatformMessage(
+            id="msg-1",
+            room_id="room-1",
+            content="delegated ask",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="Bob Broker",
+            message_type="text",
+            metadata={"delegation": make_envelope_dict(), "status": "sent"},
+            created_at=datetime.now(timezone.utc),
+            delegation=DelegationEnvelope.model_validate(make_envelope_dict()),
+        )
+
+        self._assert_clean(msg.format_for_llm())
+
+    def test_runtime_platform_message_defaults_delegation_to_none(self):
+        """Existing construction sites (and the Slack adapter's synthesized
+        messages) build the runtime PlatformMessage without the field."""
+        from datetime import datetime, timezone
+
+        from band.runtime.types import PlatformMessage as RuntimePlatformMessage
+
+        msg = RuntimePlatformMessage(
+            id="msg-1",
+            room_id="room-1",
+            content="plain",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name=None,
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+
+        assert msg.delegation is None
+
+
 class TestEnvelopeIsReadOnly:
     """I2: handler code gets a read-only view — the envelope is platform-
     authored and nothing in the SDK writes through it."""
