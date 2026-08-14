@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from functools import cache
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band.client.rest import AsyncRestClient
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -309,24 +312,52 @@ def make_participant_mock(
     return mock
 
 
+@cache
+def agent_api_namespace_classes() -> dict[str, type]:
+    """The Fern client's agent-side namespace classes, keyed by attribute name.
+
+    The namespaces are lazy properties, so the classes are harvested from a
+    throwaway client instance (constructing one performs no I/O).
+    """
+    harvest = AsyncRestClient(api_key="spec-harvest", base_url="http://localhost:0")
+    return {
+        name: type(getattr(harvest, name))
+        for name in dir(type(harvest))
+        if name.startswith("agent_api_")
+    }
+
+
 @pytest.fixture
 def mock_rest_client() -> MagicMock:
     """Mock AsyncRestClient shared by AgentTools, ContactTools and the ACP
     server adapter tests — the three suites that instantiate a REST-backed
-    client directly. A test overrides whichever namespace's return value it
-    needs; the ids below (``room-new-123``, ``msg-123``, ``evt-123``,
-    ``user-1``, ``agent-2``) are asserted on directly by existing tests, so
-    they are fixed rather than incidental.
+    client directly.
+
+    Spec'd against the real Fern client: every ``agent_api_*`` namespace is an
+    autospec of its real class, so async methods are awaitable AsyncMocks with
+    the real call signatures, and a ``band-client-rest`` bump that renames a
+    namespace, drops a method, or changes a signature fails these tests
+    instead of passing silently (the pin-bump tripwire the workarounds policy
+    relies on).
+
+    A test overrides whichever method's return value it needs; the ids below
+    (``room-new-123``, ``msg-123``, ``evt-123``, ``user-1``, ``agent-2``) are
+    asserted on directly by existing tests, so they are fixed rather than
+    incidental.
     """
-    client = MagicMock()
+    client = MagicMock(spec=AsyncRestClient)
+    for name, namespace_class in agent_api_namespace_classes().items():
+        # spec_set so overriding a method the real class no longer has fails
+        # at the assignment, not as a dead attribute nothing ever calls.
+        setattr(
+            client, name, create_autospec(namespace_class, instance=True, spec_set=True)
+        )
 
     # Chat creation (ACP: new/fork session)
     mock_chat_response = MagicMock()
     mock_chat_response.data = MagicMock()
     mock_chat_response.data.id = "room-new-123"
-    client.agent_api_chats.create_agent_chat = AsyncMock(
-        return_value=mock_chat_response
-    )
+    client.agent_api_chats.create_agent_chat.return_value = mock_chat_response
 
     # Message creation (AgentTools.send_message / ACP prompt forwarding)
     message_response = MagicMock()
@@ -336,9 +367,7 @@ def mock_rest_client() -> MagicMock:
         "content": "Hello",
         "sender_id": "agent-1",
     }
-    client.agent_api_messages.create_agent_chat_message = AsyncMock(
-        return_value=message_response
-    )
+    client.agent_api_messages.create_agent_chat_message.return_value = message_response
 
     # Event creation (AgentTools.send_event / ACP prompt forwarding)
     event_response = MagicMock()
@@ -348,19 +377,15 @@ def mock_rest_client() -> MagicMock:
         "content": "Thinking...",
         "message_type": "thought",
     }
-    client.agent_api_events.create_agent_chat_event = AsyncMock(
-        return_value=event_response
-    )
+    client.agent_api_events.create_agent_chat_event.return_value = event_response
 
     # Participant listing (AgentTools.get_participants / ACP session bootstrap)
     participant1 = make_participant_mock(
         "user-1", "User One", "User", handle="user-one"
     )
-    client.agent_api_participants.list_agent_chat_participants = AsyncMock(
-        return_value=MagicMock(data=[participant1])
+    client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+        data=[participant1]
     )
-    client.agent_api_participants.add_agent_chat_participant = AsyncMock()
-    client.agent_api_participants.remove_agent_chat_participant = AsyncMock()
 
     # Peer lookup (AgentTools.lookup_peers)
     peer1 = make_participant_mock(
@@ -391,10 +416,7 @@ def mock_rest_client() -> MagicMock:
             },
         }
     )
-    client.agent_api_peers.list_agent_peers = AsyncMock(return_value=peers_response)
-
-    # Identity lookup (ACP verify_credentials)
-    client.agent_api_identity.get_agent_me = AsyncMock()
+    client.agent_api_peers.list_agent_peers.return_value = peers_response
 
     return client
 
