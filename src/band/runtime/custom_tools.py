@@ -9,14 +9,30 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import BaseModel, ValidationError
+
+if TYPE_CHECKING:
+    from band.runtime.execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
 # Type alias for custom tool definition: (InputModel, callable)
 CustomToolDef = tuple[type[BaseModel], Callable[..., Any]]
+
+
+def ctx_from_tools(tools: Any) -> "ExecutionContext | None":
+    """Best-effort ``ExecutionContext`` behind an AgentTools instance.
+
+    ``AgentTools.from_context`` stashes the per-execution context on ``_ctx``;
+    every custom-tool call site threads it from there into
+    :func:`execute_custom_tool` (INT-994). Deliberately defensive: adapter
+    tests drive these paths with ``FakeAgentTools`` (no ``_ctx``), plain
+    mocks, or ``None`` — all of those mean "no context available", never an
+    error.
+    """
+    return getattr(tools, "_ctx", None)
 
 
 def custom_tool_to_mcp_schema(
@@ -171,16 +187,58 @@ def format_validation_error(exc: ValidationError) -> str:
     )
 
 
-def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
+# Handler positional arity, memoized: signatures are immutable, and the tool
+# loop re-inspects the same handler on every call otherwise. Keyed by the
+# callable itself; an unhashable callable (custom __eq__ without __hash__)
+# simply skips the cache.
+_HANDLER_ARITY_CACHE: dict[Callable[..., Any], int] = {}
+
+
+def _custom_tool_positional_arity(func: Callable[..., Any]) -> int:
+    """How many positional parameters the handler declares, capped at 2.
+
+    0 = zero-argument handler (empty InputModel required); 1 = the classic
+    ``handler(args)`` shape; 2 = the INT-994 opt-in ``handler(args, ctx)``
+    that also receives the ``ExecutionContext`` (or ``None`` when the call
+    site has none). Only POSITIONAL_ONLY / POSITIONAL_OR_KEYWORD parameters
+    count — ``*args`` is NOT an opt-in, so pre-INT-994 handlers keep their
+    exact call shape. Uninspectable callables fall back to the classic shape.
+    """
     try:
-        return len(inspect.signature(func).parameters) > 0
+        return _HANDLER_ARITY_CACHE[func]
+    except KeyError:
+        pass
+    except TypeError:  # unhashable callable: inspect without caching
+        return _inspect_positional_arity(func)
+
+    arity = _inspect_positional_arity(func)
+    _HANDLER_ARITY_CACHE[func] = arity
+    return arity
+
+
+def _inspect_positional_arity(func: Callable[..., Any]) -> int:
+    try:
+        parameters = inspect.signature(func).parameters.values()
     except (TypeError, ValueError):
-        return True
+        return 1
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    return min(len(positional), 2)
+
+
+def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
+    return _custom_tool_positional_arity(func) > 0
 
 
 async def execute_custom_tool(
     tool: CustomToolDef,
     arguments: dict[str, Any],
+    *,
+    ctx: "ExecutionContext | None" = None,
 ) -> Any:
     """
     Execute custom tool with Pydantic validation.
@@ -188,6 +246,10 @@ async def execute_custom_tool(
     Args:
         tool: (InputModel, callable) tuple
         arguments: Raw arguments dict from LLM
+        ctx: Optional per-execution context (INT-994). Delivered as the
+            handler's second positional argument when — and only when — the
+            handler declares one; zero-arg and one-arg handlers are called
+            exactly as before.
 
     Returns:
         Tool execution result
@@ -212,12 +274,14 @@ async def execute_custom_tool(
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
-    return await invoke_validated_custom_tool(tool, validated)
+    return await invoke_validated_custom_tool(tool, validated, ctx=ctx)
 
 
 async def invoke_validated_custom_tool(
     tool: CustomToolDef,
     validated: Any,
+    *,
+    ctx: "ExecutionContext | None" = None,
 ) -> Any:
     """
     Execute a custom tool whose arguments are already a validated InputModel
@@ -226,18 +290,23 @@ async def invoke_validated_custom_tool(
     For callers whose framework has already constructed the InputModel (e.g.
     pydantic-ai validates tool args natively): re-serializing the instance to
     a dict and re-validating would break models using field aliases, so the
-    instance is passed through as-is. Async/zero-argument handler semantics
-    match :func:`execute_custom_tool` exactly.
+    instance is passed through as-is. Async/zero-argument handler and ``ctx``
+    opt-in semantics match :func:`execute_custom_tool` exactly.
     """
     model, func = tool
 
-    accepts_input = _custom_tool_accepts_input(func)
-    if not accepts_input and model.model_fields:
+    arity = _custom_tool_positional_arity(func)
+    if arity == 0 and model.model_fields:
         tool_name = get_custom_tool_name(model)
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
-    args = (validated,) if accepts_input else ()
+    if arity == 0:
+        args: tuple[Any, ...] = ()
+    elif arity == 1:
+        args = (validated,)
+    else:
+        args = (validated, ctx)
 
     # Call the handler, then await if it produced an awaitable. This covers plain
     # sync/async functions AND callable objects with an async __call__ (for which
