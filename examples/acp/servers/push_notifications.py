@@ -48,7 +48,8 @@ from dotenv import load_dotenv
 
 from setup_logging import setup_logging
 from band import Agent
-from band.adapters import ACPServer, BandACPServerAdapter, run_acp_server
+from band.adapters import ACPServer, BandACPServerAdapter
+from band.integrations.acp import run_acp_server
 from band.config import load_agent_config
 from band.integrations.acp import ACPPushHandler
 

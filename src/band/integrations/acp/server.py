@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import acp.schema as acp_schema
 from acp import (
-    Agent,
     InitializeResponse,
     NewSessionResponse,
     PromptResponse,
@@ -39,23 +38,31 @@ from acp.schema import (
 from band import __version__
 
 if TYPE_CHECKING:
-    from acp.interfaces import Client
+    from acp.interfaces import Agent, Client
 
     from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class ACPServer(Agent):
+class ACPServer:
     """ACP protocol handler that delegates to BandACPServerAdapter.
 
-    Subclasses the ACP SDK's Agent class to handle ACP JSON-RPC protocol
-    methods (initialize, new_session, prompt, cancel) and delegates the
-    actual Band platform interaction to the adapter.
+    Handles ACP JSON-RPC methods (initialize, new_session, prompt, cancel)
+    and delegates Band platform interaction to the adapter.
 
     This follows the same two-layer pattern as the A2A Gateway:
     - ACPServer: Protocol handler (like GatewayServer)
     - BandACPServerAdapter: Platform bridge (like A2AGatewayAdapter)
+
+    Does not subclass ``acp.Agent``. The SDK router resolves handlers with
+    ``getattr`` and invokes them as ``func(**request_model_fields)``, so it
+    binds by name, never by position. Handlers therefore declare only the
+    fields they read, keyword-only, and absorb the rest in ``**kwargs``:
+    upstream reordering a parameter or adding a field cannot break dispatch.
+    Subclassing would also make an unimplemented method resolve to the
+    protocol's inherited stub, answering the request with a null result
+    instead of ``method_not_found``.
     """
 
     def __init__(self, adapter: BandACPServerAdapter) -> None:
@@ -86,8 +93,8 @@ class ACPServer(Agent):
 
     async def initialize(
         self,
+        *,
         protocol_version: int,
-        client_capabilities: Any = None,
         client_info: Any = None,
         **kwargs: Any,
     ) -> InitializeResponse:
@@ -97,9 +104,8 @@ class ACPServer(Agent):
 
         Args:
             protocol_version: ACP protocol version from client.
-            client_capabilities: Optional client capabilities.
             client_info: Optional client implementation info.
-            **kwargs: Additional keyword arguments.
+            **kwargs: Remaining InitializeRequest fields, unused here.
 
         Returns:
             InitializeResponse with agent info and protocol version.
@@ -149,8 +155,8 @@ class ACPServer(Agent):
 
     async def new_session(
         self,
+        *,
         cwd: str,
-        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
@@ -163,15 +169,12 @@ class ACPServer(Agent):
 
         Args:
             cwd: Working directory from the editor.
-            additional_directories: Extra workspace directories the editor
-                grants access to. Not used by the Band adapter.
             mcp_servers: Optional MCP server configs from the editor.
-            **kwargs: Additional keyword arguments.
+            **kwargs: Remaining NewSessionRequest fields, unused here.
 
         Returns:
             NewSessionResponse with the session identifier.
         """
-        del additional_directories
         session_id = await self._adapter.create_session(
             cwd=cwd,
             mcp_servers=mcp_servers,
@@ -181,10 +184,10 @@ class ACPServer(Agent):
 
     async def load_session(
         self,
+        *,
         cwd: str,
         session_id: str,
         mcp_servers: list[Any] | None = None,
-        additional_directories: list[str] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
         """Handle ACP load_session request.
@@ -196,14 +199,11 @@ class ACPServer(Agent):
             cwd: Working directory from the editor.
             session_id: The ACP session to load.
             mcp_servers: Optional list of MCP servers from the editor.
-            additional_directories: Extra workspace directories the editor
-                grants access to. Not used by the Band adapter.
-            **kwargs: Additional keyword arguments.
+            **kwargs: Remaining LoadSessionRequest fields, unused here.
 
         Returns:
             LoadSessionResponse if session exists, None otherwise.
         """
-        del additional_directories
         if not self._adapter.has_session(session_id):
             logger.debug("load_session: session %s not found", session_id)
             return None
@@ -216,20 +216,14 @@ class ACPServer(Agent):
         logger.info("Loaded ACP session %s", session_id)
         return LoadSessionResponse()
 
-    async def list_sessions(
-        self,
-        cwd: str | None = None,
-        cursor: str | None = None,
-        **kwargs: Any,
-    ) -> ListSessionsResponse:
+    async def list_sessions(self, **kwargs: Any) -> ListSessionsResponse:
         """Handle ACP list_sessions request.
 
-        Returns session info for each active session in the adapter.
+        Returns session info for every active session in the adapter. The
+        request's ``cwd`` filter and ``cursor`` are not applied.
 
         Args:
-            cursor: Optional pagination cursor (not used).
-            cwd: Optional working directory filter (not used).
-            **kwargs: Additional keyword arguments.
+            **kwargs: ListSessionsRequest fields, unused here.
 
         Returns:
             ListSessionsResponse with active sessions.
@@ -243,6 +237,7 @@ class ACPServer(Agent):
 
     async def set_session_mode(
         self,
+        *,
         session_id: str,
         mode_id: str,
         **kwargs: Any,
@@ -265,6 +260,7 @@ class ACPServer(Agent):
 
     async def set_config_option(
         self,
+        *,
         config_id: str,
         session_id: str,
         value: str | bool,
@@ -285,6 +281,7 @@ class ACPServer(Agent):
 
     async def authenticate(
         self,
+        *,
         method_id: str,
         **kwargs: Any,
     ) -> AuthenticateResponse | None:
@@ -311,9 +308,9 @@ class ACPServer(Agent):
 
     async def fork_session(
         self,
+        *,
         session_id: str,
         cwd: str,
-        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> ForkSessionResponse:
@@ -321,7 +318,6 @@ class ACPServer(Agent):
 
         Creates a new Band-backed ACP session as a fork target.
         """
-        del additional_directories
         if not self._adapter.has_session(session_id):
             raise KeyError(f"Cannot fork unknown ACP session: {session_id}")
 
@@ -339,9 +335,9 @@ class ACPServer(Agent):
 
     async def resume_session(
         self,
+        *,
         session_id: str,
         cwd: str,
-        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> ResumeSessionResponse:
@@ -349,8 +345,6 @@ class ACPServer(Agent):
 
         The in-memory adapter can only resume active sessions.
         """
-        del additional_directories
-        _ = kwargs
         if not self._adapter.has_session(session_id):
             raise KeyError(f"Cannot resume unknown ACP session: {session_id}")
 
@@ -454,6 +448,7 @@ class ACPServer(Agent):
 
     async def prompt(
         self,
+        *,
         session_id: str,
         prompt: list[
             TextContentBlock
@@ -472,7 +467,7 @@ class ACPServer(Agent):
         Args:
             session_id: The ACP session identifier.
             prompt: List of ACP content blocks (TextContentBlock, etc.).
-            **kwargs: Additional keyword arguments.
+            **kwargs: Remaining PromptRequest fields, unused here.
 
         Returns:
             PromptResponse with stop reason.
@@ -482,7 +477,7 @@ class ACPServer(Agent):
         await self._adapter.handle_prompt(session_id, text)
         return PromptResponse(stop_reason="end_turn")  # type: ignore[call-arg]  # Pydantic alias: stopReason
 
-    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+    async def cancel(self, *, session_id: str, **kwargs: Any) -> None:
         """Handle ACP cancel request.
 
         Cancels a pending prompt for the given session.
@@ -494,7 +489,7 @@ class ACPServer(Agent):
         logger.info("ACP cancel for session %s", session_id)
         await self._adapter.cancel_prompt(session_id)
 
-    async def close_session(self, session_id: str, **kwargs: Any) -> None:
+    async def close_session(self, *, session_id: str, **kwargs: Any) -> None:
         """Handle ACP close_session request.
 
         Cleans up all state for the session via the adapter.
@@ -587,8 +582,11 @@ async def run_acp_server(
         output_stream: Stream to write agent messages to (default: stdout).
         **connection_kwargs: Forwarded to the underlying ACP connection.
     """
+    # run_agent's parameter is typed against the nominal Agent protocol.
+    # ACPServer satisfies the router's actual contract (getattr lookup,
+    # invocation by keyword) but not the protocol's positional signatures.
     await run_agent(
-        server,
+        cast("Agent", server),
         input_stream,
         output_stream,
         use_unstable_protocol=True,

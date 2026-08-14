@@ -56,7 +56,6 @@ if TYPE_CHECKING:
         ACPClientAdapter as ACPClientAdapter,
         ACPServer as ACPServer,
         BandACPServerAdapter as BandACPServerAdapter,
-        run_acp_server as run_acp_server,
     )
     from band.adapters.agno import AgnoAdapter as AgnoAdapter
     from band.adapters.gemini import GeminiAdapter as GeminiAdapter
@@ -90,7 +89,7 @@ __all__, __getattr__ = lazy_exports(
     a2a=["A2AAdapter"],
     a2a_gateway=["A2AGatewayAdapter", "A2AGatewayAdapterConfig"],
     codex=["CodexAdapter", "CodexAdapterConfig"],
-    acp=["ACPClientAdapter", "ACPServer", "BandACPServerAdapter", "run_acp_server"],
+    acp=["ACPClientAdapter", "ACPServer", "BandACPServerAdapter"],
     agno=["AgnoAdapter"],
     gemini=["GeminiAdapter"],
     google_adk=["GoogleADKAdapter"],
