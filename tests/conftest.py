@@ -309,6 +309,96 @@ def make_participant_mock(
     return mock
 
 
+@pytest.fixture
+def mock_rest_client() -> MagicMock:
+    """Mock AsyncRestClient shared by AgentTools, ContactTools and the ACP
+    server adapter tests — the three suites that instantiate a REST-backed
+    client directly. A test overrides whichever namespace's return value it
+    needs; the ids below (``room-new-123``, ``msg-123``, ``evt-123``,
+    ``user-1``, ``agent-2``) are asserted on directly by existing tests, so
+    they are fixed rather than incidental.
+    """
+    client = MagicMock()
+
+    # Chat creation (ACP: new/fork session)
+    mock_chat_response = MagicMock()
+    mock_chat_response.data = MagicMock()
+    mock_chat_response.data.id = "room-new-123"
+    client.agent_api_chats.create_agent_chat = AsyncMock(
+        return_value=mock_chat_response
+    )
+
+    # Message creation (AgentTools.send_message / ACP prompt forwarding)
+    message_response = MagicMock()
+    message_response.data = MagicMock()
+    message_response.data.model_dump.return_value = {
+        "id": "msg-123",
+        "content": "Hello",
+        "sender_id": "agent-1",
+    }
+    client.agent_api_messages.create_agent_chat_message = AsyncMock(
+        return_value=message_response
+    )
+
+    # Event creation (AgentTools.send_event / ACP prompt forwarding)
+    event_response = MagicMock()
+    event_response.data = MagicMock()
+    event_response.data.model_dump.return_value = {
+        "id": "evt-123",
+        "content": "Thinking...",
+        "message_type": "thought",
+    }
+    client.agent_api_events.create_agent_chat_event = AsyncMock(
+        return_value=event_response
+    )
+
+    # Participant listing (AgentTools.get_participants / ACP session bootstrap)
+    participant1 = make_participant_mock(
+        "user-1", "User One", "User", handle="user-one"
+    )
+    client.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        return_value=MagicMock(data=[participant1])
+    )
+    client.agent_api_participants.add_agent_chat_participant = AsyncMock()
+    client.agent_api_participants.remove_agent_chat_participant = AsyncMock()
+
+    # Peer lookup (AgentTools.lookup_peers)
+    peer1 = make_participant_mock(
+        "agent-2", "Agent Two", "Agent", handle="agent-two", description="Another agent"
+    )
+    peers_response = MagicMock()
+    peers_response.data = [peer1]
+    peers_response.metadata = MagicMock()
+    peers_response.metadata.page = 1
+    peers_response.metadata.page_size = 50
+    peers_response.metadata.total_count = 1
+    peers_response.metadata.total_pages = 1
+    peers_response.model_dump = MagicMock(
+        return_value={
+            "data": [
+                {
+                    "id": "agent-2",
+                    "name": "Agent Two",
+                    "type": "Agent",
+                    "description": "Another agent",
+                }
+            ],
+            "metadata": {
+                "page": 1,
+                "page_size": 50,
+                "total_count": 1,
+                "total_pages": 1,
+            },
+        }
+    )
+    client.agent_api_peers.list_agent_peers = AsyncMock(return_value=peers_response)
+
+    # Identity lookup (ACP verify_credentials)
+    client.agent_api_identity.get_agent_me = AsyncMock()
+
+    return client
+
+
 def make_participant_added_event(
     room_id: str = "room-123",
     participant_id: str = "user-456",

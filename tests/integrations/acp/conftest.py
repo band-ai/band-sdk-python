@@ -12,7 +12,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -173,38 +173,6 @@ def make_tool_result_message(
         room_id=room_id,
         message_type="tool_result",
     )
-
-
-@pytest.fixture
-def mock_rest_client() -> MagicMock:
-    """Create a mock AsyncRestClient with pre-configured responses."""
-    client = MagicMock()
-
-    # Mock chat creation
-    mock_chat_response = MagicMock()
-    mock_chat_response.data = MagicMock()
-    mock_chat_response.data.id = "room-new-123"
-    client.agent_api_chats.create_agent_chat = AsyncMock(
-        return_value=mock_chat_response
-    )
-
-    # Mock participant listing
-    mock_participants_response = MagicMock()
-    mock_participants_response.data = []
-    client.agent_api_participants.list_agent_chat_participants = AsyncMock(
-        return_value=mock_participants_response
-    )
-
-    # Mock message creation
-    client.agent_api_messages.create_agent_chat_message = AsyncMock()
-
-    # Mock event creation
-    client.agent_api_events.create_agent_chat_event = AsyncMock()
-
-    # Mock identity lookup (verify_credentials)
-    client.agent_api_identity.get_agent_me = AsyncMock()
-
-    return client
 
 
 async def wait_for_pending_prompt(
