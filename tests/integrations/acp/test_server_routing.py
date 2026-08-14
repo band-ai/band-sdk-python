@@ -13,8 +13,8 @@ real session bookkeeping, so assertions are on observable state.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -102,6 +102,51 @@ def payload_for(method: str, session_id: str) -> dict[str, Any]:
     }
 
 
+class WireEditor:
+    """Drives ACPServer over the wire the way an editor does.
+
+    Owns the dispatch plumbing every test would otherwise repeat: the
+    router's positional is_notification flag behind ``request()``/``notify()``,
+    and the background-task bookkeeping ``session/prompt`` needs because it
+    blocks until the peer replies.
+    """
+
+    def __init__(self, server: ACPServer, adapter: BandACPServerAdapter) -> None:
+        self.router = build_agent_router(
+            cast(Agent, server), use_unstable_protocol=True
+        )
+        self.adapter = adapter
+
+    async def request(self, method: str, payload: dict[str, Any]) -> Any:
+        return await self.router(method, payload, False)
+
+    async def notify(self, method: str, payload: dict[str, Any]) -> None:
+        await self.router(method, payload, True)
+
+    @asynccontextmanager
+    async def prompting(self, session_id: str, text: str) -> AsyncIterator[str]:
+        """Dispatch session/prompt as a background task; yield its room id.
+
+        On exit, resolves the prompt and awaits the dispatch task regardless
+        of how the body already resolved it (a repeat ``cancel_prompt`` is a
+        no-op), so a failing assertion never leaves a dangling task or an
+        unresolved prompt for a later test to trip over.
+        """
+        task = asyncio.create_task(
+            self.request(
+                "session/prompt",
+                {"sessionId": session_id, "prompt": [{"type": "text", "text": text}]},
+            )
+        )
+        room_id = self.adapter.get_room_for_session(session_id)
+        await wait_for_pending_prompt(self.adapter, room_id)
+        try:
+            yield room_id
+        finally:
+            await self.adapter.cancel_prompt(session_id)
+            await task
+
+
 @pytest.fixture
 def adapter(mock_rest_client: MagicMock) -> BandACPServerAdapter:
     """Adapter with only the REST boundary faked."""
@@ -116,8 +161,8 @@ def server(adapter: BandACPServerAdapter) -> ACPServer:
 
 
 @pytest.fixture
-def router(server: ACPServer) -> Any:
-    return build_agent_router(cast(Agent, server), use_unstable_protocol=True)
+def editor(server: ACPServer, adapter: BandACPServerAdapter) -> WireEditor:
+    return WireEditor(server, adapter)
 
 
 @pytest.fixture
@@ -126,46 +171,10 @@ async def session_id(adapter: BandACPServerAdapter) -> str:
     return await adapter.create_session(cwd="/workspace")
 
 
-@pytest.fixture
-def dispatched_prompt(
-    router: Any, adapter: BandACPServerAdapter
-) -> Callable[[str, str], AbstractAsyncContextManager[str]]:
-    """Factory for driving a session/prompt dispatch as a background task.
-
-    ``session/prompt`` blocks until the peer replies, so a test that wants to
-    observe the pending turn dispatches it as a task and waits for it to
-    reach the room. On exit, resolves the prompt and awaits the dispatch
-    task regardless of how the test body already resolved it (a repeat
-    ``cancel_prompt`` is a no-op), so a failing assertion never leaves a
-    dangling task or an unresolved prompt for a later test to trip over.
-
-    Yields the room id the prompt landed in.
-    """
-
-    @asynccontextmanager
-    async def _dispatch(session_id: str, text: str) -> AsyncIterator[str]:
-        task = asyncio.create_task(
-            router(
-                "session/prompt",
-                {"sessionId": session_id, "prompt": [{"type": "text", "text": text}]},
-                False,
-            )
-        )
-        room_id = adapter.get_room_for_session(session_id)
-        await wait_for_pending_prompt(adapter, room_id)
-        try:
-            yield room_id
-        finally:
-            await adapter.cancel_prompt(session_id)
-            await task
-
-    return _dispatch
-
-
 @pytest.mark.parametrize("method", sorted(REQUESTS))
 @pytest.mark.asyncio
 async def test_dispatch_returns_the_declared_response(
-    method: str, router: Any, session_id: str
+    method: str, editor: WireEditor, session_id: str
 ) -> None:
     """Each method dispatches and returns its ACP response type.
 
@@ -174,7 +183,7 @@ async def test_dispatch_returns_the_declared_response(
     """
     expected = REQUESTS[method][1]
 
-    result = await router(method, payload_for(method, session_id), False)
+    result = await editor.request(method, payload_for(method, session_id))
 
     if isinstance(expected, type):
         assert isinstance(result, expected)
@@ -184,10 +193,12 @@ async def test_dispatch_returns_the_declared_response(
 
 @pytest.mark.asyncio
 async def test_new_session_creates_a_room_and_registers_the_session(
-    router: Any, adapter: BandACPServerAdapter, mock_rest_client: MagicMock
+    editor: WireEditor, adapter: BandACPServerAdapter, mock_rest_client: MagicMock
 ) -> None:
     """session/new maps a new ACP session onto a freshly created Band room."""
-    result = await router("session/new", {"cwd": "/workspace", "mcpServers": []}, False)
+    result = await editor.request(
+        "session/new", {"cwd": "/workspace", "mcpServers": []}
+    )
 
     mock_rest_client.agent_api_chats.create_agent_chat.assert_awaited_once()
     assert adapter.has_session(result.session_id)
@@ -196,25 +207,24 @@ async def test_new_session_creates_a_room_and_registers_the_session(
 
 @pytest.mark.asyncio
 async def test_close_session_removes_the_session(
-    router: Any, adapter: BandACPServerAdapter, session_id: str
+    editor: WireEditor, adapter: BandACPServerAdapter, session_id: str
 ) -> None:
     """session/close drops the session from the adapter."""
     assert adapter.has_session(session_id)
 
-    await router("session/close", {"sessionId": session_id}, False)
+    await editor.request("session/close", {"sessionId": session_id})
 
     assert not adapter.has_session(session_id)
 
 
 @pytest.mark.asyncio
 async def test_load_session_reports_a_miss_for_unknown_session(
-    router: Any, adapter: BandACPServerAdapter
+    editor: WireEditor, adapter: BandACPServerAdapter
 ) -> None:
     """session/load returns an empty result and creates nothing."""
-    result = await router(
+    result = await editor.request(
         "session/load",
         {"cwd": "/workspace", "sessionId": "never-created", "mcpServers": []},
-        False,
     )
 
     assert result == {}
@@ -223,11 +233,11 @@ async def test_load_session_reports_a_miss_for_unknown_session(
 
 @pytest.mark.asyncio
 async def test_fork_session_creates_a_second_session(
-    router: Any, adapter: BandACPServerAdapter, session_id: str
+    editor: WireEditor, adapter: BandACPServerAdapter, session_id: str
 ) -> None:
     """session/fork adds a session without disturbing the original."""
-    result = await router(
-        "session/fork", {"sessionId": session_id, "cwd": "/workspace"}, False
+    result = await editor.request(
+        "session/fork", {"sessionId": session_id, "cwd": "/workspace"}
     )
 
     assert result.session_id != session_id
@@ -237,22 +247,22 @@ async def test_fork_session_creates_a_second_session(
 
 @pytest.mark.asyncio
 async def test_set_mode_is_applied_to_the_session(
-    router: Any, adapter: BandACPServerAdapter, session_id: str
+    editor: WireEditor, adapter: BandACPServerAdapter, session_id: str
 ) -> None:
     """session/set_mode records the mode the editor selected."""
-    await router("session/set_mode", {"sessionId": session_id, "modeId": "code"}, False)
+    await editor.request(
+        "session/set_mode", {"sessionId": session_id, "modeId": "code"}
+    )
 
     assert adapter.get_session_mode(session_id) == "code"
 
 
 @pytest.mark.asyncio
 async def test_prompt_posts_the_text_to_the_room(
-    dispatched_prompt: Callable[[str, str], AbstractAsyncContextManager[str]],
-    session_id: str,
-    mock_rest_client: MagicMock,
+    editor: WireEditor, session_id: str, mock_rest_client: MagicMock
 ) -> None:
     """session/prompt sends the prompt to the room before waiting for a reply."""
-    async with dispatched_prompt(session_id, "hello"):
+    async with editor.prompting(session_id, "hello"):
         sent = mock_rest_client.agent_api_messages.create_agent_chat_message
         sent.assert_awaited_once()
         assert "hello" in sent.await_args.kwargs["message"].content
@@ -260,14 +270,11 @@ async def test_prompt_posts_the_text_to_the_room(
 
 @pytest.mark.asyncio
 async def test_cancel_notification_releases_the_pending_prompt(
-    router: Any,
-    adapter: BandACPServerAdapter,
-    dispatched_prompt: Callable[[str, str], AbstractAsyncContextManager[str]],
-    session_id: str,
+    editor: WireEditor, adapter: BandACPServerAdapter, session_id: str
 ) -> None:
     """session/cancel dispatches as a notification and unblocks the prompt."""
-    async with dispatched_prompt(session_id, "hi") as room_id:
-        await router("session/cancel", {"sessionId": session_id}, True)
+    async with editor.prompting(session_id, "hi") as room_id:
+        await editor.notify("session/cancel", {"sessionId": session_id})
 
         assert not has_pending_prompt(adapter, room_id)
 
@@ -302,7 +309,7 @@ async def test_run_acp_server_sets_use_unstable_protocol(server: ACPServer) -> N
     assert mock_run_agent.await_args.kwargs["use_unstable_protocol"] is True
 
 
-def test_requests_cover_every_method_the_router_binds(router: Any) -> None:
+def test_requests_cover_every_method_the_router_binds(editor: WireEditor) -> None:
     """REQUESTS covers every ACP method the router bound to ACPServer.
 
     Without this, a new handler added with no entry would leave the
@@ -313,4 +320,4 @@ def test_requests_cover_every_method_the_router_binds(router: Any) -> None:
     """
     expected = set(REQUESTS) | BLOCKING_METHODS | NOTIFICATION_METHODS
 
-    assert routed_methods(router) == expected
+    assert routed_methods(editor.router) == expected
