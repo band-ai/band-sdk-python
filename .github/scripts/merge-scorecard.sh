@@ -24,3 +24,4 @@ if [ "$code" -eq 0 ]; then
 else
   echo "passed=false" >> "$GITHUB_OUTPUT"
 fi
+exit "$code"
