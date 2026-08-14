@@ -730,9 +730,9 @@ direction, since the release gate treats an absent status as blocking anyway. A
    lastfailed cache" is to run *everything*, so an attempt 1 that died without
    recording a failed nodeid (collection error, import-time raise, OOM kill) would
    silently promote the retry into a second full live lane — double the provider spend
-   and wall clock against a leg capped at 120 minutes. With the flag, such a retry
-   deselects everything and exits 5, which the script reads as "nothing to retry" and
-   keeps attempt 1's verdict.
+   and wall clock against a leg that carries a wall-clock cap. With the flag, such a
+   retry deselects everything and exits 5, which the script reads as "nothing to retry"
+   and keeps attempt 1's verdict.
 
 No time-boxed automatic override is layered on top of either — a lane stuck failing
 on a real provider outage does not silently start passing after N nights. The
@@ -740,17 +740,21 @@ deliberate manual-override path is the `main-branch-protection` ruleset's existi
 `OrganizationAdmin` bypass actor, used the same way any other required-check override
 would be.
 
-**Per-leg timeout:** `e2e.yml`'s `e2e` job carries `timeout-minutes: 120` — without
+**Per-leg timeout:** `e2e.yml`'s `e2e` job carries a `timeout-minutes` cap — without
 it, GitHub's own default (360 minutes) is the only ceiling on a genuinely stuck leg.
-Observed live: three real multi-agent-collaboration tests each burned their full
-rerun budget (attempt + 2 retries, ~6 minutes each) before failing, ~40 minutes for
-just those three, so 120 leaves real headroom above realistic worst-case slowness
-while still bounding a true hang. Verified live that GitHub reports a
+The workflow is the single source of that number; this section deliberately does not
+restate it, and neither does the digest text, so there is no second copy to go stale.
+Sizing it is a real trade-off in both directions: too loose and a hung leg burns
+runner time to no purpose, but too tight is worse than it looks — GitHub reports a
+timeout as `cancelled`, which the gate treats exactly like a failure, so a cap that
+clips legs which were still making progress *manufactures* red baselines and trains
+people to ignore the signal. It was raised from an initial 120 after a full-matrix run
+showed healthy legs still working past 90 minutes. Verified live that GitHub reports a
 `timeout-minutes` kill as conclusion `cancelled`, not `failure` — `MATRIX_OK` in
 `compute-gate-verdict.sh` only checks equality with `success`, so a timeout reddens
 the gate the same as an outright failure with no extra handling, and the nightly
-digest's warning line names "failed, crashed, or timed out" explicitly rather than
-only "crashed."
+digest's warning line names "failed, crashed, or hit its time cap" explicitly rather
+than only "crashed."
 
 **`baseline-green` + the release gate:** on a full-matrix run, `e2e.yml`'s
 `mark-baseline` job posts a `baseline-green` commit status (success/failure) on the
