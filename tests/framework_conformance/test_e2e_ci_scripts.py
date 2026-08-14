@@ -12,6 +12,7 @@ file rather than on a re-implementation of it.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -25,17 +26,35 @@ _EMIT_LANE_MATRIX = CI_SCRIPTS / "emit-lane-matrix.py"
 _READ_MENTIONS = CI_SCRIPTS / "read-integrations-mentions.sh"
 _ROSTER = Path(".github") / "integrations-team.txt"
 
-requires_bash = pytest.mark.skipif(
-    shutil.which("bash") is None, reason="no bash on this platform"
+# POSIX-shell only. On Windows, `shutil.which("bash")` finds System32\bash.exe —
+# the WSL launcher, not a shell — which on a runner with no WSL distro installed
+# prints a UTF-16 "no installed distributions" notice and exits 1. So a
+# which()-based guard does not skip, it just fails confusingly. The script under
+# test only ever runs in the ubuntu-only `mark-baseline` job anyway, so a POSIX
+# shell is its real contract.
+posix_shell_only = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="needs a POSIX bash (Windows `bash` is the WSL launcher)",
 )
 
 
 def _emit_lane_matrix(lane: str, os_id: str) -> subprocess.CompletedProcess[str]:
-    """Run the lane-matrix emitter for one dispatch selection."""
+    """Run the lane-matrix emitter for one dispatch selection.
+
+    Overlays onto the inherited environment rather than replacing it: a bare
+    ``env={...}`` drops ``SYSTEMROOT`` on Windows, and CPython needs it to load
+    the winsock extension ``asyncio`` imports — the interpreter then dies with
+    ``WinError 10106`` before the script's own code runs.
+    """
     return subprocess.run(
         [sys.executable, str(_EMIT_LANE_MATRIX)],
         cwd=REPO_ROOT,
-        env={"PYTHONPATH": str(REPO_ROOT), "SELECTED_LANE": lane, "SELECTED_OS": os_id},
+        env={
+            **os.environ,
+            "PYTHONPATH": str(REPO_ROOT),
+            "SELECTED_LANE": lane,
+            "SELECTED_OS": os_id,
+        },
         capture_output=True,
         text=True,
     )
@@ -78,7 +97,12 @@ def test_lane_matrix_full_selection_spans_both_operating_systems() -> None:
 def _read_mentions(
     tmp_path: Path, roster: str | None
 ) -> subprocess.CompletedProcess[str]:
-    """Run the mentions reader against a throwaway roster (``None`` = no file)."""
+    """Run the mentions reader against a throwaway roster (``None`` = no file).
+
+    Overlays the environment (see ``_emit_lane_matrix``) so the script keeps a real
+    ``PATH`` for the ``grep``/``sed``/``paste`` it pipes through, rather than relying
+    on bash's fallback default.
+    """
     script = tmp_path / _READ_MENTIONS.name
     shutil.copy(_READ_MENTIONS, script)
     if roster is not None:
@@ -87,13 +111,13 @@ def _read_mentions(
     return subprocess.run(
         ["bash", script.name],
         cwd=tmp_path,
-        env={"GITHUB_OUTPUT": str(tmp_path / "out.txt")},
+        env={**os.environ, "GITHUB_OUTPUT": str(tmp_path / "out.txt")},
         capture_output=True,
         text=True,
     )
 
 
-@requires_bash
+@posix_shell_only
 @pytest.mark.parametrize(
     ("roster", "expected"),
     [
@@ -117,7 +141,7 @@ def test_mentions_reader_diagnoses_an_unusable_roster(
     assert expected in result.stdout + result.stderr
 
 
-@requires_bash
+@posix_shell_only
 def test_mentions_reader_emits_at_handles_for_a_real_roster(tmp_path: Path) -> None:
     result = _read_mentions(tmp_path, "# team\nalice\nbob\n")
 
