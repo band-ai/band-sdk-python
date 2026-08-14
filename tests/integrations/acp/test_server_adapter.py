@@ -12,7 +12,7 @@ from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 
-from .conftest import (
+from tests.integrations.acp.conftest import (
     make_platform_message,
     make_tool_call_message,
     wait_for_pending_prompt,

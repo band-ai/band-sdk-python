@@ -22,10 +22,10 @@ from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 
-from .acp_toolkit import (
+from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent as FakeACPAgent,  # re-exported for tests importing from conftest
 )
-from .acp_toolkit import (
+from tests.integrations.acp.acp_toolkit import (
     FakeSpawn,
     Reply,
     acp_adapter as acp_adapter,  # re-exported

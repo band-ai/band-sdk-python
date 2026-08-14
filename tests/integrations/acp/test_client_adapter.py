@@ -20,7 +20,7 @@ from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
 from band.testing import FakeAgentTools
 
-from .conftest import make_platform_message
+from tests.integrations.acp.conftest import make_platform_message
 
 
 def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
