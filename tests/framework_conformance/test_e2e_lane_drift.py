@@ -11,12 +11,12 @@ fails loudly on every PR, not only on a manual workflow dispatch.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from tests.e2e.baseline.toolkit.ci_lanes import (
+    E2E_WORKFLOW,
     assert_workflow_lane_gates_known,
     assert_workflow_lane_options_match_registry,
     ci_lanes,
@@ -24,11 +24,8 @@ from tests.e2e.baseline.toolkit.ci_lanes import (
 )
 
 
-_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "e2e.yml"
-
-
 def _workflow_jobs() -> dict[str, Any]:
-    return yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    return yaml.safe_load(E2E_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
 
 
 def test_workflow_lane_gates_reference_only_known_lanes() -> None:

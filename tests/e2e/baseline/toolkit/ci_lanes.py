@@ -140,17 +140,17 @@ def hosting_lanes(home_lanes: frozenset[str]) -> frozenset[str]:
 
 
 # The e2e workflow (REPO_ROOT is the single source of the checkout-depth assumption).
-_E2E_WORKFLOW = REPO_ROOT / ".github/workflows/e2e.yml"
+E2E_WORKFLOW = REPO_ROOT / ".github/workflows/e2e.yml"
 # A `matrix.lane == 'x'` / `!= "x"` gate literal in the workflow (either quote style).
 _LANE_GATE_RE = re.compile(r"""matrix\.lane\s*[!=]=\s*["']([^"']+)["']""")
 
 
-def workflow_lane_gate_ids(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
+def workflow_lane_gate_ids(workflow_path: Path = E2E_WORKFLOW) -> set[str]:
     """The lane ids referenced by ``matrix.lane`` gates in the e2e workflow."""
     return set(_LANE_GATE_RE.findall(workflow_path.read_text(encoding="utf-8")))
 
 
-def assert_workflow_lane_gates_known(workflow_path: Path = _E2E_WORKFLOW) -> None:
+def assert_workflow_lane_gates_known(workflow_path: Path = E2E_WORKFLOW) -> None:
     """Fail loudly if a workflow ``matrix.lane`` gate names a lane the registry
     doesn't emit.
 
@@ -169,7 +169,7 @@ def assert_workflow_lane_gates_known(workflow_path: Path = _E2E_WORKFLOW) -> Non
         )
 
 
-def workflow_lane_options(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
+def workflow_lane_options(workflow_path: Path = E2E_WORKFLOW) -> set[str]:
     """The ``workflow_dispatch`` ``lane`` dropdown options in the e2e workflow.
 
     GitHub ``choice`` inputs require a *static* options list, so this dropdown is
@@ -183,7 +183,7 @@ def workflow_lane_options(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
 
 
 def assert_workflow_lane_options_match_registry(
-    workflow_path: Path = _E2E_WORKFLOW,
+    workflow_path: Path = E2E_WORKFLOW,
 ) -> None:
     """Fail loudly if the ``lane`` dropdown drifts from the registry's lanes.
 
