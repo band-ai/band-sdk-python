@@ -234,6 +234,15 @@ def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
     return _custom_tool_positional_arity(func) > 0
 
 
+def custom_tool_accepts_ctx(func: Callable[..., Any]) -> bool:
+    """Whether a handler opted in to the INT-994 second (ctx) parameter.
+
+    Adapters whose framework owns the call chain (pydantic-ai's RunContext
+    registration) use this to pick the wrapper shape once, at conversion time.
+    """
+    return _custom_tool_positional_arity(func) >= 2
+
+
 async def execute_custom_tool(
     tool: CustomToolDef,
     arguments: dict[str, Any],

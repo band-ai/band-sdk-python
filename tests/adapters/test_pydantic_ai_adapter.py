@@ -1852,3 +1852,90 @@ class TestPortableCustomToolDef:
         (content,) = self._tool_return_contents(result)
         assert isinstance(content, str)
         assert content.startswith("user:")
+
+
+class TestCtxThreading:
+    """INT-994: a ctx-opt-in tuple handler reaches the deps' ExecutionContext."""
+
+    @staticmethod
+    def _tool_return_contents(result) -> list:
+        from pydantic_ai.messages import ToolReturnPart
+
+        return [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    def test_opt_in_tuple_converts_to_a_run_context_callable(self):
+        """A two-param handler produces a RunContext-taking wrapper (routed to
+        agent.tool by the registration classifier); a one-param handler keeps
+        the exact context-free shape."""
+        from pydantic import BaseModel
+
+        from band.adapters.pydantic_ai import (
+            _custom_tool_def_to_callable,
+            _takes_run_context,
+        )
+
+        class LookupInput(BaseModel):
+            """look up a code."""
+
+            key: str
+
+        async def legacy(args: LookupInput) -> str:
+            return "x"
+
+        async def opted_in(args: LookupInput, ctx) -> str:
+            return "y"
+
+        assert not _takes_run_context(
+            _custom_tool_def_to_callable((LookupInput, legacy))
+        )
+        assert _takes_run_context(_custom_tool_def_to_callable((LookupInput, opted_in)))
+
+    @pytest.mark.asyncio
+    async def test_opt_in_tuple_receives_ctx_through_a_real_run(self):
+        """End-to-end through pydantic-ai: the wrapper reads the turn's tools
+        off RunContext.deps and threads tools._ctx into the handler, and the
+        single model param still flattens into the tool schema."""
+        from unittest.mock import MagicMock
+
+        from pydantic import BaseModel
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
+        from band.core.protocols import AgentToolsProtocol
+
+        class LookupInput(BaseModel):
+            """look up a code."""
+
+            key: str
+
+        received = []
+
+        async def lookup(args: LookupInput, ctx) -> str:
+            received.append(ctx)
+            return f"code:{args.key}"
+
+        native = _custom_tool_def_to_callable((LookupInput, lookup))
+        agent: Agent = Agent(TestModel(), output_type=str, deps_type=AgentToolsProtocol)
+        agent.tool(native)
+
+        (tool,) = agent._function_toolset.tools.values()
+        schema = tool.function_schema.json_schema
+        assert tool.name == "lookup"
+        assert sorted((schema.get("properties") or {}).keys()) == ["key"]
+
+        deps = MagicMock()
+        sentinel_ctx = object()
+        deps._ctx = sentinel_ctx
+
+        result = await agent.run("go", deps=deps)
+
+        (content,) = self._tool_return_contents(result)
+        assert isinstance(content, str)
+        assert content.startswith("code:")
+        assert received == [sentinel_ctx]

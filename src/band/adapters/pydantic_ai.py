@@ -54,6 +54,8 @@ from band.converters.pydantic_ai import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
+    custom_tool_accepts_ctx,
     get_custom_tool_name,
     invoke_validated_custom_tool,
     is_marked_terminal,
@@ -162,15 +164,37 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     models using field aliases. The wrapper carries the stable tool name (derived
     from the model) and the ``band_terminal`` marker, so the tool name and the
     terminal-tool contract match the tuple adapters exactly.
+
+    A handler that opted in to the INT-994 ctx parameter — ``handler(args,
+    ctx)`` — instead gets a ``RunContext``-taking wrapper (routed to
+    ``agent.tool`` by ``_takes_run_context``): pydantic-ai owns the tool call
+    chain, and its ``deps`` carry the turn's AgentTools, so the wrapper reads
+    the ExecutionContext off ``run_ctx.deps`` at call time. One-param handlers
+    keep the exact context-free shape above.
     """
     input_model, handler = tool_def
 
-    async def native(args: Any) -> Any:
-        return await invoke_validated_custom_tool(tool_def, args)
+    if custom_tool_accepts_ctx(handler):
+
+        async def native(run_ctx: RunContext[AgentToolsProtocol], args: Any) -> Any:
+            return await invoke_validated_custom_tool(
+                tool_def, args, ctx=ctx_from_tools(run_ctx.deps)
+            )
+
+        native.__annotations__ = {
+            "run_ctx": RunContext[AgentToolsProtocol],
+            "args": input_model,
+            "return": str,
+        }
+    else:
+
+        async def native(args: Any) -> Any:  # type: ignore[misc]
+            return await invoke_validated_custom_tool(tool_def, args)
+
+        native.__annotations__ = {"args": input_model, "return": str}
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
-    native.__annotations__ = {"args": input_model, "return": str}
     if is_marked_terminal(handler):
         native.band_terminal = True  # type: ignore[attr-defined]
     return native
