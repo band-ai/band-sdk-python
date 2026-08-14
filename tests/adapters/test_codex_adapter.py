@@ -7271,3 +7271,66 @@ class TestDoubleEmitStartupWarning:
         assert not any(
             "two task events per turn" in record.message for record in caplog.records
         )
+
+
+class TestCtxThreading:
+    """INT-994: the tool-call loop threads tools._ctx to custom handlers."""
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_receives_ctx(self) -> None:
+        class CtxCalcInput(BaseModel):
+            """Simple calculator."""
+
+            expression: str
+
+        received: list[Any] = []
+
+        async def calculate(inp: CtxCalcInput, ctx: Any) -> str:
+            received.append(ctx)
+            return "42"
+
+        custom_tools: list[CustomToolDef] = [(CtxCalcInput, calculate)]
+        events = [
+            _event_request(
+                99,
+                "item/tool/call",
+                {
+                    "tool": "ctxcalc",
+                    "arguments": {"expression": "6*7"},
+                    "callId": "call-99",
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            additional_tools=custom_tools,
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+        sentinel_ctx = object()
+        tools._ctx = sentinel_ctx
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert received == [sentinel_ctx]

@@ -498,3 +498,38 @@ class TestPublicImportPath:
         adapter._band_agent_id = "crewai-flow-router-id"
         await adapter.on_started("crewai_flow_router", "")
         assert adapter.metadata_namespace == "crewai_flow:crewai-flow-router-id"
+
+
+class TestCtxThreading:
+    """INT-994: CrewAIFlowCustomTools.call_tool threads tools._ctx to handlers."""
+
+    @pytest.mark.asyncio
+    async def test_call_tool_threads_ctx(self):
+        from band.adapters.crewai_flow import CrewAIFlowCustomTools
+        from band.core.types import AdapterFeatures
+
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            text: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        mock_tools = MagicMock()
+        sentinel_ctx = object()
+        mock_tools._ctx = sentinel_ctx
+
+        runtime_tools = CrewAIFlowCustomTools(
+            custom_tools={"ctxprobe": (CtxProbeInput, probe)},
+            tools=mock_tools,
+            features=AdapterFeatures(),
+        )
+
+        result = await runtime_tools.call_tool("ctxprobe", {"text": "hi"})
+
+        assert result == "probed"
+        assert received == [sentinel_ctx]

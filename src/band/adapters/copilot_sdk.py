@@ -36,6 +36,7 @@ from band.integrations.copilot_sdk.room_ask_user import (
     room_inactive_answer,
 )
 from band.runtime.custom_tools import (
+    ctx_from_tools,
     custom_tools_to_schemas,
     execute_custom_tool,
     find_custom_tool,
@@ -701,7 +702,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         try:
             custom_tool = find_custom_tool(self._custom_tools, tool_name)
             if custom_tool:
-                result = await execute_custom_tool(custom_tool, arguments)
+                result = await execute_custom_tool(
+                    custom_tool, arguments, ctx=ctx_from_tools(room_tools)
+                )
             else:
                 # Structured variant: a base tool (e.g. band_send_message) can fail
                 # without raising (bad args, API error) — that surfaces as ok=False,

@@ -658,3 +658,35 @@ class TestEmptyCandidates:
 
         content = adapter._extract_candidate_content(response)
         assert content is None
+
+
+class TestCtxThreading:
+    """INT-994: _process_function_calls threads tools._ctx to custom handlers."""
+
+    @pytest.mark.asyncio
+    async def test_ctx_threads_to_custom_handler(self, mock_tools):
+        class CtxEchoInput(BaseModel):
+            text: str = Field(...)
+
+        received = []
+
+        async def ctx_echo(inp: CtxEchoInput, ctx) -> str:
+            received.append(ctx)
+            return inp.text
+
+        adapter = GeminiAdapter(
+            additional_tools=[(CtxEchoInput, ctx_echo)],
+            provider_key="test-key",
+        )
+        sentinel_ctx = object()
+        mock_tools._ctx = sentinel_ctx
+
+        function_calls = [
+            types.FunctionCall(name="ctxecho", args={"text": "hello"}, id="c1")
+        ]
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        assert received == [sentinel_ctx]
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.response == {"output": "hello"}

@@ -33,6 +33,7 @@ from band.core.types import (
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     custom_tools_to_schemas,
     execute_custom_tool,
     find_custom_tool,
@@ -210,7 +211,9 @@ def _get_tool_bridge_class() -> type:
             try:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, args)
+                    result = await execute_custom_tool(
+                        custom_tool, args, ctx=ctx_from_tools(self._tools)
+                    )
                 else:
                     result = await self._tools.execute_tool_call(self.name, args)
 
