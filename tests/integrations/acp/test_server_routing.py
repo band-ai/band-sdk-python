@@ -22,7 +22,6 @@ import pytest
 from acp.agent.router import build_agent_router
 from acp.exceptions import RequestError
 from acp.interfaces import Agent
-from acp.meta import AGENT_METHODS
 from acp.schema import (
     ForkSessionResponse,
     InitializeResponse,
@@ -75,23 +74,24 @@ REQUESTS: dict[str, tuple[dict[str, Any], Any]] = {
 
 BLOCKING_METHODS = {"session/prompt"}
 
+# Dispatched as notifications, so they return nothing to assert a type on.
+NOTIFICATION_METHODS = {"session/cancel"}
+
 # Routes the ACP SDK registers as unstable. ACPServer implements all three;
 # run_acp_server() enables them via use_unstable_protocol.
 UNSTABLE_METHODS = {"session/fork", "session/resume", "session/close"}
 
-# AGENT_METHODS key -> ACPServer handler name, where they differ.
-HANDLER_NAMES = {
-    "session_new": "new_session",
-    "session_load": "load_session",
-    "session_list": "list_sessions",
-    "session_set_mode": "set_session_mode",
-    "session_set_config_option": "set_config_option",
-    "session_prompt": "prompt",
-    "session_fork": "fork_session",
-    "session_resume": "resume_session",
-    "session_close": "close_session",
-    "session_cancel": "cancel",
-}
+
+def routed_methods(router: Any) -> set[str]:
+    """The wire methods the router bound to a live ACPServer handler.
+
+    The SDK resolves each route's handler by attribute lookup at build time
+    and stores None for a miss (dispatching such a route raises
+    method_not_found), so the route tables are the SDK's own record of which
+    methods the server implements.
+    """
+    routes = {**router._requests, **router._notifications}
+    return {method for method, route in routes.items() if route.func is not None}
 
 
 def payload_for(method: str, session_id: str) -> dict[str, Any]:
@@ -302,18 +302,15 @@ async def test_run_acp_server_sets_use_unstable_protocol(server: ACPServer) -> N
     assert mock_run_agent.await_args.kwargs["use_unstable_protocol"] is True
 
 
-def test_requests_cover_every_handler_acp_server_defines() -> None:
-    """REQUESTS covers every ACP method ACPServer handles.
+def test_requests_cover_every_method_the_router_binds(router: Any) -> None:
+    """REQUESTS covers every ACP method the router bound to ACPServer.
 
     Without this, a new handler added with no entry would leave the
-    dispatch tests above silently passing. Membership is tested against
-    ``ACPServer.__dict__`` rather than ``hasattr`` so that inherited
-    attributes cannot register as implemented handlers.
+    dispatch tests above silently passing. The covered set is derived from
+    the router's own handler resolution, so a handler rename on either
+    side fails here as a coverage mismatch rather than only as a dispatch
+    error.
     """
-    handled = {
-        AGENT_METHODS[name]
-        for name in AGENT_METHODS
-        if HANDLER_NAMES.get(name, name) in ACPServer.__dict__
-    }
+    expected = set(REQUESTS) | BLOCKING_METHODS | NOTIFICATION_METHODS
 
-    assert handled == set(REQUESTS) | BLOCKING_METHODS | {"session/cancel"}
+    assert routed_methods(router) == expected
