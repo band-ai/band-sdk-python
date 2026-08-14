@@ -58,7 +58,11 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     Example:
         from band import Agent
-        from band.integrations.acp import BandACPServerAdapter, ACPServer
+        from band.integrations.acp import (
+            ACPServer,
+            BandACPServerAdapter,
+            run_acp_server,
+        )
 
         adapter = BandACPServerAdapter(
             rest_url="https://app.band.ai",
@@ -67,7 +71,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         server = ACPServer(adapter)
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.start()
-        await run_agent(server)
+        await run_acp_server(server)
     """
 
     def __init__(

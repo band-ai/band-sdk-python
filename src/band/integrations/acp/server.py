@@ -11,6 +11,7 @@ from acp import (
     InitializeResponse,
     NewSessionResponse,
     PromptResponse,
+    run_agent,
 )
 from acp.schema import (
     AgentCapabilities,
@@ -119,6 +120,8 @@ class ACPServer(Agent):
                     audio=False,
                     embedded_context=True,
                 ),
+                # resume/fork are unstable ACP routes, so this promise only
+                # holds when the server is served via run_acp_server().
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),
                     resume=SessionResumeCapabilities(),
@@ -562,3 +565,34 @@ class ACPServer(Agent):
                 else:
                     logger.debug("Unknown content block type: %s", block_type)
         return "\n".join(parts)
+
+
+async def run_acp_server(
+    server: ACPServer,
+    input_stream: Any = None,
+    output_stream: Any = None,
+    **connection_kwargs: Any,
+) -> None:
+    """Serve an :class:`ACPServer`, with every route it advertises reachable.
+
+    Drop-in replacement for :func:`acp.run_agent`, and the only supported way
+    to run an :class:`ACPServer`. ``session/fork``, ``session/resume`` and
+    ``session/close`` are unstable routes in the ACP SDK: unless
+    ``use_unstable_protocol`` is enabled they answer ``method_not_found``,
+    even though :class:`ACPServer` implements all three and advertises them
+    from ``initialize``. Routing every caller through here keeps what the
+    server promises and what it actually answers in agreement.
+
+    Args:
+        server: The ACP server to serve.
+        input_stream: Stream to read client messages from (default: stdin).
+        output_stream: Stream to write agent messages to (default: stdout).
+        **connection_kwargs: Forwarded to the underlying ACP connection.
+    """
+    await run_agent(
+        server,
+        input_stream,
+        output_stream,
+        use_unstable_protocol=True,
+        **connection_kwargs,
+    )

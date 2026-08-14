@@ -264,7 +264,7 @@ Two-layer pattern (mirrors A2A Gateway):
 
 | File | Purpose |
 |------|---------|
-| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
+| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC; `run_acp_server` — the supported way to serve it |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
 | `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
@@ -287,6 +287,16 @@ band-acp --agent-id my-agent --api-key $BAND_API_KEY
 # Or with environment variables
 BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 ```
+
+### Serving the server (`run_acp_server`)
+
+Always serve an `ACPServer` with `run_acp_server()` (`integrations/acp/server.py`,
+re-exported from `band.adapters`), never `acp.run_agent()` directly. `session/fork`,
+`session/resume` and `session/close` are **unstable** routes in the ACP SDK: without
+`use_unstable_protocol=True` they answer `method_not_found`, even though `ACPServer`
+implements all three and advertises fork/resume from `initialize()`. The wrapper owns
+that flag so the capabilities the server promises and the routes it actually answers
+cannot drift apart.
 
 ### Session Lifecycle
 
