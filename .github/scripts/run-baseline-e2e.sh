@@ -28,7 +28,7 @@ if [ "$code" -ne 0 ]; then
   # without ever recording a failed nodeid (a collection error, an import-time
   # raise, an OOM/kill mid-session), and the plain flag would then silently promote
   # the retry into a second full live lane -- double the provider spend and wall
-  # clock, against a leg now capped at 120 minutes. Deselecting instead is the
+  # clock, against a leg that carries a wall-clock cap. Deselecting instead is the
   # honest reading: a retry with nothing identifiable to retry has nothing to add.
   BAND_E2E_SCORECARD_JSON="$ATTEMPT2" uv run pytest tests/e2e/baseline/ -v -s --no-cov \
     --last-failed --lfnf=none

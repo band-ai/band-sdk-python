@@ -139,7 +139,14 @@ jobs:
     # tests each burned their full rerun budget (attempt + 2 retries, ~6 min each)
     # before failing, ~40 minutes for just those three. This caps a leg well
     # short of the platform default while leaving headroom above that.
-    timeout-minutes: 120
+    #
+    # Raised from 120: a full-matrix run showed healthy legs still working well
+    # past 90 minutes, so 120 risked killing legs that were making progress
+    # rather than only ones that were stuck — and a timeout is indistinguishable
+    # from a real failure in the digest, so a too-tight cap manufactures red runs.
+    # This is the *only* place the cap is defined; the digest text and the docs
+    # deliberately describe it without restating the number.
+    timeout-minutes: 240
     # Per-(lane, OS) concurrency: a new dispatch cancels only the matching
     # lane+OS still running, never the whole matrix — so one lane can be
     # re-run in isolation. (See the note above the jobs block.)

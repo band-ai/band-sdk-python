@@ -36,7 +36,10 @@ body_file="$(mktemp)"
     echo
   fi
   if [ "$MATRIX_OK" != "true" ]; then
-    echo "⚠️ At least one selected lane/OS leg failed, crashed, or timed out (each lane is capped at 120 minutes) before reporting anything — see the e2e job for which and why. The counts below only cover what actually reported."
+    # Deliberately does not restate the leg time cap: it is defined once, in
+    # e2e.yml's `timeout-minutes`, and a stale copy here would misinform the very
+    # people this email is meant to inform.
+    echo "⚠️ At least one selected lane/OS leg failed, crashed, or hit its time cap before reporting anything — see the e2e job for which and why. The counts below only cover what actually reported."
     echo
   fi
   if [ -f "$GATE_SUMMARY_FILE" ]; then
