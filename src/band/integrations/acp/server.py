@@ -32,7 +32,6 @@ from acp.schema import (
     SessionInfo,
     SetSessionConfigOptionResponse,
     SetSessionModeResponse,
-    SetSessionModelResponse,
     TextContentBlock,
 )
 
@@ -148,6 +147,7 @@ class ACPServer(Agent):
     async def new_session(
         self,
         cwd: str,
+        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
@@ -160,12 +160,15 @@ class ACPServer(Agent):
 
         Args:
             cwd: Working directory from the editor.
+            additional_directories: Extra workspace directories the editor
+                grants access to. Not used by the Band adapter.
             mcp_servers: Optional MCP server configs from the editor.
             **kwargs: Additional keyword arguments.
 
         Returns:
             NewSessionResponse with the session identifier.
         """
+        del additional_directories
         session_id = await self._adapter.create_session(
             cwd=cwd,
             mcp_servers=mcp_servers,
@@ -178,6 +181,7 @@ class ACPServer(Agent):
         cwd: str,
         session_id: str,
         mcp_servers: list[Any] | None = None,
+        additional_directories: list[str] | None = None,
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
         """Handle ACP load_session request.
@@ -189,11 +193,14 @@ class ACPServer(Agent):
             cwd: Working directory from the editor.
             session_id: The ACP session to load.
             mcp_servers: Optional list of MCP servers from the editor.
+            additional_directories: Extra workspace directories the editor
+                grants access to. Not used by the Band adapter.
             **kwargs: Additional keyword arguments.
 
         Returns:
             LoadSessionResponse if session exists, None otherwise.
         """
+        del additional_directories
         if not self._adapter.has_session(session_id):
             logger.debug("load_session: session %s not found", session_id)
             return None
@@ -208,8 +215,8 @@ class ACPServer(Agent):
 
     async def list_sessions(
         self,
-        cursor: str | None = None,
         cwd: str | None = None,
+        cursor: str | None = None,
         **kwargs: Any,
     ) -> ListSessionsResponse:
         """Handle ACP list_sessions request.
@@ -233,8 +240,8 @@ class ACPServer(Agent):
 
     async def set_session_mode(
         self,
-        mode_id: str,
         session_id: str,
+        mode_id: str,
         **kwargs: Any,
     ) -> SetSessionModeResponse | None:
         """Handle ACP set_session_mode request.
@@ -242,8 +249,8 @@ class ACPServer(Agent):
         Stores the mode for the session in the adapter's state.
 
         Args:
-            mode_id: The mode identifier to set.
             session_id: The ACP session identifier.
+            mode_id: The mode identifier to set.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -252,28 +259,6 @@ class ACPServer(Agent):
         self._adapter.set_session_mode(session_id, mode_id)
         logger.info("Set session mode: session=%s, mode=%s", session_id, mode_id)
         return SetSessionModeResponse()
-
-    async def set_session_model(
-        self,
-        model_id: str,
-        session_id: str,
-        **kwargs: Any,
-    ) -> SetSessionModelResponse | None:
-        """Handle ACP set_session_model request.
-
-        Stores the model for the session in the adapter's state.
-
-        Args:
-            model_id: The model identifier to set.
-            session_id: The ACP session identifier.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            SetSessionModelResponse acknowledgement.
-        """
-        self._adapter.set_session_model(session_id, model_id)
-        logger.info("Set session model: session=%s, model=%s", session_id, model_id)
-        return SetSessionModelResponse()
 
     async def set_config_option(
         self,
@@ -323,8 +308,9 @@ class ACPServer(Agent):
 
     async def fork_session(
         self,
-        cwd: str,
         session_id: str,
+        cwd: str,
+        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> ForkSessionResponse:
@@ -332,6 +318,7 @@ class ACPServer(Agent):
 
         Creates a new Band-backed ACP session as a fork target.
         """
+        del additional_directories
         if not self._adapter.has_session(session_id):
             raise KeyError(f"Cannot fork unknown ACP session: {session_id}")
 
@@ -349,8 +336,9 @@ class ACPServer(Agent):
 
     async def resume_session(
         self,
-        cwd: str,
         session_id: str,
+        cwd: str,
+        additional_directories: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
         **kwargs: Any,
     ) -> ResumeSessionResponse:
@@ -358,6 +346,7 @@ class ACPServer(Agent):
 
         The in-memory adapter can only resume active sessions.
         """
+        del additional_directories
         _ = kwargs
         if not self._adapter.has_session(session_id):
             raise KeyError(f"Cannot resume unknown ACP session: {session_id}")
@@ -462,6 +451,7 @@ class ACPServer(Agent):
 
     async def prompt(
         self,
+        session_id: str,
         prompt: list[
             TextContentBlock
             | ImageContentBlock
@@ -469,8 +459,6 @@ class ACPServer(Agent):
             | ResourceContentBlock
             | EmbeddedResourceContentBlock
         ],
-        session_id: str,
-        message_id: str | None = None,
         **kwargs: Any,
     ) -> PromptResponse:
         """Handle ACP prompt request.
@@ -479,15 +467,13 @@ class ACPServer(Agent):
         and waits for the response to be streamed back via session_update.
 
         Args:
-            prompt: List of ACP content blocks (TextContentBlock, etc.).
             session_id: The ACP session identifier.
-            message_id: Optional message identifier from the client.
+            prompt: List of ACP content blocks (TextContentBlock, etc.).
             **kwargs: Additional keyword arguments.
 
         Returns:
             PromptResponse with stop reason.
         """
-        del message_id
         text = self._extract_text(prompt)
         logger.debug("ACP prompt for session %s: %s", session_id, text[:100])
         await self._adapter.handle_prompt(session_id, text)

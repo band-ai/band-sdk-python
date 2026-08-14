@@ -854,12 +854,6 @@ class TestBandACPServerAdapterPublicAccessors:
 
         assert adapter._session_modes["session-1"] == "code"
 
-    def test_set_session_model_logs(self) -> None:
-        """Should store the selected model."""
-        adapter = BandACPServerAdapter()
-        adapter.set_session_model("session-1", "gpt-4")
-        assert adapter._session_models["session-1"] == "gpt-4"
-
     def test_get_session_for_room(self) -> None:
         """Should return session_id for known rooms, None otherwise."""
         adapter = BandACPServerAdapter()

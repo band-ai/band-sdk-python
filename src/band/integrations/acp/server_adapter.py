@@ -91,7 +91,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         self._room_to_session: dict[str, str] = {}  # room_id -> session_id
         self._pending_prompts: dict[str, PendingACPPrompt] = {}  # room_id -> pending
         self._session_modes: dict[str, str] = {}  # session_id -> mode_id
-        self._session_models: dict[str, str] = {}  # session_id -> model_id
         self._session_cwd: dict[str, str] = {}  # session_id -> cwd
         self._session_mcp_servers: dict[
             str, list[Any]
@@ -151,15 +150,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         Cleanup races are prevented by best-effort .pop() in on_cleanup.
         """
         self._session_modes[session_id] = mode_id
-
-    def set_session_model(self, session_id: str, model_id: str) -> None:
-        """Record the model chosen by the editor.
-
-        Note: Called from sync ACP handlers. Safe because the single ACP
-        stdio connection serializes requests, so no concurrent callers.
-        """
-        self._session_models[session_id] = model_id
-        logger.debug("Session model set: session=%s, model=%s", session_id, model_id)
 
     def get_session_cwd(self, session_id: str) -> str:
         """Return the working directory for a session, or '.' if unknown."""
@@ -492,7 +482,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             if session_id:
                 self._session_to_room.pop(session_id, None)
                 self._session_modes.pop(session_id, None)
-                self._session_models.pop(session_id, None)
                 self._session_cwd.pop(session_id, None)
                 self._session_mcp_servers.pop(session_id, None)
 
