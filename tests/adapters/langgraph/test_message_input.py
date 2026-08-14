@@ -251,6 +251,64 @@ class TestOnMessage:
         )
 
     @pytest.mark.asyncio
+    async def test_simple_pattern_threads_ctx_to_tuple_custom_tools(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """INT-994: a CustomToolDef tuple is converted per turn, binding the
+        turn's ExecutionContext (tools._ctx) into the tool closure — the
+        init-time conversion could never see it."""
+        from pydantic import BaseModel
+
+        class ProbeInput(BaseModel):
+            """Report who is asking."""
+
+            text: str
+
+        received = []
+
+        async def probe(args: ProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        created_graph, _inputs, _kwargs = make_capture_graph()
+
+        with patch("langchain.agents.create_agent") as mock_create:
+            mock_create.return_value = created_graph
+            adapter = LangGraphAdapter(
+                llm=mock_llm,
+                checkpointer=mock_checkpointer,
+                additional_tools=[(ProbeInput, probe)],
+            )
+            await adapter.on_started("TestBot", "Test bot")
+
+            sentinel_ctx = object()
+            mock_tools._ctx = sentinel_ctx
+
+            with patch(
+                "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            ) as mock_convert:
+                mock_convert.return_value = []
+
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        (call,) = mock_create.call_args_list
+        turn_tools = call.kwargs["tools"]
+        (probe_tool,) = [
+            tool for tool in turn_tools if getattr(tool, "name", "") == "probe"
+        ]
+
+        assert await probe_tool.ainvoke({"text": "hi"}) == "probed"
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
     async def test_feature_capabilities_control_tool_groups(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
