@@ -377,7 +377,7 @@ def _build_opencode(
     )
 
 
-@adapter(Adapter.COPILOT_ACP, requires=[Dep.COPILOT_CLI], runs_tool_loop=False)
+@adapter(Adapter.COPILOT_ACP, requires=[Dep.COPILOT_CLI], supports=_LLM_TOOL_LOOP)
 def _build_copilot_acp(
     s: BaselineSettings,
     *,
@@ -388,8 +388,11 @@ def _build_copilot_acp(
     from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
 
     # stdio spawn of `copilot --acp` co-located with the SDK, so Band tools reach
-    # Copilot over the loopback MCP server (inject_band_tools default True). Tools are
-    # delegated to Copilot over ACP/MCP, so runs_tool_loop=False (matches codex/opencode).
+    # Copilot over the loopback MCP server (inject_band_tools default True). Tools
+    # execute out-of-process over MCP, but custom ToolSpecs are translated
+    # (additional_tools below) and every call is narrated as an observable
+    # tool_call event, so the adapter enters the tool-loop and capability
+    # matrices like opencode.
     #
     # Gate on the CLI only — not a token. Copilot accepts several auth methods (env
     # token, stored login in the OS keychain, `gh`, BYOK), and a stored login isn't
