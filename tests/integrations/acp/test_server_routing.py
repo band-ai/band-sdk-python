@@ -13,6 +13,8 @@ real session bookkeeping, so assertions are on observable state.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,7 +33,7 @@ from acp.schema import (
 
 from band.integrations.acp.server import ACPServer, run_acp_server
 from band.integrations.acp.server_adapter import BandACPServerAdapter
-from tests.integrations.acp.conftest import wait_for_pending_prompt
+from tests.integrations.acp.conftest import has_pending_prompt, wait_for_pending_prompt
 
 # Substituted with the live session id at dispatch time.
 SESSION = "<session>"
@@ -124,6 +126,42 @@ async def session_id(adapter: BandACPServerAdapter) -> str:
     return await adapter.create_session(cwd="/workspace")
 
 
+@pytest.fixture
+def dispatched_prompt(
+    router: Any, adapter: BandACPServerAdapter
+) -> Callable[[str, str], AbstractAsyncContextManager[str]]:
+    """Factory for driving a session/prompt dispatch as a background task.
+
+    ``session/prompt`` blocks until the peer replies, so a test that wants to
+    observe the pending turn dispatches it as a task and waits for it to
+    reach the room. On exit, resolves the prompt and awaits the dispatch
+    task regardless of how the test body already resolved it (a repeat
+    ``cancel_prompt`` is a no-op), so a failing assertion never leaves a
+    dangling task or an unresolved prompt for a later test to trip over.
+
+    Yields the room id the prompt landed in.
+    """
+
+    @asynccontextmanager
+    async def _dispatch(session_id: str, text: str) -> AsyncIterator[str]:
+        task = asyncio.create_task(
+            router(
+                "session/prompt",
+                {"sessionId": session_id, "prompt": [{"type": "text", "text": text}]},
+                False,
+            )
+        )
+        room_id = adapter.get_room_for_session(session_id)
+        await wait_for_pending_prompt(adapter, room_id)
+        try:
+            yield room_id
+        finally:
+            await adapter.cancel_prompt(session_id)
+            await task
+
+    return _dispatch
+
+
 @pytest.mark.parametrize("method", sorted(REQUESTS))
 @pytest.mark.asyncio
 async def test_dispatch_returns_the_declared_response(
@@ -204,58 +242,34 @@ async def test_set_mode_is_applied_to_the_session(
     """session/set_mode records the mode the editor selected."""
     await router("session/set_mode", {"sessionId": session_id, "modeId": "code"}, False)
 
-    assert adapter._session_modes[session_id] == "code"
+    assert adapter.get_session_mode(session_id) == "code"
 
 
 @pytest.mark.asyncio
 async def test_prompt_posts_the_text_to_the_room(
-    router: Any,
-    adapter: BandACPServerAdapter,
+    dispatched_prompt: Callable[[str, str], AbstractAsyncContextManager[str]],
     session_id: str,
     mock_rest_client: MagicMock,
 ) -> None:
-    """session/prompt sends the prompt to the room, then waits for a reply.
-
-    Dispatched as a task because the handler blocks until the peer responds;
-    cancel_prompt() releases it.
-    """
-    dispatch = asyncio.create_task(
-        router(
-            "session/prompt",
-            {"sessionId": session_id, "prompt": [{"type": "text", "text": "hello"}]},
-            False,
-        )
-    )
-    room_id = adapter.get_room_for_session(session_id)
-    await wait_for_pending_prompt(adapter, room_id)
-
-    sent = mock_rest_client.agent_api_messages.create_agent_chat_message
-    sent.assert_awaited_once()
-    assert "hello" in sent.await_args.kwargs["message"].content
-
-    await adapter.cancel_prompt(session_id)
-    await dispatch
+    """session/prompt sends the prompt to the room before waiting for a reply."""
+    async with dispatched_prompt(session_id, "hello"):
+        sent = mock_rest_client.agent_api_messages.create_agent_chat_message
+        sent.assert_awaited_once()
+        assert "hello" in sent.await_args.kwargs["message"].content
 
 
 @pytest.mark.asyncio
 async def test_cancel_notification_releases_the_pending_prompt(
-    router: Any, adapter: BandACPServerAdapter, session_id: str
+    router: Any,
+    adapter: BandACPServerAdapter,
+    dispatched_prompt: Callable[[str, str], AbstractAsyncContextManager[str]],
+    session_id: str,
 ) -> None:
     """session/cancel dispatches as a notification and unblocks the prompt."""
-    dispatch = asyncio.create_task(
-        router(
-            "session/prompt",
-            {"sessionId": session_id, "prompt": [{"type": "text", "text": "hi"}]},
-            False,
-        )
-    )
-    room_id = adapter.get_room_for_session(session_id)
-    await wait_for_pending_prompt(adapter, room_id)
+    async with dispatched_prompt(session_id, "hi") as room_id:
+        await router("session/cancel", {"sessionId": session_id}, True)
 
-    await router("session/cancel", {"sessionId": session_id}, True)
-
-    await dispatch
-    assert adapter._pending_prompts.get(room_id) is None
+        assert not has_pending_prompt(adapter, room_id)
 
 
 @pytest.mark.parametrize("method", sorted(UNSTABLE_METHODS))
@@ -270,9 +284,11 @@ async def test_unstable_routes_need_use_unstable_protocol(
     """
     default_router = build_agent_router(cast(Agent, server))
 
-    with pytest.warns(UserWarning, match="unstable protocol"):
-        with pytest.raises(RequestError):
-            await default_router(method, payload_for(method, session_id), False)
+    with (
+        pytest.warns(UserWarning, match="unstable protocol"),
+        pytest.raises(RequestError),
+    ):
+        await default_router(method, payload_for(method, session_id), False)
 
 
 @pytest.mark.asyncio

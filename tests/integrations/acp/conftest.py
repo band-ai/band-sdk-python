@@ -190,6 +190,11 @@ async def wait_for_pending_prompt(
         await asyncio.sleep(0)
 
 
+def has_pending_prompt(adapter: BandACPServerAdapter, room_id: str) -> bool:
+    """Whether a room currently has a prompt awaiting a reply."""
+    return adapter._pending_prompts.get(room_id) is not None
+
+
 @pytest.fixture
 def mock_acp_client() -> AsyncMock:
     """Create a mock ACP Client interface."""

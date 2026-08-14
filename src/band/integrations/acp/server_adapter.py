@@ -155,6 +155,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """
         self._session_modes[session_id] = mode_id
 
+    def get_session_mode(self, session_id: str) -> str | None:
+        """Return the mode last set for a session, or None if unset."""
+        return self._session_modes.get(session_id)
+
     def get_session_cwd(self, session_id: str) -> str:
         """Return the working directory for a session, or '.' if unknown."""
         return self._session_cwd.get(session_id, ".")

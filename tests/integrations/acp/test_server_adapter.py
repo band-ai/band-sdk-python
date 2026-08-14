@@ -845,7 +845,7 @@ class TestBandACPServerAdapterPublicAccessors:
         adapter = BandACPServerAdapter()
         adapter.set_session_mode("session-1", "code")
 
-        assert adapter._session_modes["session-1"] == "code"
+        assert adapter.get_session_mode("session-1") == "code"
 
     def test_get_session_for_room(self) -> None:
         """Should return session_id for known rooms, None otherwise."""
