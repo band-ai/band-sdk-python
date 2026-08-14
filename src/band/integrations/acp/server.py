@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-import acp.schema as acp_schema
 from acp import (
     InitializeResponse,
     NewSessionResponse,
@@ -16,6 +15,7 @@ from acp.schema import (
     AgentCapabilities,
     AudioContentBlock,
     AuthenticateResponse,
+    AuthMethodAgent,
     EmbeddedResourceContentBlock,
     ForkSessionResponse,
     ImageContentBlock,
@@ -85,11 +85,8 @@ class ACPServer:
         self._conn = conn
         self._adapter.set_acp_client(conn)
 
-    def _auth_method(self, **kwargs: Any) -> Any:
-        auth_method = getattr(acp_schema, "AuthMethod", None) or getattr(
-            acp_schema, "AuthMethodAgent"
-        )
-        return auth_method(**kwargs)
+    def _auth_method(self, **kwargs: Any) -> AuthMethodAgent:
+        return AuthMethodAgent(**kwargs)
 
     async def initialize(
         self,
