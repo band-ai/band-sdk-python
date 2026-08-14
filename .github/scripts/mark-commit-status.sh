@@ -9,6 +9,9 @@ set -euo pipefail
 : "${PASSED:?PASSED is required}"
 : "${SHA:?SHA is required}"
 
+# shellcheck source=.github/scripts/baseline-status-context.sh
+. "$(dirname "$0")/baseline-status-context.sh"
+
 if [ "$PASSED" = "true" ]; then
   state=success
   description="Nightly baseline green"
@@ -18,5 +21,5 @@ else
 fi
 
 gh api "repos/$REPO/statuses/$SHA" \
-  -f state="$state" -f context="baseline-green" \
+  -f state="$state" -f context="$BASELINE_STATUS_CONTEXT" \
   -f description="$description" -f target_url="$RUN_URL"

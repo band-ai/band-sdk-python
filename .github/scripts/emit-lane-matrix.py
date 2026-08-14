@@ -59,4 +59,18 @@ include = [
     for osid in oses
     if not (osid == "windows" and lane.linux_only)
 ]
+
+# A selection can be individually valid yet jointly empty -- a Linux-only lane asked
+# for on Windows is the reachable case (both are offered by the dispatch dropdowns).
+# Fail here rather than emit `include: []`: an empty matrix leaves EXPECTED_LANES
+# blank downstream, which trips merge-scorecard.sh's `:?` guard and reports the run
+# as a red digest, blaming the suite for what is really an impossible request.
+if not include:
+    linux_only = sorted(str(lane.id) for lane in lanes if lane.linux_only)
+    raise SystemExit(
+        f"Lane {selected!r} on os {selected_os!r} selects no runnable cell: "
+        f"these lanes are Linux-only ({linux_only}). Re-dispatch with "
+        "os 'ubuntu' or 'all'."
+    )
+
 print("lanes=" + json.dumps({"include": include}))

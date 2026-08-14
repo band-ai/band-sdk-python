@@ -695,12 +695,21 @@ structurally invisible to the cell-level grid. It is still covered — just at t
 coarser matrix-leg granularity, not the per-cell one the grid markets.
 
 A subtlety worth calling out for on-call: once `release-gate.yml` has recorded a
-*failure* for a given main commit, GitHub does not automatically re-check it just
-because a later nightly run posts a fresh green `baseline-green` status for that same
-commit — a required check's completed run is final until something re-triggers it
-(a new commit, or a manual "re-run failed jobs" on the release PR). This is ordinary
-GitHub required-check behavior, not a gap specific to this workflow; if the release
-PR is stuck red after main has actually gone green, re-run the check by hand.
+*failure*, GitHub does not automatically re-check it just because a later nightly run
+posts a fresh green `baseline-green` status — a required check's completed run is final
+until something re-triggers it (a new commit, or a manual "re-run failed jobs" on the
+release PR). This is ordinary GitHub required-check behavior, not a gap specific to
+this workflow; if the release PR is stuck red after main has actually gone green,
+re-run the check by hand.
+
+Two reporting jobs (`mark-baseline`, `report-scoped-run`) are gated on `!cancelled()`
+rather than `always()`. They write externally visible state — a commit status, and a
+comment that reopens/closes the tracking issue — and a *cancelled* run is not evidence
+of anything: under `always()`, a nightly whose legs were cancelled mid-flight (the
+per-(lane,OS) concurrency group, or a human cancelling the run) would report the
+baseline as red with nothing actually broken. Declining to report is the safe
+direction, since the release gate treats an absent status as blocking anyway. A
+`timeout-minutes` leg kill does *not* cancel the run, so a genuine hang still reddens.
 
 **Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
 
@@ -712,11 +721,18 @@ PR is stuck red after main has actually gone green, re-run the check by hand.
    explicit kind + reason (`assert_flaky_is_classified` rejects a raw
    `@pytest.mark.flaky`).
 2. **Per-lane** (`e2e.yml`'s run step): if the lane's first pytest invocation has any
-   failure at all, it reruns only the failed nodeids once (`--last-failed`) before the
-   scorecard is written. This absorbs a whole-lane transient (e.g. a rate-limit
-   window) that per-test taxonomy wouldn't catch on its own; a genuine bug still fails
-   the rerun and reddens the gate (`ScorecardCollector`'s "last write wins" is exactly
-   this rerun's final report being the cell's real outcome).
+   failure at all, it reruns only the failed nodeids once (`--last-failed --lfnf=none`)
+   before the scorecard is written. This absorbs a whole-lane transient (e.g. a
+   rate-limit window) that per-test taxonomy wouldn't catch on its own; a genuine bug
+   still fails the rerun and reddens the gate (`ScorecardCollector`'s "last write wins"
+   is exactly this rerun's final report being the cell's real outcome). `--lfnf=none` is
+   load-bearing, not decoration: pytest's default for "`--last-failed` with no
+   lastfailed cache" is to run *everything*, so an attempt 1 that died without
+   recording a failed nodeid (collection error, import-time raise, OOM kill) would
+   silently promote the retry into a second full live lane — double the provider spend
+   and wall clock against a leg capped at 120 minutes. With the flag, such a retry
+   deselects everything and exits 5, which the script reads as "nothing to retry" and
+   keeps attempt 1's verdict.
 
 No time-boxed automatic override is layered on top of either — a lane stuck failing
 on a real provider outage does not silently start passing after N nights. The
@@ -740,11 +756,25 @@ only "crashed."
 `mark-baseline` job posts a `baseline-green` commit status (success/failure) on the
 tested commit. `.github/workflows/release-gate.yml` is a separate, narrow,
 PR-triggered check: an instant no-op for every ordinary PR, and for the standing
-release-please PR it reads that `baseline-green` status for main's tip and fails the
-PR's check until it's green. This is *not* the same thing as making the whole E2E
-suite a required PR check (explicitly out of scope; INT-810 owns PR-level gating via
-Tier-1) — only this thin status lookup is required on every PR, so the cost stays
-negligible for the 99% of PRs that aren't the release PR.
+release-please PR it consults that status and fails the PR's check until the baseline
+is green. This is *not* the same thing as making the whole E2E suite a required PR
+check (explicitly out of scope; PR-level gating is covered by the existing Tier-1
+checks) — only this thin lookup is required on every PR, so the cost stays negligible
+for the 99% of PRs that aren't the release PR.
+
+It gates on the most recently **tested** commit of the base branch, not the live tip
+(`.github/scripts/check-release-baseline.sh`). A nightly marks exactly one commit —
+whatever main's tip was at 03:17 UTC — so a tip-only check would go red the instant
+anything merged after that nightly, leaving the gate red by default and training people
+to bypass rather than trust it. The script walks the branch newest-first (bounded by
+`COMMIT_SCAN_LIMIT`, default 40 commits) for the most recent commit carrying a
+`baseline-green` status, and blocks unless that verdict is `success`. Two bounds keep it
+honest: a non-green verdict blocks, and a green one older than `MAX_BASELINE_AGE_DAYS`
+(default 7) stops vouching, so a long-dead nightly can't certify today's main. Both the
+producer and the consumer read the status context name from
+`.github/scripts/baseline-status-context.sh`, so the two sides cannot drift apart —
+a typo in a re-typed literal would fail silently, blocking the release PR forever with
+nothing to point at.
 
 **Nightly digest:** the same job also comments a compact digest (pass or fail) on one
 persistent issue (matched by title, not a label — "Nightly baseline results"),

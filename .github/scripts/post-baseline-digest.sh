@@ -16,6 +16,11 @@ set -euo pipefail
 : "${RECIPIENTS:?RECIPIENTS is required}"
 : "${SYNC_ISSUE_STATE:?SYNC_ISSUE_STATE is required}"
 
+# Where the rendered digest body comes from. Overridable so a caller can point at its
+# own scratch copy (scripts/preview-baseline-digest.sh does) instead of having to
+# write into — and then clean up — the shared ./artifacts directory CI downloads into.
+GATE_SUMMARY_FILE="${GATE_SUMMARY_FILE:-artifacts/gate-summary.md}"
+
 body_file="$(mktemp)"
 {
   if [ "$PASSED" = "true" ]; then
@@ -34,8 +39,8 @@ body_file="$(mktemp)"
     echo "⚠️ At least one selected lane/OS leg failed, crashed, or timed out (each lane is capped at 120 minutes) before reporting anything — see the e2e job for which and why. The counts below only cover what actually reported."
     echo
   fi
-  if [ -f artifacts/gate-summary.md ]; then
-    cat artifacts/gate-summary.md
+  if [ -f "$GATE_SUMMARY_FILE" ]; then
+    cat "$GATE_SUMMARY_FILE"
   else
     echo "_No scorecard was produced this run — every selected lane failed before session end._"
   fi
