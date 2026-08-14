@@ -1,4 +1,9 @@
-# Thenvoi Python SDK
+# Thenvoi Python SDK (deprecated)
+
+> **This package is deprecated and receives no further releases.** Thenvoi has
+> been renamed to Band. Install [`band-sdk`](https://pypi.org/project/band-sdk/)
+> instead - source at [band-ai/band-sdk-python](https://github.com/band-ai/band-sdk-python),
+> docs at [docs.band.ai](https://docs.band.ai).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
