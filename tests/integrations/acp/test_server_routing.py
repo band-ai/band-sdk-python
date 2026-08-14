@@ -1,11 +1,10 @@
 """Router-level tests for ACPServer.
 
 The rest of the server suite calls handlers directly with hand-written
-keywords, which cannot catch drift between a handler's parameter names and
-the ACP request model the SDK router unpacks into it (``func(**fields)``).
-These tests dispatch by JSON-RPC method name through a real
-``build_agent_router``, the way an editor reaches the server, so a handler
-that no longer matches its upstream request model fails here.
+keywords. The SDK router instead unpacks an ACP request model into the
+handler (``func(**fields)``), so a handler whose parameters no longer match
+its request model fails only when dispatched. These tests dispatch by
+JSON-RPC method name through ``build_agent_router``.
 """
 
 from __future__ import annotations
@@ -44,8 +43,8 @@ WIRE_REQUESTS: dict[str, dict[str, Any]] = {
     "session/close": {"sessionId": "session-1"},
 }
 
-# Routes the ACP SDK marks unstable. ACPServer implements all of them and
-# advertises fork/resume from initialize(), so run_acp_server() enables them.
+# Routes the ACP SDK registers as unstable. ACPServer implements all three;
+# run_acp_server() enables them via use_unstable_protocol.
 UNSTABLE_METHODS = {"session/fork", "session/resume", "session/close"}
 
 
@@ -66,11 +65,10 @@ def make_server() -> tuple[ACPServer, BandACPServerAdapter]:
 @pytest.mark.parametrize("method", sorted(WIRE_REQUESTS))
 @pytest.mark.asyncio
 async def test_every_implemented_method_is_reachable(method: str) -> None:
-    """Each method should dispatch into its handler without signature drift.
+    """Each method dispatches into its handler.
 
-    A parameter renamed or reordered away from the upstream request model
-    surfaces here as a TypeError; a route the server never registered
-    surfaces as method_not_found.
+    A parameter renamed or reordered against the request model raises
+    TypeError; an unregistered route raises method_not_found.
     """
     server, _ = make_server()
     router = build_agent_router(server, use_unstable_protocol=True)
@@ -81,10 +79,10 @@ async def test_every_implemented_method_is_reachable(method: str) -> None:
 @pytest.mark.parametrize("method", sorted(UNSTABLE_METHODS))
 @pytest.mark.asyncio
 async def test_unstable_routes_need_the_band_runner(method: str) -> None:
-    """Unstable routes answer method_not_found without the runner's flag.
+    """Unstable routes return method_not_found without use_unstable_protocol.
 
-    This is what run_acp_server() exists to prevent: ACPServer implements
-    and advertises these, but a plain acp.run_agent() leaves them dark.
+    Fails if the SDK stabilizes these routes, at which point
+    run_acp_server()'s flag is no longer required.
     """
     server, _ = make_server()
     router = build_agent_router(server)
@@ -95,14 +93,13 @@ async def test_unstable_routes_need_the_band_runner(method: str) -> None:
 
 
 def test_wire_requests_cover_every_agent_method_the_server_implements() -> None:
-    """The payload table should not silently fall behind the server.
+    """WIRE_REQUESTS covers every handler ACPServer defines.
 
-    Without this, a newly implemented handler could be added with no
-    routing coverage and the parametrized tests above would still pass.
-    Membership is checked against ``ACPServer.__dict__`` rather than
-    ``hasattr``: ACPServer subclasses the ``Agent`` protocol, so every
-    protocol stub is inherited and ``hasattr`` would also be true for
-    methods the server does not actually implement.
+    Without this, a new handler added with no entry in WIRE_REQUESTS would
+    leave the tests above passing. Membership is tested against
+    ``ACPServer.__dict__`` rather than ``hasattr``: ACPServer subclasses the
+    ``Agent`` protocol, so ``hasattr`` is also true for inherited stubs the
+    server does not define.
     """
     implemented = {
         AGENT_METHODS[name]
@@ -130,8 +127,8 @@ def _handler_for(method_name: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_run_acp_server_enables_the_routes_the_server_advertises() -> None:
-    """The runner should turn the unstable routes on, not leave it to callers."""
+async def test_run_acp_server_sets_use_unstable_protocol() -> None:
+    """run_acp_server() passes use_unstable_protocol=True to run_agent()."""
     server, _ = make_server()
 
     with patch(

@@ -120,8 +120,8 @@ class ACPServer(Agent):
                     audio=False,
                     embedded_context=True,
                 ),
-                # resume/fork are unstable ACP routes, so this promise only
-                # holds when the server is served via run_acp_server().
+                # resume/fork are unstable ACP routes; they only answer when
+                # the server is run via run_acp_server().
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),
                     resume=SessionResumeCapabilities(),
@@ -573,18 +573,16 @@ async def run_acp_server(
     output_stream: Any = None,
     **connection_kwargs: Any,
 ) -> None:
-    """Serve an :class:`ACPServer`, with every route it advertises reachable.
+    """Run an :class:`ACPServer` with ``use_unstable_protocol`` enabled.
 
-    Drop-in replacement for :func:`acp.run_agent`, and the only supported way
-    to run an :class:`ACPServer`. ``session/fork``, ``session/resume`` and
-    ``session/close`` are unstable routes in the ACP SDK: unless
-    ``use_unstable_protocol`` is enabled they answer ``method_not_found``,
-    even though :class:`ACPServer` implements all three and advertises them
-    from ``initialize``. Routing every caller through here keeps what the
-    server promises and what it actually answers in agreement.
+    Equivalent to :func:`acp.run_agent` with that flag set. The ACP SDK
+    registers ``session/fork``, ``session/resume`` and ``session/close`` as
+    unstable routes, which return ``method_not_found`` when the flag is off.
+    :class:`ACPServer` implements all three and reports fork/resume in the
+    ``session_capabilities`` it returns from ``initialize``.
 
     Args:
-        server: The ACP server to serve.
+        server: The ACP server to run.
         input_stream: Stream to read client messages from (default: stdin).
         output_stream: Stream to write agent messages to (default: stdout).
         **connection_kwargs: Forwarded to the underlying ACP connection.

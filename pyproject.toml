@@ -112,10 +112,10 @@ a2a_gateway_demo = [
     "click>=8.0.0",         # CLI for demo orchestrator
 ]
 acp = [
-    # ACP Python SDK. Uncapped deliberately: 0.x minors drop protocol methods,
-    # and tests/integrations/acp/test_server_routing.py is the tripwire — it
-    # dispatches every method through the SDK's own router, so a bump that
-    # reshapes handler signatures fails CI instead of passing silently.
+    # ACP Python SDK. 0.x minors remove protocol methods (0.11.0 removed
+    # session/set_model). Left uncapped: tests/integrations/acp/
+    # test_server_routing.py dispatches every method through the SDK router,
+    # so a bump that removes a method or changes a handler signature fails CI.
     "agent-client-protocol>=0.11.0",
     "mcp>=1.25.0,<2",
     "starlette>=0.40.0",
