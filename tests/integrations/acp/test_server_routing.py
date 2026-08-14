@@ -16,9 +16,10 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
+from acp import run_agent
 from acp.agent.router import build_agent_router
 from acp.exceptions import RequestError
 from acp.interfaces import Agent
@@ -112,6 +113,10 @@ class WireEditor:
     """
 
     def __init__(self, server: ACPServer, adapter: BandACPServerAdapter) -> None:
+        # Hardcoded rather than routed through run_acp_server(): this class
+        # tests ACPServer's handler contract directly. run_acp_server()'s own
+        # wiring (that it passes use_unstable_protocol=True to run_agent) is
+        # covered separately by test_run_acp_server_sets_use_unstable_protocol.
         self.router = build_agent_router(
             cast(Agent, server), use_unstable_protocol=True
         )
@@ -139,7 +144,9 @@ class WireEditor:
             )
         )
         room_id = self.adapter.get_room_for_session(session_id)
-        await wait_for_pending_prompt(self.adapter, room_id)
+        await asyncio.wait_for(
+            wait_for_pending_prompt(self.adapter, room_id), timeout=0.5
+        )
         try:
             yield room_id
         finally:
@@ -300,10 +307,13 @@ async def test_unstable_routes_need_use_unstable_protocol(
 
 @pytest.mark.asyncio
 async def test_run_acp_server_sets_use_unstable_protocol(server: ACPServer) -> None:
-    """run_acp_server() passes use_unstable_protocol=True to run_agent()."""
-    with patch(
-        "band.integrations.acp.server.run_agent", new=AsyncMock()
-    ) as mock_run_agent:
+    """run_acp_server() passes use_unstable_protocol=True to run_agent().
+
+    Spec'd against the real run_agent so an agent-client-protocol bump that
+    renames or drops the keyword fails here instead of passing silently.
+    """
+    mock_run_agent = create_autospec(run_agent)
+    with patch("band.integrations.acp.server.run_agent", new=mock_run_agent):
         await run_acp_server(server)
 
     assert mock_run_agent.await_args.kwargs["use_unstable_protocol"] is True

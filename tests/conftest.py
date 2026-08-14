@@ -18,7 +18,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from functools import cache
+from itertools import count
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
@@ -344,6 +346,13 @@ def mock_rest_client() -> MagicMock:
     (``room-new-123``, ``msg-123``, ``evt-123``, ``user-1``, ``agent-2``) are
     asserted on directly by existing tests, so they are fixed rather than
     incidental.
+
+    ``list_agent_chat_participants`` defaults to one non-self participant
+    (``user-1``) rather than an empty list, since AgentTools/ContactTools
+    tests assert mentions are generated from it. A test asserting exact
+    message content after a call that mentions participants (e.g. ACP's
+    ``handle_prompt``) must override ``list_agent_chat_participants`` to
+    ``data=[]`` itself rather than relying on an empty default.
     """
     client = MagicMock(spec=AsyncRestClient)
     for name, namespace_class in agent_api_namespace_classes().items():
@@ -353,11 +362,19 @@ def mock_rest_client() -> MagicMock:
             client, name, create_autospec(namespace_class, instance=True, spec_set=True)
         )
 
-    # Chat creation (ACP: new/fork session)
-    mock_chat_response = MagicMock()
-    mock_chat_response.data = MagicMock()
-    mock_chat_response.data.id = "room-new-123"
-    client.agent_api_chats.create_agent_chat.return_value = mock_chat_response
+    # Chat creation (ACP: new/fork session). Each call gets its own room id
+    # (first call is the fixed "room-new-123" existing tests assert on) so a
+    # test creating two sessions (e.g. a fork) doesn't collide them onto one
+    # room.
+    room_ids = (f"room-new-{n}" for n in count(123))
+
+    def _create_agent_chat_response(*_args: Any, **_kwargs: Any) -> MagicMock:
+        response = MagicMock()
+        response.data = MagicMock()
+        response.data.id = next(room_ids)
+        return response
+
+    client.agent_api_chats.create_agent_chat.side_effect = _create_agent_chat_response
 
     # Message creation (AgentTools.send_message / ACP prompt forwarding)
     message_response = MagicMock()

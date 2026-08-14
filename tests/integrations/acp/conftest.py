@@ -195,6 +195,21 @@ def has_pending_prompt(adapter: BandACPServerAdapter, room_id: str) -> bool:
     return adapter._pending_prompts.get(room_id) is not None
 
 
+async def release_pending_prompt(
+    adapter: BandACPServerAdapter, room_id: str, *, timeout: float = 0.5
+) -> None:
+    """Wait for a pending prompt to register, then resolve it.
+
+    Dispatch this as a background task before awaiting the call that
+    registers the prompt (``handle_prompt``), so that blocking call
+    resolves instead of hanging for the test.
+    """
+    pending = await asyncio.wait_for(
+        wait_for_pending_prompt(adapter, room_id), timeout=timeout
+    )
+    pending.done_event.set()
+
+
 @pytest.fixture
 def mock_acp_client() -> AsyncMock:
     """Create a mock ACP Client interface."""

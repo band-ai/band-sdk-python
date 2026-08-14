@@ -357,7 +357,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._pending_prompts[room_id] = pending
 
             # Read routing state while holding lock
-            current_mode = self._session_modes.get(session_id)
+            current_mode = self.get_session_mode(session_id)
 
         # Route via slash commands or session modes (no lock needed — pure)
         cleaned_text = text

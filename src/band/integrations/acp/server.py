@@ -581,7 +581,18 @@ async def run_acp_server(
         input_stream: Stream to read client messages from (default: stdin).
         output_stream: Stream to write agent messages to (default: stdout).
         **connection_kwargs: Forwarded to the underlying ACP connection.
+            ``use_unstable_protocol`` is not accepted here: this function
+            always runs with it enabled.
+
+    Raises:
+        TypeError: If ``use_unstable_protocol`` is passed in
+            ``connection_kwargs``.
     """
+    if "use_unstable_protocol" in connection_kwargs:
+        raise TypeError(
+            "run_acp_server() always runs with use_unstable_protocol=True "
+            "and does not accept it via connection_kwargs."
+        )
     # run_agent's parameter is typed against the nominal Agent protocol.
     # ACPServer satisfies the router's actual contract (getattr lookup,
     # invocation by keyword) but not the protocol's positional signatures.

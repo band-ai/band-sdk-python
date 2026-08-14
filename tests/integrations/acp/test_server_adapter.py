@@ -15,7 +15,7 @@ from band.testing import FakeAgentTools
 from tests.integrations.acp.conftest import (
     make_platform_message,
     make_tool_call_message,
-    wait_for_pending_prompt,
+    release_pending_prompt,
 )
 
 
@@ -175,14 +175,7 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._session_to_room["session-1"] = "room-123"
 
         # Make pending prompt complete immediately via on_message
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Hello world")
         await task
 
@@ -198,14 +191,7 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._session_to_room["session-1"] = "room-123"
 
         # Complete immediately
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Test")
         await task
 
@@ -742,14 +728,7 @@ class TestBandACPServerAdapterRouting:
         router = AgentRouter(slash_commands={"codex": "codex"})
         adapter.set_router(router)
 
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "/codex fix bug")
         await task
 
@@ -770,14 +749,7 @@ class TestBandACPServerAdapterRouting:
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Hello")
         await task
 
@@ -800,14 +772,7 @@ class TestBandACPServerAdapterRouting:
             }
         ]
 
-        async def auto_complete() -> None:
-            pending = await asyncio.wait_for(
-                wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Check the repo")
         await task
 
