@@ -99,11 +99,15 @@ def test_wire_requests_cover_every_agent_method_the_server_implements() -> None:
 
     Without this, a newly implemented handler could be added with no
     routing coverage and the parametrized tests above would still pass.
+    Membership is checked against ``ACPServer.__dict__`` rather than
+    ``hasattr``: ACPServer subclasses the ``Agent`` protocol, so every
+    protocol stub is inherited and ``hasattr`` would also be true for
+    methods the server does not actually implement.
     """
     implemented = {
         AGENT_METHODS[name]
         for name in AGENT_METHODS
-        if name != "session_cancel" and hasattr(ACPServer, _handler_for(name))
+        if name != "session_cancel" and _handler_for(name) in ACPServer.__dict__
     }
 
     assert implemented == set(WIRE_REQUESTS)

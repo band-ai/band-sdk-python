@@ -288,16 +288,6 @@ band-acp --agent-id my-agent --api-key $BAND_API_KEY
 BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 ```
 
-### Serving the server (`run_acp_server`)
-
-Always serve an `ACPServer` with `run_acp_server()` (`integrations/acp/server.py`,
-re-exported from `band.adapters`), never `acp.run_agent()` directly. `session/fork`,
-`session/resume` and `session/close` are **unstable** routes in the ACP SDK: without
-`use_unstable_protocol=True` they answer `method_not_found`, even though `ACPServer`
-implements all three and advertises fork/resume from `initialize()`. The wrapper owns
-that flag so the capabilities the server promises and the routes it actually answers
-cannot drift apart.
-
 ### Session Lifecycle
 
 1. Editor connects via stdio -> `ACPServer.on_connect()` stores client ref
