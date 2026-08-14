@@ -11,8 +11,10 @@ fails loudly on every PR, not only on a manual workflow dispatch.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from tests.e2e.baseline.toolkit.ci_lanes import (
@@ -24,8 +26,15 @@ from tests.e2e.baseline.toolkit.ci_lanes import (
 )
 
 
+_RELEASE_GATE_WORKFLOW = E2E_WORKFLOW.parent / "release-gate.yml"
+
+
+def _jobs(workflow_path: Path) -> dict[str, Any]:
+    return yaml.safe_load(workflow_path.read_text(encoding="utf-8"))["jobs"]
+
+
 def _workflow_jobs() -> dict[str, Any]:
-    return yaml.safe_load(E2E_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    return _jobs(E2E_WORKFLOW)
 
 
 def test_workflow_lane_gates_reference_only_known_lanes() -> None:
@@ -47,21 +56,27 @@ def test_workflow_lane_options_match_registry() -> None:
     assert_workflow_lane_options_match_registry()
 
 
+def _step_index(job: dict[str, Any], name: str) -> int:
+    """The position of ``name`` in ``job``'s steps.
+
+    Reads names with ``.get`` — ``name:`` is optional in a step, so indexing would
+    raise ``KeyError`` from an unrelated unnamed step instead of this test's own
+    assertion about the step it actually cares about.
+    """
+    for i, step in enumerate(job["steps"]):
+        if step.get("name") == name:
+            return i
+    raise AssertionError(f"no step named {name!r} in the job")
+
+
 def test_baseline_certification_checks_out_before_running_repo_scripts() -> None:
     """The independent status job must have the repository scripts it invokes."""
     job = _workflow_jobs()["mark-baseline"]
-    steps = job["steps"]
-    checkout = next(
-        i for i, step in enumerate(steps) if step["name"] == "Checkout code"
-    )
-    status = next(
-        i
-        for i, step in enumerate(steps)
-        if step["name"] == "Mark the commit baseline-green or baseline-red"
-    )
 
     assert job["permissions"]["contents"] == "read"
-    assert checkout < status
+    assert _step_index(job, "Checkout code") < _step_index(
+        job, "Mark the commit baseline-green or baseline-red"
+    )
 
 
 def test_scoped_manual_runs_report_without_certifying_the_baseline() -> None:
@@ -72,3 +87,58 @@ def test_scoped_manual_runs_report_without_certifying_the_baseline() -> None:
     assert "github.triggering_actor" in job["env"]["RECIPIENTS"]
     assert "does not affect the release gate" in job["env"]["SCOPE_NOTICE"]
     assert job["permissions"]["contents"] == "read"
+
+
+# The jobs that report a run's outcome to the outside world: a commit status, and a
+# comment on a tracking issue. Their `if:` conditions decide *whether the baseline
+# gets certified at all*, so the two guards below pin the parts that fail silently.
+_REPORTING_JOBS = ("mark-baseline", "report-scoped-run")
+
+
+@pytest.mark.parametrize("job_name", _REPORTING_JOBS)
+def test_reporting_jobs_do_not_certify_a_cancelled_run(job_name: str) -> None:
+    """A cancelled run is not evidence, so it must not post a status or comment.
+
+    Under ``always()`` a nightly whose legs were cancelled mid-flight (the
+    per-(lane,OS) concurrency group, or a human cancelling) reports the baseline as
+    *red* and reopens the tracking issue with nothing actually broken. Declining to
+    report is the safe direction: ``release-gate.yml`` reads a missing status as
+    ``pending`` and blocks anyway. A ``timeout-minutes`` leg kill does not cancel the
+    run, so it still reddens.
+    """
+    condition = _workflow_jobs()[job_name]["if"]
+
+    assert "!cancelled()" in condition
+    assert "always()" not in condition
+
+
+def test_release_gate_checks_out_before_running_repo_scripts() -> None:
+    """The release gate invokes a repository script, so it must check the repo out.
+
+    Same failure mode the mark-baseline guard above covers: without a checkout the
+    step dies on a missing file, which on a *required* check blocks every PR in the
+    repository rather than just misreporting one run.
+    """
+    job = _jobs(_RELEASE_GATE_WORKFLOW)["release-baseline-gate"]
+    steps = job["steps"]
+
+    checkout = _step_index(job, "Checkout code")
+    invokes_script = next(
+        i for i, step in enumerate(steps) if ".github/scripts/" in step.get("run", "")
+    )
+
+    assert checkout < invokes_script
+
+
+@pytest.mark.parametrize("job_name", _REPORTING_JOBS)
+def test_reporting_jobs_normalize_the_dispatch_inputs(job_name: str) -> None:
+    """Both jobs must default a missing dispatch input to ``all``, like every other
+    consumer (the ``lanes``/``e2e`` jobs read ``inputs.lane || 'all'``).
+
+    Compared bare, an input that resolved empty reads as "scoped" — so a full-matrix
+    run would silently never certify the commit even though the matrix did fan out.
+    """
+    condition = _workflow_jobs()[job_name]["if"]
+
+    for dimension in ("lane", "os"):
+        assert f"github.event.inputs.{dimension} || 'all'" in condition

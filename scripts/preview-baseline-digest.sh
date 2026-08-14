@@ -17,9 +17,11 @@ case "$scope" in
   *) echo "usage: $0 [pass|fail] [nightly|manual]" >&2; exit 1 ;;
 esac
 
+# Everything this preview writes stays inside $work, so it never touches (or, on
+# cleanup, deletes) a real ./artifacts directory a developer may have downloaded a
+# live run's scorecard into. post-baseline-digest.sh reads GATE_SUMMARY_FILE.
 work="$(mktemp -d)"
-mkdir -p artifacts
-trap 'rm -rf "$work" artifacts/gate-summary.md artifacts/scorecard.json artifacts/scorecard.md' EXIT
+trap 'rm -rf "$work"' EXIT
 
 if [ "$passed" = true ]; then
   cat > "$work/scorecard-core-ubuntu.json" <<'EOF'
@@ -37,9 +39,10 @@ else
 EOF
 fi
 
+export GATE_SUMMARY_FILE="$work/gate-summary.md"
 uv run python -m tests.e2e.baseline.scorecard merge "$work/scorecard-core-ubuntu.json" \
-  --out artifacts/scorecard.json --markdown artifacts/scorecard.md \
-  --summary artifacts/gate-summary.md --expected-lanes core || true
+  --out "$work/scorecard.json" --markdown "$work/scorecard.md" \
+  --summary "$GATE_SUMMARY_FILE" --expected-lanes core || true
 
 export GH_TOKEN="$(gh auth token)"
 export REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"

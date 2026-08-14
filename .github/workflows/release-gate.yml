@@ -6,9 +6,14 @@ name: Release baseline gate
 # instant no-op for every ordinary PR and only does real work for the standing
 # release-please PR (head branch release-please--branches--main--components--*): it
 # reads the `baseline-green` commit status the nightly e2e.yml run posts (its
-# mark-baseline job) for the release PR's base commit, and fails unless that status
-# is green. That is what actually blocks the release-please PR from merging until a
-# full nightly baseline run has vouched for main.
+# mark-baseline job) and fails unless the baseline is green. That is what actually
+# blocks the release-please PR from merging until a nightly run has vouched for main.
+#
+# It gates on the most recently *tested* commit of the base branch, not the live tip:
+# a nightly marks one commit, so a tip-only check would go red the moment anything
+# merged after that nightly and the gate would be red by default. The bounds that keep
+# it meaningful (non-green blocks; a stale green stops vouching) live in
+# .github/scripts/check-release-baseline.sh.
 #
 # Both triggers mirror ci.yml's required checks: `pull_request` for immediate
 # feedback while the PR is open, `merge_group` so the check also reports against the
@@ -35,6 +40,11 @@ jobs:
     name: release-baseline-gate
     runs-on: ubuntu-latest
     steps:
+    # The gate step invokes a repository script, so the repo has to be here. Cheap
+    # enough to pay on every PR (the step itself still no-ops in milliseconds).
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
     - name: Check the release-please PR's baseline-green status
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,19 +80,13 @@ jobs:
             ;;
         esac
 
-        # Only reached for the release-please PR — the base-sha lookup (an API call
-        # every ordinary PR would otherwise pay for above) happens now, not before
-        # the head_ref check.
+        # Only reached for the release-please PR, so the baseline lookup (a handful of
+        # API calls every ordinary PR would otherwise pay for above) happens now, not
+        # before the head_ref check. On the merge-queue path the queue's own base sha
+        # is the branch state being released; otherwise walk main itself.
         if [ "$EVENT_NAME" = "merge_group" ]; then
-          base_sha="$MERGE_GROUP_BASE_SHA"
+          export BASE_REF="$MERGE_GROUP_BASE_SHA"
         else
-          base_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha')
+          export BASE_REF=main
         fi
-
-        state=$(gh api "repos/$REPO/commits/$base_sha/statuses" \
-          --jq 'map(select(.context == "baseline-green")) | .[0].state // "pending"')
-        echo "main @ $base_sha — baseline-green: $state"
-        if [ "$state" != "success" ]; then
-          echo "::error::main (@ $base_sha) is not baseline-green (status: $state) — waiting on a green nightly baseline run before the release PR can merge."
-          exit 1
-        fi
+        .github/scripts/check-release-baseline.sh
