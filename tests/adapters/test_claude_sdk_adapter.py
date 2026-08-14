@@ -2295,3 +2295,72 @@ class TestSendMessageDedupWiring:
                     room_id="room-1",
                 )
                 mock_update.assert_not_awaited()
+
+
+class TestCtxThreading:
+    """INT-994: the custom SDK tool resolves room tools and threads their ctx."""
+
+    @pytest.mark.asyncio
+    async def test_custom_sdk_tool_threads_ctx_from_resolver(self):
+        import json
+
+        from pydantic import BaseModel
+
+        from band.integrations.claude_sdk.tools import build_band_sdk_tools
+        from band.runtime.tools import AgentTools
+
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            text: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return f"probe: {args.text}"
+
+        room_tools = AgentTools("room-123", MagicMock(), [])
+        sentinel_ctx = object()
+        room_tools._ctx = sentinel_ctx
+
+        (probe_tool,) = build_band_sdk_tools(
+            tool_definitions=[],
+            get_tools={"room-123": room_tools}.get,
+            additional_tools=[(CtxProbeInput, probe)],
+        )
+
+        result = await probe_tool.handler({"room_id": "room-123", "text": "hi"})
+
+        assert json.loads(result["content"][0]["text"]) == "probe: hi"
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
+    async def test_custom_sdk_tool_runs_with_unresolvable_room(self):
+        import json
+
+        from pydantic import BaseModel
+
+        from band.integrations.claude_sdk.tools import build_band_sdk_tools
+
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            text: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return f"probe: {args.text}"
+
+        (probe_tool,) = build_band_sdk_tools(
+            tool_definitions=[],
+            get_tools=lambda _room_id: None,
+            additional_tools=[(CtxProbeInput, probe)],
+        )
+
+        result = await probe_tool.handler({"room_id": "ghost", "text": "hi"})
+
+        assert json.loads(result["content"][0]["text"]) == "probe: hi"
+        assert received == [None]

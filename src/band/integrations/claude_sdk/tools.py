@@ -28,6 +28,7 @@ from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     execute_custom_tool,
     get_custom_tool_name,
 )
@@ -241,6 +242,7 @@ def _build_builtin_sdk_tool(
 def _build_custom_sdk_tool(
     tool_def: CustomToolDef,
     *,
+    get_tools: ToolResolver,
     include_room_id: bool,
 ) -> SdkMcpTool[Any]:
     input_model, _ = tool_def
@@ -255,7 +257,12 @@ def _build_custom_sdk_tool(
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
             tool_args = {k: v for k, v in args.items() if k != "room_id"}
-            result = await execute_custom_tool(tool_def, tool_args)
+            # Resolve this room's tools only to read their ExecutionContext
+            # (INT-994); a custom tool still runs when no tools resolve.
+            room_tools = get_tools(str(args.get("room_id", "")))
+            result = await execute_custom_tool(
+                tool_def, tool_args, ctx=ctx_from_tools(room_tools)
+            )
             return _make_result(result)
         except Exception as error:
             logger.exception("Custom tool %s failed: %s", tool_name, error)
@@ -289,6 +296,7 @@ def build_band_sdk_tools(
         sdk_tools.append(
             _build_custom_sdk_tool(
                 custom_tool,
+                get_tools=get_tools,
                 include_room_id=include_room_id,
             )
         )
