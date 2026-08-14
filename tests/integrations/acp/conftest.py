@@ -8,6 +8,7 @@ pytest fixtures and the message/rest builders.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from datetime import datetime
@@ -200,7 +201,25 @@ def mock_rest_client() -> MagicMock:
     # Mock event creation
     client.agent_api_events.create_agent_chat_event = AsyncMock()
 
+    # Mock identity lookup (verify_credentials)
+    client.agent_api_identity.get_agent_me = AsyncMock()
+
     return client
+
+
+async def wait_for_pending_prompt(
+    adapter: BandACPServerAdapter, room_id: str
+) -> PendingACPPrompt:
+    """Wait until a pending prompt is registered for a room.
+
+    ``handle_prompt`` blocks until the peer replies, so tests dispatch it as
+    a task and use this to wait for the prompt to reach the room.
+    """
+    while True:
+        pending = adapter._pending_prompts.get(room_id)
+        if pending is not None:
+            return pending
+        await asyncio.sleep(0)
 
 
 @pytest.fixture

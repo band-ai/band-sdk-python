@@ -32,6 +32,8 @@ from acp.schema import (
 from band.integrations.acp.server import ACPServer, run_acp_server
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 
+from .conftest import wait_for_pending_prompt
+
 # Substituted with the live session id at dispatch time.
 SESSION = "<session>"
 
@@ -104,7 +106,6 @@ def adapter(mock_rest_client: MagicMock) -> BandACPServerAdapter:
     """Adapter with only the REST boundary faked."""
     adapter = BandACPServerAdapter()
     adapter._rest = mock_rest_client
-    mock_rest_client.agent_api_identity.get_agent_me = AsyncMock()
     return adapter
 
 
@@ -227,8 +228,7 @@ async def test_prompt_posts_the_text_to_the_room(
         )
     )
     room_id = adapter.get_room_for_session(session_id)
-    while adapter._pending_prompts.get(room_id) is None:
-        await asyncio.sleep(0)
+    await wait_for_pending_prompt(adapter, room_id)
 
     sent = mock_rest_client.agent_api_messages.create_agent_chat_message
     sent.assert_awaited_once()
@@ -251,8 +251,7 @@ async def test_cancel_notification_releases_the_pending_prompt(
         )
     )
     room_id = adapter.get_room_for_session(session_id)
-    while adapter._pending_prompts.get(room_id) is None:
-        await asyncio.sleep(0)
+    await wait_for_pending_prompt(adapter, room_id)
 
     await router("session/cancel", {"sessionId": session_id}, True)
 

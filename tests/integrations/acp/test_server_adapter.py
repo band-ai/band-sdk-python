@@ -12,18 +12,11 @@ from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 
-from .conftest import make_platform_message, make_tool_call_message
-
-
-async def _wait_for_pending_prompt(
-    adapter: BandACPServerAdapter, room_id: str
-) -> PendingACPPrompt:
-    """Wait until a pending prompt is registered for a room."""
-    while True:
-        pending = adapter._pending_prompts.get(room_id)
-        if pending is not None:
-            return pending
-        await asyncio.sleep(0)
+from .conftest import (
+    make_platform_message,
+    make_tool_call_message,
+    wait_for_pending_prompt,
+)
 
 
 class TestBandACPServerAdapterInit:
@@ -184,7 +177,7 @@ class TestBandACPServerAdapterHandlePrompt:
         # Make pending prompt complete immediately via on_message
         async def auto_complete():
             pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
+                wait_for_pending_prompt(adapter, "room-123"),
                 timeout=0.5,
             )
             pending.done_event.set()
@@ -207,7 +200,7 @@ class TestBandACPServerAdapterHandlePrompt:
         # Complete immediately
         async def auto_complete():
             pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
+                wait_for_pending_prompt(adapter, "room-123"),
                 timeout=0.5,
             )
             pending.done_event.set()
@@ -751,7 +744,7 @@ class TestBandACPServerAdapterRouting:
 
         async def auto_complete():
             pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
+                wait_for_pending_prompt(adapter, "room-123"),
                 timeout=0.5,
             )
             pending.done_event.set()
@@ -779,7 +772,7 @@ class TestBandACPServerAdapterRouting:
 
         async def auto_complete():
             pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
+                wait_for_pending_prompt(adapter, "room-123"),
                 timeout=0.5,
             )
             pending.done_event.set()
@@ -809,7 +802,7 @@ class TestBandACPServerAdapterRouting:
 
         async def auto_complete() -> None:
             pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
+                wait_for_pending_prompt(adapter, "room-123"),
                 timeout=0.5,
             )
             pending.done_event.set()
