@@ -11,7 +11,7 @@ set -euo pipefail
 # Fail with a clear message if the key is missing rather than letting a later
 # ACP session fail opaquely. printenv takes the name as an argument, so `set -u`
 # alone wouldn't catch an unset key.
-: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required for the Copilot CLI's Anthropic BYOK auth}"
+: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required for the Copilot CLI Anthropic BYOK auth}"
 
 npm install -g @github/copilot
 copilot --version
