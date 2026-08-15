@@ -377,7 +377,33 @@ def _build_opencode(
     )
 
 
-@adapter(Adapter.COPILOT_ACP, requires=[Dep.COPILOT_CLI], supports=_LLM_TOOL_LOOP)
+def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
+    """Environment for a hermetic, Anthropic-BYOK ``copilot --acp`` spawn.
+
+    BYOK (per ``copilot help providers``): COPILOT_PROVIDER_BASE_URL activates
+    it, GitHub authentication is then not required, and a model must be named
+    — the same Anthropic key + model the copilot_sdk builder uses, so cells
+    validate Copilot CLI on a BYOK model rather than the quota-bound
+    Copilot-hosted default. COPILOT_HOME points at a fresh directory so
+    host-installed extensions and session state cannot steer the turn — an
+    installed extension whose description mentions Band was observed hijacking
+    a turn (the agent loaded it and never made the requested tool call). BYOK
+    auth rides entirely on this env, so hiding the home never hides auth.
+    """
+    return {
+        "COPILOT_HOME": copilot_home,
+        "COPILOT_PROVIDER_TYPE": "anthropic",
+        "COPILOT_PROVIDER_BASE_URL": "https://api.anthropic.com",
+        "COPILOT_PROVIDER_API_KEY": s.llm_credentials.anthropic_api_key,
+        "COPILOT_MODEL": s.llm_models.anthropic_model,
+    }
+
+
+@adapter(
+    Adapter.COPILOT_ACP,
+    requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
+    supports=_LLM_TOOL_LOOP,
+)
 def _build_copilot_acp(
     s: BaselineSettings,
     *,
@@ -394,42 +420,21 @@ def _build_copilot_acp(
     # tool_call event, so the adapter enters the tool-loop and capability
     # matrices like opencode.
     #
-    # Gate on the CLI only — not a token. Copilot accepts several auth methods (env
-    # token, stored login in the OS keychain, `gh`, BYOK), and a stored login isn't
-    # reliably detectable from settings; so, like codex (which gates on the CLI, not
-    # its API key, and logs in out-of-band via setup-codex.sh), auth is provided
-    # out-of-band: a stored login locally, or GITHUB_TOKEN in the CI job env (see
-    # setup-copilot.sh). We still forward a configured token as a convenience.
+    # Auth is Anthropic BYOK (copilot_acp_env above), so the gate is the CLI +
+    # the Anthropic key — no GitHub token or stored login involved. The spawn
+    # is fully hermetic, mirroring codex's disposable CODEX_CWD: a per-cell
+    # temp cwd (Copilot discovers project skills and instructions from its
+    # working directory — the repo's own .claude/ skills would otherwise leak
+    # into the agent under test) and a per-cell COPILOT_HOME.
     # COPILOT_COMMAND overrides the binary + args.
-    # Isolate the spawned CLI from host state, mirroring codex's disposable
-    # CODEX_CWD: always a per-cell temp cwd (Copilot discovers project skills
-    # and instructions from its working directory — the repo's own .claude/
-    # skills would otherwise leak into the agent under test), and, when token
-    # auth is configured, a per-cell COPILOT_HOME so host-installed extensions
-    # and session state cannot steer the turn — an installed extension whose
-    # description mentions Band was observed hijacking the turn (the agent
-    # loaded it and never made the requested tool call).
-    #
-    # COPILOT_HOME isolation is gated on the token because auth is not always
-    # outside it: `copilot login` stores its credential in the OS credential
-    # store *or falls back to a plain-text file under ~/.copilot/* (per
-    # `copilot login --help`). Hiding the home would break the documented
-    # ambient-login lane auth for developers on that fallback; a configured
-    # token takes precedence over stored credentials, so with one present the
-    # home carries no auth the cell needs. CI always configures the token, so
-    # CI cells are always hermetic.
     sandbox = tempfile.mkdtemp(prefix="band-e2e-copilot-acp-")
-    env: dict[str, str] | None = None
-    if s.backends.github_token:
-        copilot_home = os.path.join(sandbox, "copilot-home")
-        os.makedirs(copilot_home)
-        env = {"COPILOT_HOME": copilot_home}
+    copilot_home = os.path.join(sandbox, "copilot-home")
+    os.makedirs(copilot_home)
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
-        "github_token": s.backends.github_token or None,
         "cwd": sandbox,
-        "env": env,
+        "env": copilot_acp_env(s, copilot_home),
     }
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())

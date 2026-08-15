@@ -19,6 +19,7 @@ from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.builders import copilot_acp_env
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
     emit_event_instruction,
@@ -123,12 +124,10 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
 def resumemiss_config(settings: BaselineSettings, phase_dir: Path) -> Any:
     """A per-phase ``CopilotACPAdapterConfig`` whose Copilot state cannot survive.
 
-    Mirrors the registry builder's shape (``toolkit/builders.py``) with one twist:
-    ``COPILOT_HOME`` is *always* a fresh per-phase directory (the builder gates that
-    isolation on a configured token), so a later phase's ACP ``session/load``
+    Reuses the registry builder's hermetic BYOK env (``copilot_acp_env``) with a
+    fresh per-phase ``COPILOT_HOME``, so a later phase's ACP ``session/load``
     deterministically misses and the room-history replay fallback is the only
-    possible source of context. With ambient (non-token) auth Copilot must hold its
-    credential outside ``~/.copilot`` (e.g. the OS keychain) for this to run.
+    possible source of context.
     """
     from band.adapters.copilot_acp import CopilotACPAdapterConfig
 
@@ -136,8 +135,7 @@ def resumemiss_config(settings: BaselineSettings, phase_dir: Path) -> Any:
     home.mkdir(parents=True)
     kwargs: dict[str, Any] = {
         "cwd": str(phase_dir),
-        "env": {"COPILOT_HOME": str(home)},
-        "github_token": settings.backends.github_token or None,
+        "env": copilot_acp_env(settings, str(home)),
         "custom_section": "Keep responses short and concise.",
     }
     if settings.backends.copilot_command.strip():
@@ -146,7 +144,7 @@ def resumemiss_config(settings: BaselineSettings, phase_dir: Path) -> Any:
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
-@requires(Dep.COPILOT_CLI)
+@requires(Dep.COPILOT_CLI, Dep.ANTHROPIC)
 # Deliberately no flaky marker: two clean runs so far, and a rerun here would
 # slow-surface a product bug that presents as a silent no-reply turn (the
 # load-error path failed exactly that way once). Add flaky_infra only with an

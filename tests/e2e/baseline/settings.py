@@ -159,13 +159,10 @@ class Backends(BaseSettings):
     letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str = ""  # MCP_SERVER_URL (external band-mcp SSE endpoint)
 
-    # Copilot-hosted SDK examples and Copilot ACP use this runtime-auth token.
-    # The baseline Copilot SDK builder uses singular Anthropic BYOK and needs no
-    # GitHub auth.
-    github_token: str = ""  # GITHUB_TOKEN
-
     # Copilot CLI over ACP (copilot_acp adapter). Command defaults to `copilot --acp`;
-    # override the binary + args via COPILOT_COMMAND. Auth reuses github_token above.
+    # override the binary + args via COPILOT_COMMAND. Auth is Anthropic BYOK
+    # (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder —
+    # no GitHub token involved.
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
 
 
