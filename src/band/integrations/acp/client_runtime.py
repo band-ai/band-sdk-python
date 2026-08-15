@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import replace
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Literal, Protocol, cast
 
@@ -334,8 +333,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
     def _tool_call_chunk(self, update: object) -> CollectedChunk:
         raw_input = getattr(update, "raw_input", None)
-        call = ACPToolCall.from_acp(update)
-        call = replace(call, name=self._canonicalize_tool_name(call.name))
+        call = ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
         metadata = {
             "tool_call_id": call.tool_call_id,
             "raw_input": raw_input,

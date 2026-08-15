@@ -752,42 +752,42 @@ ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _matches_tool_name(tool_name: str, names: frozenset[str]) -> bool:
-    """Match a native tool name or the ``<server>-<tool>`` MCP spelling."""
+def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None:
+    """The member of ``names`` behind ``tool_name``'s MCP spelling, if any.
+
+    The one resolver for the one MCP naming convention seen in practice: a
+    hyphen-joined ``<server>-<tool>`` prefix (e.g. Copilot CLI surfaces
+    ``band_send_message`` as ``band-band_send_message``; band-mcp <=1.3.1's
+    legacy spelling arrives as ``band-create_agent_chat_message``). Other
+    spellings (``mcp__server__tool``, ``server.tool``) are not matched — no
+    wired backend uses them. Extend here when such a backend is added.
+    """
     if tool_name in names:
-        return True
-    return tool_name.endswith(tuple(f"-{name}" for name in names))
+        return tool_name
+    for name in names:
+        if tool_name.endswith(f"-{name}"):
+            return name
+    return None
 
 
 def is_room_posting_tool(tool_name: str) -> bool:
     """True when a successful call of ``tool_name`` posts a message to the room.
 
-    Tolerates the one MCP naming convention seen in practice: a ``<server>-``
-    prefix (e.g. ``band-band_send_message`` from band-mcp 1.3.2+, or the legacy
-    ``band-create_agent_chat_message`` from band-mcp <=1.3.1). Other spellings
-    (``mcp__server__tool``, ``server.tool``) are not matched — no wired backend
-    uses them, and a miss only costs a duplicate reply (the pre-suppression
-    behavior), never a wrong post. Extend here when such a backend is added.
+    Tolerates the MCP ``<server>-`` spelling (see ``_resolve_mcp_tool_name``).
+    A miss only costs a duplicate reply (the pre-suppression behavior), never
+    a wrong post.
     """
-    return _matches_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES)
+    return _resolve_mcp_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES) is not None
 
 
-def canonicalize_mcp_tool_name(
-    tool_name: str,
-    own_names: Collection[str],
-    server_name: str,
-) -> str:
+def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> str:
     """The canonical band tool name behind an MCP ``<server>-`` spelling.
 
-    Some ACP runtimes (Copilot CLI, verified live) surface an MCP server's
-    tools under a hyphen-joined ``<server>-<tool>`` name — the same convention
-    ``is_room_posting_tool`` tolerates. Narrated ``tool_call``/``tool_result``
-    events must carry the canonical name like every other adapter's, so
-    consumers match on one vocabulary. Names that don't reveal one of
-    ``own_names`` when stripped pass through untouched.
+    Narrated ``tool_call``/``tool_result`` events must carry the canonical
+    name like every other adapter's, so consumers match on one vocabulary.
+    A name that doesn't reveal one of ``own_names`` passes through untouched.
     """
-    stripped = tool_name.removeprefix(f"{server_name}-")
-    return stripped if stripped in own_names else tool_name
+    return _resolve_mcp_tool_name(tool_name, own_names) or tool_name
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.

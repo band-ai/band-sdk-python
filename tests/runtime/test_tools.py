@@ -1416,27 +1416,27 @@ class TestCanonicalizeMcpToolName:
 
     OWN = frozenset({"band_send_message", "echo"})
 
-    def test_strips_own_server_prefix(self):
-        name = canonicalize_mcp_tool_name("band-band_send_message", self.OWN, "band")
+    def test_strips_server_prefix_off_own_tool(self):
+        name = canonicalize_mcp_tool_name("band-band_send_message", self.OWN)
         assert name == "band_send_message"
 
     def test_custom_tool_prefix_stripped(self):
-        assert canonicalize_mcp_tool_name("band-echo", self.OWN, "band") == "echo"
+        assert canonicalize_mcp_tool_name("band-echo", self.OWN) == "echo"
+
+    def test_any_server_name_reveals_own_tool(self):
+        """The server's registered name is the client's choice — any prefix
+        that reveals one of our tools resolves, same rule as suppression."""
+        name = canonicalize_mcp_tool_name("platform-band_send_message", self.OWN)
+        assert name == "band_send_message"
 
     def test_foreign_tool_passes_through(self):
-        """A stripped name that is not one of ours must stay as reported."""
-        assert canonicalize_mcp_tool_name("band-grep", self.OWN, "band") == "band-grep"
+        """A prefixed name that reveals none of ours stays as reported."""
+        assert canonicalize_mcp_tool_name("band-grep", self.OWN) == "band-grep"
 
     def test_unprefixed_name_passes_through(self):
         assert (
-            canonicalize_mcp_tool_name("band_send_message", self.OWN, "band")
+            canonicalize_mcp_tool_name("band_send_message", self.OWN)
             == "band_send_message"
-        )
-
-    def test_other_server_prefix_passes_through(self):
-        assert (
-            canonicalize_mcp_tool_name("tools-band_send_message", self.OWN, "band")
-            == "tools-band_send_message"
         )
 
 

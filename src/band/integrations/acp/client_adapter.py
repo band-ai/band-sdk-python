@@ -7,7 +7,6 @@ import logging
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import replace
 from typing import Any, ClassVar
 from uuid import uuid4
 
@@ -34,6 +33,7 @@ from band.integrations.acp.client_types import (
     BandACPClient,
 )
 from band.integrations.mcp.backends import (
+    BAND_MCP_SERVER_NAME,
     BandMCPBackend,
     create_band_mcp_backend,
 )
@@ -51,10 +51,6 @@ from band.runtime.tools import (
 logger = logging.getLogger(__name__)
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
-
-# The name the loopback Band MCP server registers under; ACP runtimes that
-# prefix MCP tool names key off it (e.g. Copilot's ``band-<tool>``).
-BAND_MCP_SERVER_NAME = "band"
 
 # Prefixes the change-triggered roster/contacts updates injected into a
 # prompt, so the model reads them as platform state, not as the requester
@@ -294,8 +290,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             **kwargs: object,
         ) -> dict[str, object]:
             del kwargs
-            call = ACPToolCall.from_acp(tool_call)
-            call = replace(call, name=self._canonical_tool_name(call.name))
+            call = ACPToolCall.from_acp(
+                tool_call, canonicalize=self._canonical_tool_name
+            )
 
             # Auto-approve by selecting one of the agent's offered allow options;
             # an ACP grant must reference an offered optionId (not a bare
@@ -417,18 +414,20 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """The SDK tool definitions the loopback MCP server registers."""
         return list(iter_tool_definitions(include_memory=False))
 
-    def _canonical_tool_name(self, name: str) -> str:
-        """Strip the loopback server's MCP prefix off one of our own tools.
-
-        Mirrors the opencode adapter: only a name that reveals a tool this
-        adapter registered (an SDK band tool or a custom tool) is rewritten;
-        anything else passes through untouched.
-        """
-        own_names = {td.name for td in self._band_tool_definitions()} | {
+    def _own_tool_names(self) -> set[str]:
+        """Names of the tools this adapter registers (SDK band + custom)."""
+        return {td.name for td in self._band_tool_definitions()} | {
             get_custom_tool_name(input_model)
             for input_model, _handler in self._custom_tools
         }
-        return canonicalize_mcp_tool_name(name, own_names, BAND_MCP_SERVER_NAME)
+
+    def _canonical_tool_name(self, name: str) -> str:
+        """Strip an MCP server prefix off one of our own tools.
+
+        Mirrors the opencode adapter: only a name that reveals a tool this
+        adapter registered is rewritten; anything else passes through.
+        """
+        return canonicalize_mcp_tool_name(name, self._own_tool_names())
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
         backend = self._band_mcp_backend
@@ -483,12 +482,44 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             mcp_servers.append(await self._get_or_start_band_mcp_server())
         return mcp_servers
 
+    async def _claim_session_bootstrap(self, session_id: str) -> bool:
+        """True exactly once per session — the caller owns the bootstrap prompt."""
+        async with self._session_lock:
+            if session_id in self._bootstrapped_sessions:
+                return False
+            self._bootstrapped_sessions.add(session_id)
+            return True
+
+    def _system_update_sections(
+        self, participants_msg: str | None, contacts_msg: str | None
+    ) -> list[str]:
+        """Roster/contacts updates as ``[System]`` blocks.
+
+        They arrive only on change (the runtime marks them sent), so inject
+        them on whichever turn carries them — mirrors codex and opencode.
+        """
+        return [
+            f"{SYSTEM_UPDATE_PREFIX}{update}"
+            for update in (participants_msg, contacts_msg)
+            if update
+        ]
+
+    @staticmethod
+    def _framed_replay(replay: list[str], live_message: str) -> list[str]:
+        """The replay block plus the live message under the nonce'd boundary
+        marker the header names (on ordinary turns it needs none)."""
+        marker = new_message_marker()
+        return [
+            HISTORY_REPLAY_HEADER.format(marker=marker) + "\n" + "\n".join(replay),
+            f"{marker}\n{live_message}",
+        ]
+
     async def _build_prompt_text(
         self,
+        *,
         room_id: str,
         session_id: str,
         msg: PlatformMessage,
-        *,
         replay: list[str] | None = None,
         participants_msg: str | None = None,
         contacts_msg: str | None = None,
@@ -496,37 +527,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """Add room context, and the transcript replay if one is due, on the
         first prompt sent to an ACP session. The current message always comes
         last, so the model answers it rather than the replayed history."""
-        async with self._session_lock:
-            needs_bootstrap = session_id not in self._bootstrapped_sessions
-            if needs_bootstrap:
-                self._bootstrapped_sessions.add(session_id)
-
         # Attributed like history lines ([sender]: content), so in a multi-party
         # room the model always knows who is speaking now and, on replay turns,
         # where the transcript ends and the live message begins.
         live_message = msg.format_for_llm()
+        system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        # Roster/contacts updates arrive only on change (the runtime marks them
-        # sent), so inject them on whichever turn carries them — mirrors codex
-        # and opencode.
-        system_updates = [
-            f"{SYSTEM_UPDATE_PREFIX}{update}"
-            for update in (participants_msg, contacts_msg)
-            if update
-        ]
-
-        if not needs_bootstrap:
+        if not await self._claim_session_bootstrap(session_id):
             return "\n\n".join([*system_updates, live_message])
 
         sections = [self._build_system_context(room_id, msg), *system_updates]
         if replay:
-            # The live message sits under the nonce'd boundary marker the
-            # header names; on ordinary turns it needs none.
-            marker = new_message_marker()
-            sections.append(
-                HISTORY_REPLAY_HEADER.format(marker=marker) + "\n" + "\n".join(replay)
-            )
-            sections.append(f"{marker}\n{live_message}")
+            sections.extend(self._framed_replay(replay, live_message))
             logger.info(
                 "Replaying %d room history lines into new ACP session %s for room %s",
                 len(replay),

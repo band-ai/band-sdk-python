@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, cast
@@ -70,15 +71,26 @@ class ACPToolCall:
     arguments: dict[str, JsonValue]
 
     @classmethod
-    def from_acp(cls, tool_call: object) -> ACPToolCall:
-        """Normalize an ACP tool-call model into the room lifecycle shape."""
-        name = getattr(tool_call, "title", None) or getattr(
-            tool_call, "name", "unknown"
+    def from_acp(
+        cls,
+        tool_call: object,
+        canonicalize: Callable[[str], str] | None = None,
+    ) -> ACPToolCall:
+        """Normalize an ACP tool-call model into the room lifecycle shape.
+
+        ``canonicalize`` rewrites the runtime's MCP spelling of the tool name
+        (e.g. Copilot's ``band-band_send_message``) at construction, so the
+        canonical name is the only one the object ever carries.
+        """
+        name = str(
+            getattr(tool_call, "title", None) or getattr(tool_call, "name", "unknown")
         )
+        if canonicalize is not None:
+            name = canonicalize(name)
         raw_input = getattr(tool_call, "raw_input", None)
         return cls(
             tool_call_id=str(getattr(tool_call, "tool_call_id", "")),
-            name=str(name),
+            name=name,
             arguments=(
                 cast(dict[str, JsonValue], raw_input)
                 if isinstance(raw_input, dict)

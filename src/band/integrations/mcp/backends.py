@@ -22,6 +22,11 @@ BandMCPBackendKind = TypeAliasType(
     Literal["sdk", "http", "sse"],
 )
 
+# The name the Band MCP server registers under. MCP clients key tool
+# namespacing off it (e.g. Copilot's hyphen-joined ``band-<tool>``), and
+# adapters reference it when advertising the server in a session config.
+BAND_MCP_SERVER_NAME = "band"
+
 
 @dataclass
 class BandMCPBackend:
@@ -92,7 +97,7 @@ async def create_band_mcp_backend(
         )
 
     local_server = LocalMCPServer(
-        name="band",
+        name=BAND_MCP_SERVER_NAME,
         tool_registrations=build_resolved_band_mcp_tool_registrations(
             get_tools=get_tools,
             additional_tools=resolved_tools,
