@@ -56,6 +56,11 @@ LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 # prefix MCP tool names key off it (e.g. Copilot's ``band-<tool>``).
 BAND_MCP_SERVER_NAME = "band"
 
+# Prefixes the change-triggered roster/contacts updates injected into a
+# prompt, so the model reads them as platform state, not as the requester
+# speaking. Shared with tests as the single spelling of that convention.
+SYSTEM_UPDATE_PREFIX = "[System]: "
+
 # Marks where the replayed transcript ends and the live message begins, so
 # the boundary is mechanical rather than inferred (transcript lines and the
 # attributed live message share the same "[sender]: content" shape). The
@@ -236,9 +241,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
 
         prompt_text = await self._build_prompt_text(
-            room_id,
-            session_id,
-            msg,
+            room_id=room_id,
+            session_id=session_id,
+            msg=msg,
             replay=replay,
             participants_msg=participants_msg,
             contacts_msg=contacts_msg,
@@ -505,7 +510,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # sent), so inject them on whichever turn carries them — mirrors codex
         # and opencode.
         system_updates = [
-            f"[System]: {update}"
+            f"{SYSTEM_UPDATE_PREFIX}{update}"
             for update in (participants_msg, contacts_msg)
             if update
         ]

@@ -14,7 +14,6 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
-import json
 import re
 
 import pytest
@@ -23,10 +22,12 @@ from pydantic import BaseModel
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
+    SYSTEM_UPDATE_PREFIX,
 )
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.runtime.formatters import build_participants_message
 
-from .acp_toolkit import FakeACPAgent, acp_adapter
+from .acp_toolkit import FakeACPAgent, acp_adapter, live_line
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.
@@ -44,6 +45,38 @@ def replay_boundary(prompt: str) -> int:
     assert len(markers) == 2, f"expected header + boundary markers, got {markers}"
     assert len(set(markers)) == 1, f"header and boundary nonces differ: {markers}"
     return prompt.rindex(markers[-1])
+
+
+# A participant snapshot as the runtime hands it to build_participants_message.
+REV = {
+    "id": "rev-1",
+    "handle": "rev",
+    "name": "Rev",
+    "type": "Agent",
+    "description": None,
+}
+
+
+def system_updates(prompt: str) -> list[str]:
+    """First line of each ``[System]:`` update block in a prompt, in order.
+
+    The projection roster/contacts tests assert on: which updates a turn
+    carried and in what order, without reciting the blocks' bodies.
+    """
+    return [
+        line.removeprefix(SYSTEM_UPDATE_PREFIX)
+        for line in prompt.splitlines()
+        if line.startswith(SYSTEM_UPDATE_PREFIX)
+    ]
+
+
+def first_line(text: str) -> str:
+    return text.splitlines()[0]
+
+
+def final_line(prompt: str) -> str:
+    """The prompt's last line — the contract puts the live message there."""
+    return prompt.splitlines()[-1]
 
 
 @pytest.mark.asyncio
@@ -144,10 +177,8 @@ async def test_mcp_prefixed_band_tool_narrated_under_canonical_name(
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("make a room")
 
-    (call,) = reply.tool_calls
-    (result,) = reply.tool_results
-    assert json.loads(call["content"])["name"] == "band_create_chatroom"
-    assert json.loads(result["content"])["name"] == "band_create_chatroom"
+    assert reply.tool_call_names == ["band_create_chatroom"]
+    assert reply.tool_result_names == ["band_create_chatroom"]
 
 
 @pytest.mark.asyncio
@@ -167,8 +198,7 @@ async def test_prefixed_custom_tool_narrated_under_canonical_name() -> None:
     async with acp_adapter(agent, additional_tools=[(EchoInput, echo)]) as session:
         reply = await session.send("echo hi")
 
-    (call,) = reply.tool_calls
-    assert json.loads(call["content"])["name"] == "echo"
+    assert reply.tool_call_names == ["echo"]
 
 
 @pytest.mark.asyncio
@@ -181,8 +211,7 @@ async def test_foreign_tool_names_pass_through_unrewritten(fake_agent) -> None:
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("search")
 
-    (call,) = reply.tool_calls
-    assert json.loads(call["content"])["name"] == "band-grep"
+    assert reply.tool_call_names == ["band-grep"]
 
 
 @pytest.mark.asyncio
@@ -609,42 +638,36 @@ async def test_roster_and_contacts_updates_injected_into_prompt(fake_agent) -> N
     The runtime delivers these only on change (then marks them sent), so a
     dropped update is lost for good — the model would never learn who is in
     the room. The live message stays last so the model answers it."""
+    roster = build_participants_message([REV])
+    contacts = "Contact update: Rev is now a contact"
     fake_agent.will_say("noted")
 
     async with acp_adapter(fake_agent) as session:
         await session.send(
-            "hello",
-            bootstrap=True,
-            participants_msg="## Current Participants\n- @rev — Rev (Agent)",
-            contacts_msg="Contact update: Rev is now a contact",
+            "hello", bootstrap=True, participants_msg=roster, contacts_msg=contacts
         )
 
     prompt = fake_agent.prompt_texts()[0]
-    roster_at = prompt.index("[System]: ## Current Participants")
-    contacts_at = prompt.index("[System]: Contact update")
-    live_at = prompt.index("[Peer]: hello")
-    assert roster_at < contacts_at < live_at, (
-        "roster and contacts updates must precede the live message"
-    )
+    assert roster in prompt, "the roster block reaches the model verbatim"
+    assert system_updates(prompt) == [first_line(roster), contacts]
+    assert final_line(prompt) == live_line("hello")
 
 
 @pytest.mark.asyncio
 async def test_roster_update_injected_on_a_later_turn(fake_agent) -> None:
     """Roster changes mid-conversation reach the model on the turn that
     carries them, not only on session bootstrap."""
+    roster = build_participants_message([REV])
     fake_agent.will_say("ok")
 
     async with acp_adapter(fake_agent) as session:
         await session.send("first", bootstrap=True)
-        await session.send(
-            "second",
-            participants_msg="## Current Participants\n- @newpeer — New Peer (Agent)",
-        )
+        await session.send("second", participants_msg=roster)
 
     first, second = fake_agent.prompt_texts()
-    assert "[System]:" not in first, "no update was attached to the first turn"
-    assert "[System]: ## Current Participants" in second
-    assert second.index("[System]:") < second.index("[Peer]: second")
+    assert system_updates(first) == [], "no update was attached to the first turn"
+    assert system_updates(second) == [first_line(roster)]
+    assert final_line(second) == live_line("second")
 
 
 @pytest.mark.asyncio

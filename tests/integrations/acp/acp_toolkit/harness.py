@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -172,6 +173,17 @@ class Reply:
         return self._events_of("tool_result")
 
     @property
+    def tool_call_names(self) -> list[str]:
+        """Narrated tool_call names in order — the canonical vocabulary
+        consumers match on (see ToolCallRoomEvent)."""
+        return [json.loads(e["content"])["name"] for e in self.tool_calls]
+
+    @property
+    def tool_result_names(self) -> list[str]:
+        """Narrated tool_result names in order (see ToolResultRoomEvent)."""
+        return [json.loads(e["content"])["name"] for e in self.tool_results]
+
+    @property
     def plans(self) -> list[str]:
         # Task events, minus the adapter's trailing "ACP client session" bookkeeping.
         return [
@@ -223,8 +235,8 @@ class AcpSession:
             _message(content, room),
             tools,
             history or ACPClientSessionState(),
-            participants_msg,
-            contacts_msg,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=room,
         )
@@ -288,6 +300,18 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
     return _spawn
 
 
+LIVE_SENDER_NAME = "Peer"
+
+
+def live_line(content: str) -> str:
+    """The attributed live-message line ``AcpSession.send`` delivers.
+
+    The adapter's contract puts it last in every prompt, so tests assert
+    position against this projection instead of hand-building the line.
+    """
+    return f"[{LIVE_SENDER_NAME}]: {content}"
+
+
 def _message(content: str, room_id: str) -> PlatformMessage:
     return PlatformMessage(
         id=str(uuid4()),
@@ -295,7 +319,7 @@ def _message(content: str, room_id: str) -> PlatformMessage:
         content=content,
         sender_id="peer-1",
         sender_type="Agent",
-        sender_name="Peer",
+        sender_name=LIVE_SENDER_NAME,
         message_type="text",
         metadata={},
         created_at=datetime.now(),
