@@ -208,6 +208,12 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
+      # A Copilot-entitled PAT for the single Copilot-hosted (non-BYOK) auth
+      # smoke — NOT the ambient secrets.GITHUB_TOKEN (a repo-scoped installation
+      # token with no Copilot entitlement). One reply turn per backends run, so
+      # quota use is minimal; the smoke skips when the secret is unset. Every
+      # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
+      GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
       # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
       # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
       # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py.

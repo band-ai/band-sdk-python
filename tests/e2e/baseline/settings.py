@@ -160,10 +160,14 @@ class Backends(BaseSettings):
     mcp_server_url: str = ""  # MCP_SERVER_URL (external band-mcp SSE endpoint)
 
     # Copilot CLI over ACP (copilot_acp adapter). Command defaults to `copilot --acp`;
-    # override the binary + args via COPILOT_COMMAND. Auth is Anthropic BYOK
-    # (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder —
-    # no GitHub token involved.
+    # override the binary + args via COPILOT_COMMAND. Matrix-cell auth is Anthropic
+    # BYOK (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder.
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
+
+    # Copilot-hosted auth for the single non-BYOK smoke
+    # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix
+    # cells never read it. The smoke skips when unset.
+    github_token: str = ""  # GITHUB_TOKEN
 
 
 class LLMModels(BaseSettings):

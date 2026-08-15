@@ -148,60 +148,19 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             features=features,
         )
         self._host, self._port = self._resolve_transport(command, host, port)
-        # stdio spawns a subprocess from ``command``; TCP dials an already-running
-        # ACP server at host/port and passes an empty command to the runtime.
-        self._command: list[str]
-        if self._host is not None:
-            self._command = []
-        else:
-            # _resolve_transport guarantees command is set when host is None.
-            assert command is not None
-            self._command = [command] if isinstance(command, str) else list(command)
+        self._command = self._shape_command(command)
         self._env = env
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        # The tools this adapter registers on the loopback MCP server: band
-        # platform tools gated by the declared capabilities, plus custom tools.
-        # Computed once — both inputs are known here — so MCP registration and
-        # tool-name canonicalization share one vocabulary (opencode parity).
-        self._tool_definitions: list[ToolDefinition] = list(
-            iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
-            )
-        )
-        self._own_tool_names: frozenset[str] = frozenset(
-            {definition.name for definition in self._tool_definitions}
-            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
-        )
+        self._tool_definitions, self._own_tool_names = self._registered_tools()
         self._rest_url = rest_url or "https://app.band.ai"
         self._validate_rest_url(self._rest_url)
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
         self._custom_section = custom_section
-
-        # Transport: an explicit spawn_process wins (advanced/custom transports and
-        # tests); otherwise default to acp's subprocess spawner (stdio) or a
-        # connect-only seam closed over host/port (TCP; see tcp_spawn_process).
-        if spawn_process is not None:
-            transport: SpawnProcess = spawn_process
-        elif self._host is not None and self._port is not None:
-            transport = tcp_spawn_process(self._host, self._port)
-        else:
-            transport = spawn_agent_process
-
-        self._runtime = ACPRuntime(
-            command=_resolve_launcher(self._command),
-            env=self._env,
-            auth_method=self._auth_method,
-            client_factory=lambda: BandACPClient(
-                profile=self._profile,
-                canonicalize_tool_name=self._canonical_tool_name,
-            ),
-            spawn_process=transport,
-        )
+        self._runtime = self._build_runtime(spawn_process)
 
         self._room_to_session: dict[str, str] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
@@ -209,6 +168,64 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._band_mcp_server: LocalMCPServer | None = None
         self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
+        # Guards the shared MCP backend singleton on its own lock: one creation
+        # path already runs under _session_lock and another outside it, and
+        # asyncio.Lock is not re-entrant, so the backend cannot reuse it.
+        self._mcp_backend_lock = asyncio.Lock()
+
+    def _shape_command(self, command: str | list[str] | None) -> list[str]:
+        """The subprocess command for stdio, or an empty command for TCP.
+
+        stdio spawns a subprocess from ``command``; TCP dials an
+        already-running ACP server at host/port instead.
+        """
+        if self._host is not None:
+            return []
+        # _resolve_transport guarantees command is set when host is None.
+        assert command is not None
+        return [command] if isinstance(command, str) else list(command)
+
+    def _registered_tools(self) -> tuple[list[ToolDefinition], frozenset[str]]:
+        """The tools this adapter registers on the loopback MCP server.
+
+        Band platform tools gated by the declared capabilities, plus custom
+        tools. Computed once at construction — both inputs are known here — so
+        MCP registration and tool-name canonicalization share one vocabulary
+        (opencode parity).
+        """
+        definitions = list(
+            iter_tool_definitions(
+                include_memory=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
+            )
+        )
+        names = frozenset(
+            {definition.name for definition in definitions}
+            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
+        )
+        return definitions, names
+
+    def _select_transport(self, spawn_process: SpawnProcess | None) -> SpawnProcess:
+        """An explicit ``spawn_process`` wins (advanced/custom transports and
+        tests); otherwise acp's subprocess spawner (stdio) or a connect-only
+        seam closed over host/port (TCP; see ``tcp_spawn_process``)."""
+        if spawn_process is not None:
+            return spawn_process
+        if self._host is not None and self._port is not None:
+            return tcp_spawn_process(self._host, self._port)
+        return spawn_agent_process
+
+    def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
+        return ACPRuntime(
+            command=_resolve_launcher(self._command),
+            env=self._env,
+            auth_method=self._auth_method,
+            client_factory=lambda: BandACPClient(
+                profile=self._profile,
+                canonicalize_tool_name=self._canonical_tool_name,
+            ),
+            spawn_process=self._select_transport(spawn_process),
+        )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
@@ -252,7 +269,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 else await self._fetch_replay(tools, msg)
             )
 
-        prompt_text = await self._build_prompt_text(
+        prompt_text = self._build_prompt_text(
             room_id=room_id,
             session_id=session_id,
             msg=msg,
@@ -435,16 +452,23 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
+        # The backend is a shared singleton (one LocalMCPServer per adapter).
+        # The started-path read is lock-free (atomic between awaits); the lock
+        # guards only creation, so two rooms' concurrent first turns cannot
+        # each start a server and leak the loser (running, never stopped).
         backend = self._band_mcp_backend
         if backend is None:
-            backend = await create_band_mcp_backend(
-                kind=self._runtime._agent_mcp_transport,
-                tool_definitions=self._tool_definitions,
-                get_tools=self._room_tools.get,
-                additional_tools=self._custom_tools,
-            )
-            self._band_mcp_backend = backend
-            self._band_mcp_server = backend.local_server
+            async with self._mcp_backend_lock:
+                backend = self._band_mcp_backend
+                if backend is None:
+                    backend = await create_band_mcp_backend(
+                        kind=self._runtime._agent_mcp_transport,
+                        tool_definitions=self._tool_definitions,
+                        get_tools=self._room_tools.get,
+                        additional_tools=self._custom_tools,
+                    )
+                    self._band_mcp_backend = backend
+                    self._band_mcp_server = backend.local_server
 
         local_server = backend.local_server
         if local_server is None:
@@ -487,13 +511,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             mcp_servers.append(await self._get_or_start_band_mcp_server())
         return mcp_servers
 
-    async def _claim_session_bootstrap(self, session_id: str) -> bool:
-        """True exactly once per session — the caller owns the bootstrap prompt."""
-        async with self._session_lock:
-            if session_id in self._bootstrapped_sessions:
-                return False
-            self._bootstrapped_sessions.add(session_id)
-            return True
+    def _claim_session_bootstrap(self, session_id: str) -> bool:
+        """True exactly once per session — the caller owns the bootstrap prompt.
+
+        Lock-free: the check-and-add runs without an await, so the event
+        loop's run-to-completion makes it atomic.
+        """
+        if session_id in self._bootstrapped_sessions:
+            return False
+        self._bootstrapped_sessions.add(session_id)
+        return True
 
     def _system_update_sections(
         self, participants_msg: str | None, contacts_msg: str | None
@@ -519,7 +546,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             f"{marker}\n{live_message}",
         ]
 
-    async def _build_prompt_text(
+    def _build_prompt_text(
         self,
         *,
         room_id: str,
@@ -538,7 +565,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         live_message = msg.format_for_llm()
         system_updates = self._system_update_sections(participants_msg, contacts_msg)
 
-        if not await self._claim_session_bootstrap(session_id):
+        if not self._claim_session_bootstrap(session_id):
             return "\n\n".join([*system_updates, live_message])
 
         sections = [self._build_system_context(room_id, msg), *system_updates]
@@ -574,6 +601,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._room_to_session.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
+        async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
             local_mcp_server = self._band_mcp_server
             self._band_mcp_backend = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -238,6 +239,28 @@ class TestACPClientAdapterLocalMcpConfig:
             second = await adapter._get_or_start_band_mcp_server()
 
         assert first.url == second.url
+        mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_turns_share_one_backend(self) -> None:
+        """Two rooms' concurrent first turns must not each start a backend —
+        the loser would leak a running LocalMCPServer (started, never stopped)."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+
+        async def slow_create(**kwargs: object) -> MagicMock:
+            await asyncio.sleep(0)  # yield, so the second caller can interleave
+            return backend
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(side_effect=slow_create),
+        ) as mock_create_backend:
+            await asyncio.gather(
+                adapter._get_or_start_band_mcp_server(),
+                adapter._get_or_start_band_mcp_server(),
+            )
+
         mock_create_backend.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -856,6 +879,48 @@ class TestACPClientAdapterPermissionHandler:
         assert result.output == "Permission cancelled"
         assert result.is_error
         assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_denied_permission_pair_carries_the_canonical_tool_name(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A denied ask naming a band tool under its MCP spelling must post its
+        synthetic pair under the canonical name — the pair is the only record
+        of the call, so it must speak the same vocabulary as real narration."""
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "band-band_send_event"
+            tool_call.tool_call_id = "tc-band"
+            await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "p-rej", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert all(
+            event["metadata"]["tool_name"] == "band_send_event" for event in perm_events
+        )
+        call = parse_tool_call(str(perm_events[0]["content"]))
+        assert call is not None and call.name == "band_send_event"
 
     @pytest.mark.asyncio
     async def test_permission_handler_uses_name_fallback(

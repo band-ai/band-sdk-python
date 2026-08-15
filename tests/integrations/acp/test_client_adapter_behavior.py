@@ -670,7 +670,9 @@ async def test_roster_and_contacts_updates_injected_into_prompt(fake_agent) -> N
 
     prompt = fake_agent.prompt_texts()[0]
     assert roster in prompt, "the roster block reaches the model verbatim"
-    assert system_updates(prompt) == [first_line(roster), contacts]
+    # Set equality: both updates must precede the live message, but their
+    # mutual order is incidental — not a contract to pin.
+    assert set(system_updates(prompt)) == {first_line(roster), contacts}
     assert closes_the_prompt(prompt, live_line("hello"))
 
 
@@ -689,6 +691,72 @@ async def test_roster_update_injected_on_a_later_turn(fake_agent) -> None:
     assert system_updates(first) == [], "no update was attached to the first turn"
     assert system_updates(second) == [first_line(roster)]
     assert closes_the_prompt(second, live_line("second"))
+
+
+@pytest.mark.asyncio
+async def test_replay_and_roster_update_share_the_bootstrap_prompt(fake_agent) -> None:
+    """A bootstrap turn can owe both a transcript replay and a roster update;
+    they must coexist without breaking the replay's anti-spoofing boundary,
+    and the live message still closes the prompt."""
+    roster = build_participants_message([REV])
+    history = rehydration_history("[Marco]: My favorite color is blue.")
+    fake_agent.will_say("hi")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send(
+            "what's my color?",
+            bootstrap=True,
+            history=history,
+            participants_msg=roster,
+        )
+
+    prompt = fake_agent.prompt_texts()[0]
+    assert system_updates(prompt) == [first_line(roster)]
+    boundary = replay_boundary(prompt)  # asserts the nonce contract holds
+    assert prompt.index(first_line(roster)) < boundary, (
+        "the roster update must not sit under the live-message boundary"
+    )
+    assert closes_the_prompt(prompt, live_line("what's my color?"))
+
+
+@pytest.mark.asyncio
+async def test_prefixed_band_post_suppresses_text_and_narrates_canonically(
+    fake_agent,
+) -> None:
+    """The full Copilot-shaped turn: an MCP-prefixed ``band-band_send_message``
+    that completes must both suppress the text fallback (the reply is already
+    in the room) and narrate under the canonical name — one vocabulary for
+    suppression and narration alike."""
+    fake_agent.will_call_tool(
+        "tc-1", "band-band_send_message", result='{"id": "msg-1"}'
+    ).will_say("Posted the answer.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?")
+
+    assert reply.texts == []
+    assert reply.tool_call_names == ["band_send_message"]
+    assert reply.tool_result_names == ["band_send_message"]
+    assert reply.outline == ["tool_call", "tool_result", "task"]
+
+
+@pytest.mark.asyncio
+async def test_roster_update_stays_in_its_own_room(fake_agent) -> None:
+    """A roster update delivered with one room's turn must not leak into a
+    concurrent room's session prompt."""
+    roster = build_participants_message([REV])
+    fake_agent.will_say("a").will_say("b")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send("hello a", room="room-a", bootstrap=True)
+        await session.send(
+            "hello b", room="room-b", bootstrap=True, participants_msg=roster
+        )
+        await session.send("again a", room="room-a")
+
+    first_a, first_b, second_a = fake_agent.prompt_texts()
+    assert system_updates(first_a) == []
+    assert system_updates(first_b) == [first_line(roster)]
+    assert system_updates(second_a) == [], "room-b's update must not reach room-a"
 
 
 @pytest.mark.asyncio
