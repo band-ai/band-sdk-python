@@ -14,9 +14,11 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
+from pydantic import BaseModel
 
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
@@ -124,6 +126,63 @@ async def test_text_relayed_alongside_non_posting_tool(fake_agent) -> None:
         reply = await session.send("weather?")
 
     assert reply.texts == ["It's 72F."]
+
+
+@pytest.mark.asyncio
+async def test_mcp_prefixed_band_tool_narrated_under_canonical_name(
+    fake_agent,
+) -> None:
+    """Copilot registers the loopback server's tools as ``band-<tool>``; the
+    narrated tool_call/tool_result must carry the canonical band name so every
+    consumer matches one vocabulary."""
+    fake_agent.will_call_tool(
+        "tc-1",
+        "band-band_create_chatroom",
+        raw_input={"title": "war room"},
+        result='{"id": "room-9"}',
+    ).will_say("Created the room.")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("make a room")
+
+    (call,) = reply.tool_calls
+    (result,) = reply.tool_results
+    assert json.loads(call["content"])["name"] == "band_create_chatroom"
+    assert json.loads(result["content"])["name"] == "band_create_chatroom"
+
+
+@pytest.mark.asyncio
+async def test_prefixed_custom_tool_narrated_under_canonical_name() -> None:
+    """A custom tool registered on the loopback server canonicalizes too."""
+
+    class EchoInput(BaseModel):
+        text: str
+
+    async def echo(text: str) -> str:
+        return text
+
+    agent = FakeACPAgent()
+    agent.will_call_tool(
+        "tc-1", "band-echo", raw_input={"text": "hi"}, result="hi"
+    ).will_say("done")
+    async with acp_adapter(agent, additional_tools=[(EchoInput, echo)]) as session:
+        reply = await session.send("echo hi")
+
+    (call,) = reply.tool_calls
+    assert json.loads(call["content"])["name"] == "echo"
+
+
+@pytest.mark.asyncio
+async def test_foreign_tool_names_pass_through_unrewritten(fake_agent) -> None:
+    """The agent's own (non-band) tools keep their reported names — only a
+    name that reveals one of ours behind the server prefix is rewritten."""
+    fake_agent.will_call_tool(
+        "tc-1", "band-grep", raw_input={"pattern": "x"}, result="match"
+    ).will_say("found it")
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("search")
+
+    (call,) = reply.tool_calls
+    assert json.loads(call["content"])["name"] == "band-grep"
 
 
 @pytest.mark.asyncio

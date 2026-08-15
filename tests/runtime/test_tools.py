@@ -23,6 +23,7 @@ from band.runtime.tools import (
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    canonicalize_mcp_tool_name,
     is_room_posting_tool,
 )
 
@@ -1408,6 +1409,35 @@ class TestIsRoomPostingTool:
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
         assert is_room_posting_tool("band_send_message_draft") is False
+
+
+class TestCanonicalizeMcpToolName:
+    """Recovering the canonical band name from an MCP ``<server>-`` spelling."""
+
+    OWN = frozenset({"band_send_message", "echo"})
+
+    def test_strips_own_server_prefix(self):
+        name = canonicalize_mcp_tool_name("band-band_send_message", self.OWN, "band")
+        assert name == "band_send_message"
+
+    def test_custom_tool_prefix_stripped(self):
+        assert canonicalize_mcp_tool_name("band-echo", self.OWN, "band") == "echo"
+
+    def test_foreign_tool_passes_through(self):
+        """A stripped name that is not one of ours must stay as reported."""
+        assert canonicalize_mcp_tool_name("band-grep", self.OWN, "band") == "band-grep"
+
+    def test_unprefixed_name_passes_through(self):
+        assert (
+            canonicalize_mcp_tool_name("band_send_message", self.OWN, "band")
+            == "band_send_message"
+        )
+
+    def test_other_server_prefix_passes_through(self):
+        assert (
+            canonicalize_mcp_tool_name("tools-band_send_message", self.OWN, "band")
+            == "tools-band_send_message"
+        )
 
 
 class TestFetchRoomContext:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from band.integrations.acp.client_profiles import ACPClientProfile
@@ -31,8 +32,12 @@ class BandACPClient(ACPCollectingClient):
     runtime-specific profile explicitly.
     """
 
-    def __init__(self, profile: ACPClientProfile | None = None) -> None:
-        super().__init__(profile=profile)
+    def __init__(
+        self,
+        profile: ACPClientProfile | None = None,
+        canonicalize_tool_name: Callable[[str], str] | None = None,
+    ) -> None:
+        super().__init__(profile=profile, canonicalize_tool_name=canonicalize_tool_name)
 
 
 BandACPClient = BandACPClient

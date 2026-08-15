@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, ClassVar
 from uuid import uuid4
 
@@ -38,14 +39,22 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ACPToolCall
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
 from band.runtime.mcp_server import LocalMCPServer
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import (
+    ToolDefinition,
+    canonicalize_mcp_tool_name,
+    iter_tool_definitions,
+)
 
 logger = logging.getLogger(__name__)
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+
+# The name the loopback Band MCP server registers under; ACP runtimes that
+# prefix MCP tool names key off it (e.g. Copilot's ``band-<tool>``).
+BAND_MCP_SERVER_NAME = "band"
 
 # Marks where the replayed transcript ends and the live message begins, so
 # the boundary is mechanical rather than inferred (transcript lines and the
@@ -170,7 +179,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
-            client_factory=lambda: BandACPClient(profile=self._profile),
+            client_factory=lambda: BandACPClient(
+                profile=self._profile,
+                canonicalize_tool_name=self._canonical_tool_name,
+            ),
             spawn_process=transport,
         )
 
@@ -278,6 +290,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         ) -> dict[str, object]:
             del kwargs
             call = ACPToolCall.from_acp(tool_call)
+            call = replace(call, name=self._canonical_tool_name(call.name))
 
             # Auto-approve by selecting one of the agent's offered allow options;
             # an ACP grant must reference an offered optionId (not a bare
@@ -383,24 +396,41 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if self._runtime._agent_mcp_transport == "sse":
             return SseMcpServer(
                 type="sse",
-                name="band",
+                name=BAND_MCP_SERVER_NAME,
                 url=local_server.sse_url,
                 headers=[],
             )
 
         return HttpMcpServer(
             type="http",
-            name="band",
+            name=BAND_MCP_SERVER_NAME,
             url=local_server.http_url,
             headers=[],
         )
+
+    def _band_tool_definitions(self) -> list[ToolDefinition]:
+        """The SDK tool definitions the loopback MCP server registers."""
+        return list(iter_tool_definitions(include_memory=False))
+
+    def _canonical_tool_name(self, name: str) -> str:
+        """Strip the loopback server's MCP prefix off one of our own tools.
+
+        Mirrors the opencode adapter: only a name that reveals a tool this
+        adapter registered (an SDK band tool or a custom tool) is rewritten;
+        anything else passes through untouched.
+        """
+        own_names = {td.name for td in self._band_tool_definitions()} | {
+            get_custom_tool_name(input_model)
+            for input_model, _handler in self._custom_tools
+        }
+        return canonicalize_mcp_tool_name(name, own_names, BAND_MCP_SERVER_NAME)
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
         backend = self._band_mcp_backend
         if backend is None:
             backend = await create_band_mcp_backend(
                 kind=self._runtime._agent_mcp_transport,
-                tool_definitions=list(iter_tool_definitions(include_memory=False)),
+                tool_definitions=self._band_tool_definitions(),
                 get_tools=self._room_tools.get,
                 additional_tools=self._custom_tools,
             )

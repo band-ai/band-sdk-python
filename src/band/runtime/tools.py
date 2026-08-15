@@ -10,7 +10,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
@@ -770,6 +770,24 @@ def is_room_posting_tool(tool_name: str) -> bool:
     behavior), never a wrong post. Extend here when such a backend is added.
     """
     return _matches_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES)
+
+
+def canonicalize_mcp_tool_name(
+    tool_name: str,
+    own_names: Collection[str],
+    server_name: str,
+) -> str:
+    """The canonical band tool name behind an MCP ``<server>-`` spelling.
+
+    Some ACP runtimes (Copilot CLI, verified live) surface an MCP server's
+    tools under a hyphen-joined ``<server>-<tool>`` name — the same convention
+    ``is_room_posting_tool`` tolerates. Narrated ``tool_call``/``tool_result``
+    events must carry the canonical name like every other adapter's, so
+    consumers match on one vocabulary. Names that don't reveal one of
+    ``own_names`` when stripped pass through untouched.
+    """
+    stripped = tool_name.removeprefix(f"{server_name}-")
+    return stripped if stripped in own_names else tool_name
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
