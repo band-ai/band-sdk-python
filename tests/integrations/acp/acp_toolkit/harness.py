@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -20,6 +19,7 @@ from acp.agent.connection import AgentSideConnection
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 
 from .agent import FakeACPAgent
@@ -175,13 +175,20 @@ class Reply:
     @property
     def tool_call_names(self) -> list[str]:
         """Narrated tool_call names in order — the canonical vocabulary
-        consumers match on (see ToolCallRoomEvent)."""
-        return [json.loads(e["content"])["name"] for e in self.tool_calls]
+        consumers match on. Parsed through the room-payload model, so a
+        malformed event fails loudly here rather than passing vacuously."""
+        return [
+            ToolCallRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_calls
+        ]
 
     @property
     def tool_result_names(self) -> list[str]:
-        """Narrated tool_result names in order (see ToolResultRoomEvent)."""
-        return [json.loads(e["content"])["name"] for e in self.tool_results]
+        """Narrated tool_result names in order (see ``tool_call_names``)."""
+        return [
+            ToolResultRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_results
+        ]
 
     @property
     def plans(self) -> list[str]:

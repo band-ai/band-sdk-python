@@ -75,9 +75,14 @@ def first_line(text: str) -> str:
     return text.splitlines()[0]
 
 
-def final_line(prompt: str) -> str:
-    """The prompt's last line — the contract puts the live message there."""
-    return prompt.splitlines()[-1]
+def closes_the_prompt(prompt: str, live: str) -> bool:
+    """Whether ``live`` (a ``live_line`` projection) ends the prompt.
+
+    Suffix-based, so it stays correct for multi-line message content and an
+    empty prompt — the contract is "the live message comes last", not "the
+    live message is one line".
+    """
+    return prompt.endswith(live)
 
 
 @pytest.mark.asyncio
@@ -666,7 +671,7 @@ async def test_roster_and_contacts_updates_injected_into_prompt(fake_agent) -> N
     prompt = fake_agent.prompt_texts()[0]
     assert roster in prompt, "the roster block reaches the model verbatim"
     assert system_updates(prompt) == [first_line(roster), contacts]
-    assert final_line(prompt) == live_line("hello")
+    assert closes_the_prompt(prompt, live_line("hello"))
 
 
 @pytest.mark.asyncio
@@ -683,7 +688,7 @@ async def test_roster_update_injected_on_a_later_turn(fake_agent) -> None:
     first, second = fake_agent.prompt_texts()
     assert system_updates(first) == [], "no update was attached to the first turn"
     assert system_updates(second) == [first_line(roster)]
-    assert final_line(second) == live_line("second")
+    assert closes_the_prompt(second, live_line("second"))
 
 
 @pytest.mark.asyncio
