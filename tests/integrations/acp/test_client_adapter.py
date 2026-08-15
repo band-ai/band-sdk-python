@@ -263,6 +263,18 @@ class TestACPClientAdapterLocalMcpConfig:
 
         mock_create_backend.assert_awaited_once()
 
+    async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
+        """The tool names the adapter would hand to ``create_band_mcp_backend``."""
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=backend),
+        ) as mock_create_backend:
+            await adapter._get_or_start_band_mcp_server()
+        return {
+            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
+        }
+
     @pytest.mark.asyncio
     async def test_memory_tools_registered_when_declared(self) -> None:
         """Declared MEMORY capability puts its tool group on the loopback server."""
@@ -270,35 +282,15 @@ class TestACPClientAdapterLocalMcpConfig:
             command="codex",
             features=AdapterFeatures(capabilities={Capability.MEMORY}),
         )
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
-
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ) as mock_create_backend:
-            await adapter._get_or_start_band_mcp_server()
-
-        registered = {
-            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
-        }
-        assert "band_store_memory" in registered
+        assert "band_store_memory" in await self._registered_tool_names(adapter)
 
     @pytest.mark.asyncio
     async def test_memory_tools_absent_without_declaration(self) -> None:
         """Undeclared MEMORY keeps its tool group off the server (an
         enterprise feature the adapter must opt into)."""
-        adapter = ACPClientAdapter(command="codex")
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
-
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ) as mock_create_backend:
-            await adapter._get_or_start_band_mcp_server()
-
-        registered = {
-            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
-        }
+        registered = await self._registered_tool_names(
+            ACPClientAdapter(command="codex")
+        )
         assert "band_store_memory" not in registered
         assert "band_send_message" in registered
 
@@ -307,18 +299,9 @@ class TestACPClientAdapterLocalMcpConfig:
         """Contact tools stay unconditionally registered — the pre-existing
         default every caller without ``features=`` (every ACP example) relies
         on. Only memory is capability-gated."""
-        adapter = ACPClientAdapter(command="codex")
-        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
-
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(return_value=backend),
-        ) as mock_create_backend:
-            await adapter._get_or_start_band_mcp_server()
-
-        registered = {
-            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
-        }
+        registered = await self._registered_tool_names(
+            ACPClientAdapter(command="codex")
+        )
         assert "band_list_contacts" in registered
 
     def test_build_system_context_mentions_band_tools(self) -> None:

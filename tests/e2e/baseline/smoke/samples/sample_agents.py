@@ -28,9 +28,8 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
-from tests.e2e.baseline.agents import ExcludedAdapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
-from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user

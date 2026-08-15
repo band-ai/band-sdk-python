@@ -256,13 +256,20 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return spawn_agent_process
 
     def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
+        # Bind profile as a local rather than closing over self to reach it
+        # (canonicalize_tool_name is a bound method either way, so it retains
+        # self regardless — this narrows what the closure needs self for, not
+        # eliminates the self <-> runtime reference cycle; CPython's cyclic
+        # GC reclaims that fine, and it's one-time construction, not a leak).
+        profile = self._profile
+        canonicalize_tool_name = self._canonical_tool_name
         return ACPRuntime(
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(
-                profile=self._profile,
-                canonicalize_tool_name=self._canonical_tool_name,
+                profile=profile,
+                canonicalize_tool_name=canonicalize_tool_name,
             ),
             spawn_process=self._select_transport(spawn_process, self._host, self._port),
         )
@@ -495,11 +502,14 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """The shared backend singleton (one ``LocalMCPServer`` per adapter),
         starting it on first use.
 
-        This fires at most once per room's first turn — never a hot path —
-        so the lock is held for the whole check-and-create rather than only
-        guarding creation; two rooms' concurrent first turns then cannot each
-        start a server and leak the loser (running, never stopped).
+        Once started, every later room's first turn hits this — so the
+        unlocked fast-path read (matching ``_get_or_create_session`` below)
+        skips the lock entirely once the backend exists; only actual creation
+        needs it, so two rooms' concurrent first turns cannot each start a
+        server and leak the loser (running, never stopped).
         """
+        if self._band_mcp_backend is not None:
+            return self._band_mcp_backend
         async with self._mcp_backend_lock:
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
