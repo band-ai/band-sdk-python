@@ -118,7 +118,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
-    SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+    SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
+        {Capability.MEMORY, Capability.CONTACTS}
+    )
 
     def __init__(
         self,
@@ -159,6 +161,20 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        # The tools this adapter registers on the loopback MCP server: band
+        # platform tools gated by the declared capabilities, plus custom tools.
+        # Computed once — both inputs are known here — so MCP registration and
+        # tool-name canonicalization share one vocabulary (opencode parity).
+        self._tool_definitions: list[ToolDefinition] = list(
+            iter_tool_definitions(
+                include_memory=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
+            )
+        )
+        self._own_tool_names: frozenset[str] = frozenset(
+            {definition.name for definition in self._tool_definitions}
+            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
+        )
         self._rest_url = rest_url or "https://app.band.ai"
         self._validate_rest_url(self._rest_url)
         self._inject_band_tools = inject_band_tools
@@ -410,31 +426,20 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             headers=[],
         )
 
-    def _band_tool_definitions(self) -> list[ToolDefinition]:
-        """The SDK tool definitions the loopback MCP server registers."""
-        return list(iter_tool_definitions(include_memory=False))
-
-    def _own_tool_names(self) -> set[str]:
-        """Names of the tools this adapter registers (SDK band + custom)."""
-        return {td.name for td in self._band_tool_definitions()} | {
-            get_custom_tool_name(input_model)
-            for input_model, _handler in self._custom_tools
-        }
-
     def _canonical_tool_name(self, name: str) -> str:
         """Strip an MCP server prefix off one of our own tools.
 
         Mirrors the opencode adapter: only a name that reveals a tool this
         adapter registered is rewritten; anything else passes through.
         """
-        return canonicalize_mcp_tool_name(name, self._own_tool_names())
+        return canonicalize_mcp_tool_name(name, self._own_tool_names)
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
         backend = self._band_mcp_backend
         if backend is None:
             backend = await create_band_mcp_backend(
                 kind=self._runtime._agent_mcp_transport,
-                tool_definitions=self._band_tool_definitions(),
+                tool_definitions=self._tool_definitions,
                 get_tools=self._room_tools.get,
                 additional_tools=self._custom_tools,
             )

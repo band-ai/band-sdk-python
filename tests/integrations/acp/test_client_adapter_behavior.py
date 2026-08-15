@@ -19,6 +19,7 @@ import re
 import pytest
 from pydantic import BaseModel
 
+from band.core.types import AdapterFeatures, Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
@@ -199,6 +200,21 @@ async def test_prefixed_custom_tool_narrated_under_canonical_name() -> None:
         reply = await session.send("echo hi")
 
     assert reply.tool_call_names == ["echo"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_vocabulary_follows_declared_capabilities(fake_agent) -> None:
+    """A memory tool's MCP spelling canonicalizes only when the MEMORY
+    capability (which registers the tool) is declared — the vocabulary and
+    the registration stay one set."""
+    fake_agent.will_call_tool(
+        "tc-1", "band-band_store_memory", raw_input={"content": "x"}, result="ok"
+    ).will_say("stored")
+    features = AdapterFeatures(capabilities={Capability.MEMORY})
+    async with acp_adapter(fake_agent, features=features) as session:
+        reply = await session.send("remember x")
+
+    assert reply.tool_call_names == ["band_store_memory"]
 
 
 @pytest.mark.asyncio

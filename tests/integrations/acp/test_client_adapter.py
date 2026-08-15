@@ -9,6 +9,7 @@ import pytest
 from acp.helpers import update_agent_message_text
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
+from band.core.types import AdapterFeatures, Capability
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -238,6 +239,48 @@ class TestACPClientAdapterLocalMcpConfig:
 
         assert first.url == second.url
         mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_memory_and_contacts_tools_registered_when_declared(self) -> None:
+        """Declared capabilities put their tool groups on the loopback server."""
+        adapter = ACPClientAdapter(
+            command="codex",
+            features=AdapterFeatures(
+                capabilities={Capability.MEMORY, Capability.CONTACTS}
+            ),
+        )
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=backend),
+        ) as mock_create_backend:
+            await adapter._get_or_start_band_mcp_server()
+
+        registered = {
+            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
+        }
+        assert "band_store_memory" in registered
+        assert "band_list_contacts" in registered
+
+    @pytest.mark.asyncio
+    async def test_capability_gated_tools_absent_without_declaration(self) -> None:
+        """Undeclared capabilities keep their tool groups off the server."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=backend),
+        ) as mock_create_backend:
+            await adapter._get_or_start_band_mcp_server()
+
+        registered = {
+            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
+        }
+        assert "band_store_memory" not in registered
+        assert "band_list_contacts" not in registered
+        assert "band_send_message" in registered
 
     def test_build_system_context_mentions_band_tools(self) -> None:
         """Should keep ACP system context minimal and room-aware."""
