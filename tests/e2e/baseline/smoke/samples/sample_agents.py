@@ -28,7 +28,9 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
+from tests.e2e.baseline.agents import ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
+from tests.e2e.baseline.toolkit.adapters import Adapter
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
@@ -109,6 +111,17 @@ COST_MULTI_TURN_AGENT = {
     "prompt": COST_MULTI_TURN_SYSTEM_PROMPT,
     "features": usage_features(),
 }
+
+# Adapters excluded from every per-turn-usage gate (the usage smokes and the
+# restart usage split). Keep this registry-derived fan honest: only adapters
+# unable to observe per-turn usage belong here.
+USAGE_EXCLUSIONS = (
+    ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
+    ExcludedAdapter(
+        Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+    ),
+    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
+)
 
 
 # Reply-oriented driving glue shared by the context-recall and rehydration

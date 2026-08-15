@@ -36,11 +36,12 @@ from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from band.client.streaming import DeliveryStatus
 
-from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
     REPLY_PROMPT,
+    USAGE_EXCLUSIONS,
     invite_instruction,
     liveness_probe,
     unique_marker,
@@ -142,12 +143,7 @@ async def test_handled_work_not_redrained_on_restart(
 
 @per_adapter(
     runs_tool_loop=True,
-    exclude=[
-        ExcludedAdapter(
-            Adapter.CREWAI,
-            "cumulative-lifetime usage counter — the per-turn token gate is N/A",
-        )
-    ],
+    exclude=USAGE_EXCLUSIONS,
     prompt=REPLY_PROMPT,
     features=usage_features(),
 )
@@ -162,8 +158,9 @@ async def test_restart_usage_splits_replay_and_inference(
 ) -> None:
     """The post-restart turn's usage shows replayed input AND fresh-inference output.
 
-    crewai is excluded (its usage counter is cumulative-lifetime, not per-turn, so the
-    gate is N-A); its rehydration recall is covered by ``test_recalls_after_rejoin``.
+    Adapters that cannot observe per-turn usage sit out (``USAGE_EXCLUSIONS``,
+    each with its rationale); their rehydration recall is covered by
+    ``test_recalls_after_rejoin``.
     """
     note = unique_marker("note")
     identity = await cell.provision(label=f"usage-{cell.adapter_id}")
