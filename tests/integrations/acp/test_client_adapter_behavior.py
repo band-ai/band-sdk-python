@@ -544,6 +544,51 @@ async def test_bootstrap_with_empty_history_has_no_replay_block(fake_agent) -> N
 
 
 @pytest.mark.asyncio
+async def test_roster_and_contacts_updates_injected_into_prompt(fake_agent) -> None:
+    """A turn carrying roster/contacts updates surfaces them to the model.
+
+    The runtime delivers these only on change (then marks them sent), so a
+    dropped update is lost for good — the model would never learn who is in
+    the room. The live message stays last so the model answers it."""
+    fake_agent.will_say("noted")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send(
+            "hello",
+            bootstrap=True,
+            participants_msg="## Current Participants\n- @rev — Rev (Agent)",
+            contacts_msg="Contact update: Rev is now a contact",
+        )
+
+    prompt = fake_agent.prompt_texts()[0]
+    roster_at = prompt.index("[System]: ## Current Participants")
+    contacts_at = prompt.index("[System]: Contact update")
+    live_at = prompt.index("[Peer]: hello")
+    assert roster_at < contacts_at < live_at, (
+        "roster and contacts updates must precede the live message"
+    )
+
+
+@pytest.mark.asyncio
+async def test_roster_update_injected_on_a_later_turn(fake_agent) -> None:
+    """Roster changes mid-conversation reach the model on the turn that
+    carries them, not only on session bootstrap."""
+    fake_agent.will_say("ok")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send("first", bootstrap=True)
+        await session.send(
+            "second",
+            participants_msg="## Current Participants\n- @newpeer — New Peer (Agent)",
+        )
+
+    first, second = fake_agent.prompt_texts()
+    assert "[System]:" not in first, "no update was attached to the first turn"
+    assert "[System]: ## Current Participants" in second
+    assert second.index("[System]:") < second.index("[Peer]: second")
+
+
+@pytest.mark.asyncio
 async def test_replay_happens_once_not_on_later_turns(fake_agent) -> None:
     """The transcript is seeded into the session's first prompt only; repeating
     it on every turn would compound the duplication it exists to avoid."""

@@ -204,6 +204,8 @@ class AcpSession:
         history: ACPClientSessionState | None = None,
         bootstrap: bool = False,
         room_context: list[dict[str, Any]] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -211,7 +213,8 @@ class AcpSession:
         adapter (re)start, when the runtime hands over the room's converted
         platform history. ``room_context`` seeds what the platform returns if
         the adapter re-fetches the room transcript itself (the off-bootstrap
-        rehydration path).
+        rehydration path). ``participants_msg``/``contacts_msg`` model the
+        change-triggered roster/contacts updates the runtime attaches to a turn.
         """
         tools = TranscriptTools()
         if room_context is not None:
@@ -220,8 +223,8 @@ class AcpSession:
             _message(content, room),
             tools,
             history or ACPClientSessionState(),
-            None,
-            None,
+            participants_msg,
+            contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=room,
         )

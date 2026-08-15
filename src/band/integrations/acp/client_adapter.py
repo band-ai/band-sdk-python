@@ -199,7 +199,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        del participants_msg, contacts_msg
         await self._ensure_connection()
 
         if self._inject_band_tools:
@@ -225,7 +224,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
 
         prompt_text = await self._build_prompt_text(
-            room_id, session_id, msg, replay=replay
+            room_id,
+            session_id,
+            msg,
+            replay=replay,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
         )
         sender_name = msg.sender_name or msg.sender_id or "Unknown"
         mentions = [{"id": msg.sender_id, "name": sender_name}]
@@ -451,6 +455,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         msg: PlatformMessage,
         *,
         replay: list[str] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> str:
         """Add room context, and the transcript replay if one is due, on the
         first prompt sent to an ACP session. The current message always comes
@@ -465,10 +471,19 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # where the transcript ends and the live message begins.
         live_message = msg.format_for_llm()
 
-        if not needs_bootstrap:
-            return live_message
+        # Roster/contacts updates arrive only on change (the runtime marks them
+        # sent), so inject them on whichever turn carries them — mirrors codex
+        # and opencode.
+        system_updates = [
+            f"[System]: {update}"
+            for update in (participants_msg, contacts_msg)
+            if update
+        ]
 
-        sections = [self._build_system_context(room_id, msg)]
+        if not needs_bootstrap:
+            return "\n\n".join([*system_updates, live_message])
+
+        sections = [self._build_system_context(room_id, msg), *system_updates]
         if replay:
             # The live message sits under the nonce'd boundary marker the
             # header names; on ordinary turns it needs none.
