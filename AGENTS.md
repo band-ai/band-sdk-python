@@ -339,7 +339,7 @@ Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copil
 
 ### Capabilities (Client Adapter)
 
-`ACPClientAdapter` supports `Capability.MEMORY` and `Capability.CONTACTS`: the declared capabilities gate which band tool groups the loopback MCP server registers, and the same vocabulary drives tool-name canonicalization (both computed once at construction, opencode parity). `render_system_prompt` carries the matching capability sections.
+`ACPClientAdapter` supports `Capability.MEMORY` and `Capability.CONTACTS`. Only memory tools are gated on the declared capability (an enterprise feature the adapter must opt into); contact tools register unconditionally, matching the adapter's pre-existing default that every caller without `features=` (every ACP example) relies on — declaring `Capability.CONTACTS` only stops the base class's unsupported-capability warning for a caller that does declare it. The registered tool vocabulary (computed once at construction) drives tool-name canonicalization too. `render_system_prompt` carries the matching capability sections.
 
 ### Permission pairing (Client Adapter)
 

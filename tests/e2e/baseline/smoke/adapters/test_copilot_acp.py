@@ -19,7 +19,7 @@ from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.builders import copilot_acp_env
+from tests.e2e.baseline.toolkit.builders import copilot_acp_env, copilot_home_dir
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
     emit_event_instruction,
@@ -135,16 +135,11 @@ def hermetic_copilot_config(
     """
     from band.adapters.copilot_acp import CopilotACPAdapterConfig
 
-    home = work_dir / "copilot-home"
-    home.mkdir(parents=True)
+    home = copilot_home_dir(str(work_dir))
     kwargs: dict[str, Any] = {
         "cwd": str(work_dir),
         "custom_section": "Keep responses short and concise.",
-        "env": (
-            {"COPILOT_HOME": str(home)}
-            if hosted
-            else copilot_acp_env(settings, str(home))
-        ),
+        "env": ({"COPILOT_HOME": home} if hosted else copilot_acp_env(settings, home)),
     }
     if hosted:
         kwargs["github_token"] = settings.backends.github_token

@@ -377,6 +377,18 @@ def _build_opencode(
     )
 
 
+def copilot_home_dir(work_dir: str) -> str:
+    """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
+
+    The one place the subdirectory name and its creation live — the registry
+    builder and the bespoke test configs (``test_copilot_acp.py``) all call
+    this rather than each re-picking the name and an os.path/pathlib API.
+    """
+    home = os.path.join(work_dir, "copilot-home")
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
 def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     """Environment for a hermetic, Anthropic-BYOK ``copilot --acp`` spawn.
 
@@ -384,11 +396,12 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     it, GitHub authentication is then not required, and a model must be named
     — the same Anthropic key + model the copilot_sdk builder uses, so cells
     validate Copilot CLI on a BYOK model rather than the quota-bound
-    Copilot-hosted default. COPILOT_HOME points at a fresh directory so
-    host-installed extensions and session state cannot steer the turn — an
-    installed extension whose description mentions Band was observed hijacking
-    a turn (the agent loaded it and never made the requested tool call). BYOK
-    auth rides entirely on this env, so hiding the home never hides auth.
+    Copilot-hosted default. ``copilot_home`` (see ``copilot_home_dir``) should
+    be a fresh directory so host-installed extensions and session state
+    cannot steer the turn — an installed extension whose description mentions
+    Band was observed hijacking a turn (the agent loaded it and never made
+    the requested tool call). BYOK auth rides entirely on this env, so hiding
+    the home never hides auth.
     """
     return {
         "COPILOT_HOME": copilot_home,
@@ -403,6 +416,7 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     Adapter.COPILOT_ACP,
     requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
     supports=_LLM_TOOL_LOOP,
+    runs_tool_loop=False,
 )
 def _build_copilot_acp(
     s: BaselineSettings,
@@ -414,11 +428,14 @@ def _build_copilot_acp(
     from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
 
     # stdio spawn of `copilot --acp` co-located with the SDK, so Band tools reach
-    # Copilot over the loopback MCP server (inject_band_tools default True). Tools
-    # execute out-of-process over MCP, but custom ToolSpecs are translated
-    # (additional_tools below) and every call is narrated as an observable
-    # tool_call event, so the adapter enters the tool-loop and capability
-    # matrices like opencode.
+    # Copilot over the loopback MCP server (inject_band_tools default True).
+    # `supports` and `runs_tool_loop` are separate axes (see AdapterSpec):
+    # memory/contacts tools are now genuinely registered and gated on declared
+    # capabilities (this adapter enters the capability matrix), but the
+    # custom-tool round trip (`runs_tool_loop=True`) needs its own live proof —
+    # matching codex/opencode/letta, which all delegate tool execution
+    # out-of-process and stay `runs_tool_loop=False` until proven. Flip once
+    # test_custom_tool_round_trips is observed green.
     #
     # Auth is Anthropic BYOK (copilot_acp_env above), so the gate is the CLI +
     # the Anthropic key — no GitHub token or stored login involved. The spawn
@@ -428,13 +445,11 @@ def _build_copilot_acp(
     # into the agent under test) and a per-cell COPILOT_HOME.
     # COPILOT_COMMAND overrides the binary + args.
     sandbox = tempfile.mkdtemp(prefix="band-e2e-copilot-acp-")
-    copilot_home = os.path.join(sandbox, "copilot-home")
-    os.makedirs(copilot_home)
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
         "cwd": sandbox,
-        "env": copilot_acp_env(s, copilot_home),
+        "env": copilot_acp_env(s, copilot_home_dir(sandbox)),
     }
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())

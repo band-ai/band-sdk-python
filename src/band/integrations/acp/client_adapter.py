@@ -43,6 +43,7 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
 from band.runtime.mcp_server import LocalMCPServer
 from band.runtime.tools import (
+    ROOM_POSTING_TOOL_NAMES,
     ToolDefinition,
     canonicalize_mcp_tool_name,
     iter_tool_definitions,
@@ -55,6 +56,13 @@ LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 # Prefixes the change-triggered roster/contacts updates injected into a
 # prompt, so the model reads them as platform state, not as the requester
 # speaking. Shared with tests as the single spelling of that convention.
+#
+# Matches the "[System]: " spelling used by codex/opencode/anthropic/etc.
+# (12+ adapters each hardcode their own copy); it has already drifted once
+# (parlant.py uses "[System Update]: " for the identical concept). Extracting
+# one real cross-adapter constant is out of scope here — it would touch every
+# other adapter's own file for no ACP-specific reason — but is worth a
+# follow-up so the convention has one source instead of N private copies.
 SYSTEM_UPDATE_PREFIX = "[System]: "
 
 # Marks where the replayed transcript ends and the live message begins, so
@@ -148,7 +156,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             features=features,
         )
         self._host, self._port = self._resolve_transport(command, host, port)
-        self._command = self._shape_command(command)
+        self._command = self._shape_command(command, self._host)
         self._env = env
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
@@ -173,13 +181,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # asyncio.Lock is not re-entrant, so the backend cannot reuse it.
         self._mcp_backend_lock = asyncio.Lock()
 
-    def _shape_command(self, command: str | list[str] | None) -> list[str]:
+    @staticmethod
+    def _shape_command(command: str | list[str] | None, host: str | None) -> list[str]:
         """The subprocess command for stdio, or an empty command for TCP.
 
         stdio spawns a subprocess from ``command``; TCP dials an
-        already-running ACP server at host/port instead.
+        already-running ACP server at ``host``/port instead. ``host`` is
+        passed explicitly (not read off ``self``) so this stays checkable
+        independent of ``__init__``'s statement order.
         """
-        if self._host is not None:
+        if host is not None:
             return []
         # _resolve_transport guarantees command is set when host is None.
         assert command is not None
@@ -188,31 +199,60 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     def _registered_tools(self) -> tuple[list[ToolDefinition], frozenset[str]]:
         """The tools this adapter registers on the loopback MCP server.
 
-        Band platform tools gated by the declared capabilities, plus custom
-        tools. Computed once at construction — both inputs are known here — so
-        MCP registration and tool-name canonicalization share one vocabulary
-        (opencode parity).
+        Band platform tools plus custom tools. Computed once at construction
+        — both inputs are known here — so MCP registration and tool-name
+        canonicalization share one vocabulary. This resembles OpenCodeAdapter's
+        equivalent block (same idea: compute the vocabulary once, up front),
+        but is not extracted into a shared helper — the two sets already serve
+        different consumers (opencode's gates auto-approve/permission
+        matching; this one gates narration canonicalization and includes the
+        legacy alias below) and, per contacts below, no longer share the same
+        gating rule either. Merging genuinely-different vocabularies just
+        because they're built similarly would cost more than the duplication
+        it removes.
+
+        Memory tools are gated behind ``Capability.MEMORY``: they were
+        previously rejected outright (an enterprise feature the adapter must
+        opt into). Contact tools are NOT gated behind ``Capability.CONTACTS``
+        despite ``iter_tool_definitions`` taking the same shape of flag for
+        both — unlike memory, contacts were already unconditionally
+        registered before this adapter declared any capabilities, and every
+        existing caller (the ACP examples) relies on that default with no
+        ``features=`` of its own. Declaring ``Capability.CONTACTS`` in
+        ``SUPPORTED_CAPABILITIES`` only stops the base class's
+        unsupported-capability warning for a caller that does declare it.
         """
         definitions = list(
             iter_tool_definitions(
                 include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
             )
         )
         names = frozenset(
             {definition.name for definition in definitions}
             | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
+            # The legacy band-mcp <=1.3.1 message-send spelling (band_send_message
+            # is already covered via iter_tool_definitions). Without it, an
+            # external band-mcp's MCP-prefixed legacy call
+            # (band-create_agent_chat_message) would canonicalize to nothing and
+            # narrate under the raw prefixed name — the one case reply-suppression
+            # (is_room_posting_tool, same source set) already tolerates.
+            | ROOM_POSTING_TOOL_NAMES
         )
         return definitions, names
 
-    def _select_transport(self, spawn_process: SpawnProcess | None) -> SpawnProcess:
+    @staticmethod
+    def _select_transport(
+        spawn_process: SpawnProcess | None, host: str | None, port: int | None
+    ) -> SpawnProcess:
         """An explicit ``spawn_process`` wins (advanced/custom transports and
         tests); otherwise acp's subprocess spawner (stdio) or a connect-only
-        seam closed over host/port (TCP; see ``tcp_spawn_process``)."""
+        seam closed over host/port (TCP; see ``tcp_spawn_process``). ``host``/
+        ``port`` are explicit (not read off ``self``), matching
+        ``_shape_command``."""
         if spawn_process is not None:
             return spawn_process
-        if self._host is not None and self._port is not None:
-            return tcp_spawn_process(self._host, self._port)
+        if host is not None and port is not None:
+            return tcp_spawn_process(host, port)
         return spawn_agent_process
 
     def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
@@ -224,7 +264,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 profile=self._profile,
                 canonicalize_tool_name=self._canonical_tool_name,
             ),
-            spawn_process=self._select_transport(spawn_process),
+            spawn_process=self._select_transport(spawn_process, self._host, self._port),
         )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -451,25 +491,29 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """
         return canonicalize_mcp_tool_name(name, self._own_tool_names)
 
-    async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
-        # The backend is a shared singleton (one LocalMCPServer per adapter).
-        # The started-path read is lock-free (atomic between awaits); the lock
-        # guards only creation, so two rooms' concurrent first turns cannot
-        # each start a server and leak the loser (running, never stopped).
-        backend = self._band_mcp_backend
-        if backend is None:
-            async with self._mcp_backend_lock:
-                backend = self._band_mcp_backend
-                if backend is None:
-                    backend = await create_band_mcp_backend(
-                        kind=self._runtime._agent_mcp_transport,
-                        tool_definitions=self._tool_definitions,
-                        get_tools=self._room_tools.get,
-                        additional_tools=self._custom_tools,
-                    )
-                    self._band_mcp_backend = backend
-                    self._band_mcp_server = backend.local_server
+    async def _ensure_band_mcp_backend(self) -> BandMCPBackend:
+        """The shared backend singleton (one ``LocalMCPServer`` per adapter),
+        starting it on first use.
 
+        This fires at most once per room's first turn — never a hot path —
+        so the lock is held for the whole check-and-create rather than only
+        guarding creation; two rooms' concurrent first turns then cannot each
+        start a server and leak the loser (running, never stopped).
+        """
+        async with self._mcp_backend_lock:
+            if self._band_mcp_backend is None:
+                backend = await create_band_mcp_backend(
+                    kind=self._runtime._agent_mcp_transport,
+                    tool_definitions=self._tool_definitions,
+                    get_tools=self._room_tools.get,
+                    additional_tools=self._custom_tools,
+                )
+                self._band_mcp_backend = backend
+                self._band_mcp_server = backend.local_server
+            return self._band_mcp_backend
+
+    async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
+        backend = await self._ensure_band_mcp_backend()
         local_server = backend.local_server
         if local_server is None:
             raise RuntimeError("ACP MCP backend did not create a local server")
@@ -514,8 +558,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     def _claim_session_bootstrap(self, session_id: str) -> bool:
         """True exactly once per session — the caller owns the bootstrap prompt.
 
-        Lock-free: the check-and-add runs without an await, so the event
-        loop's run-to-completion makes it atomic.
+        Lock-free: the check-and-add runs without an ``await``, so the event
+        loop's run-to-completion makes it atomic. ``on_cleanup``/``cleanup_all``
+        mutate this same set under ``_session_lock`` instead — also safe today
+        for the same no-``await``-in-between reason, not because of the lock.
+        Adding an ``await`` to any of these three mutation sites would need a
+        real lock added back everywhere ``_bootstrapped_sessions`` is touched.
         """
         if session_id in self._bootstrapped_sessions:
             return False
