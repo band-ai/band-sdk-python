@@ -48,9 +48,20 @@ _session_message_sent: dict[str, bool] = {}
 # Parlant tools take mentions as a comma-separated string, not the master
 # model's list[str], so the master description needs this appended — it is
 # genuinely Parlant-specific and not something get_tool_description() covers.
+# Phrased without "array"/"list" wording so it doesn't read as contradicting
+# the master text's "mentions array" line right above it.
 SEND_MESSAGE_MENTIONS_NOTE = (
-    "\n\nPass mentions as a single comma-separated string "
-    '(e.g., "@alice, @bob/agent"), not a list.'
+    "\n\nThis tool's mentions argument is a single string: separate multiple "
+    'handles with commas, e.g. "@alice, @bob/agent".'
+)
+
+# The master model describes lookup_peers' raw return shape (a 'data'/'metadata'
+# dict) for adapters that pass it through unchanged. This Parlant tool formats
+# that result into a plain-text summary instead, so the master claim would be
+# wrong here without this correction.
+LOOKUP_PEERS_RETURN_NOTE = (
+    "\n\nThis tool returns a formatted text summary of matching agents, not "
+    "the 'data'/'metadata' dict described above."
 )
 
 
@@ -139,7 +150,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         """
 
         def decorator(func: Callable[..., Any]) -> Any:
-            func.__doc__ = get_tool_description(func.__name__) + extra_doc
+            func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
             return p.tool(func)
 
         return decorator
@@ -297,7 +308,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error removing participant '{identifier}': {e}")
 
-    @band_tool()
+    @band_tool(LOOKUP_PEERS_RETURN_NOTE)
     async def band_lookup_peers(
         context: ToolContext,
     ) -> ToolResult:

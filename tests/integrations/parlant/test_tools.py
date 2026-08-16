@@ -1,19 +1,24 @@
 """Tests for Parlant tools module."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.exceptions import BandToolError
+from band.core.types import AdapterFeatures, Capability
 from band.integrations.parlant.tools import (
     _session_message_sent,
     _session_tools,
     create_parlant_tools,
+    get_current_tools,
     get_session_tools,
     mark_message_sent,
+    set_current_tools,
     set_session_tools,
     was_message_sent,
 )
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import TOOL_MODELS
 
 try:
     import parlant.sdk  # noqa: F401
@@ -119,22 +124,16 @@ class TestDeprecatedFunctions:
 
     def test_set_current_tools_emits_deprecation_warning(self):
         """Should emit deprecation warning."""
-        from band.integrations.parlant.tools import set_current_tools
-
         with pytest.warns(DeprecationWarning, match="set_current_tools is deprecated"):
             set_current_tools(MagicMock())
 
     def test_get_current_tools_emits_deprecation_warning(self):
         """Should emit deprecation warning."""
-        from band.integrations.parlant.tools import get_current_tools
-
         with pytest.warns(DeprecationWarning, match="get_current_tools is deprecated"):
             get_current_tools()
 
     def test_get_current_tools_returns_none(self):
         """Should return None (tools now accessed via session_id)."""
-        from band.integrations.parlant.tools import get_current_tools
-
         with pytest.warns(DeprecationWarning):
             result = get_current_tools()
 
@@ -190,15 +189,30 @@ class TestCreateParlantTools:
         for entry in tools:
             assert entry.tool.description, f"Tool {entry.tool.name} has no description"
 
-    def test_descriptions_match_master_source(self):
-        """Every description must derive from get_tool_description(), not a
-        hand-written docstring that can silently drift from the master model."""
+    def test_description_reflects_master_model_edit(self, monkeypatch):
+        """A master model docstring edit must reach the Parlant tool description.
+
+        Mutates the actual source (``TOOL_MODELS`` docstrings) rather than
+        re-deriving the expected text through ``get_tool_description()`` — the
+        function under test's own dependency — so this can't pass on a
+        hand-written docstring that coincidentally matches today's master text.
+        That's the regression this fix closes: Parlant tools used to hand-write
+        their own docs instead of reading the master model at all.
+        """
+        for name, model in TOOL_MODELS.items():
+            sentinel = f"SENTINEL DOCSTRING FOR {name}"
+            monkeypatch.setattr(model, "__doc__", sentinel)
+
         tools = create_parlant_tools()
+        checked = 0
         for entry in tools:
-            master = get_tool_description(entry.tool.name)
-            assert entry.tool.description.startswith(master), (
-                f"{entry.tool.name} description has drifted from its master model"
-            )
+            if entry.tool.name not in TOOL_MODELS:
+                continue
+            checked += 1
+            assert f"SENTINEL DOCSTRING FOR {entry.tool.name}" in entry.tool.description
+        assert checked == len(tools), (
+            "expected every Parlant tool to have a master model"
+        )
 
     def test_send_message_tool_has_required_parameters(self):
         """send_message should have content and mentions parameters."""
@@ -249,8 +263,6 @@ class TestCreateParlantTools:
 
     def test_excludes_contact_tools_without_capability(self):
         """Contact tools excluded when CONTACTS capability is absent."""
-        from band.core.types import AdapterFeatures
-
         tools = create_parlant_tools(features=AdapterFeatures())
         tool_names = [t.tool.name for t in tools]
 
@@ -264,8 +276,6 @@ class TestCreateParlantTools:
 
     def test_includes_contact_tools_with_capability(self):
         """Contact tools included when CONTACTS capability is present."""
-        from band.core.types import AdapterFeatures, Capability
-
         tools = create_parlant_tools(
             features=AdapterFeatures(capabilities={Capability.CONTACTS})
         )
@@ -333,8 +343,6 @@ class TestParlantToolFunctions:
         ``MagicMock(spec=ToolContext)`` is not used because ``ToolContext``
         lives in ``parlant.core.tools`` which may not be installed.
         """
-        from types import SimpleNamespace
-
         return SimpleNamespace(session_id="test-session-123")
 
     @pytest.fixture
@@ -409,8 +417,6 @@ class TestParlantToolFunctions:
         failure value so the LLM can recover, instead of letting the exception
         crash the turn.
         """
-        from band.core.exceptions import BandToolError
-
         mock_tools.send_message.side_effect = BandToolError(
             "Backend rejected message: 503 Service Unavailable"
         )
