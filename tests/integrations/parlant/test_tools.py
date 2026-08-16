@@ -13,6 +13,7 @@ from band.integrations.parlant.tools import (
     set_session_tools,
     was_message_sent,
 )
+from band.runtime.tools import get_tool_description
 
 try:
     import parlant.sdk  # noqa: F401
@@ -192,8 +193,6 @@ class TestCreateParlantTools:
     def test_descriptions_match_master_source(self):
         """Every description must derive from get_tool_description(), not a
         hand-written docstring that can silently drift from the master model."""
-        from band.runtime.tools import get_tool_description
-
         tools = create_parlant_tools()
         for entry in tools:
             master = get_tool_description(entry.tool.name)
