@@ -45,19 +45,35 @@ if _CLAUDE_SDK_AVAILABLE:
     )
 
 
+# The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
+_SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
+_ANY_MODEL = "claude-sonnet-4-6"
+# What _report_error posts for a turn that ended without a reply going out.
+_MISSING_REPLY_CONTENT = f"Error: {missing_reply_error('Claude SDK')}"
+
+
 def _tool_turn(mcp_tool_name: str) -> list:
     """A turn's stream in the protocol shape: the assistant calls a tool, then
     the result comes back in a user-type envelope."""
     return [
         AssistantMessage(
             content=[ToolUseBlock(id="tool-1", name=mcp_tool_name, input={})],
-            model="claude-sonnet-4-6",
+            model=_ANY_MODEL,
         ),
         UserMessage(
             content=[
                 ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False)
             ]
         ),
+    ]
+
+
+def _error_events(mock_tools) -> list:
+    """Contents of the error events posted through send_event."""
+    return [
+        call.kwargs["content"]
+        for call in mock_tools.send_event.call_args_list
+        if call.kwargs.get("message_type") == "error"
     ]
 
 
@@ -825,7 +841,7 @@ class TestSessionPersistence:
 
         # A turn that actually replied via band_send_message, so the missing-reply
         # guard stays quiet and the only send_event call is the session task event.
-        turn = _tool_turn("mcp__band__band_send_message")
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         result_msg = _result_message(session_id="sess-xyz-789")
 
         mock_client = MagicMock()
@@ -964,7 +980,7 @@ class TestSessionPersistence:
         adapter = ClaudeSDKAdapter()
         mock_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
 
-        turn = _tool_turn("mcp__band__band_send_message")
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         result_msg = _result_message(session_id="sess-xyz")
 
         mock_client = MagicMock()
@@ -984,7 +1000,7 @@ class TestSessionPersistence:
 
 
 class TestTurnFailureSurfacing:
-    """INT-1210: a failed or silent turn must surface a room-visible error."""
+    """A failed or silent turn must surface a room-visible error."""
 
     @staticmethod
     def _client_yielding(*sdk_messages) -> MagicMock:
@@ -1001,9 +1017,9 @@ class TestTurnFailureSurfacing:
     async def test_reports_error_on_is_error_result(self, mock_tools):
         """``is_error`` must surface even though ``subtype`` claims success.
 
-        Reproduces the production auth failures from INT-1210: the CLI reports
-        ``is_error=True`` with ``subtype="success"``, which is why the adapter
-        must gate on ``is_error`` and never on ``subtype``.
+        On a hard failure such as a CLI auth error, the CLI reports
+        ``is_error=True`` with ``subtype="success"``, so the adapter must gate
+        on ``is_error`` and never on ``subtype``.
         """
         adapter = ClaudeSDKAdapter()
         result_msg = _result_message(
@@ -1015,13 +1031,9 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        error_calls = [
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "error"
-        ]
-        assert len(error_calls) == 1
-        assert "Not logged in · Please run /login" in error_calls[0].kwargs["content"]
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "Not logged in · Please run /login" in errors[0]
 
     @pytest.mark.asyncio
     async def test_error_detail_includes_api_error_status(self, mock_tools):
@@ -1036,12 +1048,9 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        error_call = next(
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "error"
-        )
-        assert "401" in error_call.kwargs["content"]
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "401" in errors[0]
 
     @pytest.mark.asyncio
     async def test_reports_missing_reply_when_no_terminal_tool_ran(self, mock_tools):
@@ -1052,31 +1061,19 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        error_call = next(
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "error"
-        )
-        assert error_call.kwargs["content"] == (
-            f"Error: {missing_reply_error('Claude SDK')}"
-        )
+        assert _error_events(mock_tools) == [_MISSING_REPLY_CONTENT]
 
     @pytest.mark.asyncio
     async def test_no_error_reported_when_reply_tool_ran(self, mock_tools):
         """A turn that replied via band_send_message must stay quiet."""
         adapter = ClaudeSDKAdapter()
-        turn = _tool_turn("mcp__band__band_send_message")
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         result_msg = _result_message(is_error=False)
         mock_client = self._client_yielding(*turn, result_msg)
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        error_calls = [
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "error"
-        ]
-        assert error_calls == []
+        assert _error_events(mock_tools) == []
 
     @pytest.mark.asyncio
     async def test_assistant_carried_tool_result_also_counts(self, mock_tools):
@@ -1086,31 +1083,24 @@ class TestTurnFailureSurfacing:
         adapter = ClaudeSDKAdapter()
         assistant_msg = AssistantMessage(
             content=[
-                ToolUseBlock(
-                    id="tool-1", name="mcp__band__band_send_message", input={}
-                ),
+                ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={}),
                 ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
             ],
-            model="claude-sonnet-4-6",
+            model=_ANY_MODEL,
         )
         result_msg = _result_message(is_error=False)
         mock_client = self._client_yielding(assistant_msg, result_msg)
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        error_calls = [
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "error"
-        ]
-        assert error_calls == []
+        assert _error_events(mock_tools) == []
 
     @pytest.mark.asyncio
     async def test_execution_narration_covers_user_envelope_results(self, mock_tools):
         """With Emit.EXECUTION on, a protocol-shaped turn narrates both the
         tool_call and the tool_result (which arrives in a user envelope)."""
         adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
-        turn = _tool_turn("mcp__band__band_send_message")
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         mock_client = self._client_yielding(*turn, _result_message())
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
@@ -1131,14 +1121,7 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        error_call = next(
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "error"
-        )
-        assert error_call.kwargs["content"] == (
-            f"Error: {missing_reply_error('Claude SDK')}"
-        )
+        assert _error_events(mock_tools) == [_MISSING_REPLY_CONTENT]
 
 
 # ======================================================================

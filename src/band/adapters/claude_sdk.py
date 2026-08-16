@@ -694,138 +694,174 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         logger.debug("Message %s processed successfully", msg.id)
 
-    # --- Copied from BandClaudeSDKAgent._process_response ---
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
     ) -> None:
-        """
-        Process streaming response from Claude SDK.
+        """Dispatch the turn's streamed messages until its terminal ResultMessage.
 
         MCP tools handle actual execution - we log and optionally report events here.
         """
-        # Bare tool name per pending call, keyed by tool_use_id (ToolResultBlock only
-        # carries the id, not the name) - used to decide, once the turn ends, whether
-        # a Band terminal tool actually ran (see is_terminal_success / tool_executed
-        # below the loop).
+        # Bare tool name per pending call, keyed by tool_use_id (ToolResultBlock
+        # only carries the id). Feeds the terminal-work decision at turn end.
         pending_tool_names: dict[str, str] = {}
         tool_executed = False
         async for sdk_message in client.receive_response():
-            if isinstance(sdk_message, AssistantMessage):
-                for block in sdk_message.content:
-                    if isinstance(block, TextBlock):
-                        if block.text:
-                            logger.debug(
-                                "Room %s: Text: %s...", room_id, block.text[:100]
-                            )
+            match sdk_message:
+                case AssistantMessage():
+                    tool_executed |= await self._on_assistant_message(
+                        sdk_message, pending_tool_names, room_id, tools
+                    )
+                case UserMessage():
+                    tool_executed |= await self._on_user_message(
+                        sdk_message, pending_tool_names, room_id, tools
+                    )
+                case ResultMessage():
+                    await self._on_turn_complete(
+                        sdk_message, room_id, tools, tool_executed=tool_executed
+                    )
+                    break
 
-                    elif isinstance(block, ThinkingBlock):
-                        if block.thinking:
-                            logger.debug(
-                                "Room %s: Thinking: %s...",
-                                room_id,
-                                block.thinking[:100],
-                            )
-                            # Report thinking as event if enabled
-                            if Emit.THOUGHTS in self.features.emit:
-                                try:
-                                    await tools.send_event(
-                                        content=block.thinking,
-                                        message_type="thought",
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        "Failed to send thinking event: %s", e
-                                    )
+    async def _on_assistant_message(
+        self,
+        message: AssistantMessage,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Narrate one assistant message's blocks.
 
-                    elif isinstance(block, ToolUseBlock):
-                        # Bare name for the cross-adapter tool_call record (the SDK
-                        # namespaces our tools mcp__band__*; see _semantic_tool_name).
-                        tool_name = self._semantic_tool_name(block.name)
-                        pending_tool_names[block.id] = tool_name
-                        logger.info(
-                            "Room %s: Tool call: %s with %s...",
-                            room_id,
-                            tool_name,
-                            str(block.input)[:100],
-                        )
-                        if Emit.EXECUTION in self.features.emit:
-                            try:
-                                await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            ToolEventKey.NAME: tool_name,
-                                            ToolEventKey.ARGS: block.input,
-                                            ToolEventKey.TOOL_CALL_ID: block.id,
-                                        }
-                                    ),
-                                    message_type="tool_call",
-                                )
-                            except Exception as e:
-                                logger.warning("Failed to send tool_call event: %s", e)
+        Returns True when a carried tool result was terminal work — results
+        normally arrive in user envelopes (see _on_user_message);
+        assistant-carried ones are accepted defensively.
+        """
+        tool_executed = False
+        for block in message.content:
+            match block:
+                case TextBlock() if block.text:
+                    logger.debug("Room %s: Text: %s...", room_id, block.text[:100])
+                case ThinkingBlock() if block.thinking:
+                    await self._narrate_thinking(block, room_id, tools)
+                case ToolUseBlock():
+                    # Bare name for the cross-adapter tool_call record (the SDK
+                    # namespaces our tools mcp__band__*; see _semantic_tool_name).
+                    tool_name = self._semantic_tool_name(block.name)
+                    pending_tool_names[block.id] = tool_name
+                    await self._narrate_tool_call(block, tool_name, room_id, tools)
+                case ToolResultBlock():
+                    tool_executed |= await self._on_tool_result(
+                        block, pending_tool_names, room_id, tools
+                    )
+        return tool_executed
 
-                    elif isinstance(block, ToolResultBlock):
-                        if await self._on_tool_result(
-                            block, pending_tool_names, room_id, tools
-                        ):
-                            tool_executed = True
+    async def _on_user_message(
+        self,
+        message: UserMessage,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Handle the tool results the protocol delivers in user-type envelopes.
 
-            elif isinstance(sdk_message, UserMessage):
-                # Tool results come back in user-type envelopes (the protocol
-                # shape for tool_result blocks), not assistant messages.
-                if isinstance(sdk_message.content, list):
-                    for block in sdk_message.content:
-                        if isinstance(block, ToolResultBlock):
-                            if await self._on_tool_result(
-                                block, pending_tool_names, room_id, tools
-                            ):
-                                tool_executed = True
-
-            elif isinstance(sdk_message, ResultMessage):
-                logger.info(
-                    "Room %s: Complete - %sms, $%.4f",
-                    room_id,
-                    sdk_message.duration_ms,
-                    sdk_message.total_cost_usd or 0,
+        Returns True when any was terminal work. ``content`` may also be a
+        plain prompt string, which carries no tool results.
+        """
+        if not isinstance(message.content, list):
+            return False
+        tool_executed = False
+        for block in message.content:
+            if isinstance(block, ToolResultBlock):
+                tool_executed |= await self._on_tool_result(
+                    block, pending_tool_names, room_id, tools
                 )
-                # Capture session_id for potential resume
-                if sdk_message.session_id:
-                    prev_session_id = self._session_ids.get(room_id)
-                    self._session_ids[room_id] = sdk_message.session_id
-                    logger.debug(
-                        "Room %s: Captured session_id %s",
-                        room_id,
-                        sdk_message.session_id,
-                    )
-                    # Persist session_id as task event (best-effort, only on change)
-                    if sdk_message.session_id != prev_session_id:
-                        try:
-                            await tools.send_event(
-                                content="Claude SDK session",
-                                message_type="task",
-                                metadata={
-                                    "claude_sdk_session_id": sdk_message.session_id,
-                                },
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                "Room %s: Failed to persist session_id: %s",
-                                room_id,
-                                e,
-                            )
-                # The ResultMessage carries the turn's total usage (the SDK runs
-                # its own tool loop internally, so this is already aggregated).
-                await self.emit_usage(tools, self._usage_from_result(sdk_message))
+        return tool_executed
 
-                # ``is_error`` is the only reliable failure signal - ``subtype`` can
-                # report "success" on a hard failure (e.g. an auth error), so a turn
-                # that never reached the model would otherwise post nothing at all.
-                if sdk_message.is_error:
-                    await self._report_error(
-                        tools, self._result_error_detail(sdk_message)
-                    )
-                elif not tool_executed:
-                    await self._report_error(tools, missing_reply_error("Claude SDK"))
-                break
+    async def _narrate_thinking(
+        self, block: ThinkingBlock, room_id: str, tools: AgentToolsProtocol
+    ) -> None:
+        """Log a thinking block and post it as a thought event when enabled."""
+        logger.debug("Room %s: Thinking: %s...", room_id, block.thinking[:100])
+        if Emit.THOUGHTS not in self.features.emit:
+            return
+        try:
+            await tools.send_event(content=block.thinking, message_type="thought")
+        except Exception as e:
+            logger.warning("Failed to send thinking event: %s", e)
+
+    async def _narrate_tool_call(
+        self,
+        block: ToolUseBlock,
+        tool_name: str,
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Log a tool call and post it as a tool_call event when enabled."""
+        logger.info(
+            "Room %s: Tool call: %s with %s...",
+            room_id,
+            tool_name,
+            str(block.input)[:100],
+        )
+        if Emit.EXECUTION not in self.features.emit:
+            return
+        try:
+            await tools.send_event(
+                content=json.dumps(
+                    {
+                        ToolEventKey.NAME: tool_name,
+                        ToolEventKey.ARGS: block.input,
+                        ToolEventKey.TOOL_CALL_ID: block.id,
+                    }
+                ),
+                message_type="tool_call",
+            )
+        except Exception as e:
+            logger.warning("Failed to send tool_call event: %s", e)
+
+    async def _on_turn_complete(
+        self,
+        sdk_message: ResultMessage,
+        room_id: str,
+        tools: AgentToolsProtocol,
+        *,
+        tool_executed: bool,
+    ) -> None:
+        """Close out the turn: persist session id, emit usage, surface failure."""
+        logger.info(
+            "Room %s: Complete - %sms, $%.4f",
+            room_id,
+            sdk_message.duration_ms,
+            sdk_message.total_cost_usd or 0,
+        )
+        if sdk_message.session_id:
+            await self._persist_session_id(sdk_message.session_id, room_id, tools)
+        # The ResultMessage carries the turn's total usage (the SDK runs
+        # its own tool loop internally, so this is already aggregated).
+        await self.emit_usage(tools, self._usage_from_result(sdk_message))
+        # ``is_error`` is the only reliable failure signal: ``subtype``
+        # reports "success" even on a hard failure (e.g. a CLI auth error).
+        if sdk_message.is_error:
+            await self._report_error(tools, self._result_error_detail(sdk_message))
+        elif not tool_executed:
+            await self._report_error(tools, missing_reply_error("Claude SDK"))
+
+    async def _persist_session_id(
+        self, session_id: str, room_id: str, tools: AgentToolsProtocol
+    ) -> None:
+        """Cache the session id for resume and, when it changed, persist it as
+        a task event (best-effort)."""
+        prev_session_id = self._session_ids.get(room_id)
+        self._session_ids[room_id] = session_id
+        logger.debug("Room %s: Captured session_id %s", room_id, session_id)
+        if session_id == prev_session_id:
+            return
+        try:
+            await tools.send_event(
+                content="Claude SDK session",
+                message_type="task",
+                metadata={"claude_sdk_session_id": session_id},
+            )
+        except Exception as e:
+            logger.warning("Room %s: Failed to persist session_id: %s", room_id, e)
 
     async def _on_tool_result(
         self,
