@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
@@ -43,6 +44,7 @@ if _CLAUDE_SDK_AVAILABLE:
         ToolUseBlock,
         UserMessage,
     )
+    from claude_agent_sdk.types import PermissionResultDeny, ToolPermissionContext
 
 
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
@@ -1160,7 +1162,6 @@ class TestTurnFailureSurfacing:
         """A custom tool marked ``band_terminal=True`` must be recognized under
         its actual registered MCP name (get_custom_tool_name), not the Python
         handler's ``__name__`` — those two can differ."""
-        from pydantic import BaseModel
 
         class DeployInput(BaseModel):
             target: str
@@ -1189,8 +1190,6 @@ class TestTurnFailureSurfacing:
         """A denied tool call already posts its own decline notice — the
         missing-reply guard must not pile a second, contradictory error on
         top of a turn the approval flow already explained."""
-        from claude_agent_sdk.types import PermissionResultDeny, ToolPermissionContext
-
         adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
         adapter._room_tools["room-123"] = mock_tools
         can_use_tool = adapter._make_can_use_tool("room-123")
