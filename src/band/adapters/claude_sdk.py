@@ -732,7 +732,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     await self._on_turn_complete(
                         sdk_message, room_id, tools, replied_this_turn=replied_this_turn
                     )
-                    break
+                    return
+        # The stream ended (CLI subprocess exited, stdout closed) without ever
+        # yielding a ResultMessage — a turn truncated mid-flight, not a
+        # completed one, so neither the is_error nor the missing-reply check
+        # in _on_turn_complete ever runs. Report it here instead of returning
+        # silently and letting the runtime believe this message was handled.
+        await self._report_error(tools, self._stream_ended_without_result_error())
 
     async def _on_assistant_message(
         self,
@@ -949,6 +955,21 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             result_tool_name,
             succeeded=not block.is_error,
             custom_terminal=result_tool_name in self._custom_terminal_names,
+        )
+
+    @staticmethod
+    def _stream_ended_without_result_error() -> str:
+        """Room-visible detail when the CLI stream ends without a ResultMessage.
+
+        Distinct from ``_result_error_detail`` (a completed turn whose
+        ResultMessage reports failure) and ``missing_reply_error`` (a completed
+        turn that never called a reply tool): this turn never reached a
+        terminal message at all, e.g. the CLI subprocess exited or its stdout
+        closed mid-turn.
+        """
+        return (
+            "Claude SDK turn ended without a result: the CLI process exited "
+            "or its output stream closed before this turn completed."
         )
 
     @staticmethod

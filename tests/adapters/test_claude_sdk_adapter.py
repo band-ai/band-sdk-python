@@ -1236,6 +1236,24 @@ class TestTurnFailureSurfacing:
 
         assert _error_events(mock_tools) == []
 
+    @pytest.mark.asyncio
+    async def test_reports_error_when_stream_ends_without_result(self, mock_tools):
+        """The CLI can exit (or close its stdout) mid-turn without ever
+        emitting a ResultMessage — e.g. the subprocess dying between an
+        assistant reply and its result. The stream then just ends, so neither
+        the ``is_error`` check nor the missing-reply check in
+        ``_on_turn_complete`` ever runs; the gap must be caught after the loop
+        instead of returning as if the turn succeeded."""
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        mock_client = self._client_yielding(*turn)  # no ResultMessage
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "ended without a result" in errors[0]
+
 
 # ======================================================================
 # Chat-based approval flow tests
