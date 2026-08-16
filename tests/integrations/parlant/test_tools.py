@@ -189,6 +189,19 @@ class TestCreateParlantTools:
         for entry in tools:
             assert entry.tool.description, f"Tool {entry.tool.name} has no description"
 
+    def test_descriptions_match_master_source(self):
+        """Every description must derive from get_tool_description(), not a
+        hand-written docstring that can silently drift from the master model
+        (INT-1170)."""
+        from band.runtime.tools import get_tool_description
+
+        tools = create_parlant_tools()
+        for entry in tools:
+            master = get_tool_description(entry.tool.name)
+            assert entry.tool.description.startswith(master), (
+                f"{entry.tool.name} description has drifted from its master model"
+            )
+
     def test_send_message_tool_has_required_parameters(self):
         """send_message should have content and mentions parameters."""
         tools = create_parlant_tools()
