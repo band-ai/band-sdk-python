@@ -18,6 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, ClassVar, Literal, cast
 
 try:
@@ -85,6 +86,7 @@ from band.runtime.tools import (
     BASE_TOOL_NAMES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
+    band_tool_errored,
     is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
@@ -401,6 +403,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # unconditionally at the end of every response, not just this happy
         # path, so a truncated turn can't leak it into the next one.
         self._declined_tool_this_turn: dict[str, bool] = {}
+        # Bare tool name per pending call, keyed by room then tool_use_id
+        # (ToolResultBlock only carries the id). Room-scoped rather than
+        # turn-local: a resumed session can replay a result whose tool_use
+        # streamed in an earlier, truncated turn, and that result must still
+        # resolve to its name to count as terminal work. Entries are popped
+        # as results arrive and the room's map is dropped in on_cleanup.
+        self._pending_tool_names: dict[str, dict[str, str]] = {}
 
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -718,9 +727,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         MCP tools handle actual execution - we log and optionally report events here.
         """
-        # Bare tool name per pending call, keyed by tool_use_id (ToolResultBlock
-        # only carries the id). Feeds the terminal-work decision at turn end.
-        pending_tool_names: dict[str, str] = {}
+        # The room's pending-call map (see __init__) — persists across turns
+        # so a result replayed by a resumed session still resolves its name.
+        pending_tool_names = self._pending_tool_names.setdefault(room_id, {})
         replied_this_turn = False
         try:
             async for sdk_message in client.receive_response():
@@ -742,9 +751,23 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                         )
                         return
             # ``receive_response`` is documented to terminate only after its
-            # ResultMessage. Reaching EOF first means the CLI transport died;
-            # use the normal dead-client path so the runtime marks this turn
-            # failed and the cached client is not reused.
+            # ResultMessage. Reaching EOF first means the CLI transport died.
+            if replied_this_turn:
+                # The reply already reached the room — failing the turn would
+                # make the runtime redeliver the message and answer the user
+                # twice. Drop the dead session and treat the turn as done.
+                logger.warning(
+                    "Room %s: CLI stream ended without a result after the "
+                    "reply was delivered — invalidating session",
+                    room_id,
+                )
+                if self._session_manager:
+                    await self._session_manager.invalidate_session(room_id)
+                self._session_ids.pop(room_id, None)
+                return
+            # Nothing was delivered: use the normal dead-client path so the
+            # runtime marks this turn failed and the cached client is not
+            # reused.
             raise CLIConnectionError(self._stream_ended_without_result_error())
         finally:
             # This turn's decline marker must not survive past this response
@@ -814,7 +837,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         tools: AgentToolsProtocol,
         *,
         gate: Emit,
-        content: str,
+        content: str | Callable[[], str],
         message_type: str,
     ) -> None:
         """Best-effort room event, gated on the adapter's declared Emit features.
@@ -822,11 +845,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         Shared by every observability event (thought/tool_call/tool_result) —
         the session-id task event is not opt-in bookkeeping, so it posts
         unconditionally via its own path (_persist_session_id).
+
+        ``content`` may be a callable so payload serialization only happens
+        past the gate and inside this try — a large or unserializable tool
+        payload costs nothing when narration is off and can't abort the turn.
         """
         if gate not in self.features.emit:
             return
         try:
-            await tools.send_event(content=content, message_type=message_type)
+            await tools.send_event(
+                content=content() if callable(content) else content,
+                message_type=message_type,
+            )
         except Exception as e:
             logger.warning("Failed to send %s event: %s", message_type, e)
 
@@ -873,7 +903,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         await self._send_narration_event(
             tools,
             gate=Emit.EXECUTION,
-            content=json.dumps(
+            content=lambda: json.dumps(
                 {
                     ToolEventKey.NAME: tool_name,
                     ToolEventKey.ARGS: block.input,
@@ -960,7 +990,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         await self._send_narration_event(
             tools,
             gate=Emit.EXECUTION,
-            content=json.dumps(
+            content=lambda: json.dumps(
                 {
                     ToolEventKey.OUTPUT: block.content,
                     ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
@@ -968,9 +998,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             ),
             message_type="tool_result",
         )
+        # Belt and braces with the sibling adapters: a Band tool wrapper that
+        # caught an exception returns an "Error " string without is_error, so
+        # cross-check the content too (see band_tool_errored).
         return is_terminal_success(
             result_tool_name,
-            succeeded=not block.is_error,
+            succeeded=not block.is_error
+            and not band_tool_errored(result_tool_name, block.content),
             custom_terminal=result_tool_name in self._custom_terminal_names,
         )
 
@@ -1028,6 +1062,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_ids.pop(room_id, None)
         self._room_last_sender.pop(room_id, None)
         self._declined_tool_this_turn.pop(room_id, None)
+        self._pending_tool_names.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     # --- Copied from BaseFrameworkAgent._report_error ---
@@ -1054,6 +1089,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_ids.clear()
         self._room_last_sender.clear()
         self._declined_tool_this_turn.clear()
+        self._pending_tool_names.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow

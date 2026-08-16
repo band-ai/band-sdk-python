@@ -1282,21 +1282,107 @@ class TestTurnFailureSurfacing:
         assert _error_events(mock_tools) == []
 
     @pytest.mark.asyncio
-    async def test_stream_ending_without_result_raises_connection_error(
+    async def test_stream_eof_after_delivered_reply_completes_the_turn(
         self, mock_tools
     ):
-        """The CLI can exit (or close its stdout) mid-turn without ever
-        emitting a ResultMessage — e.g. the subprocess dying between an
-        assistant reply and its result. The stream then just ends, so neither
-        the ``is_error`` check nor the missing-reply check in
-        ``_on_turn_complete`` ever runs; it must reach the dead-client
-        recovery path instead of returning as if the turn succeeded."""
+        """The CLI dying between a delivered reply and its ResultMessage must
+        not fail the turn: the reply already reached the room, and a failed
+        turn would make the runtime redeliver the message and answer the user
+        twice. No exception, no room-visible error."""
         adapter = ClaudeSDKAdapter()
         turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         mock_client = self._client_yielding(*turn)  # no ResultMessage
 
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_stream_eof_without_reply_still_fails_the_turn(self, mock_tools):
+        """An EOF on a turn that delivered nothing is a dead client: it must
+        reach the dead-client recovery path, not return as a success."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        mock_client = self._client_yielding(assistant_msg)  # no result, no reply
+
         with pytest.raises(CLIConnectionError, match="ended without a result"):
             await adapter._process_response(mock_client, "room-123", mock_tools)
+
+    @pytest.mark.asyncio
+    async def test_replayed_tool_result_from_previous_turn_counts_as_reply(
+        self, mock_tools
+    ):
+        """A resumed session can replay a tool result whose tool_use streamed
+        in an earlier, truncated turn. The pending-call map is room-scoped so
+        that result still resolves to its tool name and counts as the turn's
+        answer — no spurious missing-reply error on an answered turn."""
+        adapter = ClaudeSDKAdapter()
+        tool_use_turn = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        dead_client = self._client_yielding(tool_use_turn)  # dies before result
+        with pytest.raises(CLIConnectionError, match="ended without a result"):
+            await adapter._process_response(dead_client, "room-123", mock_tools)
+
+        replayed_result = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False)
+            ]
+        )
+        resumed_client = self._client_yielding(
+            replayed_result, _result_message(is_error=False)
+        )
+        await adapter._process_response(resumed_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_band_tool_error_string_is_not_terminal_work(self, mock_tools):
+        """A Band tool wrapper that caught an exception returns an "Error "
+        string without setting is_error; that reply never reached the room,
+        so the missing-reply guard must still fire."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        failed_result = UserMessage(
+            content=[
+                ToolResultBlock(
+                    tool_use_id="tool-1", content="Error sending message", is_error=None
+                )
+            ]
+        )
+        mock_client = self._client_yielding(
+            assistant_msg, failed_result, _result_message(is_error=False)
+        )
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_unserializable_tool_payload_does_not_abort_the_turn(
+        self, mock_tools
+    ):
+        """Narration payloads are serialized lazily, past the emit gate and
+        inside its try — a tool result the default no-emit adapter can't
+        json.dumps must cost nothing and never abort the turn."""
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        turn[1].content[0].content = object()  # not JSON-serializable
+
+        mock_client = self._client_yielding(*turn, _result_message(is_error=False))
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
 
     @pytest.mark.asyncio
     async def test_silent_auto_decline_still_reports_missing_reply(self, mock_tools):
