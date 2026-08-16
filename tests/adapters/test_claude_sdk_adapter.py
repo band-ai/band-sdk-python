@@ -27,13 +27,43 @@ from band.adapters.claude_sdk import (
     BAND_MEMORY_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.runtime.tools import ALL_TOOL_NAMES
+from band.runtime.tools import ALL_TOOL_NAMES, missing_reply_error
 from band.core.types import PlatformMessage
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
     reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
 )
+
+if _CLAUDE_SDK_AVAILABLE:
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ResultMessage,
+        ToolResultBlock,
+        ToolUseBlock,
+    )
+
+
+def _result_message(
+    *,
+    session_id: str = "sess-xyz",
+    is_error: bool = False,
+    result: str | None = None,
+    errors: list[str] | None = None,
+    api_error_status: int | None = None,
+) -> ResultMessage:
+    """Build a real ``ResultMessage`` with only the fields a test cares about set."""
+    return ResultMessage(
+        subtype="success",
+        duration_ms=100,
+        duration_api_ms=100,
+        is_error=is_error,
+        num_turns=1,
+        session_id=session_id,
+        result=result,
+        errors=errors,
+        api_error_status=api_error_status,
+    )
 
 
 @pytest.fixture
@@ -776,23 +806,28 @@ class TestSessionPersistence:
         """Should emit task event with session_id after ResultMessage."""
         adapter = ClaudeSDKAdapter()
 
-        # Create a mock ResultMessage with session_id
-        mock_result_msg = MagicMock()
-        mock_result_msg.session_id = "sess-xyz-789"
-        mock_result_msg.duration_ms = 1500
-        mock_result_msg.total_cost_usd = 0.01
+        # A turn that actually replied via band_send_message, so the missing-reply
+        # guard stays quiet and the only send_event call is the session task event.
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="tool-1", name="mcp__band__band_send_message", input={}
+                ),
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
+            ],
+            model="claude-sonnet-4-6",
+        )
+        result_msg = _result_message(session_id="sess-xyz-789")
 
-        # Create mock client that yields the ResultMessage
         mock_client = MagicMock()
 
         async def mock_receive():
-            yield mock_result_msg
+            yield assistant_msg
+            yield result_msg
 
         mock_client.receive_response = mock_receive
 
-        # Patch isinstance checks for ResultMessage
-        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
-            await adapter._process_response(mock_client, "room-123", mock_tools)
+        await adapter._process_response(mock_client, "room-123", mock_tools)
 
         # Verify task event was emitted
         mock_tools.send_event.assert_called_once_with(
@@ -919,24 +954,161 @@ class TestSessionPersistence:
         adapter = ClaudeSDKAdapter()
         mock_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
 
-        mock_result_msg = MagicMock()
-        mock_result_msg.session_id = "sess-xyz"
-        mock_result_msg.duration_ms = 100
-        mock_result_msg.total_cost_usd = 0.001
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="tool-1", name="mcp__band__band_send_message", input={}
+                ),
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
+            ],
+            model="claude-sonnet-4-6",
+        )
+        result_msg = _result_message(session_id="sess-xyz")
 
         mock_client = MagicMock()
 
         async def mock_receive():
-            yield mock_result_msg
+            yield assistant_msg
+            yield result_msg
 
         mock_client.receive_response = mock_receive
 
-        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
-            # Should not raise despite send_event failure
-            await adapter._process_response(mock_client, "room-123", mock_tools)
+        # Should not raise despite send_event failure
+        await adapter._process_response(mock_client, "room-123", mock_tools)
 
         # Session ID should still be captured in-memory
         assert adapter._session_ids["room-123"] == "sess-xyz"
+
+
+class TestTurnFailureSurfacing:
+    """INT-1210: a failed or silent turn must surface a room-visible error."""
+
+    @staticmethod
+    def _client_yielding(*sdk_messages) -> MagicMock:
+        mock_client = MagicMock()
+
+        async def mock_receive():
+            for message in sdk_messages:
+                yield message
+
+        mock_client.receive_response = mock_receive
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_reports_error_on_is_error_result(self, mock_tools):
+        """``is_error`` must surface even though ``subtype`` claims success.
+
+        Reproduces the production auth failures from INT-1210: the CLI reports
+        ``is_error=True`` with ``subtype="success"``, which is why the adapter
+        must gate on ``is_error`` and never on ``subtype``.
+        """
+        adapter = ClaudeSDKAdapter()
+        result_msg = _result_message(
+            is_error=True,
+            result="Not logged in · Please run /login",
+            api_error_status=None,
+        )
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        error_calls = [
+            call
+            for call in mock_tools.send_event.call_args_list
+            if call.kwargs.get("message_type") == "error"
+        ]
+        assert len(error_calls) == 1
+        assert "Not logged in · Please run /login" in error_calls[0].kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_error_detail_includes_api_error_status(self, mock_tools):
+        """The HTTP status on a failed API call is surfaced alongside ``result``."""
+        adapter = ClaudeSDKAdapter()
+        result_msg = _result_message(
+            is_error=True,
+            result="Failed to authenticate. API Error: 401",
+            api_error_status=401,
+        )
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        error_call = next(
+            call
+            for call in mock_tools.send_event.call_args_list
+            if call.kwargs.get("message_type") == "error"
+        )
+        assert "401" in error_call.kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_reports_missing_reply_when_no_terminal_tool_ran(self, mock_tools):
+        """A clean turn that never called a Band tool must not go silent."""
+        adapter = ClaudeSDKAdapter()
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        error_call = next(
+            call
+            for call in mock_tools.send_event.call_args_list
+            if call.kwargs.get("message_type") == "error"
+        )
+        assert error_call.kwargs["content"] == (
+            f"Error: {missing_reply_error('Claude SDK')}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_error_reported_when_reply_tool_ran(self, mock_tools):
+        """A turn that replied via band_send_message must stay quiet."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="tool-1", name="mcp__band__band_send_message", input={}
+                ),
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
+            ],
+            model="claude-sonnet-4-6",
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        error_calls = [
+            call
+            for call in mock_tools.send_event.call_args_list
+            if call.kwargs.get("message_type") == "error"
+        ]
+        assert error_calls == []
+
+    @pytest.mark.asyncio
+    async def test_no_error_reported_when_only_read_only_tool_ran(self, mock_tools):
+        """A read-only lookup (e.g. band_list_contacts) is not a terminal reply."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="tool-1", name="mcp__band__band_list_contacts", input={}
+                ),
+                ToolResultBlock(tool_use_id="tool-1", content="[]", is_error=False),
+            ],
+            model="claude-sonnet-4-6",
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        error_call = next(
+            call
+            for call in mock_tools.send_event.call_args_list
+            if call.kwargs.get("message_type") == "error"
+        )
+        assert error_call.kwargs["content"] == (
+            f"Error: {missing_reply_error('Claude SDK')}"
+        )
 
 
 # ======================================================================

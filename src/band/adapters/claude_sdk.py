@@ -72,15 +72,17 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef, is_marked_terminal
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
+    is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
+    missing_reply_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -366,6 +368,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
+        # Custom tools that opt in as terminal actions (band_terminal=True on the
+        # handler). Only these let a turn with no Band terminal tool call still
+        # count as answered — see is_terminal_success.
+        self._custom_terminal_names: frozenset[str] = frozenset(
+            handler.__name__
+            for _, handler in self._custom_tools
+            if is_marked_terminal(handler)
+        )
 
         # Approval flow state
         # {room_id: {token: _PendingApproval, ...}}
@@ -692,6 +702,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         MCP tools handle actual execution - we log and optionally report events here.
         """
+        # Bare tool name per pending call, keyed by tool_use_id (ToolResultBlock only
+        # carries the id, not the name) - used to decide, once the turn ends, whether
+        # a Band terminal tool actually ran (see is_terminal_success / tool_executed
+        # below the loop).
+        pending_tool_names: dict[str, str] = {}
+        tool_executed = False
         async for sdk_message in client.receive_response():
             if isinstance(sdk_message, AssistantMessage):
                 for block in sdk_message.content:
@@ -724,6 +740,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                         # Bare name for the cross-adapter tool_call record (the SDK
                         # namespaces our tools mcp__band__*; see _semantic_tool_name).
                         tool_name = self._semantic_tool_name(block.name)
+                        pending_tool_names[block.id] = tool_name
                         logger.info(
                             "Room %s: Tool call: %s with %s...",
                             room_id,
@@ -752,6 +769,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                             block.tool_use_id[:20],
                             block.is_error,
                         )
+                        result_tool_name = pending_tool_names.pop(
+                            block.tool_use_id, None
+                        )
+                        if is_terminal_success(
+                            result_tool_name,
+                            succeeded=not block.is_error,
+                            custom_terminal=result_tool_name
+                            in self._custom_terminal_names,
+                        ):
+                            tool_executed = True
                         if Emit.EXECUTION in self.features.emit:
                             try:
                                 await tools.send_event(
@@ -803,7 +830,29 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 # The ResultMessage carries the turn's total usage (the SDK runs
                 # its own tool loop internally, so this is already aggregated).
                 await self.emit_usage(tools, self._usage_from_result(sdk_message))
+
+                # ``is_error`` is the only reliable failure signal - ``subtype`` can
+                # report "success" on a hard failure (e.g. an auth error), so a turn
+                # that never reached the model would otherwise post nothing at all.
+                if sdk_message.is_error:
+                    await self._report_error(
+                        tools, self._result_error_detail(sdk_message)
+                    )
+                elif not tool_executed:
+                    await self._report_error(tools, missing_reply_error("Claude SDK"))
                 break
+
+    @staticmethod
+    def _result_error_detail(sdk_message: ResultMessage) -> str:
+        """Room-visible detail for a turn where ``ResultMessage.is_error`` is set."""
+        detail = (
+            sdk_message.result
+            or "; ".join(sdk_message.errors or [])
+            or ("no error detail provided by the Claude CLI")
+        )
+        if sdk_message.api_error_status:
+            detail = f"{detail} (API status {sdk_message.api_error_status})"
+        return f"Claude SDK turn failed: {detail}"
 
     @staticmethod
     def _usage_from_result(sdk_message: ResultMessage) -> TurnUsage:
