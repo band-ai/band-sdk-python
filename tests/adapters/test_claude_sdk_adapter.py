@@ -37,6 +37,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 if _CLAUDE_SDK_AVAILABLE:
+    from claude_agent_sdk._errors import CLIConnectionError
     from claude_agent_sdk import (
         AssistantMessage,
         ResultMessage,
@@ -527,6 +528,50 @@ class TestCLIConnectionError:
                 )
 
             assert "room-123" not in adapter._session_ids
+
+    @pytest.mark.asyncio
+    async def test_stream_ending_without_result_invalidates_session_and_fails_turn(
+        self, sample_message, mock_tools
+    ):
+        """An EOF before ResultMessage is a dead client, not a successful turn."""
+        adapter = ClaudeSDKAdapter()
+        adapter._session_ids["room-123"] = "sess-old"
+        mock_client = MagicMock()
+
+        async def receive():
+            if False:
+                yield None
+
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=receive())
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+        mock_manager.invalidate_session = AsyncMock()
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager",
+            return_value=mock_manager,
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            with pytest.raises(CLIConnectionError, match="ended without a result"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=False,
+                    room_id="room-123",
+                )
+
+        mock_manager.invalidate_session.assert_awaited_once_with("room-123")
+        assert "room-123" not in adapter._session_ids
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "ended without a result" in errors[0]
 
 
 class TestRoomToolsStorage:
@@ -1237,22 +1282,81 @@ class TestTurnFailureSurfacing:
         assert _error_events(mock_tools) == []
 
     @pytest.mark.asyncio
-    async def test_reports_error_when_stream_ends_without_result(self, mock_tools):
+    async def test_stream_ending_without_result_raises_connection_error(
+        self, mock_tools
+    ):
         """The CLI can exit (or close its stdout) mid-turn without ever
         emitting a ResultMessage — e.g. the subprocess dying between an
         assistant reply and its result. The stream then just ends, so neither
         the ``is_error`` check nor the missing-reply check in
-        ``_on_turn_complete`` ever runs; the gap must be caught after the loop
-        instead of returning as if the turn succeeded."""
+        ``_on_turn_complete`` ever runs; it must reach the dead-client
+        recovery path instead of returning as if the turn succeeded."""
         adapter = ClaudeSDKAdapter()
         turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         mock_client = self._client_yielding(*turn)  # no ResultMessage
+
+        with pytest.raises(CLIConnectionError, match="ended without a result"):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
+
+    @pytest.mark.asyncio
+    async def test_silent_auto_decline_still_reports_missing_reply(self, mock_tools):
+        """``approval_text_notifications=False`` means auto_decline denies a
+        tool call without ever telling the room why — so the missing-reply
+        guard must still fire; the turn cannot be silently marked as already
+        explained when no explanation was actually delivered."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="auto_decline", approval_text_notifications=False
+        )
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+        mock_tools.send_message.assert_not_awaited()
+
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
+            ]
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
         errors = _error_events(mock_tools)
         assert len(errors) == 1
-        assert "ended without a result" in errors[0]
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_declined_marker_does_not_leak_into_next_turn(self, mock_tools):
+        """A decline from a turn that then dies before its ResultMessage must
+        not leave the room's next, unrelated turn looking pre-explained."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        dead_turn_client = self._client_yielding()  # ends with no ResultMessage
+        with pytest.raises(CLIConnectionError, match="ended without a result"):
+            await adapter._process_response(dead_turn_client, "room-123", mock_tools)
+
+        next_turn_client = self._client_yielding(_result_message(is_error=False))
+        await adapter._process_response(next_turn_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
 
 
 # ======================================================================

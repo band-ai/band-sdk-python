@@ -392,10 +392,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._approval_seq: dict[str, int] = {}  # per-room counters
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
-        # Set (per room) whenever a tool call is denied this turn. A denial
-        # already posts its own room-visible decline notice, so it must
-        # suppress the missing-reply guard rather than double up on it —
-        # see _on_turn_complete.
+        # Set (per room) when a denied tool call already posted a room-visible
+        # decline notice this turn — auto_decline only counts if the notice
+        # was actually delivered (approval_text_notifications=False, or a
+        # send failure, leaves this unset). That notice is the turn's answer
+        # for why nothing else happened, so it must suppress the missing-reply
+        # guard rather than double up on it — see _on_turn_complete. Cleared
+        # unconditionally at the end of every response, not just this happy
+        # path, so a truncated turn can't leak it into the next one.
         self._declined_tool_this_turn: dict[str, bool] = {}
 
     # --- Adapted from BandClaudeSDKAgent._on_started ---
@@ -718,27 +722,38 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # only carries the id). Feeds the terminal-work decision at turn end.
         pending_tool_names: dict[str, str] = {}
         replied_this_turn = False
-        async for sdk_message in client.receive_response():
-            match sdk_message:
-                case AssistantMessage():
-                    replied_this_turn |= await self._on_assistant_message(
-                        sdk_message, pending_tool_names, room_id, tools
-                    )
-                case UserMessage():
-                    replied_this_turn |= await self._on_user_message(
-                        sdk_message, pending_tool_names, room_id, tools
-                    )
-                case ResultMessage():
-                    await self._on_turn_complete(
-                        sdk_message, room_id, tools, replied_this_turn=replied_this_turn
-                    )
-                    return
-        # The stream ended (CLI subprocess exited, stdout closed) without ever
-        # yielding a ResultMessage — a turn truncated mid-flight, not a
-        # completed one, so neither the is_error nor the missing-reply check
-        # in _on_turn_complete ever runs. Report it here instead of returning
-        # silently and letting the runtime believe this message was handled.
-        await self._report_error(tools, self._stream_ended_without_result_error())
+        try:
+            async for sdk_message in client.receive_response():
+                match sdk_message:
+                    case AssistantMessage():
+                        replied_this_turn |= await self._on_assistant_message(
+                            sdk_message, pending_tool_names, room_id, tools
+                        )
+                    case UserMessage():
+                        replied_this_turn |= await self._on_user_message(
+                            sdk_message, pending_tool_names, room_id, tools
+                        )
+                    case ResultMessage():
+                        await self._on_turn_complete(
+                            sdk_message,
+                            room_id,
+                            tools,
+                            replied_this_turn=replied_this_turn,
+                        )
+                        return
+            # ``receive_response`` is documented to terminate only after its
+            # ResultMessage. Reaching EOF first means the CLI transport died;
+            # use the normal dead-client path so the runtime marks this turn
+            # failed and the cached client is not reused.
+            raise CLIConnectionError(self._stream_ended_without_result_error())
+        finally:
+            # This turn's decline marker must not survive past this response
+            # on any exit path (clean completion, truncated stream, or an
+            # exception raised mid-receive) — otherwise a decline from this
+            # turn would leak into the room's next, unrelated turn and wrongly
+            # suppress its own missing-reply guard. _on_turn_complete only
+            # reads it; this is the one place it is cleared.
+            self._declined_tool_this_turn.pop(room_id, None)
 
     async def _on_assistant_message(
         self,
@@ -891,8 +906,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # A denied tool call already posted its own room-visible decline
         # notice (see _resolve_tool_permission) — that is the turn's answer
         # for why nothing else happened, so it must not also trigger the
-        # missing-reply guard below.
-        declined = self._declined_tool_this_turn.pop(room_id, False)
+        # missing-reply guard below. Read-only: _process_response's finally
+        # owns clearing this marker, since it must fire on every exit path,
+        # not just this one.
+        declined = self._declined_tool_this_turn.get(room_id, False)
         # ``is_error`` is the only reliable failure signal: ``subtype``
         # reports "success" even on a hard failure (e.g. a CLI auth error).
         if sdk_message.is_error:
@@ -1062,12 +1079,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
-            result = await self._resolve_tool_permission(
+            return await self._resolve_tool_permission(
                 room_id, tool_name, tool_input, context
             )
-            if isinstance(result, PermissionResultDeny):
-                self._declined_tool_this_turn[room_id] = True
-            return result
 
         return _can_use_tool
 
@@ -1102,10 +1116,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return PermissionResultAllow()
 
         if self.approval_mode == "auto_decline":
+            notified = False
             if self.approval_text_notifications:
-                await self._notify_auto_decision(
+                notified = await self._notify_auto_decision(
                     room_id, summary, "decline", requester=requester
                 )
+            if notified:
+                self._declined_tool_this_turn[room_id] = True
             return PermissionResultDeny(
                 message=f"Tool use declined by policy: {summary}"
             )
@@ -1122,19 +1139,27 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         decision: str,
         *,
         requester: dict[str, str] | None = None,
-    ) -> None:
-        """Best-effort chat notification for auto-approve / auto-decline."""
+    ) -> bool:
+        """Best-effort chat notification for auto-approve / auto-decline.
+
+        Returns whether the notice actually reached the room. A silent
+        auto_decline (no room binding, or the send itself fails) still needs
+        the missing-reply guard at turn end — only a delivered notice already
+        explains the turn's silence.
+        """
         tools = self._room_tools.get(room_id)
         if not tools:
-            return
+            return False
         mention = [requester["id"]] if requester else None
         try:
             await tools.send_message(
                 f"Approval requested ({summary}). Policy decision: **{decision}**.",
                 mentions=mention,
             )
+            return True
         except Exception as e:
             logger.warning("Failed to send approval policy notification: %s", e)
+            return False
 
     async def _resolve_manual_approval(
         self,
@@ -1190,6 +1215,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     "Room %s: Failed to send approval notification — declining", room_id
                 )
                 self._clear_pending_approval(room_id, token)
+                self._declined_tool_this_turn[room_id] = True
                 return PermissionResultDeny(
                     message="Could not deliver approval prompt, tool use declined"
                 )
@@ -1202,6 +1228,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             if decision_raw == "accept":
                 return PermissionResultAllow()
+            self._declined_tool_this_turn[room_id] = True
             return PermissionResultDeny(message="User declined tool use")
 
         except asyncio.TimeoutError:
@@ -1219,6 +1246,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
             if decision == "accept":
                 return PermissionResultAllow()
+            self._declined_tool_this_turn[room_id] = True
             return PermissionResultDeny(message="Approval timed out, tool use declined")
 
         finally:
