@@ -1384,6 +1384,39 @@ class TestTurnFailureSurfacing:
         assert len(errors) == 1
         assert _MISSING_REPLY_TEXT in errors[0]
 
+    @pytest.mark.asyncio
+    async def test_undelivered_timeout_notice_still_reports_missing_reply(
+        self, mock_tools
+    ):
+        """An approval that times out into a decline suppresses the
+        missing-reply guard only when its timeout notice actually reached the
+        room; here the prompt sends fine but the timeout notice fails, so the
+        guard must still fire."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="manual",
+            approval_wait_timeout_s=0.05,
+            approval_timeout_decision="decline",
+        )
+        mock_tools.send_message = AsyncMock(
+            side_effect=[{"status": "sent"}, RuntimeError("network down")]
+        )
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
 
 # ======================================================================
 # Chat-based approval flow tests

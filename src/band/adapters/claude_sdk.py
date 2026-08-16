@@ -1236,12 +1236,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         except asyncio.TimeoutError:
             decision: ApprovalDecision = self.approval_timeout_decision
+            notified = False
             if tools:
                 try:
                     await tools.send_message(
                         f"Approval `{token}` timed out. Decision: **{decision}**.",
                         mentions=mention,
                     )
+                    notified = True
                 except Exception:
                     logger.debug(
                         "Room %s: Failed to send timeout notification", room_id
@@ -1249,7 +1251,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
             if decision == "accept":
                 return PermissionResultAllow()
-            self._declined_tool_this_turn[room_id] = True
+            # Suppressing the missing-reply guard requires a delivered notice:
+            # a timeout nobody heard about must still surface as an error.
+            if notified:
+                self._declined_tool_this_turn[room_id] = True
             return PermissionResultDeny(message="Approval timed out, tool use declined")
 
         finally:
