@@ -60,6 +60,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.converters.claude_sdk import (
+    SESSION_ID_METADATA_KEY,
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
@@ -73,7 +74,11 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
-from band.runtime.custom_tools import CustomToolDef, is_marked_terminal
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    get_custom_tool_name,
+    is_marked_terminal,
+)
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -371,10 +376,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._custom_tools: list[CustomToolDef] = additional_tools or []
         # Custom tools that opt in as terminal actions (band_terminal=True on the
         # handler). Only these let a turn with no Band terminal tool call still
-        # count as answered — see is_terminal_success.
+        # count as answered — see is_terminal_success. Keyed by the name the
+        # tool is actually registered/called under (get_custom_tool_name), not
+        # the handler's Python __name__ — _build_custom_sdk_tool derives the
+        # MCP tool name from the input model, so the two can differ.
         self._custom_terminal_names: frozenset[str] = frozenset(
-            handler.__name__
-            for _, handler in self._custom_tools
+            get_custom_tool_name(input_model)
+            for input_model, handler in self._custom_tools
             if is_marked_terminal(handler)
         )
 
@@ -384,6 +392,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._approval_seq: dict[str, int] = {}  # per-room counters
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
+        # Set (per room) whenever a tool call is denied this turn. A denial
+        # already posts its own room-visible decline notice, so it must
+        # suppress the missing-reply guard rather than double up on it —
+        # see _on_turn_complete.
+        self._declined_tool_this_turn: dict[str, bool] = {}
 
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -704,20 +717,20 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Bare tool name per pending call, keyed by tool_use_id (ToolResultBlock
         # only carries the id). Feeds the terminal-work decision at turn end.
         pending_tool_names: dict[str, str] = {}
-        tool_executed = False
+        replied_this_turn = False
         async for sdk_message in client.receive_response():
             match sdk_message:
                 case AssistantMessage():
-                    tool_executed |= await self._on_assistant_message(
+                    replied_this_turn |= await self._on_assistant_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 case UserMessage():
-                    tool_executed |= await self._on_user_message(
+                    replied_this_turn |= await self._on_user_message(
                         sdk_message, pending_tool_names, room_id, tools
                     )
                 case ResultMessage():
                     await self._on_turn_complete(
-                        sdk_message, room_id, tools, tool_executed=tool_executed
+                        sdk_message, room_id, tools, replied_this_turn=replied_this_turn
                     )
                     break
 
@@ -734,7 +747,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         normally arrive in user envelopes (see _on_user_message);
         assistant-carried ones are accepted defensively.
         """
-        tool_executed = False
+        replied_this_turn = False
         for block in message.content:
             match block:
                 case TextBlock() if block.text:
@@ -742,16 +755,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 case ThinkingBlock() if block.thinking:
                     await self._narrate_thinking(block, room_id, tools)
                 case ToolUseBlock():
-                    # Bare name for the cross-adapter tool_call record (the SDK
-                    # namespaces our tools mcp__band__*; see _semantic_tool_name).
-                    tool_name = self._semantic_tool_name(block.name)
-                    pending_tool_names[block.id] = tool_name
-                    await self._narrate_tool_call(block, tool_name, room_id, tools)
+                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
                 case ToolResultBlock():
-                    tool_executed |= await self._on_tool_result(
+                    replied_this_turn |= await self._on_tool_result(
                         block, pending_tool_names, room_id, tools
                     )
-        return tool_executed
+        return replied_this_turn
 
     async def _on_user_message(
         self,
@@ -760,32 +769,71 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         room_id: str,
         tools: AgentToolsProtocol,
     ) -> bool:
-        """Handle the tool results the protocol delivers in user-type envelopes.
+        """Handle the tool_use/tool_result blocks the protocol delivers in
+        user-type envelopes.
 
-        Returns True when any was terminal work. ``content`` may also be a
-        plain prompt string, which carries no tool results.
+        Returns True when any result was terminal work. ``content`` may also
+        be a plain prompt string, which carries neither.
         """
         if not isinstance(message.content, list):
             return False
-        tool_executed = False
+        replied_this_turn = False
         for block in message.content:
-            if isinstance(block, ToolResultBlock):
-                tool_executed |= await self._on_tool_result(
-                    block, pending_tool_names, room_id, tools
-                )
-        return tool_executed
+            match block:
+                case ToolUseBlock():
+                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
+                case ToolResultBlock():
+                    replied_this_turn |= await self._on_tool_result(
+                        block, pending_tool_names, room_id, tools
+                    )
+        return replied_this_turn
+
+    async def _send_narration_event(
+        self,
+        tools: AgentToolsProtocol,
+        *,
+        gate: Emit,
+        content: str,
+        message_type: str,
+    ) -> None:
+        """Best-effort room event, gated on the adapter's declared Emit features.
+
+        Shared by every observability event (thought/tool_call/tool_result) —
+        the session-id task event is not opt-in bookkeeping, so it posts
+        unconditionally via its own path (_persist_session_id).
+        """
+        if gate not in self.features.emit:
+            return
+        try:
+            await tools.send_event(content=content, message_type=message_type)
+        except Exception as e:
+            logger.warning("Failed to send %s event: %s", message_type, e)
 
     async def _narrate_thinking(
         self, block: ThinkingBlock, room_id: str, tools: AgentToolsProtocol
     ) -> None:
         """Log a thinking block and post it as a thought event when enabled."""
         logger.debug("Room %s: Thinking: %s...", room_id, block.thinking[:100])
-        if Emit.THOUGHTS not in self.features.emit:
-            return
-        try:
-            await tools.send_event(content=block.thinking, message_type="thought")
-        except Exception as e:
-            logger.warning("Failed to send thinking event: %s", e)
+        await self._send_narration_event(
+            tools, gate=Emit.THOUGHTS, content=block.thinking, message_type="thought"
+        )
+
+    async def _on_tool_use(
+        self,
+        block: ToolUseBlock,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Register a pending call (for the terminal-work check at turn end)
+        and narrate it. Shared by both envelopes a call can arrive in — the
+        protocol's assistant messages, and user messages when the call is
+        carried by a subagent/nested tool_use block."""
+        # Bare name for the cross-adapter tool_call record (the SDK
+        # namespaces our tools mcp__band__*; see _semantic_tool_name).
+        tool_name = self._semantic_tool_name(block.name)
+        pending_tool_names[block.id] = tool_name
+        await self._narrate_tool_call(block, tool_name, room_id, tools)
 
     async def _narrate_tool_call(
         self,
@@ -801,21 +849,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_name,
             str(block.input)[:100],
         )
-        if Emit.EXECUTION not in self.features.emit:
-            return
-        try:
-            await tools.send_event(
-                content=json.dumps(
-                    {
-                        ToolEventKey.NAME: tool_name,
-                        ToolEventKey.ARGS: block.input,
-                        ToolEventKey.TOOL_CALL_ID: block.id,
-                    }
-                ),
-                message_type="tool_call",
-            )
-        except Exception as e:
-            logger.warning("Failed to send tool_call event: %s", e)
+        await self._send_narration_event(
+            tools,
+            gate=Emit.EXECUTION,
+            content=json.dumps(
+                {
+                    ToolEventKey.NAME: tool_name,
+                    ToolEventKey.ARGS: block.input,
+                    ToolEventKey.TOOL_CALL_ID: block.id,
+                }
+            ),
+            message_type="tool_call",
+        )
 
     async def _on_turn_complete(
         self,
@@ -823,7 +868,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         room_id: str,
         tools: AgentToolsProtocol,
         *,
-        tool_executed: bool,
+        replied_this_turn: bool,
     ) -> None:
         """Close out the turn: persist session id, emit usage, surface failure."""
         logger.info(
@@ -837,11 +882,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # The ResultMessage carries the turn's total usage (the SDK runs
         # its own tool loop internally, so this is already aggregated).
         await self.emit_usage(tools, self._usage_from_result(sdk_message))
+        # A denied tool call already posted its own room-visible decline
+        # notice (see _resolve_tool_permission) — that is the turn's answer
+        # for why nothing else happened, so it must not also trigger the
+        # missing-reply guard below.
+        declined = self._declined_tool_this_turn.pop(room_id, False)
         # ``is_error`` is the only reliable failure signal: ``subtype``
         # reports "success" even on a hard failure (e.g. a CLI auth error).
         if sdk_message.is_error:
             await self._report_error(tools, self._result_error_detail(sdk_message))
-        elif not tool_executed:
+        elif not replied_this_turn and not declined:
             await self._report_error(tools, missing_reply_error("Claude SDK"))
 
     async def _persist_session_id(
@@ -858,7 +908,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             await tools.send_event(
                 content="Claude SDK session",
                 message_type="task",
-                metadata={"claude_sdk_session_id": session_id},
+                metadata={SESSION_ID_METADATA_KEY: session_id},
             )
         except Exception as e:
             logger.warning("Room %s: Failed to persist session_id: %s", room_id, e)
@@ -884,19 +934,17 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             block.is_error,
         )
         result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
-        if Emit.EXECUTION in self.features.emit:
-            try:
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            ToolEventKey.OUTPUT: block.content,
-                            ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
-                        }
-                    ),
-                    message_type="tool_result",
-                )
-            except Exception as e:
-                logger.warning("Failed to send tool_result event: %s", e)
+        await self._send_narration_event(
+            tools,
+            gate=Emit.EXECUTION,
+            content=json.dumps(
+                {
+                    ToolEventKey.OUTPUT: block.content,
+                    ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
+                }
+            ),
+            message_type="tool_result",
+        )
         return is_terminal_success(
             result_tool_name,
             succeeded=not block.is_error,
@@ -941,6 +989,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_context.pop(room_id, None)
         self._session_ids.pop(room_id, None)
         self._room_last_sender.pop(room_id, None)
+        self._declined_tool_this_turn.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     # --- Copied from BaseFrameworkAgent._report_error ---
@@ -966,6 +1015,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_context.clear()
         self._session_ids.clear()
         self._room_last_sender.clear()
+        self._declined_tool_this_turn.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
@@ -991,43 +1041,58 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
-            # The SDK passes the MCP-namespaced name; use the bare name everywhere
-            # this approval surfaces to the user (summary, notifications, logs).
-            tool_name = self._semantic_tool_name(tool_name)
-            summary = self._approval_summary(tool_name, tool_input)
-            # Capture the sender now so it doesn't get overwritten by
-            # messages arriving while we wait for a decision.
-            requester = self._room_last_sender.get(room_id)
-            logger.debug(
-                "can_use_tool: %s in room %s (mode=%s)",
-                tool_name,
-                room_id,
-                self.approval_mode,
+            result = await self._resolve_tool_permission(
+                room_id, tool_name, tool_input, context
             )
-
-            # --- auto modes ---------------------------------------------------
-            if self.approval_mode == "auto_accept":
-                if self.approval_text_notifications:
-                    await self._notify_auto_decision(
-                        room_id, summary, "accept", requester=requester
-                    )
-                return PermissionResultAllow()
-
-            if self.approval_mode == "auto_decline":
-                if self.approval_text_notifications:
-                    await self._notify_auto_decision(
-                        room_id, summary, "decline", requester=requester
-                    )
-                return PermissionResultDeny(
-                    message=f"Tool use declined by policy: {summary}"
-                )
-
-            # --- manual mode ---------------------------------------------------
-            return await self._resolve_manual_approval(
-                room_id, tool_name, tool_input, summary, requester=requester
-            )
+            if isinstance(result, PermissionResultDeny):
+                self._declined_tool_this_turn[room_id] = True
+            return result
 
         return _can_use_tool
+
+    async def _resolve_tool_permission(
+        self,
+        room_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        context: ToolPermissionContext,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        """Decide allow/deny for one tool call under the room's approval mode."""
+        # The SDK passes the MCP-namespaced name; use the bare name everywhere
+        # this approval surfaces to the user (summary, notifications, logs).
+        tool_name = self._semantic_tool_name(tool_name)
+        summary = self._approval_summary(tool_name, tool_input)
+        # Capture the sender now so it doesn't get overwritten by
+        # messages arriving while we wait for a decision.
+        requester = self._room_last_sender.get(room_id)
+        logger.debug(
+            "can_use_tool: %s in room %s (mode=%s)",
+            tool_name,
+            room_id,
+            self.approval_mode,
+        )
+
+        # --- auto modes ---------------------------------------------------
+        if self.approval_mode == "auto_accept":
+            if self.approval_text_notifications:
+                await self._notify_auto_decision(
+                    room_id, summary, "accept", requester=requester
+                )
+            return PermissionResultAllow()
+
+        if self.approval_mode == "auto_decline":
+            if self.approval_text_notifications:
+                await self._notify_auto_decision(
+                    room_id, summary, "decline", requester=requester
+                )
+            return PermissionResultDeny(
+                message=f"Tool use declined by policy: {summary}"
+            )
+
+        # --- manual mode ---------------------------------------------------
+        return await self._resolve_manual_approval(
+            room_id, tool_name, tool_input, summary, requester=requester
+        )
 
     async def _notify_auto_decision(
         self,

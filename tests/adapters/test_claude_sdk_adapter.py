@@ -48,8 +48,10 @@ if _CLAUDE_SDK_AVAILABLE:
 # The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
 _SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
 _ANY_MODEL = "claude-sonnet-4-6"
-# What _report_error posts for a turn that ended without a reply going out.
-_MISSING_REPLY_CONTENT = f"Error: {missing_reply_error('Claude SDK')}"
+# What a turn that ended without a reply going out must say — the "Error: "
+# prefix is _report_error's own formatting, asserted by substring below
+# rather than re-derived here.
+_MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
 
 
 def _tool_turn(mcp_tool_name: str) -> list:
@@ -68,12 +70,19 @@ def _tool_turn(mcp_tool_name: str) -> list:
     ]
 
 
-def _error_events(mock_tools) -> list:
+def _error_events(mock_tools: MagicMock) -> list[str]:
     """Contents of the error events posted through send_event."""
     return [
         call.kwargs["content"]
         for call in mock_tools.send_event.call_args_list
         if call.kwargs.get("message_type") == "error"
+    ]
+
+
+def _narrated_message_types(mock_tools: MagicMock) -> list[str]:
+    """``message_type`` of every event posted through send_event, in order."""
+    return [
+        call.kwargs["message_type"] for call in mock_tools.send_event.call_args_list
     ]
 
 
@@ -1061,7 +1070,9 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        assert _error_events(mock_tools) == [_MISSING_REPLY_CONTENT]
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
 
     @pytest.mark.asyncio
     async def test_no_error_reported_when_reply_tool_ran(self, mock_tools):
@@ -1105,9 +1116,7 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        narrated_types = [
-            call.kwargs["message_type"] for call in mock_tools.send_event.call_args_list
-        ]
+        narrated_types = _narrated_message_types(mock_tools)
         assert "tool_call" in narrated_types
         assert "tool_result" in narrated_types
 
@@ -1121,7 +1130,112 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        assert _error_events(mock_tools) == [_MISSING_REPLY_CONTENT]
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_tool_result_with_is_error_none_counts_as_success(self, mock_tools):
+        """The SDK's own convention: ``ToolResultBlock.is_error`` omitted from
+        the CLI's JSON (``None``) means success, same as an explicit ``False``."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={}),
+            ],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=None)]
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_custom_terminal_tool_counts_as_reply(self, mock_tools):
+        """A custom tool marked ``band_terminal=True`` must be recognized under
+        its actual registered MCP name (get_custom_tool_name), not the Python
+        handler's ``__name__`` — those two can differ."""
+        from pydantic import BaseModel
+
+        class DeployInput(BaseModel):
+            target: str
+
+        def run_the_deploy_handler(args: DeployInput) -> str:
+            return "deployed"
+
+        run_the_deploy_handler.band_terminal = True
+        adapter = ClaudeSDKAdapter(
+            additional_tools=[(DeployInput, run_the_deploy_handler)]
+        )
+        # get_custom_tool_name(DeployInput) == "deploy" — deliberately unlike
+        # the handler's own __name__, to prove the fix keys off the former.
+        turn = _tool_turn("mcp__band__deploy")
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(*turn, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_declined_reply_tool_does_not_also_report_missing_reply(
+        self, mock_tools
+    ):
+        """A denied tool call already posts its own decline notice — the
+        missing-reply guard must not pile a second, contradictory error on
+        top of a turn the approval flow already explained."""
+        from claude_agent_sdk.types import PermissionResultDeny, ToolPermissionContext
+
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        # The declined call's result comes back as an error, same as a real
+        # denial would surface through the SDK's own protocol.
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
+            ]
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_user_envelope_tool_use_is_tracked(self, mock_tools):
+        """A tool_use block carried in a user-type envelope (e.g. a
+        subagent's nested call) must be tracked the same as one carried by
+        an assistant message, not silently dropped."""
+        adapter = ClaudeSDKAdapter()
+        user_msg = UserMessage(
+            content=[
+                ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={}),
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
+            ]
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
 
 
 # ======================================================================
