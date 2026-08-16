@@ -1215,7 +1215,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     "Room %s: Failed to send approval notification — declining", room_id
                 )
                 self._clear_pending_approval(room_id, token)
-                self._declined_tool_this_turn[room_id] = True
+                # No notice reached the room — the one delivery attempt is
+                # the failure itself — so this must not suppress the
+                # missing-reply guard the way the other decline paths below
+                # (which do post a notice) correctly do.
                 return PermissionResultDeny(
                     message="Could not deliver approval prompt, tool use declined"
                 )

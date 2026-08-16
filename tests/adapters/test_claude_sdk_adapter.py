@@ -1358,6 +1358,32 @@ class TestTurnFailureSurfacing:
         assert len(errors) == 1
         assert _MISSING_REPLY_TEXT in errors[0]
 
+    @pytest.mark.asyncio
+    async def test_undelivered_approval_prompt_still_reports_missing_reply(
+        self, mock_tools
+    ):
+        """Manual mode's approval prompt itself failed to send — the room got
+        no explanation at all — so the missing-reply guard must still fire
+        even though the tool call was denied."""
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5.0)
+        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
 
 # ======================================================================
 # Chat-based approval flow tests
