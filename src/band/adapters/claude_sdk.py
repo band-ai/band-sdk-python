@@ -30,6 +30,7 @@ try:
         ToolUseBlock,
         ToolResultBlock,
         ResultMessage,
+        UserMessage,
     )
     from claude_agent_sdk._errors import CLIConnectionError  # type: ignore[import-not-found]
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
@@ -763,37 +764,21 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 logger.warning("Failed to send tool_call event: %s", e)
 
                     elif isinstance(block, ToolResultBlock):
-                        logger.debug(
-                            "Room %s: Tool result: %s... error=%s",
-                            room_id,
-                            block.tool_use_id[:20],
-                            block.is_error,
-                        )
-                        result_tool_name = pending_tool_names.pop(
-                            block.tool_use_id, None
-                        )
-                        if is_terminal_success(
-                            result_tool_name,
-                            succeeded=not block.is_error,
-                            custom_terminal=result_tool_name
-                            in self._custom_terminal_names,
+                        if await self._on_tool_result(
+                            block, pending_tool_names, room_id, tools
                         ):
                             tool_executed = True
-                        if Emit.EXECUTION in self.features.emit:
-                            try:
-                                await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            ToolEventKey.OUTPUT: block.content,
-                                            ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
-                                        }
-                                    ),
-                                    message_type="tool_result",
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to send tool_result event: %s", e
-                                )
+
+            elif isinstance(sdk_message, UserMessage):
+                # Tool results come back in user-type envelopes (the protocol
+                # shape for tool_result blocks), not assistant messages.
+                if isinstance(sdk_message.content, list):
+                    for block in sdk_message.content:
+                        if isinstance(block, ToolResultBlock):
+                            if await self._on_tool_result(
+                                block, pending_tool_names, room_id, tools
+                            ):
+                                tool_executed = True
 
             elif isinstance(sdk_message, ResultMessage):
                 logger.info(
@@ -841,6 +826,46 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 elif not tool_executed:
                     await self._report_error(tools, missing_reply_error("Claude SDK"))
                 break
+
+    async def _on_tool_result(
+        self,
+        block: ToolResultBlock,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Narrate one tool result and report whether it was terminal work.
+
+        Shared by both envelopes a result can arrive in: user-type messages
+        (the protocol shape) and assistant messages (accepted defensively).
+        Returns True when the finished call counts as the turn's productive
+        work (see is_terminal_success) — i.e. the agent already answered.
+        """
+        logger.debug(
+            "Room %s: Tool result: %s... error=%s",
+            room_id,
+            block.tool_use_id[:20],
+            block.is_error,
+        )
+        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
+        if Emit.EXECUTION in self.features.emit:
+            try:
+                await tools.send_event(
+                    content=json.dumps(
+                        {
+                            ToolEventKey.OUTPUT: block.content,
+                            ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
+                        }
+                    ),
+                    message_type="tool_result",
+                )
+            except Exception as e:
+                logger.warning("Failed to send tool_result event: %s", e)
+        return is_terminal_success(
+            result_tool_name,
+            succeeded=not block.is_error,
+            custom_terminal=result_tool_name in self._custom_terminal_names,
+        )
 
     @staticmethod
     def _result_error_detail(sdk_message: ResultMessage) -> str:
