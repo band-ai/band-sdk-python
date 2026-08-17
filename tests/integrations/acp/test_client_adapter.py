@@ -179,6 +179,30 @@ class TestACPClientAdapterShutdown:
         assert adapter._runtime._ctx is None  # ...and released
         assert adapter._runtime._conn is None
 
+    @pytest.mark.asyncio
+    async def test_restart_after_a_full_stop_allows_backend_creation(
+        self, make_acp_transport
+    ) -> None:
+        """Agent.start() reuses the same adapter instance across a
+        stop()-then-start() restart (and across a retry after a failed
+        start -- both go through cleanup_all's final=True default). The ACP
+        connection self-heals unconditionally; the MCP backend must too, or a
+        perfectly healthy restarted adapter can never call a Band tool again."""
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(command="codex", spawn_process=transport)
+        await adapter.on_started("Codex", "bridge")
+
+        await adapter.cleanup_all()  # Agent.stop(), final=True
+
+        await adapter.on_started("Codex", "bridge")  # Agent.start() again
+
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=backend),
+        ):
+            assert await adapter._ensure_band_mcp_backend() is backend
+
 
 class TestACPClientAdapterLocalMcpConfig:
     """Tests for local Band MCP injection."""

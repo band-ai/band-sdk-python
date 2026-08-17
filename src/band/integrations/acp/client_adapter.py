@@ -275,6 +275,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
+        # The other end of cleanup_all(final=True)'s _stopped: Agent.start()
+        # reuses this instance across a restart or a retry after a failed
+        # start, and the ACP connection below self-heals unconditionally, so
+        # the backend must be startable again too.
+        async with self._mcp_backend_lock:
+            self._stopped = False
         await self._spawn_process()
 
     async def _spawn_process(self) -> None:
