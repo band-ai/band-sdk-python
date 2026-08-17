@@ -150,6 +150,7 @@ def hermetic_copilot_config(
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
 @requires(Dep.COPILOT_CLI)
+@pytest.mark.timeout(extra=180)  # Copilot CLI cold boot + hosted-auth handshake
 @pytest.mark.asyncio(loop_scope="session")
 async def test_copilot_hosted_auth_replies(
     baseline_settings: BaselineSettings,

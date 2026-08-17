@@ -306,7 +306,10 @@ jobs:
             "copilot_auth": {"mode": "byok", "provider": "anthropic",
                              "model": s.llm_models.anthropic_model},
         }
-        out = pathlib.Path("artifacts/environment-backends.json")
+        # OS-qualified: the scorecard job downloads every OS's artifact for this
+        # lane with merge-multiple=true into one shared directory, so a
+        # same-named file across ubuntu/windows would silently overwrite.
+        out = pathlib.Path(f"artifacts/environment-backends-{platform.system()}.json")
         out.parent.mkdir(exist_ok=True)
         out.write_text(json.dumps(meta, indent=2) + "\n")
         PY

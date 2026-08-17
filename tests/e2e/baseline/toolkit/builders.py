@@ -430,9 +430,9 @@ def _build_copilot_acp(
     # stdio spawn of `copilot --acp` co-located with the SDK, so Band tools reach
     # Copilot over the loopback MCP server (inject_band_tools default True).
     # `supports` and `runs_tool_loop` are separate axes (see AdapterSpec):
-    # memory tools are now genuinely registered and gated on declared
-    # capabilities (this adapter enters the capability matrix); contacts stay
-    # unconditionally registered like every other caller with no `features=`
+    # memory tools are registered and gated on declared capabilities (this
+    # adapter is in the capability matrix); contacts stay unconditionally
+    # registered like every other caller with no `features=` of its own
     # (see ACPClientAdapter._registered_tools' docstring). The
     # custom-tool round trip (`runs_tool_loop=True`) needs its own live proof —
     # matching codex/opencode/letta, which all delegate tool execution

@@ -496,14 +496,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """The shared backend singleton (one ``LocalMCPServer`` per adapter),
         starting it on first use.
 
-        Once started, every later room's first turn hits this — so the
-        unlocked fast-path read (matching ``_get_or_create_session`` below)
-        skips the lock entirely once the backend exists; only actual creation
-        needs it, so two rooms' concurrent first turns cannot each start a
-        server and leak the loser (running, never stopped).
+        Always through the lock, no unlocked fast-path read: a fast path
+        reading ``self._band_mcp_backend`` before acquiring the lock could
+        observe it non-``None`` while ``cleanup_all`` is mid-teardown (already
+        nulled it out but still awaiting ``backend.stop()`` under the same
+        lock), or observe ``None`` and race a fresh creation into existence
+        that outlives shutdown and is never stopped -- a real leaked server,
+        not just a failed turn. An uncontended ``asyncio.Lock.acquire()``
+        doesn't suspend, so the lock costs nothing on the hot path it guards.
         """
-        if self._band_mcp_backend is not None:
-            return self._band_mcp_backend
         async with self._mcp_backend_lock:
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(

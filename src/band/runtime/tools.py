@@ -773,9 +773,12 @@ def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None
 def is_room_posting_tool(tool_name: str) -> bool:
     """True when a successful call of ``tool_name`` posts a message to the room.
 
-    Tolerates the MCP ``<server>-`` spelling (see ``_resolve_mcp_tool_name``).
-    A miss only costs a duplicate reply (the pre-suppression behavior), never
-    a wrong post.
+    Tolerates the MCP ``<server>-`` spelling (see ``_resolve_mcp_tool_name``),
+    matched by suffix only -- it does not verify ``<server>`` is actually the
+    Band loopback server's own name. A miss only costs a duplicate reply (the
+    pre-suppression behavior), never a wrong post; the reverse (an external
+    MCP server whose own tool happens to be named identically to a Band tool)
+    would, but requires that exact naming collision, not seen in practice.
     """
     return _resolve_mcp_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES) is not None
 
