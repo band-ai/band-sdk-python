@@ -15,17 +15,12 @@ from band.runtime.mcp_server import (
     LocalMCPServer,
     build_resolved_band_mcp_tool_registrations,
 )
-from band.runtime.tools import ToolDefinition
+from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 BandMCPBackendKind = TypeAliasType(
     "BandMCPBackendKind",
     Literal["sdk", "http", "sse"],
 )
-
-# The name the Band MCP server registers under. MCP clients key tool
-# namespacing off it (e.g. Copilot's hyphen-joined ``band-<tool>``), and
-# adapters reference it when advertising the server in a session config.
-BAND_MCP_SERVER_NAME = "band"
 
 
 @dataclass

@@ -1387,3 +1387,17 @@ class TestTurnRepliedInRoom:
             )
         ]
         assert not turn_replied_in_room(chunks)
+
+    def test_foreign_mcp_servers_own_tool_never_counts(self) -> None:
+        """A non-Band MCP server's own tool that happens to end in
+        ``-band_send_message`` must not suppress the text fallback -- only the
+        Band loopback server's own ``band-`` prefix counts as a room post."""
+        chunks = [
+            self._chunk(
+                "tool_call",
+                "other-band_send_message",
+                tool_call_id="tc-1",
+                status="completed",
+            )
+        ]
+        assert not turn_replied_in_room(chunks)

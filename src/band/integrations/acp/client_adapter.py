@@ -33,7 +33,6 @@ from band.integrations.acp.client_types import (
     BandACPClient,
 )
 from band.integrations.mcp.backends import (
-    BAND_MCP_SERVER_NAME,
     BandMCPBackend,
     create_band_mcp_backend,
 )
@@ -43,6 +42,7 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
 from band.runtime.mcp_server import LocalMCPServer
 from band.runtime.tools import (
+    BAND_MCP_SERVER_NAME,
     ROOM_POSTING_TOOL_NAMES,
     ToolDefinition,
     canonicalize_mcp_tool_name,
