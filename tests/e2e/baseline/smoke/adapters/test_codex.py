@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.types import AdapterFeatures, Emit
 
 from tests.e2e.baseline.agents import Lane, lane
@@ -66,8 +67,6 @@ async def test_codex_thoughts_are_not_placeholders(
     ``name == marker`` and the ask itself invites reasoning (how a joke might be
     badly interpreted).
     """
-    from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-
     name = unique_marker("Sam")
     config_kwargs: dict[str, Any] = {
         "cwd": baseline_settings.backends.codex_cwd,

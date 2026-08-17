@@ -719,6 +719,19 @@ test, where the markdown-docs run actually executes it.
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` as the first import in every file
+- **Imports go at the top of the file, full absolute path (`from band.x.y
+  import Z`), never inside a function body.** This gets missed constantly —
+  check it explicitly before finishing any edit that touches an import. The
+  one legitimate exception: a module gated behind an optional extra not
+  installed in every lane's venv (e.g. `band.adapters.copilot_acp` imports
+  `acp`, the `agent-client-protocol` package — importing it at module level
+  would break test *collection* for a venv that lacks that extra, such as
+  `dev-crewai`). Even then the deferred import belongs only at the specific
+  call site that needs it, and only because collection-time safety genuinely
+  requires it — never as a default habit. If the module has no such
+  extra-gated dependency (true for the vast majority, including every
+  adapter that only shells out to a CLI, like `codex`), the import is
+  top-level, full stop.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,
