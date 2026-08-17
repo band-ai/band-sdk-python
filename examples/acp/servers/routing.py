@@ -43,12 +43,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ACPServer, BandACPServerAdapter
+from band.integrations.acp import run_acp_server
 from band.config import load_agent_config
 from band.integrations.acp import AgentRouter
 
@@ -116,7 +116,7 @@ async def main() -> None:
     await agent.start()
     try:
         # Block on stdio until editor disconnects
-        await run_agent(server)
+        await run_acp_server(server)
     finally:
         await agent.stop()
 

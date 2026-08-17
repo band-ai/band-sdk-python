@@ -21,7 +21,7 @@ from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.testing import FakeAgentTools
 
-from .agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
 

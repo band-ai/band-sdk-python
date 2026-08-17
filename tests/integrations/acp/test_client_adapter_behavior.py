@@ -24,7 +24,7 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 
-from .acp_toolkit import FakeACPAgent, acp_adapter
+from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.

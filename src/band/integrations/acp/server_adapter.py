@@ -58,7 +58,11 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     Example:
         from band import Agent
-        from band.integrations.acp import BandACPServerAdapter, ACPServer
+        from band.integrations.acp import (
+            ACPServer,
+            BandACPServerAdapter,
+            run_acp_server,
+        )
 
         adapter = BandACPServerAdapter(
             rest_url="https://app.band.ai",
@@ -67,7 +71,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         server = ACPServer(adapter)
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.start()
-        await run_agent(server)
+        await run_acp_server(server)
     """
 
     def __init__(
@@ -91,7 +95,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         self._room_to_session: dict[str, str] = {}  # room_id -> session_id
         self._pending_prompts: dict[str, PendingACPPrompt] = {}  # room_id -> pending
         self._session_modes: dict[str, str] = {}  # session_id -> mode_id
-        self._session_models: dict[str, str] = {}  # session_id -> model_id
         self._session_cwd: dict[str, str] = {}  # session_id -> cwd
         self._session_mcp_servers: dict[
             str, list[Any]
@@ -152,14 +155,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """
         self._session_modes[session_id] = mode_id
 
-    def set_session_model(self, session_id: str, model_id: str) -> None:
-        """Record the model chosen by the editor.
-
-        Note: Called from sync ACP handlers. Safe because the single ACP
-        stdio connection serializes requests, so no concurrent callers.
-        """
-        self._session_models[session_id] = model_id
-        logger.debug("Session model set: session=%s, model=%s", session_id, model_id)
+    def get_session_mode(self, session_id: str) -> str | None:
+        """Return the mode last set for a session, or None if unset."""
+        return self._session_modes.get(session_id)
 
     def get_session_cwd(self, session_id: str) -> str:
         """Return the working directory for a session, or '.' if unknown."""
@@ -359,7 +357,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._pending_prompts[room_id] = pending
 
             # Read routing state while holding lock
-            current_mode = self._session_modes.get(session_id)
+            current_mode = self.get_session_mode(session_id)
 
         # Route via slash commands or session modes (no lock needed — pure)
         cleaned_text = text
@@ -492,7 +490,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             if session_id:
                 self._session_to_room.pop(session_id, None)
                 self._session_modes.pop(session_id, None)
-                self._session_models.pop(session_id, None)
                 self._session_cwd.pop(session_id, None)
                 self._session_mcp_servers.pop(session_id, None)
 

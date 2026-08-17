@@ -264,7 +264,7 @@ Two-layer pattern (mirrors A2A Gateway):
 
 | File | Purpose |
 |------|---------|
-| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
+| `src/band/integrations/acp/server.py` | `ACPServer` — handles ACP JSON-RPC methods, does not subclass `acp.Agent`; `run_acp_server` — runs it with `use_unstable_protocol` (required for `session/fork`, `session/resume`, `session/close`) |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
 | `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |

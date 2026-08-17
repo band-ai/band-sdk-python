@@ -12,18 +12,11 @@ from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 
-from .conftest import make_platform_message, make_tool_call_message
-
-
-async def _wait_for_pending_prompt(
-    adapter: BandACPServerAdapter, room_id: str
-) -> PendingACPPrompt:
-    """Wait until a pending prompt is registered for a room."""
-    while True:
-        pending = adapter._pending_prompts.get(room_id)
-        if pending is not None:
-            return pending
-        await asyncio.sleep(0)
+from tests.integrations.acp.conftest import (
+    make_platform_message,
+    make_tool_call_message,
+    release_pending_prompt,
+)
 
 
 class TestBandACPServerAdapterInit:
@@ -182,14 +175,7 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._session_to_room["session-1"] = "room-123"
 
         # Make pending prompt complete immediately via on_message
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Hello world")
         await task
 
@@ -205,14 +191,7 @@ class TestBandACPServerAdapterHandlePrompt:
         adapter._session_to_room["session-1"] = "room-123"
 
         # Complete immediately
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Test")
         await task
 
@@ -749,14 +728,7 @@ class TestBandACPServerAdapterRouting:
         router = AgentRouter(slash_commands={"codex": "codex"})
         adapter.set_router(router)
 
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "/codex fix bug")
         await task
 
@@ -777,14 +749,7 @@ class TestBandACPServerAdapterRouting:
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
-        async def auto_complete():
-            pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Hello")
         await task
 
@@ -807,14 +772,7 @@ class TestBandACPServerAdapterRouting:
             }
         ]
 
-        async def auto_complete() -> None:
-            pending = await asyncio.wait_for(
-                _wait_for_pending_prompt(adapter, "room-123"),
-                timeout=0.5,
-            )
-            pending.done_event.set()
-
-        task = asyncio.create_task(auto_complete())
+        task = asyncio.create_task(release_pending_prompt(adapter, "room-123"))
         await adapter.handle_prompt("session-1", "Check the repo")
         await task
 
@@ -852,13 +810,7 @@ class TestBandACPServerAdapterPublicAccessors:
         adapter = BandACPServerAdapter()
         adapter.set_session_mode("session-1", "code")
 
-        assert adapter._session_modes["session-1"] == "code"
-
-    def test_set_session_model_logs(self) -> None:
-        """Should store the selected model."""
-        adapter = BandACPServerAdapter()
-        adapter.set_session_model("session-1", "gpt-4")
-        assert adapter._session_models["session-1"] == "gpt-4"
+        assert adapter.get_session_mode("session-1") == "code"
 
     def test_get_session_for_room(self) -> None:
         """Should return session_id for known rooms, None otherwise."""

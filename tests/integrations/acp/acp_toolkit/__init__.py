@@ -22,8 +22,8 @@ Example::
 
 from __future__ import annotations
 
-from .agent import FakeACPAgent, PromptHandler
-from .harness import (
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, PromptHandler
+from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
     FakeSpawn,
     Reply,
