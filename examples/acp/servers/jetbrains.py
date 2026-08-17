@@ -70,7 +70,6 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
@@ -78,7 +77,7 @@ from band import Agent
 from band.config import load_agent_config
 from band.integrations.acp.push_handler import ACPPushHandler
 from band.integrations.acp.router import AgentRouter
-from band.integrations.acp.server import ACPServer
+from band.integrations.acp.server import ACPServer, run_acp_server
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 setup_logging()
@@ -146,7 +145,7 @@ async def main() -> None:
 
     await agent.start()
     try:
-        await run_agent(server)
+        await run_acp_server(server)
     finally:
         await agent.stop()
 

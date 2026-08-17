@@ -39,20 +39,6 @@ def mock_ws_client():
     return ws
 
 
-@pytest.fixture
-def mock_rest_client():
-    """Mock AsyncRestClient for testing BandLink."""
-    client = AsyncMock()
-    client.agent_api_identity = MagicMock()
-    client.agent_api_messages = MagicMock()
-    client.agent_api_chats = MagicMock()
-    client.agent_api_peers = MagicMock()
-    client.agent_api_participants = MagicMock()
-    client.agent_api_events = MagicMock()
-    client.agent_api_context = MagicMock()
-    return client
-
-
 class TestBandLinkConstruction:
     """Test BandLink initialization."""
 

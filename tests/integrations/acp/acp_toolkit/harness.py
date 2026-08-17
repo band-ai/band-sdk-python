@@ -22,7 +22,7 @@ from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 
-from .agent import FakeACPAgent
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
 
