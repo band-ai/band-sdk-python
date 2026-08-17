@@ -22,14 +22,16 @@ NOTE: We intentionally do NOT use `from __future__ import annotations` here
 because Parlant's @p.tool decorator checks annotation types at runtime.
 """
 
+import inspect
 import json
 import logging
 import warnings
-from typing import Any, Callable, Optional
+from typing import Annotated, Any, Callable, Optional
 
 from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
+    TOOL_MODELS,
     append_available_mention_handles,
     get_tool_description,
     serialize_tool_result,
@@ -53,6 +55,14 @@ _session_message_sent: dict[str, bool] = {}
 SEND_MESSAGE_MENTIONS_NOTE = (
     "\n\nThis tool's mentions argument is a single string: separate multiple "
     'handles with commas, e.g. "@alice, @bob/agent".'
+)
+
+# Same divergence as SEND_MESSAGE_MENTIONS_NOTE, appended to the per-argument
+# description instead of the tool-level one: the master field's list-oriented
+# text would otherwise reach the LLM unqualified for this comma-separated param.
+SEND_MESSAGE_MENTIONS_PARAM_NOTE = (
+    " This tool takes it as a single comma-separated string, not a list, "
+    'e.g. "@alice, @bob/agent".'
 )
 
 # The master model describes lookup_peers' raw return shape (a 'data'/'metadata'
@@ -134,28 +144,65 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
     """
     try:
         import parlant.sdk as p  # type: ignore[missing-import]
-        from parlant.core.tools import ToolContext, ToolResult  # type: ignore[missing-import]
+        from parlant.core.tools import (  # type: ignore[missing-import]
+            ToolContext,
+            ToolParameterOptions,
+            ToolResult,
+        )
     except ImportError:
         logger.warning("Parlant SDK not installed, skipping tool creation")
         return []
 
-    def band_tool(extra_doc: str = "") -> Callable[[Callable[..., Any]], Any]:
-        """Decorator: describe *func* from its master model, then register it.
+    def band_tool(
+        extra_doc: str = "",
+        param_overrides: dict[str, str] | None = None,
+    ) -> Callable[[Callable[..., Any]], Any]:
+        """Decorator: describe *func* and its parameters from the master model, then register it.
 
         The tool name is never retyped as a string — it's ``func.__name__``,
         which is always written to match its ``TOOL_MODELS`` entry (e.g. the
         function below is literally named ``band_send_message``). ``extra_doc``
-        appends prose the master model can't express (a Parlant-only argument
-        shape); it never replaces the master text.
+        appends prose the master tool description can't express (a
+        Parlant-only argument shape); ``param_overrides`` does the same per
+        argument, keyed by parameter name. Neither ever replaces master text —
+        only appends — so a master model edit keeps propagating.
+
+        Parlant's own schema builder never reads a docstring's ``Args:``
+        section (unlike pydantic-ai's griffe parser) — a parameter only gets a
+        description if its type annotation is
+        ``Annotated[T, ToolParameterOptions(description=...)]``. So this also
+        wraps each parameter's annotation from the master model's
+        ``Field(description=...)`` before registering, skipping ``context``
+        (must stay exactly ``ToolContext``) and any parameter with no master
+        description.
         """
 
         def decorator(func: Callable[..., Any]) -> Any:
             func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
+
+            model = TOOL_MODELS.get(func.__name__)
+            if model is not None:
+                for param_name, param in inspect.signature(func).parameters.items():
+                    if param_name == "context":
+                        continue
+                    field = model.model_fields.get(param_name)
+                    description = field.description if field else None
+                    if not description:
+                        continue
+                    if param_overrides and param_name in param_overrides:
+                        description = description.rstrip() + param_overrides[param_name]
+                    func.__annotations__[param_name] = Annotated[
+                        param.annotation, ToolParameterOptions(description=description)
+                    ]
+
             return p.tool(func)
 
         return decorator
 
-    @band_tool(SEND_MESSAGE_MENTIONS_NOTE)
+    @band_tool(
+        SEND_MESSAGE_MENTIONS_NOTE,
+        param_overrides={"mentions": SEND_MESSAGE_MENTIONS_PARAM_NOTE},
+    )
     async def band_send_message(
         context: ToolContext,
         content: str,

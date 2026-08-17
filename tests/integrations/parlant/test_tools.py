@@ -214,6 +214,84 @@ class TestCreateParlantTools:
             "expected every Parlant tool to have a master model"
         )
 
+    def test_tool_parameters_have_descriptions(self):
+        """Every tool argument should carry a description, not just the tool itself.
+
+        Parlant's schema builder never reads a docstring's Args: section (unlike
+        pydantic-ai's griffe parser) — a parameter only gets a description via
+        Annotated[T, ToolParameterOptions(description=...)] on its type
+        annotation. Without that, every argument silently reaches the LLM with
+        no description at all.
+        """
+        tools = create_parlant_tools()
+
+        missing = [
+            (entry.tool.name, param_name)
+            for entry in tools
+            for param_name, (_, options) in entry.tool.parameters.items()
+            if not options.description
+        ]
+        assert not missing, f"parameters with no description: {missing}"
+
+    def test_parameter_description_reflects_master_model_field_edit(self, monkeypatch):
+        """A master field description edit must reach the Parlant parameter schema.
+
+        Same mutation-test shape as test_description_reflects_master_model_edit,
+        applied per argument instead of per tool. Scoped to parameters Parlant's
+        tool functions actually accept — some master fields (e.g.
+        AddParticipantInput.role, SendEventInput.metadata, both LookupPeersInput
+        fields) aren't exposed as Parlant parameters at all; the tool hardcodes
+        that value internally instead.
+        """
+        baseline_params = {
+            (entry.tool.name, param_name)
+            for entry in create_parlant_tools()
+            for param_name in entry.tool.parameters
+        }
+
+        sentinels: dict[tuple[str, str], str] = {}
+        for tool_name, model in TOOL_MODELS.items():
+            for field_name, field in model.model_fields.items():
+                if (
+                    tool_name,
+                    field_name,
+                ) not in baseline_params or not field.description:
+                    continue
+                sentinel = f"SENTINEL FIELD DESC FOR {tool_name}.{field_name}"
+                monkeypatch.setattr(field, "description", sentinel)
+                sentinels[(tool_name, field_name)] = sentinel
+
+        tools = create_parlant_tools()
+        checked = 0
+        for entry in tools:
+            for param_name, (_, options) in entry.tool.parameters.items():
+                sentinel = sentinels.get((entry.tool.name, param_name))
+                if sentinel is None:
+                    continue
+                checked += 1
+                assert options.description is not None
+                assert options.description.startswith(sentinel)
+        assert checked == len(sentinels), (
+            "expected every field-described master parameter to reach Parlant"
+        )
+
+    def test_send_message_mentions_param_notes_comma_separated_shape(self):
+        """mentions is a comma-separated string in Parlant, not the master's list[str].
+
+        The per-argument description must say so, not just the tool-level docstring —
+        otherwise an LLM asking about this one argument sees the master's
+        list-oriented wording unqualified.
+        """
+        tools = create_parlant_tools()
+
+        send_message_entry = next(
+            t for t in tools if t.tool.name == "band_send_message"
+        )
+        description = send_message_entry.tool.parameters["mentions"][1].description
+
+        assert description is not None
+        assert "comma" in description
+
     def test_send_message_tool_has_required_parameters(self):
         """send_message should have content and mentions parameters."""
         tools = create_parlant_tools()
