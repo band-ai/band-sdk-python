@@ -957,7 +957,7 @@ async def test_skips_unknown_event_without_handler(caplog):
     assert "no handler registered" in caplog.text
 
 
-async def test_event_created_without_handler_does_not_warn(caplog):
+async def test_event_created_without_handler_logs_at_debug_not_warning(caplog):
     """event_created has no handler/PlatformEvent anywhere yet (event rows are read
     back over REST instead) -- this is expected, so it must not warn like a
     genuinely unregistered event does, but it should still be visible at debug."""
@@ -967,15 +967,12 @@ async def test_event_created_without_handler_does_not_warn(caplog):
         event = "event_created"
         payload = {"data": "test"}
 
-    logger_name = "band.client.streaming.client"
-    with caplog.at_level(logging.WARNING, logger=logger_name):
+    with caplog.at_level(logging.DEBUG, logger="band.client.streaming.client"):
         await client._handle_events(MockMessage(), {})
-    assert "no handler registered" not in caplog.text
 
-    caplog.clear()
-    with caplog.at_level(logging.DEBUG, logger=logger_name):
-        await client._handle_events(MockMessage(), {})
-    assert "no handler registered" in caplog.text
+    unhandled = [r for r in caplog.records if "no handler registered" in r.message]
+    assert len(unhandled) == 1
+    assert unhandled[0].levelno == logging.DEBUG
 
 
 async def test_passes_raw_dict_for_unknown_event_types():

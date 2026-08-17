@@ -750,10 +750,22 @@ test, where the markdown-docs run actually executes it.
 - Write intent-oriented code: the reader should see *what* is meant, not decode
   *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
   early returns over nested branches), and hide bookkeeping behind a small helper
-  or property with an intent-revealing name. In tests especially, assert on a
-  readable projection of the observable outcome, not raw internals — e.g.
-  `assert reply.outline == ["tool_call (permission)", "message", ...]` over a
-  hand-rolled comprehension pulling `message_type` out of each event dict.
+  or property with an intent-revealing name. Branch on *what to do*, not *which
+  function to call*: an `if`/`else` choosing between two calls reads clearer
+  than a ternary that selects a callable into a variable and invokes it —
+  `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`, never
+  `log = logger.debug if known else logger.warning; log(msg, ...)`.
+- **Tests must be declarative and intent-revealing, not a transcript of the
+  implementation.** Assert on a readable projection of the observable outcome
+  — the thing the test is actually about — never on raw internals or on a
+  side effect that merely implies the real answer. Concretely:
+  - `assert reply.outline == ["tool_call (permission)", "message", ...]` over
+    a hand-rolled comprehension pulling `message_type` out of each event dict.
+  - `assert record.levelno == logging.DEBUG` over inferring a log level
+    indirectly from whether two separate capture windows came back empty.
+  If writing the assertion requires re-deriving *how* the code decided
+  something, the test is checking the wrong thing — assert the decision
+  itself.
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a
