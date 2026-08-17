@@ -307,6 +307,37 @@ class TestACPClientAdapterLocalMcpConfig:
         assert recreated is fresh_backend
         mock_create_backend.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_shutdown_racing_a_parked_first_turn_fails_loudly(self) -> None:
+        """The exact reachability the review named: a room's first-turn
+        bootstrap is genuinely parked on ``_mcp_backend_lock`` (not just
+        sequenced after) while real shutdown holds it -- it must wake to a
+        raise, never a backend that outlives shutdown unstopped."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+
+        async def slow_stop() -> None:
+            await asyncio.sleep(0)  # yield while holding the lock, so the
+            # parked _ensure_band_mcp_backend call can interleave here
+
+        backend.stop = AsyncMock(side_effect=slow_stop)
+        adapter._band_mcp_backend = backend
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(),
+        ) as mock_create_backend:
+            results = await asyncio.gather(
+                adapter.cleanup_all(),
+                adapter._ensure_band_mcp_backend(),
+                return_exceptions=True,
+            )
+
+        assert results[0] is None  # cleanup_all completed normally
+        assert isinstance(results[1], RuntimeError)
+        mock_create_backend.assert_not_awaited()
+        backend.stop.assert_awaited_once()  # stopped exactly once, not raced
+
     async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
         """The tool names the adapter would hand to ``create_band_mcp_backend``."""
         backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
