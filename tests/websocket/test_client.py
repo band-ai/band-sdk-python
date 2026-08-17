@@ -957,6 +957,27 @@ async def test_skips_unknown_event_without_handler(caplog):
     assert "no handler registered" in caplog.text
 
 
+async def test_event_created_without_handler_does_not_warn(caplog):
+    """event_created has no handler/PlatformEvent anywhere yet (event rows are read
+    back over REST instead) -- this is expected, so it must not warn like a
+    genuinely unregistered event does, but it should still be visible at debug."""
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    class MockMessage:
+        event = "event_created"
+        payload = {"data": "test"}
+
+    logger_name = "band.client.streaming.client"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        await client._handle_events(MockMessage(), {})
+    assert "no handler registered" not in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger=logger_name):
+        await client._handle_events(MockMessage(), {})
+    assert "no handler registered" in caplog.text
+
+
 async def test_passes_raw_dict_for_unknown_event_types():
     """Should pass raw payload dict for event types without Pydantic models."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
