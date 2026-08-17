@@ -122,6 +122,12 @@ ApprovalDecision = Literal["accept", "decline"]
 _APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
 _LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
 
+# A pending approval's future, force-resolved by eviction or room teardown
+# rather than a genuine /decline reply — distinct from the "decline" string
+# _handle_approval_command sets, since only that path posts a room-visible
+# notice for the specific call it declines (see _record_notified_decline).
+_FORCED_DECLINE = "forced_decline"
+
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
     r"""(?x)
@@ -395,18 +401,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
         # tool_use_ids (per room) whose decline was actually posted as a
-        # room-visible notice — auto_decline only counts if the notice was
-        # delivered (approval_text_notifications=False, or a send failure,
-        # leaves it unrecorded). Cross-referenced in _on_turn_complete against
-        # ResultMessage.permission_denials, which the CLI reports fresh per
-        # turn (verified live: a denial from one turn never appears in the
-        # next), so this set needs no turn-scoping of its own — tool_use_ids
-        # are unique per call, so a value written late by a decision that
-        # resolves after its turn ended can only ever match that same turn's
-        # denials, never a later turn's. A notice only explains the turn's
-        # silence when the declined tool is what would have delivered the
-        # reply (see is_terminal_success); a declined side tool (e.g. Bash)
-        # still needs the missing-reply guard.
+        # room-visible notice this turn (see _record_notified_decline). Popped
+        # unconditionally once per turn in _on_turn_complete — see
+        # _declined_the_reply for what this is cross-referenced against and
+        # why tool_use_id uniqueness needs no turn-scoping here.
         self._notified_declines: dict[str, set[str]] = {}
         # Bare tool name per pending call, keyed by room then tool_use_id
         # (ToolResultBlock only carries the id). Room-scoped rather than
@@ -928,33 +926,38 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # The ResultMessage carries the turn's total usage (the SDK runs
         # its own tool loop internally, so this is already aggregated).
         await self.emit_usage(tools, self._usage_from_result(sdk_message))
-        # A denied tool call already posted its own room-visible decline
-        # notice (see _resolve_tool_permission) — that only explains this
-        # turn's silence, and only when the declined tool is what would have
-        # delivered the reply (a declined side tool like Bash does not).
+        # Consumed exactly once per turn regardless of outcome, so a decline
+        # that never explains a silence (the turn replied anyway, or errored
+        # outright) doesn't linger and grow this room's entry unbounded.
+        notified = self._notified_declines.pop(room_id, None)
         if sdk_message.is_error:
             await self._report_error(tools, self._result_error_detail(sdk_message))
         elif not replied_this_turn and not self._declined_the_reply(
-            sdk_message, room_id
+            sdk_message.permission_denials, notified
         ):
             await self._report_error(tools, missing_reply_error("Claude SDK"))
 
-    def _declined_the_reply(self, sdk_message: ResultMessage, room_id: str) -> bool:
+    def _declined_the_reply(
+        self, permission_denials: list[Any] | None, notified: set[str] | None
+    ) -> bool:
         """Whether this turn's silence is already explained by a decline.
 
-        ``ResultMessage.permission_denials`` is the CLI's own record of every
-        tool denied during this turn (verified live: it never carries a
-        denial from a different turn), each with the ``tool_name`` and
-        ``tool_use_id`` it denied. Cross-referenced against
-        ``_notified_declines`` — the one thing the CLI can't tell us, whether
-        the room was actually told — and against ``is_terminal_success``,
-        since declining an incidental tool like Bash still leaves the turn's
-        question unanswered.
+        ``permission_denials`` is ``ResultMessage.permission_denials`` — the
+        CLI's own record of every tool denied during this turn (verified
+        live: it never carries a denial from a different turn), each with the
+        ``tool_name`` and ``tool_use_id`` it denied. ``notified`` is the one
+        thing the CLI can't tell us — which of those denials actually reached
+        the room as a decline notice (see _record_notified_decline). A denial
+        only explains the silence when it was both notified and the declined
+        tool is what would have delivered the reply (is_terminal_success) —
+        a declined side tool like Bash still leaves the turn's question
+        unanswered.
         """
-        notified = self._notified_declines.pop(room_id, None)
         if not notified:
             return False
-        for denial in sdk_message.permission_denials or []:
+        for denial in permission_denials or []:
+            if not isinstance(denial, dict):
+                continue
             raw_tool_name = denial.get("tool_name")
             if denial.get("tool_use_id") not in notified or not isinstance(
                 raw_tool_name, str
@@ -971,6 +974,17 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             ):
                 return True
         return False
+
+    def _record_notified_decline(self, room_id: str, tool_use_id: str) -> None:
+        """Record that a decline notice for ``tool_use_id`` reached the room.
+
+        Single source of truth for the three call sites that can determine a
+        decline was actually delivered (auto_decline, manual /decline, manual
+        timeout) — deliberately not called for a forced resolution (approval
+        eviction, room teardown; see _FORCED_DECLINE), which never posts a
+        notice for the specific call it force-declines.
+        """
+        self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
 
     async def _persist_session_id(
         self, session_id: str, room_id: str, tools: AgentToolsProtocol
@@ -1192,7 +1206,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     room_id, summary, "decline", requester=requester
                 )
             if notified and tool_use_id:
-                self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
+                self._record_notified_decline(room_id, tool_use_id)
             return PermissionResultDeny(
                 message=f"Tool use declined by policy: {summary}"
             )
@@ -1260,7 +1274,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             oldest_token = min(room_pending, key=lambda t: room_pending[t].created_at)
             oldest = room_pending.pop(oldest_token)
             if not oldest.future.done():
-                oldest.future.set_result("decline")
+                oldest.future.set_result(_FORCED_DECLINE)
             logger.warning(
                 "Room %s: Evicted oldest pending approval %s (capacity %s)",
                 room_id,
@@ -1302,10 +1316,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             if decision_raw == "accept":
                 return PermissionResultAllow()
-            # Reaching here means a human replied to the approval prompt, so
-            # it was necessarily delivered — no separate notified check needed.
-            if tool_use_id:
-                self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
+            # Only a genuine "decline" (a human replying to the approval
+            # prompt via _handle_approval_command, which posts its own
+            # resolved-as-decline notice) implies delivery. A forced
+            # resolution — eviction or room teardown, _FORCED_DECLINE — never
+            # posts a notice for this specific call, so must not count.
+            if decision_raw == "decline" and tool_use_id:
+                self._record_notified_decline(room_id, tool_use_id)
             return PermissionResultDeny(message="User declined tool use")
 
         except asyncio.TimeoutError:
@@ -1328,7 +1345,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             # Suppressing the missing-reply guard requires a delivered notice:
             # a timeout nobody heard about must still surface as an error.
             if notified and tool_use_id:
-                self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
+                self._record_notified_decline(room_id, tool_use_id)
             return PermissionResultDeny(message="Approval timed out, tool use declined")
 
         finally:
@@ -1508,5 +1525,5 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         room_pending = self._pending_approvals.pop(room_id, {})
         for item in room_pending.values():
             if not item.future.done():
-                item.future.set_result("decline")
+                item.future.set_result(_FORCED_DECLINE)
         # Keep the seq counter to avoid token collisions with suspended coroutines

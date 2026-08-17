@@ -23,6 +23,7 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
     _DEFAULT_MODEL,
+    _FORCED_DECLINE,
     _PendingApproval,
     _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
@@ -1067,6 +1068,15 @@ class TestSessionPersistence:
 class TestTurnFailureSurfacing:
     """A failed or silent turn must surface a room-visible error."""
 
+    def test_declined_the_reply_ignores_malformed_denial_entries(self):
+        """``permission_denials`` is typed ``list[Any]`` — raw, unvalidated
+        CLI JSON, not a structure this SDK guarantees the shape of. A
+        malformed entry must not crash turn-completion, just fail to match."""
+        adapter = ClaudeSDKAdapter()
+        assert (
+            adapter._declined_the_reply(["not-a-dict", 42, None], {"tool-1"}) is False
+        )
+
     @staticmethod
     def _client_yielding(*sdk_messages) -> MagicMock:
         mock_client = MagicMock()
@@ -1342,6 +1352,39 @@ class TestTurnFailureSurfacing:
         errors = _error_events(mock_tools)
         assert len(errors) == 1
         assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_notified_decline_does_not_leak_past_a_turn_that_replied(
+        self, mock_tools
+    ):
+        """A side tool declined-and-notified in a turn that still replies via
+        band_send_message must not leave a stale notified-decline entry for
+        this room once the turn completes — otherwise it grows unbounded
+        over the life of a room that declines side tools but keeps
+        answering normally."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            "mcp__band__band_list_contacts",
+            {},
+            ToolPermissionContext(tool_use_id="tool-1"),
+        )
+        assert isinstance(decision, PermissionResultDeny)
+        assert "tool-1" in adapter._notified_declines["room-123"]
+
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", "mcp__band__band_list_contacts")],
+        )
+        mock_client = self._client_yielding(*turn, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+        assert "room-123" not in adapter._notified_declines
 
     @pytest.mark.asyncio
     async def test_user_envelope_tool_use_is_tracked(self, mock_tools):
@@ -2512,7 +2555,7 @@ class TestApprovalCleanup:
         await adapter.on_cleanup("room-1")
 
         assert future.done()
-        assert future.result() == "decline"
+        assert future.result() == _FORCED_DECLINE
         assert "room-1" not in adapter._pending_approvals
 
     @pytest.mark.asyncio
@@ -2547,8 +2590,8 @@ class TestApprovalCleanup:
 
         await adapter.cleanup_all()
 
-        assert f1.result() == "decline"
-        assert f2.result() == "decline"
+        assert f1.result() == _FORCED_DECLINE
+        assert f2.result() == _FORCED_DECLINE
         assert len(adapter._pending_approvals) == 0
 
 
@@ -2589,7 +2632,41 @@ class TestPendingApprovalEviction:
 
         # Old future should have been evicted and declined
         assert old_future.done()
-        assert old_future.result() == "decline"
+        assert old_future.result() == _FORCED_DECLINE
+
+    @pytest.mark.asyncio
+    async def test_evicted_approval_is_not_recorded_as_notified(self, mock_tools):
+        """Eviction force-resolves the oldest pending approval, but never
+        posts a room-visible notice for that specific call — only the
+        original 'Approval requested' prompt, sent when it was first created.
+        If the evicted call were recorded as notified and it happened to be
+        the reply tool, the turn would end completely silent: no reply (the
+        tool was declined) and no error (the guard wrongly suppressed)."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="manual",
+            max_pending_approvals_per_room=1,
+            approval_wait_timeout_s=0.1,
+        )
+        adapter._room_tools["room-1"] = mock_tools
+        adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
+        callback = adapter._make_can_use_tool("room-1")
+
+        async def request_first():
+            return await callback(
+                _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
+            )
+
+        first_task = asyncio.create_task(request_first())
+        await asyncio.sleep(0.02)  # let the first approval register + prompt
+
+        second_result = await callback(
+            "Bash", {"command": "ls"}, ToolPermissionContext(tool_use_id="tool-2")
+        )
+        first_result = await first_task
+
+        assert isinstance(first_result, PermissionResultDeny)
+        assert isinstance(second_result, PermissionResultDeny)
+        assert "tool-1" not in adapter._notified_declines.get("room-1", set())
 
 
 class TestSendMessageDedupWiring:
