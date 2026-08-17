@@ -11,7 +11,9 @@ session persistence, and the chat-based approval flow.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,7 +31,7 @@ from band.adapters.claude_sdk import (
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.runtime.tools import ALL_TOOL_NAMES, missing_reply_error
-from band.core.types import AdapterFeatures, Emit, PlatformMessage
+from band.core.types import AdapterFeatures, Emit, PlatformMessage, ToolEventKey
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
@@ -96,6 +98,7 @@ def _result_message(
     result: str | None = None,
     errors: list[str] | None = None,
     api_error_status: int | None = None,
+    permission_denials: list[dict[str, Any]] | None = None,
 ) -> ResultMessage:
     """Build a real ``ResultMessage`` with only the fields a test cares about set."""
     return ResultMessage(
@@ -108,7 +111,13 @@ def _result_message(
         result=result,
         errors=errors,
         api_error_status=api_error_status,
+        permission_denials=permission_denials,
     )
+
+
+def _denial(tool_use_id: str, tool_name: str) -> dict[str, Any]:
+    """A ``SDKPermissionDenial``-shaped entry for ``ResultMessage.permission_denials``."""
+    return {"tool_name": tool_name, "tool_use_id": tool_use_id, "tool_input": {}}
 
 
 @pytest.fixture
@@ -1168,6 +1177,34 @@ class TestTurnFailureSurfacing:
         assert "tool_result" in narrated_types
 
     @pytest.mark.asyncio
+    async def test_tool_result_payload_includes_name_and_is_error(self, mock_tools):
+        """The tool_result event must carry NAME and IS_ERROR: parse_tool_result
+        (converters/parsing.py) drops any payload missing a name outright, and
+        every sibling adapter's tool_result payload sets both."""
+        adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="boom", is_error=True)
+            ]
+        )
+        mock_client = self._client_yielding(assistant_msg, user_msg, _result_message())
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        [result_call] = [
+            call
+            for call in mock_tools.send_event.call_args_list
+            if call.kwargs.get("message_type") == "tool_result"
+        ]
+        payload = json.loads(result_call.kwargs["content"])
+        assert payload[ToolEventKey.NAME] == "band_send_message"
+        assert payload[ToolEventKey.IS_ERROR] is True
+
+    @pytest.mark.asyncio
     async def test_no_error_reported_when_only_read_only_tool_ran(self, mock_tools):
         """A read-only lookup (e.g. band_list_contacts) is not a terminal reply."""
         adapter = ClaudeSDKAdapter()
@@ -1240,7 +1277,7 @@ class TestTurnFailureSurfacing:
         can_use_tool = adapter._make_can_use_tool("room-123")
 
         decision = await can_use_tool(
-            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
         )
         assert isinstance(decision, PermissionResultDeny)
 
@@ -1255,12 +1292,56 @@ class TestTurnFailureSurfacing:
                 ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
             ]
         )
-        result_msg = _result_message(is_error=False)
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", _SEND_MESSAGE_MCP_NAME)],
+        )
         mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
         assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_declined_side_tool_still_reports_missing_reply(self, mock_tools):
+        """Declining a tool that would never have delivered the reply (e.g. a
+        read-only lookup) does not explain a subsequent silent turn — only a
+        decline notice for what would have been the reply tool does."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            "mcp__band__band_list_contacts",
+            {},
+            ToolPermissionContext(tool_use_id="tool-1"),
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="tool-1", name="mcp__band__band_list_contacts", input={}
+                )
+            ],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
+            ]
+        )
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", "mcp__band__band_list_contacts")],
+        )
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
 
     @pytest.mark.asyncio
     async def test_user_envelope_tool_use_is_tracked(self, mock_tools):
@@ -1397,7 +1478,7 @@ class TestTurnFailureSurfacing:
         can_use_tool = adapter._make_can_use_tool("room-123")
 
         decision = await can_use_tool(
-            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
         )
         assert isinstance(decision, PermissionResultDeny)
         mock_tools.send_message.assert_not_awaited()
@@ -1411,7 +1492,13 @@ class TestTurnFailureSurfacing:
                 ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
             ]
         )
-        result_msg = _result_message(is_error=False)
+        # The CLI still reports the denial (see permission_denials) even
+        # though our own notification never reached the room — proves the
+        # guard is gated on delivery, not merely on the CLI's own record.
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", _SEND_MESSAGE_MCP_NAME)],
+        )
         mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
@@ -1423,13 +1510,16 @@ class TestTurnFailureSurfacing:
     @pytest.mark.asyncio
     async def test_declined_marker_does_not_leak_into_next_turn(self, mock_tools):
         """A decline from a turn that then dies before its ResultMessage must
-        not leave the room's next, unrelated turn looking pre-explained."""
+        not leave the room's next, unrelated turn looking pre-explained, even
+        though nothing ever clears the leftover notified-tool_use_id record
+        (a real CLI never reuses a tool_use_id, so the next turn's own
+        ``permission_denials`` can never accidentally match it)."""
         adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
         adapter._room_tools["room-123"] = mock_tools
         can_use_tool = adapter._make_can_use_tool("room-123")
 
         decision = await can_use_tool(
-            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
         )
         assert isinstance(decision, PermissionResultDeny)
 
@@ -1437,6 +1527,7 @@ class TestTurnFailureSurfacing:
         with pytest.raises(CLIConnectionError, match="ended without a result"):
             await adapter._process_response(dead_turn_client, "room-123", mock_tools)
 
+        # A fresh, unrelated turn: no tool activity, no permission_denials.
         next_turn_client = self._client_yielding(_result_message(is_error=False))
         await adapter._process_response(next_turn_client, "room-123", mock_tools)
 
