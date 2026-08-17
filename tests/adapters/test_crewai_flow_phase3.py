@@ -788,7 +788,7 @@ class TestRuntimeTools:
                         for t in rt.create_crewai_tools()
                         if t.name == "band_send_message"
                     )
-                    send_tool._run(content="subcrew visible", mentions="[]")
+                    send_tool._run(content="subcrew visible", mentions=[])
                     return {
                         "decision": "direct_response",
                         "content": "should not finalize",
@@ -848,7 +848,7 @@ class TestRuntimeTools:
                         for t in rt.create_crewai_tools()
                         if t.name == "band_send_message"
                     )
-                    result = send_tool._run(content="subcrew visible", mentions="[]")
+                    result = send_tool._run(content="subcrew visible", mentions=[])
                     assert '"status": "success"' in result
                     return {"decision": "waiting", "reason": "done"}
 

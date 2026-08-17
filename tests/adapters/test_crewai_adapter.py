@@ -1107,7 +1107,7 @@ class TestMemoryToolExecution:
                 subject_id="subject-1",
                 scope="subject",
                 system="working",
-                memory_type="fact",
+                type="fact",
                 segment="user",
                 content_query="remember",
                 page_size=5,
@@ -1143,7 +1143,7 @@ class TestMemoryToolExecution:
             result = store_memory_tool._run(
                 content="remember this",
                 system="working",
-                memory_type="fact",
+                type="fact",
                 segment="user",
                 thought="important for follow-up",
                 scope="subject",
@@ -1241,7 +1241,7 @@ class TestToolExecution:
         send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         # Call tool without setting context variable (simulates call outside message handling)
-        result = send_message_tool._run(content="Hello!", mentions="[]")
+        result = send_message_tool._run(content="Hello!", mentions=[])
 
         result_data = json.loads(result)
         assert result_data["status"] == "error"
@@ -1296,8 +1296,9 @@ class TestToolExecution:
         schema_fields = send_event.args_schema.model_fields
 
         assert "message_type" in schema_fields
-        message_type_field = schema_fields["message_type"]
-        assert message_type_field.default == "thought"
+        # Required, not defaulted to "thought" — the master model is authoritative
+        # and every other adapter already makes the agent state the event type.
+        assert schema_fields["message_type"].is_required()
 
     def test_successful_tool_execution_with_room_context(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
@@ -1410,7 +1411,7 @@ class TestExecutionReporting:
         send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         with room_context("room-123"):
-            send_message_tool._run(content="Hello!", mentions="[]")
+            send_message_tool._run(content="Hello!", mentions=[])
 
         assert mock_tools.send_event.call_count >= 2
 
@@ -1552,68 +1553,34 @@ class TestRunAsync:
 
 
 class TestMentionsValidator:
-    @pytest.mark.asyncio
-    async def test_mentions_list_converted_to_json(self, CrewAIAdapter, crewai_mocks):
+    """Models driving CrewAI emit mentions in several shapes; all reach list[str]."""
+
+    @pytest.fixture
+    async def send_message_schema(self, CrewAIAdapter, crewai_mocks):
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
-        call_kwargs = crewai_mocks.Agent.call_args[1]
-        tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "band_send_message")
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        return next(t for t in tools if t.name == "band_send_message").args_schema
 
-        input_model = send_message_tool.args_schema
-
-        instance = input_model(
-            content="Hello!",
-            mentions=["Alice", "Bob"],
-        )
-
-        assert instance.mentions == '["Alice", "Bob"]'
-
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (["Alice", "Bob"], ["Alice", "Bob"]),
+            ('["Alice"]', ["Alice"]),
+            # Neither JSON nor a list — what gpt-4o-mini actually emitted.
+            ("[@yael.avioz/test2]", ["@yael.avioz/test2"]),
+            (None, []),
+            ("", []),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_mentions_string_kept_as_is(self, CrewAIAdapter, crewai_mocks):
-        crewai_mocks.Agent.reset_mock()
+    async def test_mentions_normalize_to_list(self, send_message_schema, raw, expected):
+        instance = send_message_schema(content="Hello!", mentions=raw)
 
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-
-        call_kwargs = crewai_mocks.Agent.call_args[1]
-        tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "band_send_message")
-
-        input_model = send_message_tool.args_schema
-
-        instance = input_model(
-            content="Hello!",
-            mentions='["Alice"]',
-        )
-
-        assert instance.mentions == '["Alice"]'
-
-    @pytest.mark.asyncio
-    async def test_mentions_none_converted_to_empty_array(
-        self, CrewAIAdapter, crewai_mocks
-    ):
-        """None mentions should be normalized to empty JSON array string."""
-        crewai_mocks.Agent.reset_mock()
-
-        adapter = CrewAIAdapter()
-        await adapter.on_started("TestBot", "Test bot")
-
-        call_kwargs = crewai_mocks.Agent.call_args[1]
-        tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "band_send_message")
-
-        input_model = send_message_tool.args_schema
-
-        instance = input_model(
-            content="Hello!",
-            mentions=None,
-        )
-
-        assert instance.mentions == "[]"
+        assert instance.mentions == expected
 
 
 class TestPromptRendering:

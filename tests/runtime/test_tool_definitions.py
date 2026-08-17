@@ -17,7 +17,11 @@ from band.runtime.tools import (
     SendEventInput,
     AddParticipantInput,
     LookupPeersInput,
+    format_arg_doc,
     get_tool_description,
+    get_tool_docstring_with_args,
+    platform_args_schema,
+    platform_tool,
 )
 
 
@@ -177,3 +181,93 @@ class TestGetToolDescription:
         """Should return fallback for unknown tool name."""
         desc = get_tool_description("unknown_tool")
         assert desc == "Execute unknown_tool"
+
+
+def args_section(docstring: str) -> dict[str, str]:
+    """Parse the rendered ``Args:`` block back into {arg_name: description}.
+
+    Mirrors how a Google-style docstring parser reads it: a line indented past
+    the argument name continues the previous entry.
+    """
+    _, _, args_block = docstring.partition("\nArgs:\n")
+    entries: dict[str, str] = {}
+    current = ""
+    for line in args_block.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("        "):
+            entries[current] += " " + line.strip()
+            continue
+        current, _, description = line.strip().partition(": ")
+        entries[current] = description
+    return entries
+
+
+class TestGetToolDocstringWithArgs:
+    """The Args: section is rendered from the master fields, never hand-written."""
+
+    @pytest.mark.parametrize(
+        "name", ["band_send_message", "band_add_participant", "band_store_memory"]
+    )
+    def test_args_section_mirrors_master_field_descriptions(self, name):
+        model = TOOL_MODELS[name]
+        expected = {
+            field_name: field.description
+            for field_name, field in model.model_fields.items()
+            if field.description
+        }
+
+        assert args_section(get_tool_docstring_with_args(name)) == expected
+
+    def test_description_comes_first_verbatim(self):
+        docstring = get_tool_docstring_with_args("band_send_message")
+
+        assert docstring.startswith(get_tool_description("band_send_message").rstrip())
+
+    def test_fieldless_model_gets_no_args_section(self):
+        """GetParticipantsInput has no fields, so there is nothing to document."""
+        assert get_tool_docstring_with_args("band_get_participants") == (
+            get_tool_description("band_get_participants")
+        )
+
+    def test_multiline_description_stays_one_entry(self):
+        """A flush-left continuation would end the entry for a docstring parser."""
+        rendered = format_arg_doc("mentions", "first line\nsecond line")
+
+        assert rendered == "    mentions: first line\n        second line"
+        assert args_section(f"x\n\nArgs:\n{rendered}") == {
+            "mentions": "first line second line"
+        }
+
+
+class TestPlatformTool:
+    def test_decorator_applies_master_docstring(self):
+        @platform_tool("band_add_participant")
+        def whatever(identifier: str, role: str) -> None: ...
+
+        assert whatever.__doc__ == get_tool_docstring_with_args("band_add_participant")
+
+
+class TestPlatformArgsSchema:
+    def test_returns_master_model_unchanged_without_validators(self):
+        assert platform_args_schema("band_send_message") is SendMessageInput
+
+    def test_subclass_keeps_master_description_and_field_text(self):
+        from pydantic import field_validator
+
+        schema = platform_args_schema(
+            "band_send_message",
+            validators={
+                "coerce": field_validator("mentions", mode="before")(
+                    staticmethod(lambda v: [v] if isinstance(v, str) else v)
+                )
+            },
+        )
+
+        assert issubclass(schema, SendMessageInput)
+        assert schema.__doc__ == SendMessageInput.__doc__
+        assert (
+            schema.model_fields["mentions"].description
+            == SendMessageInput.model_fields["mentions"].description
+        )
+        assert schema(content="hi", mentions="@alice").mentions == ["@alice"]

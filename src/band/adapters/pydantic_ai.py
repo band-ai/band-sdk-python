@@ -61,9 +61,9 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
-    get_tool_description,
     is_terminal_success,
     missing_reply_error,
+    platform_tool,
     serialize_tool_result,
 )
 
@@ -384,6 +384,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Register platform tools dynamically from centralized definitions
         # All tools catch exceptions and return error strings so LLM can see failures
 
+        @platform_tool("band_send_message")
         async def band_send_message(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
@@ -394,9 +395,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error sending message: {e}"
 
-        band_send_message.__doc__ = get_tool_description("band_send_message")
         agent.tool(band_send_message)
 
+        @platform_tool("band_send_event")
         async def band_send_event(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
@@ -408,9 +409,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error sending event: {e}"
 
-        band_send_event.__doc__ = get_tool_description("band_send_event")
         agent.tool(band_send_event)
 
+        @platform_tool("band_add_participant")
         async def band_add_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
@@ -421,9 +422,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error adding participant '{identifier}': {e}"
 
-        band_add_participant.__doc__ = get_tool_description("band_add_participant")
         agent.tool(band_add_participant)
 
+        @platform_tool("band_remove_participant")
         async def band_remove_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
@@ -433,11 +434,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error removing participant '{identifier}': {e}"
 
-        band_remove_participant.__doc__ = get_tool_description(
-            "band_remove_participant"
-        )
         agent.tool(band_remove_participant)
 
+        @platform_tool("band_lookup_peers")
         async def band_lookup_peers(
             ctx: RunContext[AgentToolsProtocol],
             page: int = 1,
@@ -450,9 +449,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error looking up peers: {e}"
 
-        band_lookup_peers.__doc__ = get_tool_description("band_lookup_peers")
         agent.tool(band_lookup_peers)
 
+        @platform_tool("band_get_participants")
         async def band_get_participants(
             ctx: RunContext[AgentToolsProtocol],
         ) -> list[dict[str, Any]] | str:
@@ -461,9 +460,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error getting participants: {e}"
 
-        band_get_participants.__doc__ = get_tool_description("band_get_participants")
         agent.tool(band_get_participants)
 
+        @platform_tool("band_create_chatroom")
         async def band_create_chatroom(
             ctx: RunContext[AgentToolsProtocol],
             task_id: str | None = None,
@@ -473,12 +472,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
-        band_create_chatroom.__doc__ = get_tool_description("band_create_chatroom")
         agent.tool(band_create_chatroom)
 
         # Contact management tools (opt-in via Capability.CONTACTS)
         if Capability.CONTACTS in self.features.capabilities:
 
+            @platform_tool("band_list_contacts")
             async def band_list_contacts(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
@@ -491,9 +490,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
-            band_list_contacts.__doc__ = get_tool_description("band_list_contacts")
             agent.tool(band_list_contacts)
 
+            @platform_tool("band_add_contact")
             async def band_add_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str,
@@ -504,9 +503,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error adding contact '{handle}': {e}"
 
-            band_add_contact.__doc__ = get_tool_description("band_add_contact")
             agent.tool(band_add_contact)
 
+            @platform_tool("band_remove_contact")
             async def band_remove_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str | None = None,
@@ -517,9 +516,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error removing contact: {e}"
 
-            band_remove_contact.__doc__ = get_tool_description("band_remove_contact")
             agent.tool(band_remove_contact)
 
+            @platform_tool("band_list_contact_requests")
             async def band_list_contact_requests(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
@@ -535,11 +534,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contact requests: {e}"
 
-            band_list_contact_requests.__doc__ = get_tool_description(
-                "band_list_contact_requests"
-            )
             agent.tool(band_list_contact_requests)
 
+            @platform_tool("band_respond_contact_request")
             async def band_respond_contact_request(
                 ctx: RunContext[AgentToolsProtocol],
                 action: str,
@@ -568,14 +565,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         pass  # Don't fail if error reporting fails
                     return error_msg
 
-            band_respond_contact_request.__doc__ = get_tool_description(
-                "band_respond_contact_request"
-            )
             agent.tool(band_respond_contact_request)
 
         # Memory management tools (enterprise only - opt-in)
         if Capability.MEMORY in self.features.capabilities:
 
+            @platform_tool("band_list_memories")
             async def band_list_memories(
                 ctx: RunContext[AgentToolsProtocol],
                 subject_id: str | None = None,
@@ -602,9 +597,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing memories: {e}"
 
-            band_list_memories.__doc__ = get_tool_description("band_list_memories")
             agent.tool(band_list_memories)
 
+            @platform_tool("band_store_memory")
             async def band_store_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 content: str,
@@ -632,9 +627,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error storing memory: {e}"
 
-            band_store_memory.__doc__ = get_tool_description("band_store_memory")
             agent.tool(band_store_memory)
 
+            @platform_tool("band_get_memory")
             async def band_get_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -644,9 +639,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error getting memory: {e}"
 
-            band_get_memory.__doc__ = get_tool_description("band_get_memory")
             agent.tool(band_get_memory)
 
+            @platform_tool("band_supersede_memory")
             async def band_supersede_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -658,11 +653,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error superseding memory: {e}"
 
-            band_supersede_memory.__doc__ = get_tool_description(
-                "band_supersede_memory"
-            )
             agent.tool(band_supersede_memory)
 
+            @platform_tool("band_archive_memory")
             async def band_archive_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -674,7 +667,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 
-            band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
             agent.tool(band_archive_memory)
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on

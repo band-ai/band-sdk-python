@@ -26,29 +26,16 @@ from typing import (
     Any,
     Awaitable,
     Callable,
-    Literal,
     Protocol,
-    Type,
     cast,
     runtime_checkable,
 )
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 
 if TYPE_CHECKING:
     from crewai.tools import BaseTool
 
-from band.core.memory_types import (
-    MemoryListScope,
-    MemorySegment,
-    MemoryStatus,
-    MemoryStoreScope,
-    MemorySystem,
-    MemoryType,
-    memory_type_field_description,
-    validate_memory_type_for_system,
-    validate_subject_scope,
-)
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
@@ -56,8 +43,6 @@ from band.core.types import (
     AdapterFeatures,
     Capability,
     Emit,
-    EventMessageType,
-    MessageType,
     ToolEventKey,
 )
 from band.integrations.crewai.runtime import run_async
@@ -71,6 +56,7 @@ from band.runtime.tools import (
     append_available_mention_handles,
     get_tool_description,
     is_terminal_success,
+    platform_args_schema,
     serialize_tool_result,
 )
 
@@ -320,177 +306,45 @@ def _execute_tool(
     return result
 
 
-# --- Input models ---
+# --- CrewAI-specific parsing leniency ---
 
 
-class _SendMessageInput(BaseModel):
-    content: str = Field(..., description="The message content to send")
-    mentions: str = Field(
-        ...,
-        description='JSON array of participant handles to @mention (e.g., \'["@john", "@john/weather-agent"]\')',
-    )
+def normalize_mentions_lenient(value: Any) -> list[str]:
+    """Coerce whatever CrewAI's tool layer produced into a list of handles.
 
-    @field_validator("mentions", mode="before")
-    @classmethod
-    def normalize_mentions(cls, v: Any) -> str:
-        if v is None:
-            return "[]"
-        if isinstance(v, list):
-            return json.dumps(v)
-        return v
+    Smaller models driving CrewAI emit ``mentions`` as a JSON-encoded string or
+    a bracketed list of bare handles (``"[@john/agent]"``) rather than a real
+    list. Without this the platform rejects the call for having no mentions and
+    the agent retries in a loop, so the leniency lives here rather than on the
+    master model, which every other adapter satisfies as-is.
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(decoded, list):
+                return [str(item) for item in decoded]
+        stripped = value.strip().strip("[]")
+        return [
+            token.strip().strip("'\"") for token in stripped.split(",") if token.strip()
+        ]
+    return [str(value)]
 
 
-class _SendEventInput(BaseModel):
-    content: str = Field(..., description="Human-readable event content")
-    message_type: EventMessageType = Field(
-        default=MessageType.THOUGHT,
-        description="Type of event: 'thought', 'error', or 'task'",
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None, description="Optional structured metadata"
-    )
-
-
-class _AddParticipantInput(BaseModel):
-    identifier: str = Field(
-        ...,
-        description=(
-            "Identifier of participant to add — can be a handle, name, "
-            "or ID (from band_lookup_peers). Prefer the exact ID "
-            "returned by band_lookup_peers; handles are mainly for mentions."
+SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
+    "band_send_message",
+    validators={
+        "normalize_mentions": field_validator("mentions", mode="before")(
+            staticmethod(normalize_mentions_lenient)
         ),
-    )
-    role: Literal["owner", "admin", "member"] = Field(
-        default="member", description="Role: 'owner', 'admin', or 'member'"
-    )
-
-
-class _RemoveParticipantInput(BaseModel):
-    identifier: str = Field(
-        ...,
-        description=(
-            "Identifier of the participant to remove — can be a handle, name, or ID"
-        ),
-    )
-
-
-class _GetParticipantsInput(BaseModel):
-    pass
-
-
-class _LookupPeersInput(BaseModel):
-    page: int = Field(default=1, description="Page number", ge=1)
-    page_size: int = Field(
-        default=50, description="Items per page (max 100)", ge=1, le=100
-    )
-
-
-class _CreateChatroomInput(BaseModel):
-    task_id: str | None = Field(
-        default=None, description="Associated task ID (optional)"
-    )
-
-
-class _ListContactsInput(BaseModel):
-    page: int = Field(default=1, description="Page number", ge=1)
-    page_size: int = Field(
-        default=50, description="Items per page (max 100)", ge=1, le=100
-    )
-
-
-class _AddContactInput(BaseModel):
-    handle: str = Field(
-        ...,
-        description="Handle of user/agent to add (e.g., '@john' or '@john/agent-name')",
-    )
-    message: str | None = Field(
-        default=None, description="Optional message with the request"
-    )
-
-
-class _RemoveContactInput(BaseModel):
-    handle: str | None = Field(default=None, description="Contact's handle")
-    contact_id: str | None = Field(
-        default=None, description="Or contact record ID (UUID)"
-    )
-
-
-class _ListContactRequestsInput(BaseModel):
-    page: int = Field(default=1, description="Page number", ge=1)
-    page_size: int = Field(
-        default=50, description="Items per page (max 100)", ge=1, le=100
-    )
-    sent_status: Literal["pending", "approved", "rejected", "cancelled", "all"] = Field(
-        default="pending", description="Filter sent requests by status"
-    )
-
-
-class _RespondContactRequestInput(BaseModel):
-    action: Literal["approve", "reject", "cancel"] = Field(
-        ..., description="Action to take ('approve', 'reject', 'cancel')"
-    )
-    handle: str | None = Field(default=None, description="Other party's handle")
-    request_id: str | None = Field(default=None, description="Or request ID (UUID)")
-
-
-class _ListMemoriesInput(BaseModel):
-    subject_id: str | None = Field(default=None, description="Filter by subject UUID")
-    scope: MemoryListScope | None = Field(
-        default=None, description="Filter by scope (subject, organization, all)"
-    )
-    system: MemorySystem | None = Field(
-        default=None,
-        description="Filter by memory system (sensory, working, long_term)",
-    )
-    memory_type: MemoryType | None = Field(
-        default=None, description="Filter by memory type"
-    )
-    segment: MemorySegment | None = Field(
-        default=None, description="Filter by segment (user, agent, tool, guideline)"
-    )
-    content_query: str | None = Field(
-        default=None, description="Full-text search query"
-    )
-    page_size: int = Field(
-        default=50, description="Number of results per page", ge=1, le=50
-    )
-    status: MemoryStatus | None = Field(
-        default=None,
-        description="Filter by status (active, superseded, archived, all)",
-    )
-
-
-class _StoreMemoryInput(BaseModel):
-    content: str = Field(..., description="The memory content")
-    system: MemorySystem = Field(..., description="Memory system tier")
-    memory_type: MemoryType = Field(..., description=memory_type_field_description())
-    segment: MemorySegment = Field(..., description="Logical segment")
-    thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: MemoryStoreScope = Field(..., description="Visibility scope")
-    subject_id: str | None = Field(
-        default=None, description="UUID of the subject (required for subject scope)"
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None, description="Additional metadata"
-    )
-
-    @model_validator(mode="after")
-    def validate_memory_fields(self) -> "_StoreMemoryInput":
-        validate_memory_type_for_system(self.system, self.memory_type)
-        validate_subject_scope(self.scope, self.subject_id)
-        return self
-
-
-class _GetMemoryInput(BaseModel):
-    memory_id: str = Field(..., description="Memory ID (UUID)")
-
-
-class _SupersedeMemoryInput(BaseModel):
-    memory_id: str = Field(..., description="Memory ID (UUID)")
-
-
-class _ArchiveMemoryInput(BaseModel):
-    memory_id: str = Field(..., description="Memory ID (UUID)")
+    },
+)
 
 
 # --- Tool factory ---
@@ -524,16 +378,14 @@ def _make_platform_tools(
     class SendMessageTool(BaseTool):
         name: str = "band_send_message"
         description: str = get_tool_description("band_send_message")
-        args_schema: Type[BaseModel] = _SendMessageInput
+        args_schema: type[BaseModel] = SEND_MESSAGE_ARGS_SCHEMA
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             content: str = kwargs.get("content", "")
-            mentions: str = kwargs.get("mentions", "[]")
-            try:
-                mention_list = json.loads(mentions) if mentions else []
-            except json.JSONDecodeError:
-                mention_list = []
+            # Normalized here too, not just in the schema: _run is also called
+            # directly, bypassing args_schema validation.
+            mention_list = normalize_mentions_lenient(kwargs.get("mentions"))
 
             async def execute(tools: AgentToolsProtocol) -> str:
                 execute_send_message = getattr(reporter, "execute_send_message", None)
@@ -559,7 +411,7 @@ def _make_platform_tools(
     class SendEventTool(BaseTool):
         name: str = "band_send_event"
         description: str = get_tool_description("band_send_event")
-        args_schema: Type[BaseModel] = _SendEventInput
+        args_schema: type[BaseModel] = platform_args_schema("band_send_event")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -577,7 +429,7 @@ def _make_platform_tools(
     class AddParticipantTool(BaseTool):
         name: str = "band_add_participant"
         description: str = get_tool_description("band_add_participant")
-        args_schema: Type[BaseModel] = _AddParticipantInput
+        args_schema: type[BaseModel] = platform_args_schema("band_add_participant")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -599,7 +451,7 @@ def _make_platform_tools(
     class RemoveParticipantTool(BaseTool):
         name: str = "band_remove_participant"
         description: str = get_tool_description("band_remove_participant")
-        args_schema: Type[BaseModel] = _RemoveParticipantInput
+        args_schema: type[BaseModel] = platform_args_schema("band_remove_participant")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -618,7 +470,7 @@ def _make_platform_tools(
     class GetParticipantsTool(BaseTool):
         name: str = "band_get_participants"
         description: str = get_tool_description("band_get_participants")
-        args_schema: Type[BaseModel] = _GetParticipantsInput
+        args_schema: type[BaseModel] = platform_args_schema("band_get_participants")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **_kwargs: Any) -> Any:
@@ -646,7 +498,7 @@ def _make_platform_tools(
     class LookupPeersTool(BaseTool):
         name: str = "band_lookup_peers"
         description: str = get_tool_description("band_lookup_peers")
-        args_schema: Type[BaseModel] = _LookupPeersInput
+        args_schema: type[BaseModel] = platform_args_schema("band_lookup_peers")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -668,7 +520,7 @@ def _make_platform_tools(
     class CreateChatroomTool(BaseTool):
         name: str = "band_create_chatroom"
         description: str = get_tool_description("band_create_chatroom")
-        args_schema: Type[BaseModel] = _CreateChatroomInput
+        args_schema: type[BaseModel] = platform_args_schema("band_create_chatroom")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -692,7 +544,7 @@ def _make_platform_tools(
     class ListContactsTool(BaseTool):
         name: str = "band_list_contacts"
         description: str = get_tool_description("band_list_contacts")
-        args_schema: Type[BaseModel] = _ListContactsInput
+        args_schema: type[BaseModel] = platform_args_schema("band_list_contacts")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -714,7 +566,7 @@ def _make_platform_tools(
     class AddContactTool(BaseTool):
         name: str = "band_add_contact"
         description: str = get_tool_description("band_add_contact")
-        args_schema: Type[BaseModel] = _AddContactInput
+        args_schema: type[BaseModel] = platform_args_schema("band_add_contact")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -736,7 +588,7 @@ def _make_platform_tools(
     class RemoveContactTool(BaseTool):
         name: str = "band_remove_contact"
         description: str = get_tool_description("band_remove_contact")
-        args_schema: Type[BaseModel] = _RemoveContactInput
+        args_schema: type[BaseModel] = platform_args_schema("band_remove_contact")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -758,7 +610,9 @@ def _make_platform_tools(
     class ListContactRequestsTool(BaseTool):
         name: str = "band_list_contact_requests"
         description: str = get_tool_description("band_list_contact_requests")
-        args_schema: Type[BaseModel] = _ListContactRequestsInput
+        args_schema: type[BaseModel] = platform_args_schema(
+            "band_list_contact_requests"
+        )
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -787,7 +641,9 @@ def _make_platform_tools(
     class RespondContactRequestTool(BaseTool):
         name: str = "band_respond_contact_request"
         description: str = get_tool_description("band_respond_contact_request")
-        args_schema: Type[BaseModel] = _RespondContactRequestInput
+        args_schema: type[BaseModel] = platform_args_schema(
+            "band_respond_contact_request"
+        )
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -812,14 +668,14 @@ def _make_platform_tools(
     class ListMemoriesTool(BaseTool):
         name: str = "band_list_memories"
         description: str = get_tool_description("band_list_memories")
-        args_schema: Type[BaseModel] = _ListMemoriesInput
+        args_schema: type[BaseModel] = platform_args_schema("band_list_memories")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             subject_id = kwargs.get("subject_id")
             scope = kwargs.get("scope")
             system = kwargs.get("system")
-            memory_type = kwargs.get("memory_type")
+            memory_type = kwargs.get("type")
             segment = kwargs.get("segment")
             content_query = kwargs.get("content_query")
             page_size = kwargs.get("page_size", 50)
@@ -866,13 +722,13 @@ def _make_platform_tools(
     class StoreMemoryTool(BaseTool):
         name: str = "band_store_memory"
         description: str = get_tool_description("band_store_memory")
-        args_schema: Type[BaseModel] = _StoreMemoryInput
+        args_schema: type[BaseModel] = platform_args_schema("band_store_memory")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             content = kwargs.get("content", "")
             system = kwargs.get("system", "")
-            memory_type = kwargs.get("memory_type", "")
+            memory_type = kwargs.get("type", "")
             segment = kwargs.get("segment", "")
             thought = kwargs.get("thought", "")
             scope = kwargs.get("scope", "")
@@ -915,7 +771,7 @@ def _make_platform_tools(
     class GetMemoryTool(BaseTool):
         name: str = "band_get_memory"
         description: str = get_tool_description("band_get_memory")
-        args_schema: Type[BaseModel] = _GetMemoryInput
+        args_schema: type[BaseModel] = platform_args_schema("band_get_memory")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -934,7 +790,7 @@ def _make_platform_tools(
     class SupersedeMemoryTool(BaseTool):
         name: str = "band_supersede_memory"
         description: str = get_tool_description("band_supersede_memory")
-        args_schema: Type[BaseModel] = _SupersedeMemoryInput
+        args_schema: type[BaseModel] = platform_args_schema("band_supersede_memory")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -953,7 +809,7 @@ def _make_platform_tools(
     class ArchiveMemoryTool(BaseTool):
         name: str = "band_archive_memory"
         description: str = get_tool_description("band_archive_memory")
-        args_schema: Type[BaseModel] = _ArchiveMemoryInput
+        args_schema: type[BaseModel] = platform_args_schema("band_archive_memory")
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -1042,7 +898,7 @@ def _make_custom_tools(
             class CustomCrewAITool(BaseTool):
                 name: str = _tool_name  # type: ignore[misc]
                 description: str = _tool_desc  # type: ignore[misc]
-                args_schema: Type[BaseModel] = model
+                args_schema: type[BaseModel] = model
                 cache_function: Any = staticmethod(lambda *_a, **_kw: False)
 
                 def _run(self, *_args: Any, **kwargs: Any) -> Any:

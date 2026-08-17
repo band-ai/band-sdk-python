@@ -11,9 +11,16 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    ValidationError,
+    create_model,
+    model_validator,
+)
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.runtime.participants import participant_snapshot
@@ -276,8 +283,8 @@ class LookupPeersInput(BaseModel):
     a question directly.
     """
 
-    page: int = Field(1, description="Page number")
-    page_size: int = Field(50, le=100, description="Items per page (max 100)")
+    page: int = Field(1, ge=1, description="Page number")
+    page_size: int = Field(50, ge=1, le=100, description="Items per page (max 100)")
 
 
 class GetParticipantsInput(BaseModel):
@@ -1272,6 +1279,16 @@ def mcp_tool_names(names: frozenset[str]) -> list[str]:
     return [f"{MCP_TOOL_PREFIX}{name}" for name in sorted(names)]
 
 
+def resolve_tool_model(name: str) -> type[BaseModel] | None:
+    """Resolve a tool name to its master input model.
+
+    Accepts the deprecated unprefixed spelling too, so every consumer sees one
+    resolution rule. Warning about the deprecated form is the caller's job —
+    this stays quiet so it can be used for lookups that aren't user-facing.
+    """
+    return TOOL_MODELS.get(name) or TOOL_MODELS.get(f"band_{name}")
+
+
 def get_tool_description(name: str) -> str:
     """
     Get the LLM-optimized description for a tool.
@@ -1286,24 +1303,98 @@ def get_tool_description(name: str) -> str:
     Returns:
         Tool description string
     """
-    # Try exact match first
-    model = TOOL_MODELS.get(name)
-    if model and model.__doc__:
-        return model.__doc__
+    model = resolve_tool_model(name)
+    if model is None or not model.__doc__:
+        return f"Execute {name}"
 
-    # Try with prefix for backwards compatibility (deprecated)
-    if not name.startswith("band_"):
-        prefixed_name = f"band_{name}"
-        model = TOOL_MODELS.get(prefixed_name)
-        if model and model.__doc__:
-            warnings.warn(
-                f"Tool name '{name}' is deprecated. Use '{prefixed_name}' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return model.__doc__
+    if name not in TOOL_MODELS:
+        warnings.warn(
+            f"Tool name '{name}' is deprecated. Use 'band_{name}' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return model.__doc__
 
-    return f"Execute {name}"
+
+def format_arg_doc(name: str, description: str) -> str:
+    """Render one Google-style ``Args:`` entry.
+
+    Continuation lines are indented past the argument name so a multi-line
+    ``Field(description=...)`` stays part of that argument — flush-left
+    continuations end the entry as far as a docstring parser is concerned.
+    """
+    head, *rest = description.strip().splitlines()
+    return "\n".join(
+        [f"    {name}: {head}", *(f"        {line.strip()}" for line in rest)]
+    )
+
+
+def get_tool_docstring_with_args(name: str) -> str:
+    """Return the tool description plus a Google-style ``Args:`` section.
+
+    Both halves come from the master model: the class docstring and each
+    field's ``Field(description=...)``. Frameworks that build their schema by
+    parsing a Python function's docstring (pydantic-ai via griffe) only see
+    per-argument text if it appears under ``Args:``, so this renders it there
+    rather than having each adapter retype it.
+    """
+    description = get_tool_description(name)
+    model = resolve_tool_model(name)
+    if model is None:
+        return description
+
+    arg_lines = [
+        format_arg_doc(field_name, field.description)
+        for field_name, field in model.model_fields.items()
+        if field.description
+    ]
+    if not arg_lines:
+        return description
+    return f"{description.rstrip()}\n\nArgs:\n" + "\n".join(arg_lines)
+
+
+ToolFunc = TypeVar("ToolFunc", bound=Callable[..., Any])
+
+
+def platform_tool(name: str) -> Callable[[ToolFunc], ToolFunc]:
+    """Give a tool function the master description and ``Args:`` section.
+
+    For frameworks that derive their schema from the function docstring. The
+    decorator takes only a tool name on purpose — there is nowhere to type
+    prose, so the docstring cannot drift from the master model.
+    """
+
+    def wrap(fn: ToolFunc) -> ToolFunc:
+        fn.__doc__ = get_tool_docstring_with_args(name)
+        return fn
+
+    return wrap
+
+
+def platform_args_schema(
+    name: str,
+    *,
+    validators: dict[str, Any] | None = None,
+) -> type[BaseModel]:
+    """Return the master input model for ``name`` as a framework args schema.
+
+    ``validators`` layers extra pydantic validators onto a subclass for
+    frameworks whose tool-calling layer emits a value the master model is too
+    strict to parse. There is deliberately no field or description override:
+    an adapter needing different *text* has a modeling problem to fix on the
+    master, not a formatting one to patch locally.
+    """
+    model = TOOL_MODELS[name]
+    if not validators:
+        return model
+    return create_model(
+        f"{model.__name__}Adapted",
+        __base__=model,
+        # create_model does not inherit the base docstring, and that docstring
+        # is the tool description every adapter reads.
+        __doc__=model.__doc__,
+        __validators__=validators,
+    )
 
 
 def iter_tool_definitions(
