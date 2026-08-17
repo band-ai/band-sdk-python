@@ -263,6 +263,50 @@ class TestACPClientAdapterLocalMcpConfig:
 
         mock_create_backend.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_final_cleanup_blocks_backend_recreation(self) -> None:
+        """A turn arriving after real shutdown must fail loudly, not leak a
+        fresh LocalMCPServer nothing will ever stop again."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend.stop = AsyncMock()
+        adapter._band_mcp_backend = backend
+
+        await adapter.cleanup_all()  # final=True default, matches Agent.stop()
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(),
+        ) as mock_create_backend:
+            with pytest.raises(RuntimeError, match="stopped"):
+                await adapter._ensure_band_mcp_backend()
+
+        mock_create_backend.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_turn_recovery_stop_allows_backend_recreation(self) -> None:
+        """The on_message error path's ``stop()`` tears down to recover a wedged
+        turn, not to end the adapter -- a later turn on any room must still be
+        able to self-heal by starting a fresh backend."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend.stop = AsyncMock()
+        adapter._band_mcp_backend = backend
+
+        await adapter.stop()  # the on_message except-handler's call, not shutdown
+
+        fresh_backend = MagicMock(
+            local_server=MagicMock(http_url="http://127.0.0.1:2/mcp")
+        )
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=fresh_backend),
+        ) as mock_create_backend:
+            recreated = await adapter._ensure_band_mcp_backend()
+
+        assert recreated is fresh_backend
+        mock_create_backend.assert_awaited_once()
+
     async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
         """The tool names the adapter would hand to ``create_band_mcp_backend``."""
         backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
