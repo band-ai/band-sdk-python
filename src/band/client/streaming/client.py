@@ -410,18 +410,18 @@ class WebSocketClient:
 
         # Check if we have a handler for this event
         if message.event not in event_handlers:
-            unhandled_event_msg = (
-                "[WebSocket] Received event '%s' but no handler registered. "
-                "Available handlers: %s"
+            level = (
+                logging.DEBUG
+                if message.event in KNOWN_UNHANDLED_EVENTS
+                else logging.WARNING
             )
-            if message.event in KNOWN_UNHANDLED_EVENTS:
-                logger.debug(
-                    unhandled_event_msg, message.event, list(event_handlers.keys())
-                )
-            else:
-                logger.warning(
-                    unhandled_event_msg, message.event, list(event_handlers.keys())
-                )
+            logger.log(
+                level,
+                "[WebSocket] Received event '%s' but no handler registered. "
+                "Available handlers: %s",
+                message.event,
+                list(event_handlers.keys()),
+            )
             return
 
         # Validate and parse payload into Pydantic models for known types

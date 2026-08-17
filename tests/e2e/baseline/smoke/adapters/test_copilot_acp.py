@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from band.core.types import MessageType
-from band.runtime.tools import EVENT_TOOL_NAMES
 
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
@@ -33,6 +32,12 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+# The Band platform tool the sample agent's instructions ask it to call (see
+# emit_event_instruction). Test-local identity, not band.runtime.tools.EVENT_TOOL_NAMES
+# -- that vocabulary answers a different question ("is this tool observational,
+# not terminal work, for no-reply detection"), which only coincides with this one today.
+BAND_EVENT_TOOL_NAME = "band_send_event"
 
 
 @with_adapters(Adapter.COPILOT_ACP, **TOOL_AGENT)
@@ -73,7 +78,7 @@ async def test_acp_band_tool_call_is_narrated(
 
     thoughts.assert_contains_any([marker])
     tool_call_events.assert_at_least(1)
-    tool_call_events.assert_contains_any(EVENT_TOOL_NAMES)
+    tool_call_events.assert_contains_any([BAND_EVENT_TOOL_NAME])
 
 
 @with_adapters(Adapter.COPILOT_ACP, **TOOL_AGENT)
@@ -100,8 +105,8 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
     asserted inside the tool_result, because the platform's create-event
     response (``{id, message_type, success}``) does not echo the content. The
     check is scoped to the Band tool's results by the wrapper's ``name`` (see
-    ``EVENT_TOOL_NAMES``): Copilot also narrates its own internal tools (e.g.
-    skill loading), whose outputs are legitimately plain text.
+    ``BAND_EVENT_TOOL_NAME``): Copilot also narrates its own internal tools
+    (e.g. skill loading), whose outputs are legitimately plain text.
     """
     marker = unique_marker("acp-result")
     room_id = await resource_manager.provision_room(
@@ -120,8 +125,8 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
         tool_results = await capture.tool_results(sender_id=agent.id)
 
     thoughts.assert_contains_any([marker])
-    band_results = tool_results.named(*EVENT_TOOL_NAMES)
-    band_results.assert_present(what=f"a tool_result among {sorted(EVENT_TOOL_NAMES)}")
+    band_results = tool_results.named(BAND_EVENT_TOOL_NAME)
+    band_results.assert_present(what=f"a {BAND_EVENT_TOOL_NAME} tool_result")
     band_results.assert_json_output()
 
 

@@ -764,10 +764,13 @@ test, where the markdown-docs run actually executes it.
   *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
   early returns over nested branches), and hide bookkeeping behind a small helper
   or property with an intent-revealing name. Branch on *what to do*, not *which
-  function to call*: an `if`/`else` choosing between two calls reads clearer
-  than a ternary that selects a callable into a variable and invokes it —
-  `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`, never
-  `log = logger.debug if known else logger.warning; log(msg, ...)`.
+  function to call*, and prefer computing the varying part once over
+  duplicating a call across both branches of an `if`/`else` — e.g. a log
+  statement that only varies by level: `level = logging.DEBUG if known else
+  logging.WARNING; logger.log(level, msg, ...)`, never `log = logger.debug if
+  known else logger.warning; log(msg, ...)` (a ternary-selected callable) and
+  never `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`
+  (the message and args retyped in both branches).
 - **Tests must be declarative and intent-revealing, not a transcript of the
   implementation.** Assert on a readable projection of the observable outcome
   — the thing the test is actually about — never on raw internals or on a

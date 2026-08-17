@@ -8,13 +8,13 @@ the canonical JSON shape ``ToolEventKey`` defines (``name``/``output``/
 history converter uses, rather than any one adapter's own room-event model.
 
 Tests reach this through ``ReplyCapture.tool_results`` (see ``capture.py``),
-the tool_result analogue of ``ReplyCapture.tool_calls`` / :class:`ToolCalls`.
+the tool_result analogue of ``ReplyCapture.tool_calls`` / :class:`ToolCalls`
+(same memory-exclusion default; no ``TOOL_NAMES``-style bound-view hook yet).
 """
 
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -22,10 +22,11 @@ from band_rest import ChatMessage
 
 from band.converters.parsing import parse_tool_result
 from band.core.types import MessageType
+from band.runtime.tools import MEMORY_TOOL_NAMES
 
+from tests.e2e.baseline.toolkit.observations.assertions import assert_nonempty
+from tests.e2e.baseline.toolkit.observations.matching import named_subset
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class ToolResults(list[ToolResult]):
         sender_id: str | None = None,
         since: datetime | None = None,
         limit: int = 100,
+        include_memory: bool = False,
     ) -> ToolResults:
         """Read a room's tool results, oldest-first.
 
@@ -83,7 +85,8 @@ class ToolResults(list[ToolResult]):
         ``ToolResult``. Pass ``sender_id`` to keep only one agent's results
         (rooms can hold several agents). Call after the turn is known complete
         (e.g. after ``wait_for_processed``); tests usually reach this via
-        ``ReplyCapture.tool_results``.
+        ``ReplyCapture.tool_results``. Memory tools are excluded by default,
+        matching ``ToolCalls.read``; pass ``include_memory=True`` to keep them.
         """
         messages = await user_ops.list_messages(
             room_id, message_type=MessageType.TOOL_RESULT, since=since, limit=limit
@@ -93,7 +96,9 @@ class ToolResults(list[ToolResult]):
             if sender_id is not None and message.sender_id != sender_id:
                 continue
             result = ToolResult.from_event(message)
-            if result is not None:
+            if result is not None and (
+                include_memory or result.name not in MEMORY_TOOL_NAMES
+            ):
                 results.append(result)
         return results
 
@@ -102,14 +107,11 @@ class ToolResults(list[ToolResult]):
         (case-insensitive). The tool_result analogue of ``ToolCalls.named`` --
         use it to scope an assertion to one tool's results when a turn also
         narrates unrelated ones (e.g. an agent backend's internal tools)."""
-        wanted = {name.lower() for name in names}
-        return type(self)(result for result in self if result.name.lower() in wanted)
+        return type(self)(named_subset(self, names))
 
     def assert_present(self, *, what: str | None = None) -> None:
         """Assert at least one result was captured."""
-        label = what or "a tool_result event"
-        if not self:
-            raise AssertionError(f"expected {label}, but none were emitted")
+        assert_nonempty(len(self), label=what or "a tool_result event")
 
     def assert_json_output(self) -> None:
         """Assert every captured result's ``output`` is one well-formed JSON

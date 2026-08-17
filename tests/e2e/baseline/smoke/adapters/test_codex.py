@@ -13,8 +13,6 @@ Run with:
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
@@ -29,6 +27,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     reasoning_joke_instruction,
     unique_marker,
 )
+from tests.e2e.baseline.toolkit.builders import codex_config_kwargs
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager, running_agent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -51,13 +50,14 @@ async def test_codex_thoughts_are_not_placeholders(
     reasoning/plan items must not spam the room.
 
     Bespoke construction (bypassing the shared registry builder) because the
-    matrix has no per-test hook for ``reasoning_summary``: the generic matrix
-    builder only derives ``CodexAdapterConfig`` from env-driven settings
-    (``codex_cwd``/``codex_model``/``codex_command``), and Codex only returns a
-    reasoning summary when one is explicitly requested -- leaving it unset (the
-    matrix default) means every summary comes back empty and the adapter
-    correctly drops every one rather than posting a placeholder, so this test
-    would fail vacuously without requesting one itself.
+    matrix has no per-test hook for ``reasoning_summary``. Reuses the
+    builder's own ``codex_config_kwargs`` for cwd/model/command so this test
+    can't drift from the matrix's env-driven settings, adding only the one
+    field the builder doesn't expose. Codex only returns a reasoning summary
+    when one is explicitly requested -- leaving it unset (the matrix default)
+    means every summary comes back empty and the adapter correctly drops
+    every one rather than posting a placeholder, so this test would fail
+    vacuously without requesting one itself.
 
     A completed reply proves the turn ran. At least one thought event must have
     landed — otherwise the placeholder assertion below would pass vacuously
@@ -68,17 +68,8 @@ async def test_codex_thoughts_are_not_placeholders(
     badly interpreted).
     """
     name = unique_marker("Sam")
-    config_kwargs: dict[str, Any] = {
-        "cwd": baseline_settings.backends.codex_cwd,
-        "custom_section": REPLY_PROMPT,
-        "reasoning_summary": "auto",
-    }
-    if baseline_settings.backends.codex_model.strip():
-        config_kwargs["model"] = baseline_settings.backends.codex_model
-    if baseline_settings.backends.codex_command.strip():
-        config_kwargs["codex_command"] = tuple(
-            baseline_settings.backends.codex_command.split()
-        )
+    config_kwargs = codex_config_kwargs(baseline_settings, prompt=REPLY_PROMPT)
+    config_kwargs["reasoning_summary"] = "auto"
     adapter = CodexAdapter(
         config=CodexAdapterConfig(**config_kwargs),
         features=AdapterFeatures(emit={Emit.THOUGHTS}),

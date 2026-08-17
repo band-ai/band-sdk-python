@@ -394,15 +394,18 @@ class ReplyCapture:
         sender_id: str | None = None,
         since: datetime | None = None,
         limit: int = 100,
+        include_memory: bool = False,
     ) -> ToolResults:
         """Read this room's tool results (call after the turn settles). Same
-        read contract as ``tool_calls``."""
+        read contract as ``tool_calls`` (including the memory-tool exclusion
+        default)."""
         return await ToolResults.read(
             self._require_user_ops(),
             self.room_id,
             sender_id=sender_id,
             since=since,
             limit=limit,
+            include_memory=include_memory,
         )
 
     async def usage(

@@ -26,7 +26,10 @@ from band_rest import ChatMessage
 
 from band.core.types import MessageType, is_usage_event
 
-from tests.e2e.baseline.toolkit.observations.assertions import ContentAssertions
+from tests.e2e.baseline.toolkit.observations.assertions import (
+    ContentAssertions,
+    assert_nonempty,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
@@ -102,8 +105,7 @@ class Events(ContentAssertions, list[ChatMessage]):
         label = what or (
             f"a {self.MESSAGE_TYPE.value} event" if self.MESSAGE_TYPE else "an event"
         )
-        if not self:
-            raise AssertionError(f"expected {label}, but none were emitted")
+        assert_nonempty(len(self), label=label)
 
 
 class Thoughts(Events):

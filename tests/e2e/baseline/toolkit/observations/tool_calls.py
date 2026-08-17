@@ -40,7 +40,10 @@ from band.runtime.tools import (
     READ_ONLY_TOOL_NAMES,
 )
 
-from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
+from tests.e2e.baseline.toolkit.observations.matching import (
+    named_subset,
+    tolerant_match,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
@@ -216,8 +219,7 @@ class ToolCalls(list[ToolCall]):
     def named(self, *names: str) -> ToolCalls:
         """Return a same-class subset of the calls matching any of ``names``
         (case-insensitive). Re-wrapped so the assertions stay available."""
-        wanted = {name.lower() for name in names}
-        return type(self)(call for call in self if call.name.lower() in wanted)
+        return type(self)(named_subset(self, names))
 
     def fired(self, name: str) -> bool:
         """True if any call matches ``name`` (case-insensitive)."""

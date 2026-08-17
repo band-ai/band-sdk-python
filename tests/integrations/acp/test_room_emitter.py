@@ -22,10 +22,11 @@ from band.integrations.acp.types import (
     ToolResultRoomEvent,
     ToolStatus,
 )
-from band.runtime.tools import EVENT_TOOL_NAMES
 from band.testing.fake_tools import FakeAgentTools
 
-TOOL_NAME = next(iter(EVENT_TOOL_NAMES))
+# Arbitrary example name: these tests exercise the generic wrapping mechanism,
+# not any one specific platform tool's identity.
+TOOL_NAME = "band_send_event"
 
 
 def make_emitter(tools: FakeAgentTools) -> RoomTurnEmitter:
