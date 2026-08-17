@@ -135,6 +135,7 @@ def make_link_mock(
             description=agent_description,
             owner_uuid="owner-1",
             updated_at=datetime.now(timezone.utc),
+            feature_flags={},
         )
     )
     link.rest.agent_api_identity.get_agent_me = AsyncMock(

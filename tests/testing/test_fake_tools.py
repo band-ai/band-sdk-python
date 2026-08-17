@@ -37,7 +37,7 @@ def listed_contents(listing: dict[str, Any]) -> list[str]:
 
 
 class TestMemoryListing:
-    """list_memories must serve the real SDK's Fern envelope (data/meta)."""
+    """list_memories must serve the real SDK's Fern envelope (data/meta/metadata)."""
 
     async def test_stored_memories_come_back_in_the_real_envelope(self) -> None:
         tools = FakeAgentTools()
@@ -45,15 +45,16 @@ class TestMemoryListing:
 
         listing = await listing_seen_by_adapter(tools)
 
-        assert set(listing) == {"data", "meta"}, (
+        assert set(listing) == {"data", "meta", "metadata"}, (
             f"Envelope keys {set(listing)} drifted from the real SDK's "
-            "{data, meta} — adapters reading .data/.meta would go untested"
+            "{data, meta, metadata} — adapters reading .data/.meta would go untested"
         )
         assert listed_contents(listing) == ["prefers dark mode"], (
             "A stored memory must be visible in the listing's data"
         )
-        assert listing["meta"] == {"page_size": 1, "total_count": 1}, (
-            "meta must report this page's size and the total match count"
+        assert listing["meta"]["page_size"] == 1, "meta must report this page's size"
+        assert listing["meta"]["total_count"] == 1, (
+            "meta must report the total match count"
         )
 
     async def test_page_size_serves_the_first_page(self) -> None:
@@ -66,9 +67,11 @@ class TestMemoryListing:
         assert listed_contents(listing) == ["first", "second"], (
             "page_size must truncate to the first page, oldest first"
         )
-        assert listing["meta"] == {"page_size": 2, "total_count": 3}, (
-            "meta.page_size is the served page's size, "
-            "total_count the whole store — the platform's semantics"
+        assert listing["meta"]["page_size"] == 2, (
+            "meta.page_size is the served page's size, not the whole store"
+        )
+        assert listing["meta"]["total_count"] == 3, (
+            "meta.total_count is the whole store — the platform's semantics"
         )
 
     async def test_seeded_memories_are_listed(self) -> None:
