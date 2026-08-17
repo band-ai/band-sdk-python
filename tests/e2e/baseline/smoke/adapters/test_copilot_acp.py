@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from band.core.types import MessageType
+from band.runtime.tools import EVENT_TOOL_NAMES
 
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
@@ -47,9 +48,10 @@ async def test_acp_band_tool_call_is_narrated(
     """A band_send_event call is narrated as an ACP tool_call, like any other tool.
 
     Uses the raw ``events`` reader (not the JSON-based ``tool_calls`` helper):
-    ACP narrates a tool_call's content as the plain ACP-reported title (e.g.
-    ``"band_send_event"``), not the ``{"name": ..., "args": ...}`` JSON shape
-    other adapters use, so a substring check is the right tool here.
+    the room event's content is the serialized ``ToolCallRoomEvent`` wrapper
+    (``name``/``args``/``tool_call_id``), and a plain substring check on the
+    unescaped ``name`` field is enough to prove the call was narrated -- no
+    need to decode it for that.
     """
     marker = unique_marker("acp-event")
     room_id = await resource_manager.provision_room(
@@ -71,7 +73,7 @@ async def test_acp_band_tool_call_is_narrated(
 
     thoughts.assert_contains_any([marker])
     tool_call_events.assert_at_least(1)
-    tool_call_events.assert_contains_any(["band_send_event"])
+    tool_call_events.assert_contains_any(EVENT_TOOL_NAMES)
 
 
 @with_adapters(Adapter.COPILOT_ACP, **TOOL_AGENT)
@@ -89,15 +91,17 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
     An MCP bridge that forwards both a result's readable text and its
     structuredContent companion into one block duplicates the payload -- the
     room event then reads as the same JSON twice (once readable, once
-    re-encoded). The contract: the emitted tool_result content is a single
-    well-formed JSON document, the platform's actual response.
+    re-encoded). The room event's content is the serialized
+    ``ToolResultRoomEvent`` wrapper (``name``/``output``/``tool_call_id``/
+    ``is_error``); the contract this checks is on the decoded ``output``
+    field: a single well-formed JSON document, the platform's actual response.
 
     The marker proves the tool ran (via the thought it posted); it is NOT
     asserted inside the tool_result, because the platform's create-event
     response (``{id, message_type, success}``) does not echo the content. The
-    JSON check is scoped to the Band tool's results (selected by the response's
-    ``"success"`` field): Copilot also narrates its own internal tools (e.g.
-    skill loading), whose results are legitimately plain text.
+    check is scoped to the Band tool's results by the wrapper's ``name`` (see
+    ``EVENT_TOOL_NAMES``): Copilot also narrates its own internal tools (e.g.
+    skill loading), whose outputs are legitimately plain text.
     """
     marker = unique_marker("acp-result")
     room_id = await resource_manager.provision_room(
@@ -113,12 +117,12 @@ async def test_acp_band_tool_result_is_a_single_clean_payload(
         )
         await capture.wait_for_processed(mid, agent.id)
         thoughts = await capture.thoughts(sender_id=agent.id)
-        tool_results = await capture.events(MessageType.TOOL_RESULT, sender_id=agent.id)
+        tool_results = await capture.tool_results(sender_id=agent.id)
 
     thoughts.assert_contains_any([marker])
-    band_results = tool_results.containing('"success"')
-    band_results.assert_at_least(1)
-    band_results.assert_json_content()
+    band_results = tool_results.named(*EVENT_TOOL_NAMES)
+    band_results.assert_present(what=f"a tool_result among {sorted(EVENT_TOOL_NAMES)}")
+    band_results.assert_json_output()
 
 
 def hermetic_copilot_config(
