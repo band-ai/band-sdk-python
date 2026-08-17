@@ -198,9 +198,13 @@ class TestCapabilityGatedSections:
         assert "## Memory Tools" in prompt
         assert "## Contact Management Tools" in prompt
 
-    def test_capability_sections_excluded_when_no_base_instructions(self):
-        """Capability sections not included when include_base_instructions=False."""
-        features = AdapterFeatures(capabilities={Capability.MEMORY})
+    def test_capability_sections_included_without_base_instructions(self):
+        """Capability sections still render when include_base_instructions=False --
+        an adapter that supplies its own base behavior (e.g. its own CLI/agent)
+        must still learn about tools its declared capabilities enabled."""
+        features = AdapterFeatures(
+            capabilities={Capability.MEMORY, Capability.CONTACTS}
+        )
         prompt = render_system_prompt(
             agent_name="Bot",
             agent_description="helper",
@@ -208,4 +212,6 @@ class TestCapabilityGatedSections:
             include_base_instructions=False,
         )
 
-        assert "## Memory Tools" not in prompt
+        assert "## Memory Tools" in prompt
+        assert "## Contact Management Tools" in prompt
+        assert "## Environment" not in prompt  # BASE_INSTRUCTIONS itself stays excluded

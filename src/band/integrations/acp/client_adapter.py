@@ -211,16 +211,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         because they're built similarly would cost more than the duplication
         it removes.
 
-        Memory tools are gated behind ``Capability.MEMORY``: they were
-        previously rejected outright (an enterprise feature the adapter must
-        opt into). Contact tools are NOT gated behind ``Capability.CONTACTS``
-        despite ``iter_tool_definitions`` taking the same shape of flag for
-        both — unlike memory, contacts were already unconditionally
-        registered before this adapter declared any capabilities, and every
-        existing caller (the ACP examples) relies on that default with no
-        ``features=`` of its own. Declaring ``Capability.CONTACTS`` in
-        ``SUPPORTED_CAPABILITIES`` only stops the base class's
-        unsupported-capability warning for a caller that does declare it.
+        Memory tools are gated behind ``Capability.MEMORY`` — an opt-in,
+        enterprise feature. Contact tools are NOT gated behind
+        ``Capability.CONTACTS`` despite ``iter_tool_definitions`` taking the
+        same shape of flag for both: every existing caller (the ACP examples)
+        constructs this adapter with no ``features=`` of its own and expects
+        contacts to just work, so gating them would silently drop
+        ``band_list_contacts`` et al. for every one of them with no warning
+        (``SUPPORTED_CAPABILITIES`` already covers ``CONTACTS``, so the base
+        class's unsupported-capability warning never fires either). Declaring
+        ``Capability.CONTACTS`` in ``SUPPORTED_CAPABILITIES`` only stops that
+        warning for a caller that does declare it.
         """
         definitions = list(
             iter_tool_definitions(
@@ -256,20 +257,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return spawn_agent_process
 
     def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
-        # Bind profile as a local rather than closing over self to reach it
-        # (canonicalize_tool_name is a bound method either way, so it retains
-        # self regardless — this narrows what the closure needs self for, not
-        # eliminates the self <-> runtime reference cycle; CPython's cyclic
-        # GC reclaims that fine, and it's one-time construction, not a leak).
-        profile = self._profile
-        canonicalize_tool_name = self._canonical_tool_name
         return ACPRuntime(
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(
-                profile=profile,
-                canonicalize_tool_name=canonicalize_tool_name,
+                profile=self._profile,
+                canonicalize_tool_name=self._canonical_tool_name,
             ),
             spawn_process=self._select_transport(spawn_process, self._host, self._port),
         )
@@ -664,10 +658,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             local_mcp_server = self._band_mcp_server
             self._band_mcp_backend = None
             self._band_mcp_server = None
-        if backend is not None:
-            await backend.stop()
-        elif local_mcp_server is not None:
-            await local_mcp_server.stop()
+            # Stop while still holding the lock: closes the window where a
+            # concurrent _ensure_band_mcp_backend's locked slow path could see
+            # None and start a fresh backend while this one is mid-teardown.
+            # _ensure_band_mcp_backend's own unlocked fast-path read (its
+            # documented hot-path optimization) can still race a brand-new
+            # room's very first turn against this one-time, process-teardown
+            # call -- accepted: that turn fails loudly (a tool-call connection
+            # error) rather than corrupting state.
+            if backend is not None:
+                await backend.stop()
+            elif local_mcp_server is not None:
+                await local_mcp_server.stop()
         await self._runtime.stop()
         logger.info("ACP client adapter stopped")
 

@@ -294,9 +294,13 @@ jobs:
         from tests.e2e.baseline.settings import BaselineSettings
         s = BaselineSettings()
         cli = shutil.which("copilot")  # the npm shim is copilot.cmd on windows
+        # copilot.cmd is a batch shim: raw CreateProcess (no shell=True) can't
+        # execute it directly on Windows -- shell=True lets cmd.exe resolve it.
+        # Both argv pieces are static/trusted (a resolved local path + a literal
+        # flag), so shell=True carries no injection risk here.
         meta = {
             "copilot_cli": subprocess.run(
-                [cli, "--version"], capture_output=True, text=True
+                f'"{cli}" --version', shell=True, capture_output=True, text=True
             ).stdout.strip() if cli else "unavailable",
             "os": platform.platform(),
             "copilot_auth": {"mode": "byok", "provider": "anthropic",
