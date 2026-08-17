@@ -1382,7 +1382,9 @@ def platform_args_schema(
     an adapter needing different *text* has a modeling problem to fix on the
     master, not a formatting one to patch locally.
     """
-    model = TOOL_MODELS[name]
+    model = resolve_tool_model(name)
+    if model is None:
+        raise KeyError(name)
     if not validators:
         return model
     return create_model(
