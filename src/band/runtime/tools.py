@@ -1356,19 +1356,17 @@ def get_tool_docstring_with_args(name: str) -> str:
 ToolFunc = TypeVar("ToolFunc", bound=Callable[..., Any])
 
 
-def platform_tool(name: str) -> Callable[[ToolFunc], ToolFunc]:
+def platform_tool(fn: ToolFunc) -> ToolFunc:
     """Give a tool function the master description and ``Args:`` section.
 
-    For frameworks that derive their schema from the function docstring. The
-    decorator takes only a tool name on purpose — there is nowhere to type
-    prose, so the docstring cannot drift from the master model.
+    For frameworks that derive their schema from the function docstring. Reads
+    ``fn.__name__`` rather than taking a tool name argument — the function is
+    always named after the tool it registers (frameworks that key a tool by
+    its function name, like pydantic-ai, require this already), so there is
+    nowhere left to retype that name, let alone the description.
     """
-
-    def wrap(fn: ToolFunc) -> ToolFunc:
-        fn.__doc__ = get_tool_docstring_with_args(name)
-        return fn
-
-    return wrap
+    fn.__doc__ = get_tool_docstring_with_args(fn.__name__)
+    return fn
 
 
 def platform_args_schema(

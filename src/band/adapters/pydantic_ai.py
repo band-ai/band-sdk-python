@@ -384,7 +384,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Register platform tools dynamically from centralized definitions
         # All tools catch exceptions and return error strings so LLM can see failures
 
-        @platform_tool("band_send_message")
+        @platform_tool
         async def band_send_message(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
@@ -397,7 +397,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         agent.tool(band_send_message)
 
-        @platform_tool("band_send_event")
+        @platform_tool
         async def band_send_event(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
@@ -411,7 +411,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         agent.tool(band_send_event)
 
-        @platform_tool("band_add_participant")
+        @platform_tool
         async def band_add_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
@@ -424,7 +424,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         agent.tool(band_add_participant)
 
-        @platform_tool("band_remove_participant")
+        @platform_tool
         async def band_remove_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
@@ -436,7 +436,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         agent.tool(band_remove_participant)
 
-        @platform_tool("band_lookup_peers")
+        @platform_tool
         async def band_lookup_peers(
             ctx: RunContext[AgentToolsProtocol],
             page: int = 1,
@@ -451,7 +451,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         agent.tool(band_lookup_peers)
 
-        @platform_tool("band_get_participants")
+        @platform_tool
         async def band_get_participants(
             ctx: RunContext[AgentToolsProtocol],
         ) -> list[dict[str, Any]] | str:
@@ -462,7 +462,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         agent.tool(band_get_participants)
 
-        @platform_tool("band_create_chatroom")
+        @platform_tool
         async def band_create_chatroom(
             ctx: RunContext[AgentToolsProtocol],
             task_id: str | None = None,
@@ -477,7 +477,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Contact management tools (opt-in via Capability.CONTACTS)
         if Capability.CONTACTS in self.features.capabilities:
 
-            @platform_tool("band_list_contacts")
+            @platform_tool
             async def band_list_contacts(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
@@ -492,7 +492,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_list_contacts)
 
-            @platform_tool("band_add_contact")
+            @platform_tool
             async def band_add_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str,
@@ -505,7 +505,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_add_contact)
 
-            @platform_tool("band_remove_contact")
+            @platform_tool
             async def band_remove_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str | None = None,
@@ -518,7 +518,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_remove_contact)
 
-            @platform_tool("band_list_contact_requests")
+            @platform_tool
             async def band_list_contact_requests(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
@@ -536,7 +536,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_list_contact_requests)
 
-            @platform_tool("band_respond_contact_request")
+            @platform_tool
             async def band_respond_contact_request(
                 ctx: RunContext[AgentToolsProtocol],
                 action: str,
@@ -570,7 +570,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Memory management tools (enterprise only - opt-in)
         if Capability.MEMORY in self.features.capabilities:
 
-            @platform_tool("band_list_memories")
+            @platform_tool
             async def band_list_memories(
                 ctx: RunContext[AgentToolsProtocol],
                 subject_id: str | None = None,
@@ -599,7 +599,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_list_memories)
 
-            @platform_tool("band_store_memory")
+            @platform_tool
             async def band_store_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 content: str,
@@ -629,7 +629,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_store_memory)
 
-            @platform_tool("band_get_memory")
+            @platform_tool
             async def band_get_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -641,7 +641,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_get_memory)
 
-            @platform_tool("band_supersede_memory")
+            @platform_tool
             async def band_supersede_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -655,7 +655,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_supersede_memory)
 
-            @platform_tool("band_archive_memory")
+            @platform_tool
             async def band_archive_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,

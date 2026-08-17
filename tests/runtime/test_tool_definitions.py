@@ -242,10 +242,12 @@ class TestGetToolDocstringWithArgs:
 
 class TestPlatformTool:
     def test_decorator_applies_master_docstring(self):
-        @platform_tool("band_add_participant")
-        def whatever(identifier: str, role: str) -> None: ...
+        @platform_tool
+        def band_add_participant(identifier: str, role: str) -> None: ...
 
-        assert whatever.__doc__ == get_tool_docstring_with_args("band_add_participant")
+        assert band_add_participant.__doc__ == get_tool_docstring_with_args(
+            "band_add_participant"
+        )
 
 
 class TestPlatformArgsSchema:
