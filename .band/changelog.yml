@@ -1,0 +1,17 @@
+# Per-repo config for the changelog-generator skill
+# (changelog-generator@private-agent-skills), read from this repo's working tree
+# at run time. NON-SECRET values only — secrets come from the workflow env:
+# LINEAR_API_KEY, SLACK_WEBHOOK_URL, DISCORD_DRAFT_WEBHOOK_URL.
+
+# Fern docs repo that receives the changelog PR (opened as a DRAFT for a human to review and merge).
+fern_repo: band-ai/fern
+# Path within the Fern repo where changelog entries live. Match the layout of the
+# newest existing entry in that repo.
+fern_changelog_path: fern/changelog/sdks
+
+# Linear: how to find the issues that belong to this SDK's releases. The skill
+# queries the Linear GraphQL API and also matches issue identifiers (e.g. SDK-123)
+# found in the release's merged PRs. Set at least the team key.
+linear:
+  team_key: INT
+  # project: "Python SDK"  # optional: narrow further by project name
