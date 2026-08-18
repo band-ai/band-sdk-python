@@ -6,6 +6,7 @@ import socket
 from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -190,6 +191,13 @@ class TestLocalMcpServer:
         try:
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
             print(f"CHECKPOINT: url={server.url}", flush=True)
+
+            print("CHECKPOINT: entering warmup healthz GET", flush=True)
+            async with httpx.AsyncClient() as warmup_client:
+                warmup_response = await warmup_client.get(
+                    f"http://{LOCAL_MCP_HOST}:{server.port}/healthz"
+                )
+            print(f"CHECKPOINT: warmup returned {warmup_response.status_code}", flush=True)
 
             print("CHECKPOINT: entering sse_client", flush=True)
             async with sse_client(server.url) as (read_stream, write_stream):
