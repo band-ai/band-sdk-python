@@ -11,10 +11,13 @@ code comment. This module makes the full grid observable:
   collected cell from its test report — exact ``nodeid`` keys, no junit-name scraping.
 * :func:`merge` unions the per-lane scorecards CI emits (each lane runs only its own
   cells; the rest are ``skip``) into one grid.
+* :func:`gate` turns a merged grid into a pass/fail verdict for CI: any ``fail`` cell,
+  or any ``skip`` cell whose expected lane (its ``@lane`` pin, or else its adapter's
+  home lane) was expected to run this invocation, reddens it.
 
 The pieces are pure functions so they unit-test without a live platform; the conftest is
 a thin hook delegate, and ``python -m tests.e2e.baseline.scorecard merge`` is the
-post-run CI step that folds the lanes together.
+post-run CI step that folds the lanes together and gates on the result.
 """
 
 from __future__ import annotations
@@ -22,14 +25,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 import pytest
 
 from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
+from tests.e2e.baseline.lane_selection import expected_lane as _resolve_expected_lane
+from tests.e2e.baseline.toolkit.ci_lanes import adapter_home_lanes, known_lane_ids
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +53,40 @@ _RANK: dict[Status, int] = {"skip": 0, "na": 1, "pass": 2, "fail": 3}
 
 @dataclass(frozen=True)
 class ScorecardRow:
-    """One adapter×test cell: its outcome, and the reason when it is ``N/A``/``skip``."""
+    """One adapter×test cell: its outcome, and the reason when it is ``N/A``/``skip``.
+
+    ``expected_lane`` is the override-aware lane this cell was scheduled against
+    (``lane_selection.expected_lane`` — a test's ``@lane`` pin if it has one, else its
+    adapter's home lane); populated for a ``skip`` row collected from a live session, so
+    :func:`gate` can tell a legitimately out-of-scope cell from a silently missing one
+    without re-deriving it from ``adapter`` alone (which is blind to a ``@lane`` pin).
+    ``None`` for a row loaded from data that predates this field, or for an ``na``/``pass``/
+    ``fail`` row, where the gate never consults it.
+    """
 
     test: str  # nodeid without the ``[adapter]`` param — the test function
     adapter: str
     status: Status
     reason: str | None = None
+    expected_lane: str | None = None
 
 
 def _test_id(nodeid: str) -> str:
     """The test-function nodeid — the cell's ``[adapter]`` param stripped off."""
     return nodeid.split("[", 1)[0]
+
+
+def _cell_key(nodeid: str) -> tuple[str, str] | None:
+    """The ``(test, adapter)`` row key for ``nodeid``, or ``None`` if it names no
+    matrix cell (unparametrized, or parametrized by something other than an
+    adapter id — e.g. ``test_send_event[thought]``)."""
+    test, sep, rest = nodeid.partition("[")
+    if not sep:
+        return None
+    adapter = rest.rstrip("]")
+    if adapter not in _ADAPTER_IDS:
+        return None
+    return test, adapter
 
 
 def na_rows(items: Iterable[pytest.Item]) -> dict[tuple[str, str], ScorecardRow]:
@@ -106,12 +135,10 @@ def outcome_row(
     """
     if report.when not in ("setup", "call"):
         return None
-    test, sep, rest = report.nodeid.partition("[")
-    if not sep:
-        return None  # unparametrized — not a matrix cell
-    adapter = rest.rstrip("]")
-    if adapter not in _ADAPTER_IDS:
-        return None  # a non-adapter parametrization (e.g. an event type)
+    key = _cell_key(report.nodeid)
+    if key is None:
+        return None  # unparametrized, or a non-adapter parametrization
+    test, adapter = key
     if report.skipped:
         status: Status = "skip"
         reason = _skip_reason(report)
@@ -123,7 +150,7 @@ def outcome_row(
         reason = None
     else:
         return None  # a passing setup carries no verdict — wait for the call phase
-    return (test, adapter), ScorecardRow(test, adapter, status, reason)
+    return key, ScorecardRow(test, adapter, status, reason)
 
 
 class ScorecardCollector:
@@ -151,8 +178,21 @@ class ScorecardCollector:
 
         The two sets are disjoint (an excluded adapter has no node, so no outcome), but
         ``N/A`` is applied last so a marker reason is authoritative if they ever overlap.
+        A ``skip`` row is annotated with its override-aware ``expected_lane`` (see
+        ``ScorecardRow``) here, while a live item is still available to resolve it —
+        by the time :func:`gate` runs on a merged, JSON-loaded grid, only the
+        serialized rows remain.
         """
+        items = list(items)
         rows = dict(self._outcomes)
+        lane_of = adapter_home_lanes()
+        for item in items:
+            key = _cell_key(item.nodeid)
+            row = rows.get(key) if key is not None else None
+            if row is not None and row.status == "skip":
+                rows[key] = replace(
+                    row, expected_lane=_resolve_expected_lane(item, lane_of)
+                )
         rows.update(na_rows(items))
         return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
 
@@ -176,6 +216,118 @@ def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:
             if key not in best or _RANK[row.status] > _RANK[best[key].status]:
                 best[key] = row
     return sorted(best.values(), key=lambda row: (row.test, row.adapter))
+
+
+def overlay(
+    base: list[ScorecardRow], override: list[ScorecardRow]
+) -> list[ScorecardRow]:
+    """Layer a retry attempt's rows over the original run's, unconditionally.
+
+    Unlike :func:`merge` (which unions *sibling lanes* and must let a real outcome
+    outrank a benign ``skip``), this is for two *sequential* attempts of the *same*
+    lane: ``--last-failed`` restricts the retry to only the nodeids that failed the
+    first time, so its process's :class:`ScorecardCollector` never sees — and would
+    otherwise silently drop — every cell that passed on the first attempt. Rank-based
+    merging would also get a genuine fix backwards (a first-attempt ``fail`` outranks
+    a retry's ``pass``). Here the retry's row for a cell always wins when present;
+    the original row survives untouched for every cell the retry didn't touch.
+    """
+    rows = {(row.test, row.adapter): row for row in base}
+    rows.update({(row.test, row.adapter): row for row in override})
+    return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """CI's pass/fail verdict on a merged scorecard.
+
+    ``failing`` is every ``fail`` cell. ``missing`` is a ``skip`` cell whose expected
+    lane (see ``ScorecardRow.expected_lane``) was expected to run this invocation but
+    reported nothing for it, e.g. a lane job that crashed before writing its
+    scorecard fragment. A ``skip`` cell whose expected lane wasn't expected this run
+    (an out-of-scope lane on a scoped dispatch) is neither — it is simply not
+    evaluated.
+    """
+
+    ok: bool
+    failing: tuple[ScorecardRow, ...]
+    missing: tuple[ScorecardRow, ...]
+
+
+def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult:
+    """Decide whether a merged scorecard is green, given which lanes ran this time.
+
+    ``expected_lanes`` is the set of lane ids this invocation selected (the full
+    registry for a nightly/full-matrix run, or just the chosen lane for a scoped
+    dispatch) — never inferred from the rows themselves, so an intentionally
+    out-of-scope lane's cells can never be mistaken for a silent failure.
+
+    A row's own ``expected_lane`` (see ``ScorecardRow``) is used when present,
+    falling back to the adapter's home lane only for a row collected before that
+    field existed.
+    """
+    home_lane = adapter_home_lanes()
+    failing = tuple(r for r in rows if r.status == "fail")
+    missing = tuple(
+        r
+        for r in rows
+        if r.status == "skip"
+        and (r.expected_lane or home_lane.get(r.adapter)) in expected_lanes
+    )
+    return GateResult(ok=not failing and not missing, failing=failing, missing=missing)
+
+
+def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
+    """A one-line verdict + totals, meant to sit above the markdown grid."""
+    counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
+    verdict = "PASS" if result.ok else "FAIL"
+    line = (
+        f"**GATE: {verdict}** — {counts['pass']} passed, {counts['fail']} failed, "
+        f"{counts['na']} N/A, {counts['skip']} skipped"
+    )
+    if not result.ok:
+        culprits = sorted(
+            f"`{r.test.rsplit('::', 1)[-1]}`/`{r.adapter}`"
+            for r in (*result.failing, *result.missing)
+        )
+        line += "\n\nFailing cells: " + ", ".join(culprits)
+    return line + "\n"
+
+
+def _cell_lines(rows: tuple[ScorecardRow, ...]) -> list[str]:
+    return [
+        f"- `{r.test.rsplit('::', 1)[-1]}` / `{r.adapter}`"
+        for r in sorted(rows, key=lambda r: (r.test, r.adapter))
+    ]
+
+
+def digest_body(result: GateResult, rows: list[ScorecardRow]) -> str:
+    """A counts table + only the problem cells — no header, no wide grid.
+
+    The email-safe half of :func:`gate_summary`: a full adapter×test grid reads fine
+    in a GitHub Actions step summary (full width, GitHub's own renderer) but turns
+    into a cramped, unreadable wall in a notification email, so this deliberately
+    leaves it out — a caller wanting the full picture links to the run instead. The
+    counts render as a small GFM table (not a "·"-joined line): GitHub's notification
+    email renders plain GFM — tables, bold, bullets — the same as the web UI, just
+    with no `<style>`/inline-CSS support, so a table is the highest-fidelity "glance"
+    layout available without a custom HTML email. Also deliberately carries no
+    PASS/FAIL header: a matrix-leg crash the cell-level grid can't see (no OS
+    dimension on `ScorecardRow`) can override `result.ok`'s verdict, so a caller with
+    that broader context should render its own header rather than trust one built
+    from cell data alone.
+    """
+    counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
+    lines = [
+        "| Passed | Failed | N/A | Skipped |",
+        "| --- | --- | --- | --- |",
+        f"| {counts['pass']} | {counts['fail']} | {counts['na']} | {counts['skip']} |",
+    ]
+    if result.failing:
+        lines += ["", "**Failing**", *_cell_lines(result.failing)]
+    if result.missing:
+        lines += ["", "**Missing** (lane ran, no result)", *_cell_lines(result.missing)]
+    return "\n".join(lines) + "\n"
 
 
 def write_json(rows: list[ScorecardRow], path: str | Path) -> None:
@@ -218,26 +370,80 @@ def to_markdown(rows: list[ScorecardRow]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _merge_cmd(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    known_lanes = known_lane_ids()
+    expected_lanes = frozenset(args.expected_lanes.split(","))
+    if unknown := expected_lanes - known_lanes:
+        parser.error(
+            f"--expected-lanes names unknown lane id(s) {sorted(unknown)}; "
+            f"known lanes: {sorted(known_lanes)}"
+        )
+
+    rows = merge(_load(path) for path in args.inputs)
+    write_json(rows, args.out)
+    result = gate(rows, expected_lanes)
+    if args.markdown:
+        Path(args.markdown).write_text(
+            gate_summary(result, rows) + "\n" + to_markdown(rows)
+        )
+    if args.summary:
+        Path(args.summary).write_text(digest_body(result, rows))
+    logger.info(
+        "scorecard: %d cells from %d lane file(s) -> %s (gate: %s)",
+        len(rows),
+        len(args.inputs),
+        args.out,
+        "PASS" if result.ok else "FAIL",
+    )
+    if not result.ok:
+        sys.exit(1)
+
+
+def _overlay_cmd(args: argparse.Namespace) -> None:
+    rows = overlay(_load(args.base), _load(args.override))
+    write_json(rows, args.out)
+    logger.info("scorecard: overlaid %d cell(s) -> %s", len(rows), args.out)
+
+
 def main(argv: list[str] | None = None) -> None:
-    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact."""
+    """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact and gate on
+    it, or ``overlay`` a same-lane retry attempt onto its original run."""
     parser = argparse.ArgumentParser(prog="scorecard")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
     merge_cmd = sub.add_parser("merge", help="union per-lane scorecards into one grid")
     merge_cmd.add_argument("inputs", nargs="+", help="per-lane scorecard JSON files")
     merge_cmd.add_argument("--out", required=True, help="combined scorecard.json path")
     merge_cmd.add_argument("--markdown", help="also write a markdown grid to this path")
-    args = parser.parse_args(argv)
-
-    rows = merge(_load(path) for path in args.inputs)
-    write_json(rows, args.out)
-    if args.markdown:
-        Path(args.markdown).write_text(to_markdown(rows))
-    logger.info(
-        "scorecard: %d cells from %d lane file(s) -> %s",
-        len(rows),
-        len(args.inputs),
-        args.out,
+    merge_cmd.add_argument(
+        "--summary",
+        help="also write the email-safe digest (counts + only the problem cells, no "
+        "grid — see digest_body) to this path",
     )
+    merge_cmd.add_argument(
+        "--expected-lanes",
+        required=True,
+        help="comma-separated lane ids this invocation selected (every registry lane "
+        "for a full nightly run, or just the dispatched lane) — used to gate on "
+        "missing cells",
+    )
+
+    overlay_cmd = sub.add_parser(
+        "overlay",
+        help="layer a same-lane retry attempt's rows over its original attempt "
+        "(see overlay() — not a rank-based merge across lanes)",
+    )
+    overlay_cmd.add_argument("base", help="the original attempt's scorecard JSON")
+    overlay_cmd.add_argument("override", help="the retry attempt's scorecard JSON")
+    overlay_cmd.add_argument(
+        "--out", required=True, help="combined scorecard JSON path"
+    )
+
+    args = parser.parse_args(argv)
+    if args.cmd == "merge":
+        _merge_cmd(args, parser)
+    else:
+        _overlay_cmd(args)
 
 
 if __name__ == "__main__":

@@ -659,16 +659,169 @@ CI a queryable N-A instead of a silent gap.
   report, keyed by exact nodeid — no junit scraping), out-of-lane cells as `skip`, and
   the `@per_adapter` exclusions as `na` with their reasons. Empty (the local default)
   emits nothing.
-- **CI folds the lanes together.** Each `e2e` lane writes its own slice to
-  `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final `scorecard` job merges
-  them (`python -m tests.e2e.baseline.scorecard merge … --out … --markdown …`) into one
-  `artifacts/scorecard.json` (+ a markdown grid). A cell runs in exactly one lane, so the
-  union keeps its real outcome over the `skip`s and never clobbers an `na`. The job
-  *reports* the matrix; it does not gate on it.
+- **CI folds the lanes together and gates on the result.** Each `e2e` lane writes its
+  own slice to `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final
+  `scorecard` job merges them (`python -m tests.e2e.baseline.scorecard merge … --out …
+  --markdown … --expected-lanes …`) into one `artifacts/scorecard.json` (+ a markdown
+  grid, also written to the run's step summary). A cell runs in exactly one lane, so
+  the union keeps its real outcome over the `skip`s and never clobbers an `na`.
 
-The logic (`na_rows` / `outcome_row` / `merge`) lives in `scorecard.py` as pure functions
-(unit-tested in `tests/framework_conformance/test_scorecard.py`); the conftest is a thin
-`pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
+The logic (`na_rows` / `outcome_row` / `merge` / `gate`) lives in `scorecard.py` as pure
+functions (unit-tested in `tests/framework_conformance/test_scorecard.py`); the
+conftest is a thin `pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
+
+### CI gating & flake policy
+
+The suite runs nightly (`e2e.yml`'s `schedule:` cron), full lane × OS matrix,
+unattended. A `workflow_dispatch` with the default `lane: all` / `os: all` reproduces
+that run exactly — it is not a lesser "manual mode." Only a *scoped* dispatch (one
+lane and/or one OS) skips the parts below that assume the full matrix ran.
+
+**Fail-loud rule** (`gate()` in `scorecard.py`): a `fail` cell reddens the run. A
+`skip` cell reddens it too, but only if its home lane (from `ci_lanes()` — see "CI
+lanes" above) was one of this invocation's `--expected-lanes`; a `skip` from a lane
+that was never selected this run is simply out of scope. `na` (+ reason) always
+passes. A cell-level gate can't see a whole OS leg of an expected lane producing *zero*
+scorecard fragment (`ScorecardRow` carries no OS dimension) — the `scorecard` job's
+final "Compute gate verdict" step backstops that by also failing whenever
+`needs.e2e.result != 'success'`.
+
+That backstop is also the *only* net for a bespoke `@lane`-pinned smoke (parlant,
+and the non-`@per_adapter` tests in `backends`/`letta`) — this is a pre-existing
+property of the scorecard module, not something this gate changes: `outcome_row`
+only recognizes a nodeid whose `[…]` parametrization is a registered adapter id
+(`_ADAPTER_IDS`), so a bespoke smoke never produces a `ScorecardRow` at all and is
+structurally invisible to the cell-level grid. It is still covered — just at the
+coarser matrix-leg granularity, not the per-cell one the grid markets.
+
+A subtlety worth calling out for on-call: once `release-gate.yml` has recorded a
+*failure*, GitHub does not automatically re-check it just because a later nightly run
+posts a fresh green `baseline-green` status — a required check's completed run is final
+until something re-triggers it (a new commit, or a manual "re-run failed jobs" on the
+release PR). This is ordinary GitHub required-check behavior, not a gap specific to
+this workflow; if the release PR is stuck red after main has actually gone green,
+re-run the check by hand.
+
+Two reporting jobs (`mark-baseline`, `report-scoped-run`) are gated on `!cancelled()`
+rather than `always()`. They write externally visible state — a commit status, and a
+comment that reopens/closes the tracking issue — and a *cancelled* run is not evidence
+of anything: under `always()`, a nightly whose legs were cancelled mid-flight (the
+per-(lane,OS) concurrency group, or a human cancelling the run) would report the
+baseline as red with nothing actually broken. Declining to report is the safe
+direction, since the release gate treats an absent status as blocking anyway. A
+`timeout-minutes` leg kill does *not* cancel the run, so a genuine hang still reddens.
+
+**Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
+
+1. **Per-test** (`flaky.py`, already existed before this policy): `flaky_model`
+   reruns a test whose failure can be genuine LLM non-determinism (an `AssertionError`
+   is retried too — a capable model's bad moment); `flaky_infra` reruns only
+   non-assertion failures (timeouts, cold starts) and lets an `AssertionError` fail
+   loud immediately, since that's a real bug. Every flaky-prone test carries an
+   explicit kind + reason (`assert_flaky_is_classified` rejects a raw
+   `@pytest.mark.flaky`).
+2. **Per-lane** (`e2e.yml`'s run step): if the lane's first pytest invocation has any
+   failure at all, it reruns only the failed nodeids once (`--last-failed --lfnf=none`)
+   before the scorecard is written. This absorbs a whole-lane transient (e.g. a
+   rate-limit window) that per-test taxonomy wouldn't catch on its own; a genuine bug
+   still fails the rerun and reddens the gate (`ScorecardCollector`'s "last write wins"
+   is exactly this rerun's final report being the cell's real outcome). `--lfnf=none` is
+   load-bearing, not decoration: pytest's default for "`--last-failed` with no
+   lastfailed cache" is to run *everything*, so an attempt 1 that died without
+   recording a failed nodeid (collection error, import-time raise, OOM kill) would
+   silently promote the retry into a second full live lane — double the provider spend
+   and wall clock against a leg that carries a wall-clock cap. With the flag, such a
+   retry deselects everything and exits 5, which the script reads as "nothing to retry"
+   and keeps attempt 1's verdict.
+
+No time-boxed automatic override is layered on top of either — a lane stuck failing
+on a real provider outage does not silently start passing after N nights. The
+deliberate manual-override path is the `main-branch-protection` ruleset's existing
+`OrganizationAdmin` bypass actor, used the same way any other required-check override
+would be.
+
+**Per-leg timeout:** `e2e.yml`'s `e2e` job carries a `timeout-minutes` cap — without
+it, GitHub's own default (360 minutes) is the only ceiling on a genuinely stuck leg.
+The workflow is the single source of that number; this section deliberately does not
+restate it, and neither does the digest text, so there is no second copy to go stale.
+Sizing it is a real trade-off in both directions: too loose and a hung leg burns
+runner time to no purpose, but too tight is worse than it looks — GitHub reports a
+timeout as `cancelled`, which the gate treats exactly like a failure, so a cap that
+clips legs which were still making progress *manufactures* red baselines and trains
+people to ignore the signal. It was raised from an initial 120 after a full-matrix run
+showed healthy legs still working past 90 minutes. Verified live that GitHub reports a
+`timeout-minutes` kill as conclusion `cancelled`, not `failure` — `MATRIX_OK` in
+`compute-gate-verdict.sh` only checks equality with `success`, so a timeout reddens
+the gate the same as an outright failure with no extra handling, and the nightly
+digest's warning line names "failed, crashed, or hit its time cap" explicitly rather
+than only "crashed."
+
+**`baseline-green` + the release gate:** on a full-matrix run, `e2e.yml`'s
+`mark-baseline` job posts a `baseline-green` commit status (success/failure) on the
+tested commit. `.github/workflows/release-gate.yml` is a separate, narrow,
+PR-triggered check: an instant no-op for every ordinary PR, and for the standing
+release-please PR it consults that status and fails the PR's check until the baseline
+is green. This is *not* the same thing as making the whole E2E suite a required PR
+check (explicitly out of scope; PR-level gating is covered by the existing Tier-1
+checks) — only this thin lookup is required on every PR, so the cost stays negligible
+for the 99% of PRs that aren't the release PR.
+
+It gates on the most recently **tested** commit of the base branch, not the live tip
+(`.github/scripts/check-release-baseline.sh`). A nightly marks exactly one commit —
+whatever main's tip was at 03:17 UTC — so a tip-only check would go red the instant
+anything merged after that nightly, leaving the gate red by default and training people
+to bypass rather than trust it. The script walks the branch newest-first (bounded by
+`COMMIT_SCAN_LIMIT`, default 40 commits) for the most recent commit carrying a
+`baseline-green` status, and blocks unless that verdict is `success`. Two bounds keep it
+honest: a non-green verdict blocks, and a green one older than `MAX_BASELINE_AGE_DAYS`
+(default 7) stops vouching, so a long-dead nightly can't certify today's main. Both the
+producer and the consumer read the status context name from
+`.github/scripts/baseline-status-context.sh`, so the two sides cannot drift apart —
+a typo in a re-typed literal would fail silently, blocking the release PR forever with
+nothing to point at.
+
+**Nightly digest:** the same job also comments a compact digest (pass or fail) on one
+persistent issue (matched by title, not a label — "Nightly baseline results"),
+reopening it on red and closing it on green so its state also reads "currently
+red/green" at a glance. The comment individually mentions each `band-ai/integrations`
+member, listed in `.github/integrations-team.txt` (one GitHub username per line) —
+verified live that a bot-authored `@org/team` mention does not reliably fan out a
+per-member notification, even with every member's own settings correctly configured,
+so individual mentions are what actually delivers. The roster lives in that plain data
+file rather than inline in the workflow so updating membership never means editing
+YAML. GitHub's own mention-notification delivery emails each one per their own account
+settings, so there's no mailer to stand up and no email address this repo ever has to
+see or store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the
+wide adapter×test grid — a real run spans every registered adapter (15+ columns as of
+this writing) across all lanes, which is fine full-width in the step summary but
+turns into an unreadable wall in a notification email. It's a small GFM counts table
+(Passed/Failed/N-A/Skipped) plus only the problem cells (failing / missing, listed
+separately), plus a link back to the run for the full grid — GitHub's comment/email
+renderer sanitizes out `<style>`/inline CSS, so plain GFM (tables, bold, bullets) is
+the ceiling for styling here; `post-baseline-digest.sh` also adds a shields.io
+PASS/FAIL badge image alongside the bold emoji+text header (the bold text is the
+guaranteed-to-render fallback for mail clients that block remote images by default).
+Its PASS/FAIL header is built by the workflow from the job's
+combined verdict (`$PASSED`), not read off the cell-level digest — a matrix-leg crash
+the cell grid can't see (no OS dimension on `ScorecardRow`) can flip that verdict in
+a way the digest content alone wouldn't show, so the workflow says so explicitly
+when it happens rather than let the email quietly disagree with the `baseline-green`
+commit status.
+
+**Scoped manual reports:** a manual dispatch that selects one lane and/or OS posts the
+same compact digest to a separate `Manual E2E results` issue and mentions only the
+person who initiated it. Its header names the selected scope and explicitly says it
+does not certify the full baseline; it never writes `baseline-green` or changes the
+canonical nightly issue's state. The requester also receives GitHub's normal workflow
+completion notification when enabled.
+
+**Local preview:** `scripts/preview-baseline-digest.sh [pass|fail] [nightly|manual]`
+posts a real comment in seconds without waiting on E2E. It fabricates a tiny scorecard
+and drives the same `.github/scripts/{find-or-create-tracking-issue,
+post-baseline-digest}.sh` path CI uses, so formatting cannot drift. `nightly` (the
+default) pings the roster and changes the canonical issue state; `manual` mentions
+only the current GitHub user and leaves both the release state and nightly issue alone.
+Use either sparingly.
 
 ## Letta lane
 

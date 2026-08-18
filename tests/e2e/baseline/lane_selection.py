@@ -34,12 +34,12 @@ from tests.e2e.baseline.agents import (
     PerAdapter,
     WithAdapters,
 )
-from tests.e2e.baseline.toolkit.ci_lanes import CILane, ci_lanes, hosting_lanes
-
-
-def _lane_of(lanes: list[CILane]) -> dict[str, str]:
-    """Flatten the registry's lane partition to an adapter-id -> home-lane-id map."""
-    return {str(adapter): str(cl.id) for cl in lanes for adapter in cl.adapters}
+from tests.e2e.baseline.toolkit.ci_lanes import (
+    CILane,
+    adapter_home_lanes,
+    ci_lanes,
+    hosting_lanes,
+)
 
 
 def item_frameworks(item: pytest.Item) -> frozenset[str]:
@@ -91,6 +91,39 @@ def _require_known_lane(lane: str, lanes: list[CILane]) -> None:
         )
 
 
+def _resolve_target_lane(
+    override: str | None, item: pytest.Item, lane_of: dict[str, str]
+) -> str | None:
+    """``override`` if given, else ``item``'s single shared home lane, else ``None``.
+
+    Split out from :func:`expected_lane` so a caller that already has ``override``
+    (``_lane_skip_reason`` below, which also needs it to word its skip reason) can
+    reuse it instead of re-deriving it via a second ``_override_lane`` call.
+    """
+    if override is not None:
+        return override
+    homes = _home_lanes(item, lane_of)
+    if len(homes) == 1:
+        (home,) = homes
+        return home
+    return None
+
+
+def expected_lane(item: pytest.Item, lane_of: dict[str, str]) -> str | None:
+    """The one lane ``item`` is expected to run in, override-aware.
+
+    An explicit ``@lane(L)`` wins regardless of home lane; otherwise it's the single
+    home lane its frameworks share. ``None`` means adapter-agnostic (no frameworks —
+    runs everywhere) or spanning >1 home lane with no override (unschedulable —
+    ``assert_every_item_is_schedulable`` fails collection for this case, so it is not
+    reachable for a test that actually ran). The one place both the scheduler
+    (``_lane_skip_reason`` below) and the scorecard gate (``scorecard.gate``) resolve
+    "which lane owns this cell", so a ``@lane`` pin can never make one call the cell
+    scheduled while the other calls it missing.
+    """
+    return _resolve_target_lane(_override_lane(item), item, lane_of)
+
+
 def _lane_skip_reason(
     item: pytest.Item, lane: str, lane_of: dict[str, str]
 ) -> str | None:
@@ -107,18 +140,16 @@ def _lane_skip_reason(
       it; this just never lets it run in an arbitrary lane).
     """
     override = _override_lane(item)
-    if override is not None:
-        if override == lane:
+    target = _resolve_target_lane(override, item, lane_of)
+    if target is not None:
+        if target == lane:
             return None
-        return f"assigned to lane {override!r} (@lane), not active lane {lane!r}"
+        if override is not None:
+            return f"assigned to lane {target!r} (@lane), not active lane {lane!r}"
+        return f"runs in lane {target!r}, not active lane {lane!r}"
     homes = _home_lanes(item, lane_of)
     if not homes:
         return None
-    if len(homes) == 1:
-        (home,) = homes
-        if home == lane:
-            return None
-        return f"runs in lane {home!r}, not active lane {lane!r}"
     return f"spans lanes {sorted(homes)} with no @lane override (unschedulable)"
 
 
@@ -133,7 +164,7 @@ def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
         return
     lanes = ci_lanes()
     _require_known_lane(lane, lanes)
-    lane_of = _lane_of(lanes)
+    lane_of = adapter_home_lanes()
     for item in items:
         reason = _lane_skip_reason(item, lane, lane_of)
         if reason is not None:
@@ -162,7 +193,7 @@ def assert_every_item_is_schedulable(items: list[pytest.Item]) -> None:
     Runs in every collection — lane-scoped or not — so drift fails before CI.
     Single-framework and same-home tests never trip it.
     """
-    lane_of = _lane_of(ci_lanes())
+    lane_of = adapter_home_lanes()
     offenders: list[str] = []
     for item in items:
         homes = _home_lanes(item, lane_of)

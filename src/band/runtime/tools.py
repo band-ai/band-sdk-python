@@ -38,7 +38,7 @@ from band.core.memory_types import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.types import EventMessageType
+from band.core.types import ContactRequestSentStatus, EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -340,7 +340,7 @@ class ListContactRequestsInput(BaseModel):
     page_size: int = Field(
         50, description="Items per page per direction (max 100)", ge=1, le=100
     )
-    sent_status: Literal["pending", "approved", "rejected", "cancelled", "all"] = Field(
+    sent_status: ContactRequestSentStatus = Field(
         "pending", description="Filter sent requests by status"
     )
 
@@ -531,14 +531,12 @@ class ListReceivedContactRequestsInput(BaseModel):
 class ListSentContactRequestsInput(BaseModel):
     """List contact requests sent by the user."""
 
-    status: Literal["pending", "approved", "rejected", "cancelled", "all"] | None = (
-        Field(
-            None,
-            description=(
-                "Filter by status: 'pending', 'approved', 'rejected', "
-                "'cancelled', or 'all' (optional)."
-            ),
-        )
+    status: ContactRequestSentStatus | None = Field(
+        None,
+        description=(
+            "Filter by status: 'pending', 'approved', 'rejected', "
+            "'cancelled', or 'all' (optional)."
+        ),
     )
     page: int | None = Field(None, description="Page number for pagination (optional).")
     page_size: int | None = Field(

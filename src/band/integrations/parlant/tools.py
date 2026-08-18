@@ -5,32 +5,35 @@ These tools are defined at server startup and use a session-keyed registry
 to access the current room's tools during execution.
 
 This module provides the same tools as LangGraph/Claude adapters:
-- send_message: Send messages to the chat room
-- send_event: Send events (thought, error, task)
-- add_participant: Add agents/users to the room
-- remove_participant: Remove participants
-- lookup_peers: Find available agents
-- get_participants: List current participants
-- create_chatroom: Create new rooms
-- list_contacts: List agent's contacts
-- add_contact: Send a contact request
-- remove_contact: Remove an existing contact
-- list_contact_requests: List received and sent requests
-- respond_contact_request: Approve, reject, or cancel requests
+- band_send_message: Send messages to the chat room
+- band_send_event: Send events (thought, error, task)
+- band_add_participant: Add agents/users to the room
+- band_remove_participant: Remove participants
+- band_lookup_peers: Find available agents
+- band_get_participants: List current participants
+- band_create_chatroom: Create new rooms
+- band_list_contacts: List agent's contacts
+- band_add_contact: Send a contact request
+- band_remove_contact: Remove an existing contact
+- band_list_contact_requests: List received and sent requests
+- band_respond_contact_request: Approve, reject, or cancel requests
 
 NOTE: We intentionally do NOT use `from __future__ import annotations` here
 because Parlant's @p.tool decorator checks annotation types at runtime.
 """
 
+import inspect
 import json
 import logging
 import warnings
-from typing import Any, Optional
+from typing import Annotated, Any, Callable, Literal, Optional, get_args, get_origin
 
 from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
+    TOOL_MODELS,
     append_available_mention_handles,
+    get_tool_description,
     serialize_tool_result,
 )
 
@@ -43,6 +46,49 @@ _session_tools: dict[str, Any] = {}
 # Track whether send_message was called for each session
 # This helps the adapter know if it needs to forward Parlant's response
 _session_message_sent: dict[str, bool] = {}
+
+# Parlant tools take mentions as a comma-separated string, not the master
+# model's list[str], so the master description needs this appended — it is
+# genuinely Parlant-specific and not something get_tool_description() covers.
+# Phrased without "array"/"list" wording so it doesn't read as contradicting
+# the master text's "mentions array" line right above it.
+SEND_MESSAGE_MENTIONS_NOTE = (
+    "\n\nThis tool's mentions argument is a single string: separate multiple "
+    'handles with commas, e.g. "@alice, @bob/agent".'
+)
+
+# Same divergence as SEND_MESSAGE_MENTIONS_NOTE, appended to the per-argument
+# description instead of the tool-level one: the master field's list-oriented
+# text would otherwise reach the LLM unqualified for this comma-separated param.
+SEND_MESSAGE_MENTIONS_PARAM_NOTE = (
+    " This tool takes it as a single comma-separated string, not a list, "
+    'e.g. "@alice, @bob/agent".'
+)
+
+# The master model describes lookup_peers' raw return shape (a 'data'/'metadata'
+# dict) for adapters that pass it through unchanged. This Parlant tool formats
+# that result into a plain-text summary instead, so the master claim would be
+# wrong here without this correction.
+LOOKUP_PEERS_RETURN_NOTE = (
+    "\n\nThis tool returns a formatted text summary of matching agents, not "
+    "the 'data'/'metadata' dict described above."
+)
+
+
+def _literal_choices(annotation: Any) -> tuple[str, ...] | None:
+    """String choices of a master field's ``Literal[...]`` annotation, if any.
+
+    Parlant's schema builder turns a real ``enum.Enum`` class into a JSON
+    Schema ``enum``, but a bare ``Literal[...]`` isn't one — it falls into
+    the builder's list-only generic-container branch and raises. So a
+    Literal-typed master field can't be passed through as the parameter's own
+    annotation; its choices are folded into the description as prose instead.
+    """
+    if get_origin(annotation) is Literal:
+        args = get_args(annotation)
+        if args and all(isinstance(a, str) for a in args):
+            return args
+    return None
 
 
 def set_session_tools(session_id: str, tools: Optional[Any]) -> None:
@@ -114,31 +160,80 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
     """
     try:
         import parlant.sdk as p  # type: ignore[missing-import]
-        from parlant.core.tools import ToolContext, ToolResult  # type: ignore[missing-import]
+        from parlant.core.tools import (  # type: ignore[missing-import]
+            ToolContext,
+            ToolParameterOptions,
+            ToolResult,
+        )
     except ImportError:
         logger.warning("Parlant SDK not installed, skipping tool creation")
         return []
 
-    @p.tool
+    def band_tool(
+        extra_doc: str = "",
+        param_overrides: dict[str, str] | None = None,
+    ) -> Callable[[Callable[..., Any]], Any]:
+        """Decorator: describe *func* and its parameters from the master model, then register it.
+
+        The tool name is never retyped as a string — it's ``func.__name__``,
+        which is always written to match its ``TOOL_MODELS`` entry (e.g. the
+        function below is literally named ``band_send_message``). ``extra_doc``
+        appends prose the master tool description can't express (a
+        Parlant-only argument shape); ``param_overrides`` does the same per
+        argument, keyed by parameter name. Neither ever replaces master text —
+        only appends — so a master model edit keeps propagating.
+
+        Parlant's own schema builder never reads a docstring's ``Args:``
+        section (unlike pydantic-ai's griffe parser) — a parameter only gets a
+        description if its type annotation is
+        ``Annotated[T, ToolParameterOptions(description=...)]``. So this also
+        wraps each parameter's annotation from the master model's
+        ``Field(description=...)`` before registering, skipping ``context``
+        (must stay exactly ``ToolContext``) and any parameter with no master
+        description. A master field typed ``Literal[...]`` has its string
+        choices folded into that same description text (see
+        ``_literal_choices``) — the function keeps its own ``str``
+        annotation, since handing Parlant the ``Literal`` itself crashes
+        registration.
+        """
+
+        def decorator(func: Callable[..., Any]) -> Any:
+            func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
+
+            model = TOOL_MODELS.get(func.__name__)
+            if model is not None:
+                for param_name, param in inspect.signature(func).parameters.items():
+                    if param_name == "context":
+                        continue
+                    field = model.model_fields.get(param_name)
+                    description = field.description if field else None
+                    if not description:
+                        continue
+                    if field is not None and (
+                        choices := _literal_choices(field.annotation)
+                    ):
+                        description = (
+                            description.rstrip() + f" One of: {', '.join(choices)}."
+                        )
+                    if param_overrides and param_name in param_overrides:
+                        description = description.rstrip() + param_overrides[param_name]
+                    func.__annotations__[param_name] = Annotated[
+                        param.annotation, ToolParameterOptions(description=description)
+                    ]
+
+            return p.tool(func)
+
+        return decorator
+
+    @band_tool(
+        SEND_MESSAGE_MENTIONS_NOTE,
+        param_overrides={"mentions": SEND_MESSAGE_MENTIONS_PARAM_NOTE},
+    )
     async def band_send_message(
         context: ToolContext,
         content: str,
         mentions: str,
     ) -> ToolResult:
-        """
-        Send a message to the chat room.
-
-        Use this to respond to users or other agents. Messages require @mentions
-        to reach users. You MUST use this tool to communicate.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            content: The message content to send
-            mentions: Comma-separated list of participant handles to @mention (e.g., "@alice, @bob/agent")
-
-        Returns:
-            Confirmation of message sent or error
-        """
         logger.info(
             "[Parlant Tool] send_message called: session=%s, content=%s..., mentions=%s",
             context.session_id,
@@ -182,25 +277,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 )
             return ToolResult(data=f"Error sending message: {error}")
 
-    @p.tool
+    @band_tool()
     async def band_send_event(
         context: ToolContext,
         content: str,
         message_type: str,
     ) -> ToolResult:
-        """
-        Send an event to the chat room. No mentions required.
-
-        Use this to share your reasoning or report status.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            content: Human-readable event content
-            message_type: Type of event - 'thought' (share reasoning), 'error' (report problem), or 'task' (report progress)
-
-        Returns:
-            Confirmation of event sent or error
-        """
         logger.info(
             "[Parlant Tool] send_event called: session=%s, type=%s",
             context.session_id,
@@ -227,25 +309,11 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             logger.error("[Parlant Tool] Error sending event: %s", e, exc_info=True)
             return ToolResult(data=f"Error sending event: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_add_participant(
         context: ToolContext,
         identifier: str,
     ) -> ToolResult:
-        """
-        Invite an agent or user to join this chat room.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            identifier: REQUIRED - Handle, name, or ID of the agent to add. Prefer the exact ID returned by lookup_peers; handles are mainly for mentions. Use lookup_peers to find available agents.
-
-        Returns:
-            Success message or error description
-
-        Example calls:
-            add_participant(identifier="pirate-captain")
-            add_participant(identifier="Research Agent")
-        """
         logger.info(
             "[Parlant Tool] add_participant called: session=%s, identifier=%s",
             context.session_id,
@@ -280,25 +348,11 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error adding participant '{identifier}': {e}")
 
-    @p.tool
+    @band_tool()
     async def band_remove_participant(
         context: ToolContext,
         identifier: str,
     ) -> ToolResult:
-        """
-        Remove a participant from this chat room.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            identifier: REQUIRED - Handle, name, or ID of the participant to remove.
-
-        Returns:
-            Success message or error description
-
-        Example calls:
-            remove_participant(identifier="pirate-captain")
-            remove_participant(identifier="Research Agent")
-        """
         logger.info(
             "[Parlant Tool] remove_participant called: session=%s, identifier=%s",
             context.session_id,
@@ -327,22 +381,10 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error removing participant '{identifier}': {e}")
 
-    @p.tool
+    @band_tool(LOOKUP_PEERS_RETURN_NOTE)
     async def band_lookup_peers(
         context: ToolContext,
     ) -> ToolResult:
-        """
-        List available peers (agents and users) that can be added to this room.
-
-        Automatically excludes peers already in the room. Use this to find
-        specialized agents when you cannot answer a question directly.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-
-        Returns:
-            List of available agents with their names and descriptions
-        """
         logger.info(
             "[Parlant Tool] lookup_peers called: session=%s", context.session_id
         )
@@ -378,19 +420,10 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             logger.error("[Parlant Tool] Error looking up peers: %s", e, exc_info=True)
             return ToolResult(data=f"Error looking up peers: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_get_participants(
         context: ToolContext,
     ) -> ToolResult:
-        """
-        Get the list of all participants currently in the chat room.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-
-        Returns:
-            List of current participants with their names and types
-        """
         logger.info(
             "[Parlant Tool] get_participants called: session=%s", context.session_id
         )
@@ -423,21 +456,11 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error getting participants: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_create_chatroom(
         context: ToolContext,
         task_id: str = "",
     ) -> ToolResult:
-        """
-        Create a new chat room for a specific task or conversation.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            task_id: Optional task ID to associate with the room
-
-        Returns:
-            The ID of the newly created room
-        """
         logger.info(
             "[Parlant Tool] create_chatroom called: session=%s, task_id=%s",
             context.session_id,
@@ -461,23 +484,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
 
     include_contacts = features is None or Capability.CONTACTS in features.capabilities
 
-    @p.tool
+    @band_tool()
     async def band_list_contacts(
         context: ToolContext,
         page: int = 1,
         page_size: int = 50,
     ) -> ToolResult:
-        """
-        List agent's contacts with pagination.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            page: Page number (default 1)
-            page_size: Items per page (default 50, max 100)
-
-        Returns:
-            JSON with contacts list and pagination metadata
-        """
         logger.info(
             "[Parlant Tool] list_contacts called: session=%s, page=%s",
             context.session_id,
@@ -500,26 +512,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             logger.error("[Parlant Tool] Error listing contacts: %s", e, exc_info=True)
             return ToolResult(data=f"Error listing contacts: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_add_contact(
         context: ToolContext,
         handle: str,
         message: str = "",
     ) -> ToolResult:
-        """
-        Send a contact request to add someone as a contact.
-
-        Returns 'pending' when request is created, 'approved' when inverse
-        request existed and was auto-accepted.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            handle: Handle of user/agent to add (e.g., '@john' or '@john/agent-name')
-            message: Optional message with the request
-
-        Returns:
-            Status of the contact request
-        """
         logger.info(
             "[Parlant Tool] add_contact called: session=%s, handle=%s",
             context.session_id,
@@ -544,25 +542,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             logger.error("[Parlant Tool] Error adding contact: %s", e, exc_info=True)
             return ToolResult(data=f"Error adding contact: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_remove_contact(
         context: ToolContext,
         handle: str = "",
         contact_id: str = "",
     ) -> ToolResult:
-        """
-        Remove an existing contact by handle or contact ID.
-
-        Provide either handle or contact_id (at least one required).
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            handle: Contact's handle (e.g., '@john')
-            contact_id: Or contact record ID (UUID)
-
-        Returns:
-            Confirmation of contact removal
-        """
         logger.info(
             "[Parlant Tool] remove_contact called: session=%s, handle=%s, contact_id=%s",
             context.session_id,
@@ -592,28 +577,13 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             logger.error("[Parlant Tool] Error removing contact: %s", e, exc_info=True)
             return ToolResult(data=f"Error removing contact: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_list_contact_requests(
         context: ToolContext,
         page: int = 1,
         page_size: int = 50,
         sent_status: str = "pending",
     ) -> ToolResult:
-        """
-        List both received and sent contact requests.
-
-        Received requests are always filtered to pending status.
-        Sent requests can be filtered by status.
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            page: Page number (default 1)
-            page_size: Items per page per direction (default 50, max 100)
-            sent_status: Filter sent requests by status: 'pending', 'approved', 'rejected', 'cancelled', or 'all'
-
-        Returns:
-            JSON with received and sent request lists and metadata
-        """
         logger.info(
             "[Parlant Tool] list_contact_requests called: session=%s, sent_status=%s",
             context.session_id,
@@ -638,31 +608,13 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error listing contact requests: {e}")
 
-    @p.tool
+    @band_tool()
     async def band_respond_contact_request(
         context: ToolContext,
         action: str,
         handle: str = "",
         request_id: str = "",
     ) -> ToolResult:
-        """
-        Respond to a contact request.
-
-        Actions:
-        - 'approve'/'reject': For requests you RECEIVED (handle = requester's handle)
-        - 'cancel': For requests you SENT (handle = recipient's handle)
-
-        Provide either handle or request_id (at least one required).
-
-        Args:
-            context: Parlant tool context (automatically provided)
-            action: Action to take - 'approve', 'reject', or 'cancel'
-            handle: Other party's handle
-            request_id: Or request ID (UUID)
-
-        Returns:
-            Status of the response action
-        """
         logger.info(
             "[Parlant Tool] respond_contact_request called: session=%s, action=%s",
             context.session_id,

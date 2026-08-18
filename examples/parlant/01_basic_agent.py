@@ -86,7 +86,7 @@ async def setup_agent_with_guidelines(
     # When user asks to add someone or wants specialized help
     await agent.create_guideline(
         condition="User asks to add someone to the chat, mentions a specific agent name, or asks for specialized help you can't provide",
-        action="First use band_lookup_peers to find available agents. Then IMMEDIATELY call band_add_participant with the name parameter set to the exact name from the band_lookup_peers result. Do NOT ask for confirmation - just add them. If user wants multiple agents, call band_add_participant once for each.",
+        action="First use band_lookup_peers to find available agents. Then IMMEDIATELY call band_add_participant with the identifier parameter set to the exact identifier from the band_lookup_peers result. Do NOT ask for confirmation - just add them. If user wants multiple agents, call band_add_participant once for each.",
         tools=tools,
     )
 
@@ -107,7 +107,7 @@ async def setup_agent_with_guidelines(
     # When user asks to remove someone
     await agent.create_guideline(
         condition="User asks to remove someone from the chat",
-        action="Use band_remove_participant with the name parameter set to the exact name to remove",
+        action="Use band_remove_participant with the identifier parameter set to the exact identifier to remove",
         tools=tools,
     )
 
