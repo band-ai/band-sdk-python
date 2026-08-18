@@ -284,12 +284,14 @@ stray `mcp`-package imports. A new module that genuinely needs to import
 `mcp` directly belongs on that allowlist with a comment saying why; anything
 else should go through the engine or a resolver instead.
 
-**The published CLI's wire contract is pinned by snapshot, not by review.**
-`tests/mcp/test_wire_schema_snapshot.py` diffs a real `list_tools()`
-round-trip against checked-in JSON fixtures (`tests/fixtures/wire_schemas/`)
-— tool names, schemas, and descriptions the CLI advertised before this
-engine existed still have to match today, byte for byte, unless a change is
-an intentional, reviewed contract break.
+**The published CLI's wire contract is pinned by declarative code, not a
+snapshot.** `tests/mcp/test_wire_contract.py` drives a real `list_tools()`
+round trip and checks it against small, hand-written `ToolContract`
+entries — only tools with a genuinely non-obvious wire invariant (an
+enum, an array item type, a required-set) get one; enum values are read
+from the real `StrEnum`/`Literal` they come from, never copied by hand.
+`chat_id` room-binding (required when unpinned, hidden when pinned) is
+checked once, generically, against `AGENT_ROOM_BOUND_TOOL_NAMES`.
 
 ## OpenCode Integration
 
