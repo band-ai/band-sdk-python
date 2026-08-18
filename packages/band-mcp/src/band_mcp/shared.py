@@ -11,26 +11,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from collections import OrderedDict
 from typing import Any
 
 from band_rest import AsyncRestClient
+from band.config.logs import LogSettings
 from band.integrations.mcp.engine import dispatch_tool
-from band.runtime.tools import AgentTools, HumanTools, Surface, ToolDefinition
+from band.logging_config import LogStream
+from band.runtime.tools import (
+    AgentTools,
+    HumanTools,
+    Surface,
+    ToolDefinition,
+    TOOL_DEFINITIONS,
+)
 
 from band_mcp.config import Config, Scope, resolve_credential_for_scope, settings
 
-SEND_MESSAGE_METHOD_NAME = "send_message"
-"""Matches ``ToolDefinition(method_name="send_message", ...)`` in
-``src/band/runtime/tools.py`` -- the one thing that needs to stay in sync
-with :func:`_invoke_agent`'s pre-flight participant refresh below."""
+SEND_MESSAGE_METHOD_NAME = TOOL_DEFINITIONS["band_send_message"].method_name
+"""The one thing that needs to stay in sync with :func:`_invoke_agent`'s
+pre-flight participant refresh below -- read off the registry directly so a
+future rename can't silently drift out of sync with a hand-typed sibling."""
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    stream=sys.stderr,
-)
+# The stream is not negotiable: stdio transport's stdout is the JSON-RPC
+# channel, so a log line written there corrupts the session (matches
+# band-acp's cli.py, which pins the same override for the same reason).
+# for_application(): band-mcp's own logger (band_mcp.*) is not a child of the
+# "band" logger LogSettings raises by default, so without this the process's
+# own startup/warning logs would be silently suppressed below BAND_LOG_LEVEL.
+LogSettings(log_stream=LogStream.STDERR).for_application().configure()
 logger = logging.getLogger(__name__)
 
 AGENT_TOOLS_CACHE_MAX_SIZE = 128
@@ -68,6 +77,7 @@ class StandaloneResolver:
         self._agent_rest = agent_rest
         self._agent_id: str | None = None
         self._agent_id_resolved = False
+        self._agent_id_lock = asyncio.Lock()
         self._agent_tools_cache: OrderedDict[str | None, Any] = OrderedDict()
         self._agent_tools_locks: list[asyncio.Lock] = [
             asyncio.Lock() for _ in range(AGENT_TOOLS_LOCK_STRIPES)
@@ -132,11 +142,16 @@ class StandaloneResolver:
         """
         if self._agent_id_resolved:
             return self._agent_id
-        assert self._agent_rest is not None
-        identity = await self._agent_rest.agent_api_identity.get_agent_me()
-        self._agent_id = identity.data.id
-        self._agent_id_resolved = True
-        return self._agent_id
+        async with self._agent_id_lock:
+            # Re-check: a concurrent caller (different chat_id stripe) may
+            # have already resolved it while this one waited for the lock.
+            if self._agent_id_resolved:
+                return self._agent_id
+            assert self._agent_rest is not None
+            identity = await self._agent_rest.agent_api_identity.get_agent_me()
+            self._agent_id = identity.data.id
+            self._agent_id_resolved = True
+            return self._agent_id
 
     async def _get_or_create_agent_tools(
         self, chat_id: str | None, tool_name: str

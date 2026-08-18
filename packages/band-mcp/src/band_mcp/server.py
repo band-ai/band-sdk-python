@@ -95,7 +95,7 @@ def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
             if is_agent_room_bound:
                 model = extend_with_chat_id(model, pinned_room_id)
             elif is_human_room_bound and pinned_room_id is not None:
-                model = pin_existing_chat_id(model, pinned_room_id)
+                model = pin_existing_chat_id(model)
 
             registrations.append(
                 build_tool_registration(
@@ -150,9 +150,9 @@ async def _health_check(resolver: StandaloneResolver) -> str:
     return "Failed | no credential configured"
 
 
-def _build_transport_security() -> TransportSecuritySettings:
+def _build_transport_security(transport: Transport) -> TransportSecuritySettings:
     if (
-        settings.transport == "sse"
+        transport == Transport.SSE
         and settings.enable_dns_rebinding_protection
         and not settings.allowed_hosts
     ):
@@ -310,7 +310,12 @@ def run() -> None:
         logger.error("Configuration error: %s", exc)
         raise SystemExit(2) from exc
 
-    mcp = build_engine(spec, transport_security=_build_transport_security())
+    # Determine transport mode (CLI args override env vars) before building
+    # the engine: the DNS-rebinding warning below must judge the transport
+    # actually started with, not just the env-var default.
+    transport: Transport = args.transport or settings.transport
+
+    mcp = build_engine(spec, transport_security=_build_transport_security(transport))
 
     # Named health_check directly (not e.g. _health_check_tool): FastMCP
     # derives the advertised schema's "title" from the function's own
@@ -327,9 +332,6 @@ def run() -> None:
     logger.info("Resolved tools: %s", config.tools or "<none>")
     if config.room_id:
         logger.info("Pinned room id: %s", config.room_id)
-
-    # Determine transport mode (CLI args override env vars)
-    transport: Transport = args.transport or settings.transport
 
     if args.host is not None:
         mcp.settings.host = args.host

@@ -63,7 +63,6 @@ class TestACPClientAdapterInit:
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._band_mcp_backend is None
-        assert adapter._band_mcp_server is None
 
     def test_init_codex_acp_uses_absolute_default_cwd(self) -> None:
         """Should normalize codex-acp default cwd to an absolute path."""
@@ -225,7 +224,7 @@ class TestACPClientAdapterLocalMcpConfig:
         assert server.headers == []
         assert server.type == "http"
         assert adapter._band_mcp_backend is backend
-        assert adapter._band_mcp_server is mock_server
+        assert adapter._band_mcp_backend.local_server is mock_server
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_sse_config(self) -> None:
@@ -246,7 +245,7 @@ class TestACPClientAdapterLocalMcpConfig:
         assert server.headers == []
         assert server.type == "sse"
         assert adapter._band_mcp_backend is backend
-        assert adapter._band_mcp_server is mock_server
+        assert adapter._band_mcp_backend.local_server is mock_server
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:
@@ -1070,7 +1069,6 @@ class TestACPClientAdapterCleanup:
         backend = MagicMock(local_server=local_server)
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
-        adapter._band_mcp_server = local_server
 
         await adapter.on_cleanup("room-123")
 
@@ -1116,7 +1114,6 @@ class TestACPClientAdapterStop:
         backend = MagicMock(local_server=local_server)
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
-        adapter._band_mcp_server = local_server
         adapter._bootstrapped_sessions.add("session-123")
 
         await adapter.stop()
@@ -1129,7 +1126,6 @@ class TestACPClientAdapterStop:
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._band_mcp_backend is None
-        assert adapter._band_mcp_server is None
         assert adapter._bootstrapped_sessions == set()
 
     @pytest.mark.asyncio
@@ -1141,7 +1137,6 @@ class TestACPClientAdapterStop:
         backend = MagicMock(local_server=local_server)
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
-        adapter._band_mcp_server = local_server
 
         await adapter.stop()
 

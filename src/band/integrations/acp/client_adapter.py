@@ -174,7 +174,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._room_to_session: dict[str, str] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._band_mcp_backend: BandMCPBackend | None = None
-        self._band_mcp_server: LocalMCPServer | None = None
         self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
         # Guards the shared MCP backend singleton on its own lock: one creation
@@ -532,7 +531,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     additional_tools=self._custom_tools,
                 )
                 self._band_mcp_backend = backend
-                self._band_mcp_server = backend.local_server
             return self._band_mcp_backend
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
@@ -682,9 +680,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._bootstrapped_sessions.clear()
         async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
-            local_mcp_server = self._band_mcp_server
             self._band_mcp_backend = None
-            self._band_mcp_server = None
             if final:
                 # Set before releasing the lock: a room's first turn parked on
                 # _mcp_backend_lock (e.g. via _load_persisted_session, which awaits
@@ -697,8 +693,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # None and start a fresh backend while this one is mid-teardown.
             if backend is not None:
                 await backend.stop()
-            elif local_mcp_server is not None:
-                await local_mcp_server.stop()
         await self._runtime.stop()
         logger.info("ACP client adapter stopped")
 

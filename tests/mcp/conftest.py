@@ -3,6 +3,8 @@
 Fixtures from band-testing-python are auto-loaded via pytest entry point.
 """
 
+from __future__ import annotations
+
 import uuid
 from copy import deepcopy
 from typing import Any

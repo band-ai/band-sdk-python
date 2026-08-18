@@ -369,6 +369,41 @@ class TestLocalMcpServer:
         assert seen_hosts == ["0.0.0.0"]
 
     @pytest.mark.asyncio
+    async def test_start_closes_socket_when_engine_construction_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: a failure between socket reservation and the uvicorn
+        serve task starting (e.g. build_engine raising) must still close the
+        reserved socket, not leak a bound-and-listening fd."""
+        import band.integrations.mcp.local_server as local_server_mod
+
+        server = LocalMCPServer(
+            name="test-engine-failure", tool_registrations=[], port_min=0, port_max=0
+        )
+        real_reserve_socket = server._reserve_socket
+        reserved: list[socket.socket] = []
+
+        def capturing_reserve_socket() -> tuple[socket.socket, int]:
+            sock, port = real_reserve_socket()
+            reserved.append(sock)
+            return sock, port
+
+        server._reserve_socket = capturing_reserve_socket  # type: ignore[method-assign]
+
+        def failing_build_engine(*args: object, **kwargs: object) -> FastMCP:
+            raise RuntimeError("simulated engine construction failure")
+
+        monkeypatch.setattr(local_server_mod, "build_engine", failing_build_engine)
+
+        with pytest.raises(RuntimeError, match="simulated engine construction failure"):
+            await server.start()
+
+        assert len(reserved) == 1
+        assert reserved[0].fileno() == -1  # closed, not leaked
+        assert server._socket is None
+        assert server._port is None
+
+    @pytest.mark.asyncio
     async def test_concurrent_start_calls_are_serialized(self) -> None:
         """start()/start() must not race: the second call, once it acquires
         the lifecycle lock, sees the first's already-running server and

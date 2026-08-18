@@ -115,7 +115,7 @@ class TestExtendAndPinChatId:
 
     def test_pin_existing_chat_id_hides_field_from_schema(self) -> None:
         definition = TOOL_DEFINITIONS["band_send_my_chat_message"]
-        pinned = pin_existing_chat_id(definition.input_model, "r_pinned")
+        pinned = pin_existing_chat_id(definition.input_model)
         schema = pinned.model_json_schema()
         assert "chat_id" not in schema.get("properties", {})
 
@@ -334,7 +334,7 @@ async def test_human_room_bound_pinned_injects_and_hides_chat_id() -> None:
     definition = TOOL_DEFINITIONS["band_send_my_chat_message"]
     registration = build_tool_registration(
         definition,
-        pin_existing_chat_id(definition.input_model, "chat-1"),
+        pin_existing_chat_id(definition.input_model),
         resolver=_NoopHumanResolver(fake),
         strip_chat_id=False,
         pinned_room_id="chat-1",

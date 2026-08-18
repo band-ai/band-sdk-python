@@ -1885,6 +1885,67 @@ class TestApprovalCommandHandling:
         assert future.result() == "decline"
 
     @pytest.mark.asyncio
+    async def test_decline_resolution_notice_failure_does_not_claim_delivery(
+        self, adapter_with_approval, mock_tools, sender
+    ):
+        """When the '/decline resolved as **decline**' notice itself fails to
+        send, the future must resolve to _FORCED_DECLINE, not plain
+        "decline" — otherwise _resolve_manual_approval's decision_raw ==
+        "decline" check would wrongly treat the tool call as having been
+        explained to the room and suppress the missing-reply guard."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        adapter_with_approval._pending_approvals["room-1"] = {
+            "a-1": _PendingApproval(
+                tool_name="Bash",
+                tool_input={},
+                summary="Bash",
+                created_at=datetime.now(timezone.utc),
+                future=future,
+                requester={"id": "test-user", "name": "Test"},
+            ),
+        }
+        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+        await adapter_with_approval._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="decline",
+            args="a-1",
+            sender=sender,
+        )
+        assert future.done()
+        assert future.result() == _FORCED_DECLINE
+
+    @pytest.mark.asyncio
+    async def test_approve_resolution_notice_failure_still_accepts(
+        self, adapter_with_approval, mock_tools, sender
+    ):
+        """An approve's confirmation notice is best-effort: a failed send must
+        not turn an approved tool call into a decline."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        adapter_with_approval._pending_approvals["room-1"] = {
+            "a-1": _PendingApproval(
+                tool_name="Bash",
+                tool_input={},
+                summary="Bash",
+                created_at=datetime.now(timezone.utc),
+                future=future,
+                requester={"id": "test-user", "name": "Test"},
+            ),
+        }
+        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+        await adapter_with_approval._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="approve",
+            args="a-1",
+            sender=sender,
+        )
+        assert future.done()
+        assert future.result() == "accept"
+
+    @pytest.mark.asyncio
     async def test_approve_single_pending_no_token(
         self, adapter_with_approval, mock_tools, sender
     ):

@@ -10,6 +10,7 @@ SDK-import-failure mode to test.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -167,6 +168,40 @@ async def test_get_agent_tools_passes_resolved_agent_id(monkeypatch):
     tools = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
 
     assert tools.agent_id == "self-agent-id"
+
+
+async def test_resolve_agent_id_concurrent_cold_start_issues_one_rest_call(
+    monkeypatch,
+):
+    """Two rooms hashing to different lock stripes both cold-starting at once
+    must not each issue their own `get_agent_me` call -- `_resolve_agent_id`'s
+    own docstring promises "resolved once, cached for the resolver's
+    lifetime", which only a dedicated lock (independent of the per-chat_id
+    stripe locks the callers hold) can guarantee under real concurrency."""
+
+    class FakeAgentTools:
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
+            self.room_id = room_id
+            self.agent_id = agent_id
+
+    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+    rest = _fake_agent_rest()
+
+    async def slow_get_agent_me():
+        await asyncio.sleep(0)
+        identity = MagicMock()
+        identity.data.id = "self-agent-id"
+        return identity
+
+    rest.agent_api_identity.get_agent_me = AsyncMock(side_effect=slow_get_agent_me)
+    resolver = StandaloneResolver(agent_rest=rest)
+
+    await asyncio.gather(
+        resolver._get_or_create_agent_tools("room_A", "band_get_participants"),
+        resolver._get_or_create_agent_tools("room_B", "band_get_participants"),
+    )
+
+    assert rest.agent_api_identity.get_agent_me.await_count == 1
 
 
 def test_get_agent_tools_locks_use_fixed_stripes():

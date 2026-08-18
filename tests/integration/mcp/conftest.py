@@ -161,7 +161,13 @@ def harness(live_config: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness
 
 @pytest.fixture
 async def agent_room(harness: LiveHarness):
-    """Create a throwaway agent chat room, yield its id (agent scope only)."""
+    """Create a throwaway agent chat room, yield its id (agent scope only).
+
+    No teardown: the Band REST API has no room-delete endpoint, so every live
+    run of a test using this fixture permanently leaks the room it creates
+    (same known platform limitation noted in ``tests/integration/test_agent_contacts.py``).
+    These tests require real API access and are skipped in CI.
+    """
     if "agent" not in harness.scope:
         pytest.skip("agent scope not served by this key")
 

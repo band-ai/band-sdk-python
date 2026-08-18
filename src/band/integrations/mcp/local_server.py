@@ -253,39 +253,44 @@ class LocalMCPServer:
                 return
 
             reserved_socket, port = self._reserve_socket()
-            # A fresh FastMCP every start(): its session manager is single-use
-            # (StreamableHTTPSessionManager.run() raises on a second call), so
-            # a start->stop->start cycle needs a brand-new engine, not a
-            # restarted one.
-            mcp = build_engine(
-                EngineSpec(name=self._name, tools=tuple(self._tool_registrations)),
-                host=self._host,
-                sse_path=self._sse_path,
-                message_path=self._message_path,
-                streamable_http_path=self._http_path,
-            )
-            app = self._build_app(mcp)
-            uvicorn_server = EmbeddedUvicornServer(
-                uvicorn.Config(
-                    app,
-                    host=self._host,
-                    port=port,
-                    lifespan="on",
-                    log_level="warning",
-                    access_log=False,
-                    timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
-                )
-            )
-            serve_task = asyncio.create_task(
-                uvicorn_server.serve(sockets=[reserved_socket])
-            )
-
+            # Tracked immediately, before anything below can raise: `stop()`'s
+            # cleanup closes `self._socket` unconditionally, so a failure in
+            # engine/app/uvicorn construction still gets the socket closed
+            # instead of leaking a bound-and-listening fd.
             self._socket = reserved_socket
             self._port = port
-            self._uvicorn_server = uvicorn_server
-            self._serve_task = serve_task
 
             try:
+                # A fresh FastMCP every start(): its session manager is
+                # single-use (StreamableHTTPSessionManager.run() raises on a
+                # second call), so a start->stop->start cycle needs a
+                # brand-new engine, not a restarted one.
+                mcp = build_engine(
+                    EngineSpec(name=self._name, tools=tuple(self._tool_registrations)),
+                    host=self._host,
+                    sse_path=self._sse_path,
+                    message_path=self._message_path,
+                    streamable_http_path=self._http_path,
+                )
+                app = self._build_app(mcp)
+                uvicorn_server = EmbeddedUvicornServer(
+                    uvicorn.Config(
+                        app,
+                        host=self._host,
+                        port=port,
+                        lifespan="on",
+                        log_level="warning",
+                        access_log=False,
+                        timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
+                    )
+                )
+                serve_task = asyncio.create_task(
+                    uvicorn_server.serve(sockets=[reserved_socket])
+                )
+
+                self._uvicorn_server = uvicorn_server
+                self._serve_task = serve_task
+
                 await self._wait_until_started()
             except Exception:
                 await self._stop_locked()

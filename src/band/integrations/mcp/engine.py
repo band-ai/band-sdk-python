@@ -50,6 +50,7 @@ from band.runtime.tools import (
     SendEventInput,
     ToolDefinition,
     append_available_mention_handles,
+    serialize_tool_result,
     validate_tool_arguments,
 )
 
@@ -284,18 +285,17 @@ def extend_with_chat_id(
     return model
 
 
-def pin_existing_chat_id(
-    original: type[BaseModel],
-    pinned_room_id: str,  # noqa: ARG001 - injected by the caller, not the model
-) -> type[BaseModel]:
+def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
     """Return a subclass that re-annotates an existing ``chat_id`` as pinned.
 
     For human room-bound tools, whose input models already carry a plain
     ``chat_id`` field (``HumanTools`` is not constructor-scoped, so it was
     never missing one the way agent tools are). The advertised schema omits
     the field; an inbound value is still accepted via alias so a client that
-    sends ``chat_id`` explicitly doesn't fail validation. The caller injects
-    ``pinned_room_id`` into the dispatched arguments before validation.
+    sends ``chat_id`` explicitly doesn't fail validation. The actual pinned
+    value is injected into the dispatched arguments before validation by
+    ``build_tool_registration``'s own ``pinned_room_id`` parameter, not by
+    this function -- it only reshapes the schema.
     """
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",
@@ -499,25 +499,18 @@ def _serialize(result: Any) -> str:
     """Serialize a tool method's return value to a JSON string for the wire.
 
     The published band-mcp CLI shape (divergence-matrix row 15) -- now
-    universal for both doors: raw-string passthrough, ``model_dump`` for a
-    single Pydantic model, per-item ``model_dump`` for a list, plain
-    ``json.dumps`` otherwise. Embedded callers' LLMs see this shape too now
-    (previously a ``{"result": x}`` dict-wrap); flagged as an intentional
-    change in the PR, verified by the e2e backends lane.
+    universal for both doors: raw-string passthrough, ``serialize_tool_result``
+    (the single source of truth for model_dump-ing a Pydantic tool result --
+    see its docstring) otherwise. Embedded callers' LLMs see this shape too
+    now (previously a ``{"result": x}`` dict-wrap); flagged as an intentional
+    change in the PR, verified by the e2e backends lane. No ``indent``: this
+    payload has no human reader, only pretty-printing token cost.
     """
     if result is None:
         return json.dumps(None)
     if isinstance(result, str):
         return result
-    if hasattr(result, "model_dump"):
-        return json.dumps(result.model_dump(mode="json"), default=str, indent=2)
-    if isinstance(result, list):
-        serialized = [
-            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
-            for item in result
-        ]
-        return json.dumps(serialized, default=str, indent=2)
-    return json.dumps(result, default=str, indent=2)
+    return json.dumps(serialize_tool_result(result), default=str)
 
 
 def validate_unique_tool_names(registrations: Sequence[MCPToolRegistration]) -> None:

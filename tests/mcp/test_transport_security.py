@@ -93,6 +93,7 @@ class TestMcpTransportSecurityIntegration:
     def _build_mcp(self) -> object:
         from band.integrations.mcp.engine import build_engine
         from band_mcp.config import Config
+        from band_mcp.config import settings
         from band_mcp.server import _build_transport_security, standalone_spec
         from band_mcp.shared import build_standalone_resolver
 
@@ -100,7 +101,7 @@ class TestMcpTransportSecurityIntegration:
         resolver = build_standalone_resolver(config)
         return build_engine(
             standalone_spec(config, resolver),
-            transport_security=_build_transport_security(),
+            transport_security=_build_transport_security(settings.transport),
         )
 
     def test_mcp_transport_security_reflects_settings(self) -> None:
@@ -116,6 +117,29 @@ class TestMcpTransportSecurityIntegration:
         )
         assert transport_security.allowed_hosts == settings.allowed_hosts
         assert transport_security.allowed_origins == settings.allowed_origins
+
+    def test_warns_on_cli_transport_even_without_env_var(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The warning must judge the CLI-resolved transport, not just TRANSPORT.
+
+        A ``--transport sse`` flag with no ``TRANSPORT`` env var leaves
+        ``settings.transport`` at its stdio default; the warning has to be
+        driven by ``args.transport or settings.transport`` (what ``run()``
+        actually starts with) or it never fires despite the server coming up
+        in SSE mode with an empty ``allowed_hosts``.
+        """
+        from band_mcp.config import Transport, settings
+        from band_mcp.server import _build_transport_security
+
+        assert settings.transport == Transport.STDIO
+        with caplog.at_level("WARNING"):
+            _build_transport_security(Transport.SSE)
+
+        assert any(
+            "DNS rebinding protection enabled" in record.message
+            for record in caplog.records
+        )
 
 
 class TestDnsRebindingProtectionBehavior:

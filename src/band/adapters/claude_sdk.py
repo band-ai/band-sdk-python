@@ -1454,12 +1454,33 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return
 
         decision: ApprovalDecision = "accept" if command == "approve" else "decline"
+        notified = True
+        try:
+            await tools.send_message(
+                f"Approval `{token}` resolved as **{decision}**.",
+                mentions=mention,
+            )
+        except Exception as e:
+            notified = False
+            logger.warning(
+                "Room %s: Failed to send approval resolution notice for token %s: %s",
+                room_id,
+                token,
+                e,
+            )
+
         if not selected.future.done():
-            selected.future.set_result(decision)
-        await tools.send_message(
-            f"Approval `{token}` resolved as **{decision}**.",
-            mentions=mention,
-        )
+            # A failed notice for a decline must not claim delivery --
+            # _FORCED_DECLINE is the existing "declined with no notice"
+            # sentinel (matches eviction/teardown above), which
+            # _resolve_manual_approval's decision_raw == "decline" check
+            # correctly treats as not implying the missing-reply guard is
+            # covered. An accept has no such guard to protect, so it always
+            # resolves as a genuine accept regardless of notice delivery.
+            resolved = (
+                decision if (notified or decision == "accept") else _FORCED_DECLINE
+            )
+            selected.future.set_result(resolved)
 
     async def _handle_status_command(
         self,
