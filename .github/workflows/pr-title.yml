@@ -55,6 +55,9 @@ jobs:
             deps
             tests
             examples
+            tools
+            auth
+            transport
           # Require scope to be provided
           requireScope: false
           # Disable validation for merge commits
