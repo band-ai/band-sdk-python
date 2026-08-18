@@ -679,3 +679,67 @@ class TestCleanup:
         await adapter.on_cleanup(ROOM)
 
         assert ROOM not in adapter._message_history
+
+
+class TestCtxThreading:
+    """INT-994: each turn's custom-tool bridges carry that turn's ctx."""
+
+    async def test_custom_tool_receives_the_turns_ctx(self, tools, scripted):
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            question: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        adapter = await scripted(
+            ToolTurn("ctxprobe", {"question": "who?"}),
+            additional_tools=[(CtxProbeInput, probe)],
+        )
+        sentinel_ctx = object()
+        tools._ctx = sentinel_ctx
+
+        await _run_message(adapter, tools)
+
+        assert received == [sentinel_ctx]
+        assert _tool_results(adapter) == ["probed"]
+
+    async def test_turns_do_not_share_a_ctx_binding(self, scripted):
+        """The bridge is rebuilt per turn: a second turn with different tools
+        must see the second tools' ctx, not the first's."""
+
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            question: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        from band.testing import TextTurn
+
+        adapter = await scripted(
+            ToolTurn("ctxprobe", {"question": "first?"}),
+            TextTurn("first turn done"),
+            ToolTurn("ctxprobe", {"question": "second?"}),
+            additional_tools=[(CtxProbeInput, probe)],
+        )
+
+        first_tools = FakeAgentTools(room_id=ROOM)
+        first_ctx = object()
+        first_tools._ctx = first_ctx
+        await _run_message(adapter, first_tools)
+
+        second_tools = FakeAgentTools(room_id=ROOM)
+        second_ctx = object()
+        second_tools._ctx = second_ctx
+        await _run_message(adapter, second_tools, is_session_bootstrap=False)
+
+        assert received == [first_ctx, second_ctx]

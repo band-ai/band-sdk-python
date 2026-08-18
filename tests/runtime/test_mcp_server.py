@@ -274,3 +274,74 @@ class TestLocalMcpServer:
                     assert result.structuredContent == {"echo": "hello"}
         finally:
             await server.stop()
+
+
+class TestCustomToolCtxThreading:
+    """INT-994: both custom-registration builders thread the tools' ctx."""
+
+    @pytest.mark.asyncio
+    async def test_custom_registration_threads_agent_tools_ctx(self) -> None:
+        agent_tools = AgentTools("room-123", MagicMock(), [])
+        sentinel_ctx = object()
+        agent_tools._ctx = sentinel_ctx  # type: ignore[assignment]
+
+        received = []
+
+        async def probe(args: EchoInput, ctx) -> dict[str, str]:
+            received.append(ctx)
+            return {"echo": args.message}
+
+        registrations = build_band_mcp_tool_registrations(
+            agent_tools,
+            additional_tools=[(EchoInput, probe)],
+        )
+        registration = next(item for item in registrations if item.name == "echo")
+
+        result = await registration.execute({"message": "hi"})
+
+        assert result == {"echo": "hi"}
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
+    async def test_resolved_custom_registration_threads_room_tools_ctx(self) -> None:
+        room_tools = AgentTools("room-123", MagicMock(), [])
+        sentinel_ctx = object()
+        room_tools._ctx = sentinel_ctx  # type: ignore[assignment]
+
+        received = []
+
+        async def probe(args: EchoInput, ctx) -> dict[str, str]:
+            received.append(ctx)
+            return {"echo": args.message}
+
+        registrations = build_resolved_band_mcp_tool_registrations(
+            get_tools={"room-123": room_tools}.get,
+            additional_tools=[(EchoInput, probe)],
+        )
+        registration = next(item for item in registrations if item.name == "echo")
+
+        result = await registration.execute({"room_id": "room-123", "message": "hi"})
+
+        assert result == {"echo": "hi"}
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
+    async def test_resolved_custom_tool_still_runs_without_room_tools(self) -> None:
+        """A custom tool needs no AgentTools to execute — an unknown room
+        yields ctx=None, never an error (unlike builtin registrations)."""
+        received = []
+
+        async def probe(args: EchoInput, ctx) -> dict[str, str]:
+            received.append(ctx)
+            return {"echo": args.message}
+
+        registrations = build_resolved_band_mcp_tool_registrations(
+            get_tools=lambda _room_id: None,
+            additional_tools=[(EchoInput, probe)],
+        )
+        registration = next(item for item in registrations if item.name == "echo")
+
+        result = await registration.execute({"room_id": "ghost", "message": "hi"})
+
+        assert result == {"echo": "hi"}
+        assert received == [None]

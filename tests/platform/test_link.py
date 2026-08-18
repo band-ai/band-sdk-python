@@ -802,6 +802,111 @@ class TestGetStaleProcessingMessages:
         link.rest.agent_api_messages.list_agent_messages.assert_awaited_once()
 
 
+class TestRestMessagesCarryTheDelegationEnvelope:
+    """INT-992: the REST backlog wrappers build the runtime PlatformMessage,
+    the message handler-facing type — its ``delegation`` field is the typed
+    view of ``metadata["delegation"]``. Parsing is tolerant: a malformed
+    envelope yields ``None``, never an exception (the recovery sweep must not
+    die on a platform bug)."""
+
+    ENVELOPE = {
+        "version": 1,
+        "originator": {
+            "uuid": "0b7a3c2e-9d1f-4e8a-b6c5-2f4a8d9e1c3b",
+            "handle": "alice.asker",
+            "display_name": "Alice Asker",
+        },
+        "message_id": "7f3e9a1b-5c2d-4f6e-8a9b-1c3d5e7f9a2b",
+        "minted_at": "2026-08-13T09:30:00Z",
+        "hop": None,
+    }
+
+    @staticmethod
+    def _rest_item(metadata):
+        item = MagicMock()
+        item.id = "msg-1"
+        item.chat_room_id = "room-1"
+        item.content = "delegated ask"
+        item.sender_id = "user-1"
+        item.sender_type = "User"
+        item.sender_name = "Bob Broker"
+        item.message_type = "text"
+        item.metadata = metadata
+        item.inserted_at = None
+        return item
+
+    @pytest.mark.asyncio
+    async def test_get_next_message_parses_the_envelope(self):
+        from band.core.delegation import DelegationEnvelope
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        response = MagicMock()
+        response.data = self._rest_item({"delegation": dict(self.ENVELOPE)})
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            return_value=response
+        )
+
+        msg = await link.get_next_message("room-1")
+
+        assert msg is not None
+        assert isinstance(msg.delegation, DelegationEnvelope)
+        assert msg.delegation.originator is not None
+        assert msg.delegation.originator.handle == "alice.asker"
+        # The raw metadata still carries the envelope for the backlog re-wrap;
+        # only LLM-facing formatting strips it.
+        assert msg.metadata["delegation"] == self.ENVELOPE
+
+    @pytest.mark.asyncio
+    async def test_get_next_message_without_envelope_yields_none(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        response = MagicMock()
+        response.data = self._rest_item({})
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            return_value=response
+        )
+
+        msg = await link.get_next_message("room-1")
+
+        assert msg is not None
+        assert msg.delegation is None
+
+    @pytest.mark.asyncio
+    async def test_get_next_message_tolerates_a_malformed_envelope(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        response = MagicMock()
+        response.data = self._rest_item({"delegation": "junk-not-an-envelope"})
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            return_value=response
+        )
+
+        msg = await link.get_next_message("room-1")
+
+        assert msg is not None
+        assert msg.delegation is None
+
+    @pytest.mark.asyncio
+    async def test_stale_processing_messages_parse_the_envelope(self):
+        from band.core.delegation import DelegationEnvelope
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        response = MagicMock()
+        response.data = [self._rest_item({"delegation": dict(self.ENVELOPE)})]
+        response.metadata = MagicMock(total_pages=1)
+        link.rest.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=response
+        )
+
+        messages = await link.get_stale_processing_messages("room-1")
+
+        assert len(messages) == 1
+        assert isinstance(messages[0].delegation, DelegationEnvelope)
+        assert messages[0].delegation.message_id == self.ENVELOPE["message_id"]
+
+
 class TestReportActivity:
     """Tests for BandLink.report_activity (boolean working-state reporting)."""
 

@@ -54,6 +54,8 @@ from band.runtime.retry_tracker import MessageRetryTracker
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
+    from band.core.delegation import DelegationEnvelope
+    from band.platform.delegation_exchange import CredentialResolver
     from band.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
@@ -280,6 +282,18 @@ class ExecutionContext:
         # LLM context tracking
         self._llm_initialized = False
 
+        # Cross-owner identity envelope for the message currently being
+        # processed (INT-992). DefaultPreprocessor.process assigns it on every
+        # message it lifts — the parsed envelope for a delegated message, None
+        # otherwise — so it can never carry over from a previous turn. Typed,
+        # read-only view for handler/tool code; never rendered for the LLM.
+        self.delegation: DelegationEnvelope | None = None
+
+        # Lazily built delegated-credential resolver for the CURRENT envelope
+        # (INT-993). Invalidated by identity when self.delegation changes, so
+        # a token cache can never outlive its message's delegation.
+        self._credentials_resolver: CredentialResolver | None = None
+
         # Message ownership ledger (in-flight claims, completed LRU, pending
         # acks) shared by /next and WebSocket processing. Runtime-provided so
         # all contexts of one agent coordinate; private otherwise.
@@ -340,6 +354,31 @@ class ExecutionContext:
     def is_processing(self) -> bool:
         """Check if context is currently processing an event."""
         return self.state is ExecutionState.PROCESSING
+
+    @property
+    def credentials(self) -> "CredentialResolver":
+        """Delegated-credential resolver for the CURRENT message (INT-993).
+
+        Built lazily from ``self.link`` and ``self.delegation`` and kept
+        stable for the duration of the turn, so a tool fan-out shares one
+        per-audience token cache and single-flight lock. When the envelope
+        changes (the preprocessor assigns ``self.delegation`` on every
+        message), the next access builds a fresh resolver — a token can never
+        outlive its message's delegation. Without an envelope (owner-invoked
+        or non-delegated message) the resolver raises ``NoDelegation`` on
+        use, the typed I1 error, rather than this property failing.
+        """
+        # Import here to avoid a module cycle (platform.delegation_exchange
+        # is import-light, but runtime.execution is imported everywhere).
+        from band.platform.delegation_exchange import CredentialResolver
+
+        cached = self._credentials_resolver
+        if cached is not None and cached.envelope is self.delegation:
+            return cached
+
+        resolver = CredentialResolver(self.link, self.delegation)
+        self._credentials_resolver = resolver
+        return resolver
 
     def _set_state(self, new_state: ExecutionState) -> None:
         """

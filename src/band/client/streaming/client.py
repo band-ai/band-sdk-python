@@ -15,9 +15,16 @@ from phoenix_channels_python_client.client import (
 from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from band.client.streaming.errors import classify_initial_upgrade_error
+from band.core.delegation import DelegationEnvelope, parse_delegation_value
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +86,17 @@ class MessageMetadata(BaseModel):
     # ``attempts`` list. This is the same signal the runtime uses to dedup
     # already-handled messages.
     delivery_status: dict[str, Any] | None = None
+    # Cross-owner identity envelope minted by the platform (INT-992). Typed so
+    # handler code gets a real model instead of a raw extra; validated
+    # tolerantly because the REST backlog path re-wraps platform dicts with
+    # ``MessageMetadata(**metadata)`` and a malformed envelope must never fail
+    # the whole metadata parse (it is logged and treated as absent).
+    delegation: DelegationEnvelope | None = None
+
+    @field_validator("delegation", mode="before")
+    @classmethod
+    def _tolerate_malformed_delegation(cls, value: Any) -> DelegationEnvelope | None:
+        return parse_delegation_value(value)
 
 
 class MessageCreatedPayload(BaseModel):

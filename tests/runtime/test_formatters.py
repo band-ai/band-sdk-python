@@ -84,7 +84,12 @@ class TestFormatMessageForLlm:
         assert result["message_type"] == "text"
 
     def test_preserves_metadata(self):
-        """Should preserve metadata for adapters that need it (e.g., A2A)."""
+        """Should preserve metadata for adapters that need it (e.g., A2A).
+
+        The single exception is the platform's identity envelope
+        (``metadata["delegation"]``, INT-992): it is for handler/tool code,
+        never the model, so it is the ONLY key stripped at this seam.
+        """
         msg = {
             "sender_type": "Agent",
             "content": "A2A task completed",
@@ -93,6 +98,7 @@ class TestFormatMessageForLlm:
                 "a2a_context_id": "ctx-123",
                 "a2a_task_id": "task-456",
                 "a2a_task_state": "completed",
+                "delegation": _DELEGATION_ENVELOPE,
             },
         }
         result = format_message_for_llm(msg)
@@ -107,6 +113,114 @@ class TestFormatMessageForLlm:
         msg = {"sender_type": "Agent", "content": "Hello"}
         result = format_message_for_llm(msg)
         assert result["metadata"] == {}
+
+
+# The platform's frozen minted shape for the identity envelope (INT-992).
+_DELEGATION_ENVELOPE = {
+    "version": 1,
+    "originator": {
+        "uuid": "0b7a3c2e-9d1f-4e8a-b6c5-2f4a8d9e1c3b",
+        "handle": "alice.asker",
+        "display_name": "Alice Asker",
+    },
+    "message_id": "7f3e9a1b-5c2d-4f6e-8a9b-1c3d5e7f9a2b",
+    "minted_at": "2026-08-13T09:30:00Z",
+    "hop": None,
+}
+
+
+class TestDelegationNeverReachesTheLlm:
+    """I1 (INT-992): the identity envelope must never appear in anything
+    formatted for the model. format_message_for_llm is the single choke point
+    every history path goes through (bootstrap hydration and oneshot alike),
+    so the strip lives here and ONLY here — adapter-facing surfaces keep full
+    metadata."""
+
+    def test_strips_only_the_delegation_key(self):
+        msg = {
+            "sender_type": "User",
+            "content": "please check the forecast",
+            "sender_name": "Alice",
+            "metadata": {
+                "delegation": dict(_DELEGATION_ENVELOPE),
+                "a2a_context_id": "ctx-123",
+                "status": "sent",
+            },
+        }
+
+        result = format_message_for_llm(msg)
+
+        assert "delegation" not in result["metadata"]
+        # The adapter contract survives: every other key is untouched.
+        assert result["metadata"]["a2a_context_id"] == "ctx-123"
+        assert result["metadata"]["status"] == "sent"
+
+    def test_no_envelope_content_in_the_formatted_message(self):
+        msg = {
+            "sender_type": "User",
+            "content": "please check the forecast",
+            "sender_name": "Bob Broker",
+            "metadata": {"delegation": dict(_DELEGATION_ENVELOPE)},
+        }
+
+        result = format_message_for_llm(msg)
+
+        rendered = str(result)
+        assert "alice.asker" not in rendered
+        assert "Alice Asker" not in rendered
+        assert "0b7a3c2e-9d1f-4e8a-b6c5-2f4a8d9e1c3b" not in rendered
+        assert "delegation" not in rendered
+
+    def test_does_not_mutate_the_source_metadata(self):
+        """The source dict belongs to the hydrated context cache, which
+        adapter-facing paths keep reading — strip on a copy."""
+        metadata = {
+            "delegation": dict(_DELEGATION_ENVELOPE),
+            "a2a_context_id": "ctx-123",
+        }
+        msg = {"sender_type": "User", "content": "hi", "metadata": metadata}
+
+        format_message_for_llm(msg)
+
+        assert metadata["delegation"] == _DELEGATION_ENVELOPE
+        assert metadata["a2a_context_id"] == "ctx-123"
+
+    def test_metadata_without_envelope_passes_through_unchanged(self):
+        metadata = {"a2a_context_id": "ctx-123", "status": "sent"}
+        msg = {"sender_type": "User", "content": "hi", "metadata": metadata}
+
+        result = format_message_for_llm(msg)
+
+        assert result["metadata"] == {"a2a_context_id": "ctx-123", "status": "sent"}
+
+    def test_history_hydration_never_carries_the_envelope(self):
+        """End to end through format_history_for_llm: a delegated message in
+        hydrated history reaches the model without any envelope content."""
+        messages = [
+            {
+                "id": "m1",
+                "sender_type": "User",
+                "content": "earlier plain message",
+                "metadata": {"status": "sent"},
+            },
+            {
+                "id": "m2",
+                "sender_type": "User",
+                "content": "delegated ask",
+                "metadata": {
+                    "delegation": dict(_DELEGATION_ENVELOPE),
+                    "a2a_context_id": "ctx-123",
+                },
+            },
+        ]
+
+        result = format_history_for_llm(messages)
+
+        rendered = str(result)
+        assert "delegation" not in rendered
+        assert "alice.asker" not in rendered
+        assert result[1]["metadata"]["a2a_context_id"] == "ctx-123"
+        assert result[0]["metadata"] == {"status": "sent"}
 
 
 class TestFormatHistoryForLlm:

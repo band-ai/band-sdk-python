@@ -75,13 +75,25 @@ def format_message_for_llm(msg: dict, participants: list[dict] | None = None) ->
     if participants:
         content = replace_uuid_mentions(content, participants)
 
+    metadata = msg.get("metadata", {})
+    if isinstance(metadata, dict) and "delegation" in metadata:
+        # The platform's identity envelope (metadata["delegation"], INT-992)
+        # is for handler/tool code, never the model. This function is the
+        # single choke point every history path flows through (bootstrap
+        # hydration and oneshot alike), so the strip is enforced here and ONLY
+        # here. Strip ONLY this key: adapters keep reading their session keys
+        # (e.g. a2a_context_id) off history metadata — a deliberate contract
+        # pinned by test_preserves_metadata. Copy, don't mutate: the source
+        # dict belongs to the hydrated context cache.
+        metadata = {k: v for k, v in metadata.items() if k != "delegation"}
+
     return {
         "role": "assistant" if sender_type == "Agent" else "user",
         "content": content,
         "sender_name": sender_name,
         "sender_type": sender_type,
         "message_type": msg.get("message_type", "text"),
-        "metadata": msg.get("metadata", {}),
+        "metadata": metadata,
     }
 
 

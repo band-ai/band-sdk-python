@@ -28,6 +28,7 @@ from band.core.types import (
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     custom_tools_to_schemas,
     execute_custom_tool,
     find_custom_tool,
@@ -470,7 +471,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, tool_input)
+                    result = await execute_custom_tool(
+                        custom_tool, tool_input, ctx=ctx_from_tools(tools)
+                    )
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
                 result_str = (

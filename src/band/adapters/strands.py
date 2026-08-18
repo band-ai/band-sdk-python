@@ -46,6 +46,7 @@ from band.core.types import (
 from band.converters.strands import StrandsHistoryConverter, StrandsMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     execute_custom_tool,
     get_custom_tool_name,
     is_marked_terminal,
@@ -192,10 +193,18 @@ class StrandsToolBridge(AgentTool):
 
 
 class CustomToolBridge(StrandsToolBridge):
-    """Expose a portable custom tool through Strands' native tool protocol."""
+    """Expose a portable custom tool through Strands' native tool protocol.
 
-    def __init__(self, tool_def: CustomToolDef):
+    ``ctx`` is the turn's ExecutionContext (INT-994). Bridges are built once
+    at adapter init for validation, then REBUILT per turn by
+    ``_custom_tools_for_turn`` so each turn's bridge carries that turn's
+    context — the adapter is shared across rooms, so a mutable slot here
+    would race concurrent turns.
+    """
+
+    def __init__(self, tool_def: CustomToolDef, ctx: Any = None):
         self._tool_def = tool_def
+        self._ctx = ctx
         input_model, _ = tool_def
         name = get_custom_tool_name(input_model)
         super().__init__(name, input_model, input_model.__doc__ or name)
@@ -209,7 +218,7 @@ class CustomToolBridge(StrandsToolBridge):
         del invocation_state, kwargs
         try:
             result = await execute_custom_tool(
-                self._tool_def, dict(tool_use["input"] or {})
+                self._tool_def, dict(tool_use["input"] or {}), ctx=self._ctx
             )
         except Exception as error:
             yield _tool_result(
@@ -398,7 +407,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         overflow, keeping toolUse/toolResult pairs intact. The persisted room
         transcript is therefore capped by the framework, not unbounded.
         """
-        framework_tools = self._build_platform_tools(tools) + self._custom_tools
+        framework_tools = self._build_platform_tools(
+            tools
+        ) + self._custom_tools_for_turn(tools)
         return Agent(
             model=self.model,
             messages=messages,
@@ -410,6 +421,25 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             callback_handler=None,
             name=self.agent_name or None,
         )
+
+    def _custom_tools_for_turn(
+        self, tools: AgentToolsProtocol
+    ) -> list[AgentTool | Callable[..., Any]]:
+        """Custom tools for one turn: tuples re-bridged with this turn's ctx.
+
+        The init-built bridges validated names and terminal markers; per-turn
+        rebridging binds the current ExecutionContext (read defensively off
+        the AgentTools) and keeps each turn's tool spec unshared — Strands
+        writes normalization into the spec's nested schema in place. Native
+        tools (plain callables / AgentTool) pass through by identity.
+        """
+        ctx = ctx_from_tools(tools)
+        return [
+            CustomToolBridge(tool._tool_def, ctx=ctx)
+            if isinstance(tool, CustomToolBridge)
+            else tool
+            for tool in self._custom_tools
+        ]
 
     def _build_platform_tools(self, tools: AgentToolsProtocol) -> list[AgentTool]:
         """Adapt the central Band tool registry to Strands for this turn.

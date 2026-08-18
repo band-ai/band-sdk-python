@@ -103,6 +103,69 @@ class TestExecutionContextConstruction:
 
         assert ctx.is_llm_initialized is False
 
+    def test_init_no_delegation(self, mock_link, mock_handler):
+        """The identity envelope (INT-992) starts absent; the preprocessor
+        sets it per message."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+
+        assert ctx.delegation is None
+
+
+class TestCredentials:
+    """ctx.credentials — the per-turn delegated-credential resolver (INT-993)."""
+
+    def test_returns_a_resolver_bound_to_the_current_envelope(
+        self, mock_link, mock_handler
+    ):
+        from band.core.delegation import DelegationEnvelope
+        from band.platform.delegation_exchange import CredentialResolver
+
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        envelope = DelegationEnvelope(message_id="msg-1")
+        ctx.delegation = envelope
+
+        resolver = ctx.credentials
+
+        assert isinstance(resolver, CredentialResolver)
+        assert resolver.envelope is envelope
+
+    def test_is_stable_within_one_turn(self, mock_link, mock_handler):
+        """A tool fan-out must share one resolver, or its per-audience cache
+        and single-flight lock would be useless."""
+        from band.core.delegation import DelegationEnvelope
+
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.delegation = DelegationEnvelope(message_id="msg-1")
+
+        assert ctx.credentials is ctx.credentials
+
+    def test_rebuilds_when_the_envelope_changes(self, mock_link, mock_handler):
+        """A new message's envelope must never see the previous message's
+        token cache — the exchange is scoped to (message, audience)."""
+        from band.core.delegation import DelegationEnvelope
+
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.delegation = DelegationEnvelope(message_id="msg-1")
+        first = ctx.credentials
+
+        ctx.delegation = DelegationEnvelope(message_id="msg-2")
+        second = ctx.credentials
+
+        assert second is not first
+        assert second.envelope is ctx.delegation
+
+    async def test_without_envelope_token_for_raises_no_delegation(
+        self, mock_link, mock_handler
+    ):
+        """I3: owner-invoked messages have no envelope; the resolver's
+        absence-error explains that instead of an AttributeError or a 404."""
+        from band.platform.delegation_exchange import NoDelegation
+
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+
+        with pytest.raises(NoDelegation):
+            await ctx.credentials.token_for("some-connector-id")
+
 
 class TestExecutionContextProtocol:
     """Test that ExecutionContext implements Execution protocol."""

@@ -643,3 +643,39 @@ class TestStoreMemoryInputDescription:
                     "scope": "organization",
                 }
             )
+
+
+class TestCustomToolCtxThreading:
+    """INT-994: custom tool handlers can receive the ExecutionContext."""
+
+    def test_custom_tool_receives_ctx_from_context_tools(self, builder_mod):
+        from pydantic import BaseModel
+
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            text: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        tools_obj = MagicMock()
+        sentinel_ctx = object()
+        tools_obj._ctx = sentinel_ctx
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+            custom_tools=[(CtxProbeInput, probe)],
+        )
+        probe_tool = next(t for t in tools if t.name == "ctxprobe")
+
+        result = json.loads(probe_tool._run(text="hi"))
+
+        assert result["status"] == "success"
+        assert result["result"] == "probed"
+        assert received == [sentinel_ctx]

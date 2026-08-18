@@ -55,6 +55,7 @@ from band.core.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     custom_tools_to_schemas,
     execute_custom_tool,
     get_custom_tool_name,
@@ -575,7 +576,9 @@ class CrewAIFlowCustomTools:
         input_data = dict(arguments or kwargs)
         await self._report_call(name, input_data)
         try:
-            result = await execute_custom_tool(tool, input_data)
+            result = await execute_custom_tool(
+                tool, input_data, ctx=ctx_from_tools(self._tools)
+            )
         except Exception as exc:
             await self._report_result(name, str(exc), is_error=True)
             raise

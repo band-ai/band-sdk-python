@@ -25,6 +25,7 @@ import uvicorn
 
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     execute_custom_tool,
     get_custom_tool_name,
 )
@@ -171,7 +172,8 @@ def build_band_mcp_tool_registrations(
         for definition in definitions
     ]
     registrations.extend(
-        _build_custom_registration(tool_def) for tool_def in additional_tools or []
+        _build_custom_registration(agent_tools, tool_def)
+        for tool_def in additional_tools or []
     )
     _validate_unique_tool_names(registrations)
     return registrations
@@ -201,7 +203,7 @@ def build_resolved_band_mcp_tool_registrations(
         for definition in definitions
     ]
     registrations.extend(
-        _build_resolved_custom_registration(tool_def)
+        _build_resolved_custom_registration(get_tools, tool_def)
         for tool_def in additional_tools or []
     )
     _validate_unique_tool_names(registrations)
@@ -262,12 +264,19 @@ def _build_resolved_builtin_registration(
     )
 
 
-def _build_custom_registration(tool_def: CustomToolDef) -> MCPToolRegistration:
+def _build_custom_registration(
+    agent_tools: AgentToolsProtocol,
+    tool_def: CustomToolDef,
+) -> MCPToolRegistration:
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
 
     async def execute(arguments: dict[str, Any]) -> Any:
-        return await execute_custom_tool(tool_def, arguments)
+        # ctx resolved at call time: AgentTools.from_context stashes the
+        # ExecutionContext after this registration is built (INT-994).
+        return await execute_custom_tool(
+            tool_def, arguments, ctx=ctx_from_tools(agent_tools)
+        )
 
     return MCPToolRegistration(
         name=tool_name,
@@ -277,14 +286,21 @@ def _build_custom_registration(tool_def: CustomToolDef) -> MCPToolRegistration:
     )
 
 
-def _build_resolved_custom_registration(tool_def: CustomToolDef) -> MCPToolRegistration:
+def _build_resolved_custom_registration(
+    get_tools: RoomToolResolver,
+    tool_def: CustomToolDef,
+) -> MCPToolRegistration:
     input_model, _ = tool_def
     tool_name = get_custom_tool_name(input_model)
 
     async def execute(arguments: dict[str, Any]) -> Any:
+        # Unlike builtin registrations, a custom tool does not require room
+        # tools to run — an unknown room simply yields ctx=None (INT-994).
+        room_id = str(arguments.get("room_id", ""))
         return await execute_custom_tool(
             tool_def,
             {key: value for key, value in arguments.items() if key != "room_id"},
+            ctx=ctx_from_tools(get_tools(room_id)),
         )
 
     return MCPToolRegistration(
