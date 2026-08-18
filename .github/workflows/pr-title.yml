@@ -55,9 +55,7 @@ jobs:
             deps
             tests
             examples
-            tools
-            auth
-            transport
+            mcp
           # Require scope to be provided
           requireScope: false
           # Disable validation for merge commits
