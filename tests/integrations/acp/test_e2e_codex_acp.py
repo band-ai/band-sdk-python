@@ -14,6 +14,7 @@ Requires: codex-acp
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -31,9 +32,9 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import BandACPClient
-from band.runtime.mcp_server import (
+from band.integrations.mcp.engine import MCPToolRegistration
+from band.integrations.mcp.local_server import (
     LocalMCPServer,
-    MCPToolRegistration,
     build_band_mcp_tool_registrations,
 )
 from band.runtime.tools import AgentTools
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 # live subprocess (Node + network), so they are opt-in like the rest of the e2e
 # suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
 # are slow and their subprocess/fd pressure was starving nearby server tests
-# (e.g. tests/runtime/test_mcp_server.py) into spurious timeouts.
+# (e.g. tests/integrations/mcp/test_local_server.py) into spurious timeouts.
 _E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
     "1",
     "true",
@@ -207,8 +208,12 @@ async def test_codex_acp_http_mcp_server_tool_call(
     from acp import text_block
     from acp.schema import HttpMcpServer
 
-    async def execute(arguments: dict[str, str]) -> dict[str, str]:
-        return {"echo": arguments["message"]}
+    # execute() must return a wire-serialized string (INT-1096 divergence-matrix
+    # row 15, universal for both doors now): the dynamic handler build_engine()
+    # creates always declares -> str, so FastMCP's structured-output validation
+    # rejects a raw dict here.
+    async def execute(arguments: dict[str, str]) -> str:
+        return json.dumps({"echo": arguments["message"]})
 
     local_server = LocalMCPServer(
         name="test-codex-http-mcp",

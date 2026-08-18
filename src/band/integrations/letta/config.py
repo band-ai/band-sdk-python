@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from band.core.exceptions import BandConfigError
-from band.runtime.mcp_server import LOCAL_MCP_HOST
+from band.integrations.mcp.local_server import LOCAL_MCP_HOST
 
 MCPTransport = Literal["sse", "streamable_http"]
 

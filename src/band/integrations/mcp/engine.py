@@ -128,7 +128,7 @@ class EmbeddedResolver:
     nothing here worth re-caching (divergence-matrix row 11).
     """
 
-    def __init__(self, get_tools: Callable[[str | None], Any]) -> None:
+    def __init__(self, get_tools: Callable[[str], Any]) -> None:
         self._get_tools = get_tools
 
     async def invoke(
@@ -137,6 +137,12 @@ class EmbeddedResolver:
         chat_id: str | None,
         arguments: dict[str, Any],
     ) -> Any:
+        # Embedded's uniform wrap (row 2) makes chat_id required on every
+        # agent tool's advertised schema, so validation already rejects a
+        # missing one before dispatch reaches here -- this is a defensive
+        # narrowing for the type checker and a clear error, not a real path.
+        if chat_id is None:
+            raise ValueError(f"{definition.name}: missing chat_id for room-bound tool")
         tools = self._get_tools(chat_id)
         if tools is None:
             raise ValueError(f"No tools available for room {chat_id}")
@@ -498,6 +504,9 @@ def build_engine(
     spec: EngineSpec,
     *,
     transport_security: TransportSecuritySettings | None = None,
+    sse_path: str = "/sse",
+    message_path: str = "/messages/",
+    streamable_http_path: str = "/mcp",
 ) -> FastMCP:
     """Build a fresh ``FastMCP`` instance from a normalized ``EngineSpec``.
 
@@ -506,9 +515,19 @@ def build_engine(
     returns a brand-new ``FastMCP`` -- the embedded door's session managers
     are single-use, so a caller doing a start/stop/start lifecycle must call
     this again per start rather than reuse the returned instance.
+
+    The path overrides default to FastMCP's own defaults; they exist so
+    ``local_server.py`` can preserve ``LocalMCPServer``'s existing
+    constructor surface (published band-sdk API) unchanged.
     """
     validate_unique_tool_names(spec.tools)
-    mcp = FastMCP(name=spec.name, transport_security=transport_security)
+    mcp = FastMCP(
+        name=spec.name,
+        transport_security=transport_security,
+        sse_path=sse_path,
+        message_path=message_path,
+        streamable_http_path=streamable_http_path,
+    )
     for registration in spec.tools:
         handler = _make_dispatch_function(registration)
         mcp.add_tool(

@@ -27,7 +27,7 @@ from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
-from band.runtime.mcp_server import LOCAL_MCP_HTTP_PATH, LOCAL_MCP_SSE_PATH
+from band.integrations.mcp.local_server import LOCAL_MCP_HTTP_PATH, LOCAL_MCP_SSE_PATH
 from band.runtime.tools import ToolDefinition
 
 logger = logging.getLogger(__name__)

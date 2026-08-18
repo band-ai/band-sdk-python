@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,15 +11,15 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 
-from band.runtime.custom_tools import get_custom_tool_name
-from band.runtime.mcp_server import (
+from band.integrations.mcp.engine import MCPToolRegistration
+from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     SERVER_STOP_TIMEOUT_S,
-    MCPToolRegistration,
     LocalMCPServer,
     build_band_mcp_tool_registrations,
     build_resolved_band_mcp_tool_registrations,
 )
+from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools
 
 
@@ -58,7 +59,10 @@ class TestBuildBandMcpToolRegistrations:
             )
 
     @pytest.mark.asyncio
-    async def test_resolved_registrations_require_room_id(self) -> None:
+    async def test_resolved_registrations_advertise_chat_id(self) -> None:
+        """The embedded door's uniform wrap advertises ``chat_id`` (canonical
+        name, INT-1096); ``room_id`` remains a accepted input alias only --
+        see test_resolved_registrations_dispatch_by_room_id below."""
         tools_by_room = {
             "room-123": AgentTools("room-123", MagicMock(), []),
         }
@@ -69,10 +73,11 @@ class TestBuildBandMcpToolRegistrations:
         registration = next(
             item for item in registrations if item.name == "band_get_participants"
         )
-        schema = registration.to_mcp_tool().inputSchema
+        schema = registration.input_model.model_json_schema()
 
-        assert "room_id" in schema["properties"]
-        assert "room_id" in schema["required"]
+        assert "chat_id" in schema["properties"]
+        assert "chat_id" in schema["required"]
+        assert "room_id" not in schema["properties"]
 
     @pytest.mark.asyncio
     async def test_resolved_registrations_dispatch_by_room_id(self) -> None:
@@ -142,8 +147,12 @@ class TestLocalMcpServer:
 
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
-        async def execute(arguments: dict[str, str]) -> dict[str, str]:
-            return {"echo": arguments["message"]}
+        # A registration's execute() always returns a wire-serialized string
+        # (INT-1096 divergence-matrix row 15, universal for both doors now):
+        # the dynamic handler build_engine() creates always declares -> str,
+        # so FastMCP's structured-output validation rejects a raw dict here.
+        async def execute(arguments: dict[str, str]) -> str:
+            return json.dumps({"echo": arguments["message"]})
 
         server = LocalMCPServer(
             name="test-local-mcp",
@@ -172,7 +181,7 @@ class TestLocalMcpServer:
 
                     result = await session.call_tool("echo", {"message": "hello"})
                     assert not result.isError
-                    assert result.structuredContent == {"echo": "hello"}
+                    assert json.loads(result.content[0].text) == {"echo": "hello"}
         finally:
             await server.stop()
 
@@ -237,8 +246,8 @@ class TestLocalMcpServer:
     @pytest.mark.timeout(90)
     @pytest.mark.asyncio
     async def test_serves_streamable_http_tools_on_localhost(self) -> None:
-        async def execute(arguments: dict[str, str]) -> dict[str, str]:
-            return {"echo": arguments["message"]}
+        async def execute(arguments: dict[str, str]) -> str:
+            return json.dumps({"echo": arguments["message"]})
 
         server = LocalMCPServer(
             name="test-local-mcp-http",
@@ -271,6 +280,87 @@ class TestLocalMcpServer:
 
                     result = await session.call_tool("echo", {"message": "hello"})
                     assert not result.isError
-                    assert result.structuredContent == {"echo": "hello"}
+                    assert json.loads(result.content[0].text) == {"echo": "hello"}
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_cleans_up_state_even_if_serve_task_crashed(self) -> None:
+        """Regression: stop() used to skip socket close and state reset when
+        the serve task crashed with anything but CancelledError -- the bare
+        ``await self._serve_task`` re-raised past the cleanup code below it,
+        leaking the socket and leaving stale state for the next start()."""
+        server = LocalMCPServer(
+            name="test-crash", tool_registrations=[], port_min=0, port_max=0
+        )
+        reserved_socket, port = server._reserve_socket()
+        server._socket = reserved_socket
+        server._port = port
+
+        async def _raise() -> None:
+            raise RuntimeError("simulated serve-task crash")
+
+        server._serve_task = asyncio.create_task(_raise())
+
+        await server.stop()  # must not raise, and must still clean up
+
+        assert server._serve_task is None
+        assert server._socket is None
+        assert server._port is None
+        assert server._uvicorn_server is None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_start_calls_are_serialized(self) -> None:
+        """start()/start() must not race: the second call, once it acquires
+        the lifecycle lock, sees the first's already-running server and
+        no-ops rather than binding a second socket."""
+        server = LocalMCPServer(
+            name="test-concurrent-start",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        try:
+            await asyncio.gather(server.start(), server.start())
+            assert server.port is not None
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_stop_start_cycle_rebuilds_engine(self) -> None:
+        """Session managers are single-use (mcp.server.streamable_http_manager);
+        a second start() must construct a fresh engine, not reuse a stale one."""
+
+        async def execute(arguments: dict[str, str]) -> str:
+            return json.dumps({"echo": arguments["message"]})
+
+        server = LocalMCPServer(
+            name="test-start-stop-start",
+            tool_registrations=[
+                MCPToolRegistration(
+                    name="echo",
+                    description="Echo a message",
+                    input_model=EchoInput,
+                    execute=execute,
+                )
+            ],
+            port_min=0,
+            port_max=0,
+        )
+
+        await server.start()
+        await server.stop()
+        await server.start()
+        try:
+            async with streamablehttp_client(server.http_url) as (
+                read_stream,
+                write_stream,
+                _,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    result = await session.call_tool("echo", {"message": "hi"})
+                    assert not result.isError
+                    assert json.loads(result.content[0].text) == {"echo": "hi"}
         finally:
             await server.stop()

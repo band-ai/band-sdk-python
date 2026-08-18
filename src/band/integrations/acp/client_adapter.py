@@ -40,7 +40,7 @@ from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ACPToolCall
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
-from band.runtime.mcp_server import LocalMCPServer
+from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     ROOM_POSTING_TOOL_NAMES,
