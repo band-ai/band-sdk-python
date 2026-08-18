@@ -9,7 +9,7 @@ import pytest
 from band.integrations.acp.push_handler import ACPPushHandler
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 
-from .conftest import make_platform_message
+from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestACPPushHandler:

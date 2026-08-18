@@ -18,6 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, ClassVar, Literal, cast
 
 try:
@@ -30,6 +31,7 @@ try:
         ToolUseBlock,
         ToolResultBlock,
         ResultMessage,
+        UserMessage,
     )
     from claude_agent_sdk._errors import CLIConnectionError  # type: ignore[import-not-found]
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
@@ -59,6 +61,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.converters.claude_sdk import (
+    SESSION_ID_METADATA_KEY,
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )
@@ -72,15 +75,22 @@ from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
 )
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    get_custom_tool_name,
+    is_marked_terminal,
+)
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
+    band_tool_errored,
+    is_terminal_success,
     iter_tool_definitions,
     mcp_tool_names,
+    missing_reply_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,6 +121,12 @@ ApprovalDecision = Literal["accept", "decline"]
 # Commands recognised as local (not forwarded to Claude)
 _APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
 _LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
+
+# A pending approval's future, force-resolved by eviction or room teardown
+# rather than a genuine /decline reply — distinct from the "decline" string
+# _handle_approval_command sets, since only that path posts a room-visible
+# notice for the specific call it declines (see _record_notified_decline).
+_FORCED_DECLINE = "forced_decline"
 
 # Patterns that look like secrets/tokens in shell commands
 _REDACT_RE = re.compile(
@@ -366,6 +382,17 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
+        # Custom tools that opt in as terminal actions (band_terminal=True on the
+        # handler). Only these let a turn with no Band terminal tool call still
+        # count as answered — see is_terminal_success. Keyed by the name the
+        # tool is actually registered/called under (get_custom_tool_name), not
+        # the handler's Python __name__ — _build_custom_sdk_tool derives the
+        # MCP tool name from the input model, so the two can differ.
+        self._custom_terminal_names: frozenset[str] = frozenset(
+            get_custom_tool_name(input_model)
+            for input_model, handler in self._custom_tools
+            if is_marked_terminal(handler)
+        )
 
         # Approval flow state
         # {room_id: {token: _PendingApproval, ...}}
@@ -373,6 +400,19 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._approval_seq: dict[str, int] = {}  # per-room counters
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
+        # tool_use_ids (per room) whose decline was actually posted as a
+        # room-visible notice this turn (see _record_notified_decline). Popped
+        # unconditionally once per turn in _on_turn_complete — see
+        # _declined_the_reply for what this is cross-referenced against and
+        # why tool_use_id uniqueness needs no turn-scoping here.
+        self._notified_declines: dict[str, set[str]] = {}
+        # Bare tool name per pending call, keyed by room then tool_use_id
+        # (ToolResultBlock only carries the id). Room-scoped rather than
+        # turn-local: a resumed session can replay a result whose tool_use
+        # streamed in an earlier, truncated turn, and that result must still
+        # resolve to its name to count as terminal work. Entries are popped
+        # as results arrive and the room's map is dropped in on_cleanup.
+        self._pending_tool_names: dict[str, dict[str, str]] = {}
 
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -683,127 +723,361 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         logger.debug("Message %s processed successfully", msg.id)
 
-    # --- Copied from BandClaudeSDKAgent._process_response ---
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
     ) -> None:
-        """
-        Process streaming response from Claude SDK.
+        """Dispatch the turn's streamed messages until its terminal ResultMessage.
 
         MCP tools handle actual execution - we log and optionally report events here.
         """
+        # The room's pending-call map (see __init__) — persists across turns
+        # so a result replayed by a resumed session still resolves its name.
+        pending_tool_names = self._pending_tool_names.setdefault(room_id, {})
+        replied_this_turn = False
         async for sdk_message in client.receive_response():
-            if isinstance(sdk_message, AssistantMessage):
-                for block in sdk_message.content:
-                    if isinstance(block, TextBlock):
-                        if block.text:
-                            logger.debug(
-                                "Room %s: Text: %s...", room_id, block.text[:100]
-                            )
-
-                    elif isinstance(block, ThinkingBlock):
-                        if block.thinking:
-                            logger.debug(
-                                "Room %s: Thinking: %s...",
-                                room_id,
-                                block.thinking[:100],
-                            )
-                            # Report thinking as event if enabled
-                            if Emit.THOUGHTS in self.features.emit:
-                                try:
-                                    await tools.send_event(
-                                        content=block.thinking,
-                                        message_type="thought",
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        "Failed to send thinking event: %s", e
-                                    )
-
-                    elif isinstance(block, ToolUseBlock):
-                        # Bare name for the cross-adapter tool_call record (the SDK
-                        # namespaces our tools mcp__band__*; see _semantic_tool_name).
-                        tool_name = self._semantic_tool_name(block.name)
-                        logger.info(
-                            "Room %s: Tool call: %s with %s...",
-                            room_id,
-                            tool_name,
-                            str(block.input)[:100],
-                        )
-                        if Emit.EXECUTION in self.features.emit:
-                            try:
-                                await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            ToolEventKey.NAME: tool_name,
-                                            ToolEventKey.ARGS: block.input,
-                                            ToolEventKey.TOOL_CALL_ID: block.id,
-                                        }
-                                    ),
-                                    message_type="tool_call",
-                                )
-                            except Exception as e:
-                                logger.warning("Failed to send tool_call event: %s", e)
-
-                    elif isinstance(block, ToolResultBlock):
-                        logger.debug(
-                            "Room %s: Tool result: %s... error=%s",
-                            room_id,
-                            block.tool_use_id[:20],
-                            block.is_error,
-                        )
-                        if Emit.EXECUTION in self.features.emit:
-                            try:
-                                await tools.send_event(
-                                    content=json.dumps(
-                                        {
-                                            ToolEventKey.OUTPUT: block.content,
-                                            ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
-                                        }
-                                    ),
-                                    message_type="tool_result",
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to send tool_result event: %s", e
-                                )
-
-            elif isinstance(sdk_message, ResultMessage):
-                logger.info(
-                    "Room %s: Complete - %sms, $%.4f",
-                    room_id,
-                    sdk_message.duration_ms,
-                    sdk_message.total_cost_usd or 0,
-                )
-                # Capture session_id for potential resume
-                if sdk_message.session_id:
-                    prev_session_id = self._session_ids.get(room_id)
-                    self._session_ids[room_id] = sdk_message.session_id
-                    logger.debug(
-                        "Room %s: Captured session_id %s",
-                        room_id,
-                        sdk_message.session_id,
+            match sdk_message:
+                case AssistantMessage():
+                    replied_this_turn |= await self._on_assistant_message(
+                        sdk_message, pending_tool_names, room_id, tools
                     )
-                    # Persist session_id as task event (best-effort, only on change)
-                    if sdk_message.session_id != prev_session_id:
-                        try:
-                            await tools.send_event(
-                                content="Claude SDK session",
-                                message_type="task",
-                                metadata={
-                                    "claude_sdk_session_id": sdk_message.session_id,
-                                },
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                "Room %s: Failed to persist session_id: %s",
-                                room_id,
-                                e,
-                            )
-                # The ResultMessage carries the turn's total usage (the SDK runs
-                # its own tool loop internally, so this is already aggregated).
-                await self.emit_usage(tools, self._usage_from_result(sdk_message))
-                break
+                case UserMessage():
+                    replied_this_turn |= await self._on_user_message(
+                        sdk_message, pending_tool_names, room_id, tools
+                    )
+                case ResultMessage():
+                    await self._on_turn_complete(
+                        sdk_message,
+                        room_id,
+                        tools,
+                        replied_this_turn=replied_this_turn,
+                    )
+                    return
+        # ``receive_response`` is documented to terminate only after its
+        # ResultMessage. Reaching EOF first means the CLI transport died.
+        if replied_this_turn:
+            # The reply already reached the room — failing the turn would
+            # make the runtime redeliver the message and answer the user
+            # twice. Drop the dead session and treat the turn as done.
+            logger.warning(
+                "Room %s: CLI stream ended without a result after the "
+                "reply was delivered — invalidating session",
+                room_id,
+            )
+            if self._session_manager:
+                await self._session_manager.invalidate_session(room_id)
+            self._session_ids.pop(room_id, None)
+            return
+        # Nothing was delivered: use the normal dead-client path so the
+        # runtime marks this turn failed and the cached client is not reused.
+        raise CLIConnectionError(self._stream_ended_without_result_error())
+
+    async def _on_assistant_message(
+        self,
+        message: AssistantMessage,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Narrate one assistant message's blocks.
+
+        Returns True when a carried tool result was terminal work — results
+        normally arrive in user envelopes (see _on_user_message);
+        assistant-carried ones are accepted defensively.
+        """
+        replied_this_turn = False
+        for block in message.content:
+            match block:
+                case TextBlock() if block.text:
+                    logger.debug("Room %s: Text: %s...", room_id, block.text[:100])
+                case ThinkingBlock() if block.thinking:
+                    await self._narrate_thinking(block, room_id, tools)
+                case ToolUseBlock():
+                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
+                case ToolResultBlock():
+                    replied_this_turn |= await self._on_tool_result(
+                        block, pending_tool_names, room_id, tools
+                    )
+        return replied_this_turn
+
+    async def _on_user_message(
+        self,
+        message: UserMessage,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Handle the tool_use/tool_result blocks the protocol delivers in
+        user-type envelopes.
+
+        Returns True when any result was terminal work. ``content`` may also
+        be a plain prompt string, which carries neither.
+        """
+        if not isinstance(message.content, list):
+            return False
+        replied_this_turn = False
+        for block in message.content:
+            match block:
+                case ToolUseBlock():
+                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
+                case ToolResultBlock():
+                    replied_this_turn |= await self._on_tool_result(
+                        block, pending_tool_names, room_id, tools
+                    )
+        return replied_this_turn
+
+    async def _send_narration_event(
+        self,
+        tools: AgentToolsProtocol,
+        *,
+        gate: Emit,
+        content: str | Callable[[], str],
+        message_type: str,
+    ) -> None:
+        """Best-effort room event, gated on the adapter's declared Emit features.
+
+        Shared by every observability event (thought/tool_call/tool_result) —
+        the session-id task event is not opt-in bookkeeping, so it posts
+        unconditionally via its own path (_persist_session_id).
+
+        ``content`` may be a callable so payload serialization only happens
+        past the gate and inside this try — a large or unserializable tool
+        payload costs nothing when narration is off and can't abort the turn.
+        """
+        if gate not in self.features.emit:
+            return
+        try:
+            await tools.send_event(
+                content=content() if callable(content) else content,
+                message_type=message_type,
+            )
+        except Exception as e:
+            logger.warning("Failed to send %s event: %s", message_type, e)
+
+    async def _narrate_thinking(
+        self, block: ThinkingBlock, room_id: str, tools: AgentToolsProtocol
+    ) -> None:
+        """Log a thinking block and post it as a thought event when enabled."""
+        logger.debug("Room %s: Thinking: %s...", room_id, block.thinking[:100])
+        await self._send_narration_event(
+            tools, gate=Emit.THOUGHTS, content=block.thinking, message_type="thought"
+        )
+
+    async def _on_tool_use(
+        self,
+        block: ToolUseBlock,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Register a pending call (for the terminal-work check at turn end)
+        and narrate it. Shared by both envelopes a call can arrive in — the
+        protocol's assistant messages, and user messages when the call is
+        carried by a subagent/nested tool_use block."""
+        # Bare name for the cross-adapter tool_call record (the SDK
+        # namespaces our tools mcp__band__*; see _semantic_tool_name).
+        tool_name = self._semantic_tool_name(block.name)
+        pending_tool_names[block.id] = tool_name
+        await self._narrate_tool_call(block, tool_name, room_id, tools)
+
+    async def _narrate_tool_call(
+        self,
+        block: ToolUseBlock,
+        tool_name: str,
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Log a tool call and post it as a tool_call event when enabled."""
+        logger.info(
+            "Room %s: Tool call: %s with %s...",
+            room_id,
+            tool_name,
+            str(block.input)[:100],
+        )
+        await self._send_narration_event(
+            tools,
+            gate=Emit.EXECUTION,
+            content=lambda: json.dumps(
+                {
+                    ToolEventKey.NAME: tool_name,
+                    ToolEventKey.ARGS: block.input,
+                    ToolEventKey.TOOL_CALL_ID: block.id,
+                }
+            ),
+            message_type="tool_call",
+        )
+
+    async def _on_turn_complete(
+        self,
+        sdk_message: ResultMessage,
+        room_id: str,
+        tools: AgentToolsProtocol,
+        *,
+        replied_this_turn: bool,
+    ) -> None:
+        """Close out the turn: persist session id, emit usage, surface failure."""
+        logger.info(
+            "Room %s: Complete - %sms, $%.4f",
+            room_id,
+            sdk_message.duration_ms,
+            sdk_message.total_cost_usd or 0,
+        )
+        if sdk_message.session_id:
+            await self._persist_session_id(sdk_message.session_id, room_id, tools)
+        # The ResultMessage carries the turn's total usage (the SDK runs
+        # its own tool loop internally, so this is already aggregated).
+        await self.emit_usage(tools, self._usage_from_result(sdk_message))
+        # Consumed exactly once per turn regardless of outcome, so a decline
+        # that never explains a silence (the turn replied anyway, or errored
+        # outright) doesn't linger and grow this room's entry unbounded.
+        notified = self._notified_declines.pop(room_id, None)
+        if sdk_message.is_error:
+            await self._report_error(tools, self._result_error_detail(sdk_message))
+        elif not replied_this_turn and not self._declined_the_reply(
+            sdk_message.permission_denials, notified
+        ):
+            await self._report_error(tools, missing_reply_error("Claude SDK"))
+
+    def _declined_the_reply(
+        self, permission_denials: list[Any] | None, notified: set[str] | None
+    ) -> bool:
+        """Whether this turn's silence is already explained by a decline.
+
+        ``permission_denials`` is ``ResultMessage.permission_denials`` — the
+        CLI's own record of every tool denied during this turn (verified
+        live: it never carries a denial from a different turn), each with the
+        ``tool_name`` and ``tool_use_id`` it denied. ``notified`` is the one
+        thing the CLI can't tell us — which of those denials actually reached
+        the room as a decline notice (see _record_notified_decline). A denial
+        only explains the silence when it was both notified and the declined
+        tool is what would have delivered the reply (is_terminal_success) —
+        a declined side tool like Bash still leaves the turn's question
+        unanswered.
+        """
+        if not notified:
+            return False
+        for denial in permission_denials or []:
+            if not isinstance(denial, dict):
+                continue
+            raw_tool_name = denial.get("tool_name")
+            if denial.get("tool_use_id") not in notified or not isinstance(
+                raw_tool_name, str
+            ):
+                continue
+            # The CLI reports the tool_use block's own name, which for an MCP
+            # tool is namespaced (see _semantic_tool_name) — strip it before
+            # comparing, same as every other tool-name check in this adapter.
+            tool_name = self._semantic_tool_name(raw_tool_name)
+            if is_terminal_success(
+                tool_name,
+                succeeded=True,
+                custom_terminal=tool_name in self._custom_terminal_names,
+            ):
+                return True
+        return False
+
+    def _record_notified_decline(self, room_id: str, tool_use_id: str) -> None:
+        """Record that a decline notice for ``tool_use_id`` reached the room.
+
+        Single source of truth for the three call sites that can determine a
+        decline was actually delivered (auto_decline, manual /decline, manual
+        timeout) — deliberately not called for a forced resolution (approval
+        eviction, room teardown; see _FORCED_DECLINE), which never posts a
+        notice for the specific call it force-declines.
+        """
+        self._notified_declines.setdefault(room_id, set()).add(tool_use_id)
+
+    async def _persist_session_id(
+        self, session_id: str, room_id: str, tools: AgentToolsProtocol
+    ) -> None:
+        """Cache the session id for resume and, when it changed, persist it as
+        a task event (best-effort)."""
+        prev_session_id = self._session_ids.get(room_id)
+        self._session_ids[room_id] = session_id
+        logger.debug("Room %s: Captured session_id %s", room_id, session_id)
+        if session_id == prev_session_id:
+            return
+        try:
+            await tools.send_event(
+                content="Claude SDK session",
+                message_type="task",
+                metadata={SESSION_ID_METADATA_KEY: session_id},
+            )
+        except Exception as e:
+            logger.warning("Room %s: Failed to persist session_id: %s", room_id, e)
+
+    async def _on_tool_result(
+        self,
+        block: ToolResultBlock,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Narrate one tool result and report whether it was terminal work.
+
+        Shared by both envelopes a result can arrive in: user-type messages
+        (the protocol shape) and assistant messages (accepted defensively).
+        Returns True when the finished call counts as the turn's productive
+        work (see is_terminal_success) — i.e. the agent already answered.
+        """
+        logger.debug(
+            "Room %s: Tool result: %s... error=%s",
+            room_id,
+            block.tool_use_id[:20],
+            block.is_error,
+        )
+        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
+        # NAME and IS_ERROR are required by parse_tool_result (parsing.py):
+        # without a name it drops the event outright, and every sibling
+        # adapter's tool_result payload sets both.
+        await self._send_narration_event(
+            tools,
+            gate=Emit.EXECUTION,
+            content=lambda: json.dumps(
+                {
+                    ToolEventKey.NAME: result_tool_name,
+                    ToolEventKey.OUTPUT: block.content,
+                    ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
+                    ToolEventKey.IS_ERROR: block.is_error,
+                }
+            ),
+            message_type="tool_result",
+        )
+        # Belt and braces with the sibling adapters: a Band tool wrapper that
+        # caught an exception returns an "Error " string without is_error, so
+        # cross-check the content too (see band_tool_errored).
+        return is_terminal_success(
+            result_tool_name,
+            succeeded=not block.is_error
+            and not band_tool_errored(result_tool_name, block.content),
+            custom_terminal=result_tool_name in self._custom_terminal_names,
+        )
+
+    @staticmethod
+    def _stream_ended_without_result_error() -> str:
+        """Room-visible detail when the CLI stream ends without a ResultMessage.
+
+        Distinct from ``_result_error_detail`` (a completed turn whose
+        ResultMessage reports failure) and ``missing_reply_error`` (a completed
+        turn that never called a reply tool): this turn never reached a
+        terminal message at all, e.g. the CLI subprocess exited or its stdout
+        closed mid-turn.
+        """
+        return (
+            "Claude SDK turn ended without a result: the CLI process exited "
+            "or its output stream closed before this turn completed."
+        )
+
+    @staticmethod
+    def _result_error_detail(sdk_message: ResultMessage) -> str:
+        """Room-visible detail for a turn where ``ResultMessage.is_error`` is set."""
+        detail = (
+            sdk_message.result
+            or "; ".join(sdk_message.errors or [])
+            or ("no error detail provided by the Claude CLI")
+        )
+        if sdk_message.api_error_status:
+            detail = f"{detail} (API status {sdk_message.api_error_status})"
+        return f"Claude SDK turn failed: {detail}"
 
     @staticmethod
     def _usage_from_result(sdk_message: ResultMessage) -> TurnUsage:
@@ -831,6 +1105,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_context.pop(room_id, None)
         self._session_ids.pop(room_id, None)
         self._room_last_sender.pop(room_id, None)
+        self._notified_declines.pop(room_id, None)
+        self._pending_tool_names.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     # --- Copied from BaseFrameworkAgent._report_error ---
@@ -856,6 +1132,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._session_context.clear()
         self._session_ids.clear()
         self._room_last_sender.clear()
+        self._notified_declines.clear()
+        self._pending_tool_names.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
@@ -881,43 +1159,62 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
-            # The SDK passes the MCP-namespaced name; use the bare name everywhere
-            # this approval surfaces to the user (summary, notifications, logs).
-            tool_name = self._semantic_tool_name(tool_name)
-            summary = self._approval_summary(tool_name, tool_input)
-            # Capture the sender now so it doesn't get overwritten by
-            # messages arriving while we wait for a decision.
-            requester = self._room_last_sender.get(room_id)
-            logger.debug(
-                "can_use_tool: %s in room %s (mode=%s)",
-                tool_name,
-                room_id,
-                self.approval_mode,
-            )
-
-            # --- auto modes ---------------------------------------------------
-            if self.approval_mode == "auto_accept":
-                if self.approval_text_notifications:
-                    await self._notify_auto_decision(
-                        room_id, summary, "accept", requester=requester
-                    )
-                return PermissionResultAllow()
-
-            if self.approval_mode == "auto_decline":
-                if self.approval_text_notifications:
-                    await self._notify_auto_decision(
-                        room_id, summary, "decline", requester=requester
-                    )
-                return PermissionResultDeny(
-                    message=f"Tool use declined by policy: {summary}"
-                )
-
-            # --- manual mode ---------------------------------------------------
-            return await self._resolve_manual_approval(
-                room_id, tool_name, tool_input, summary, requester=requester
+            return await self._resolve_tool_permission(
+                room_id, tool_name, tool_input, context
             )
 
         return _can_use_tool
+
+    async def _resolve_tool_permission(
+        self,
+        room_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        context: ToolPermissionContext,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        """Decide allow/deny for one tool call under the room's approval mode."""
+        # The SDK passes the MCP-namespaced name; use the bare name everywhere
+        # this approval surfaces to the user (summary, notifications, logs).
+        tool_name = self._semantic_tool_name(tool_name)
+        summary = self._approval_summary(tool_name, tool_input)
+        # Capture the sender now so it doesn't get overwritten by
+        # messages arriving while we wait for a decision.
+        requester = self._room_last_sender.get(room_id)
+        # Always a real string for a can_use_tool callback (see
+        # ToolPermissionContext.tool_use_id); matched against this same call's
+        # entry in ResultMessage.permission_denials at turn end.
+        tool_use_id = context.tool_use_id
+        logger.debug(
+            "can_use_tool: %s in room %s (mode=%s)",
+            tool_name,
+            room_id,
+            self.approval_mode,
+        )
+
+        # --- auto modes ---------------------------------------------------
+        if self.approval_mode == "auto_accept":
+            if self.approval_text_notifications:
+                await self._notify_auto_decision(
+                    room_id, summary, "accept", requester=requester
+                )
+            return PermissionResultAllow()
+
+        if self.approval_mode == "auto_decline":
+            notified = False
+            if self.approval_text_notifications:
+                notified = await self._notify_auto_decision(
+                    room_id, summary, "decline", requester=requester
+                )
+            if notified and tool_use_id:
+                self._record_notified_decline(room_id, tool_use_id)
+            return PermissionResultDeny(
+                message=f"Tool use declined by policy: {summary}"
+            )
+
+        # --- manual mode ---------------------------------------------------
+        return await self._resolve_manual_approval(
+            room_id, tool_name, tool_input, summary, tool_use_id, requester=requester
+        )
 
     async def _notify_auto_decision(
         self,
@@ -926,19 +1223,27 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         decision: str,
         *,
         requester: dict[str, str] | None = None,
-    ) -> None:
-        """Best-effort chat notification for auto-approve / auto-decline."""
+    ) -> bool:
+        """Best-effort chat notification for auto-approve / auto-decline.
+
+        Returns whether the notice actually reached the room. A silent
+        auto_decline (no room binding, or the send itself fails) still needs
+        the missing-reply guard at turn end — only a delivered notice already
+        explains the turn's silence.
+        """
         tools = self._room_tools.get(room_id)
         if not tools:
-            return
+            return False
         mention = [requester["id"]] if requester else None
         try:
             await tools.send_message(
                 f"Approval requested ({summary}). Policy decision: **{decision}**.",
                 mentions=mention,
             )
+            return True
         except Exception as e:
             logger.warning("Failed to send approval policy notification: %s", e)
+            return False
 
     async def _resolve_manual_approval(
         self,
@@ -946,6 +1251,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         tool_name: str,
         tool_input: dict[str, Any],
         summary: str,
+        tool_use_id: str | None,
         *,
         requester: dict[str, str] | None = None,
     ) -> PermissionResultAllow | PermissionResultDeny:
@@ -968,7 +1274,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             oldest_token = min(room_pending, key=lambda t: room_pending[t].created_at)
             oldest = room_pending.pop(oldest_token)
             if not oldest.future.done():
-                oldest.future.set_result("decline")
+                oldest.future.set_result(_FORCED_DECLINE)
             logger.warning(
                 "Room %s: Evicted oldest pending approval %s (capacity %s)",
                 room_id,
@@ -994,6 +1300,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     "Room %s: Failed to send approval notification — declining", room_id
                 )
                 self._clear_pending_approval(room_id, token)
+                # No notice reached the room — the one delivery attempt is
+                # the failure itself — so this must not suppress the
+                # missing-reply guard the way the other decline paths below
+                # (which do post a notice) correctly do.
                 return PermissionResultDeny(
                     message="Could not deliver approval prompt, tool use declined"
                 )
@@ -1006,16 +1316,25 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             if decision_raw == "accept":
                 return PermissionResultAllow()
+            # Only a genuine "decline" (a human replying to the approval
+            # prompt via _handle_approval_command, which posts its own
+            # resolved-as-decline notice) implies delivery. A forced
+            # resolution — eviction or room teardown, _FORCED_DECLINE — never
+            # posts a notice for this specific call, so must not count.
+            if decision_raw == "decline" and tool_use_id:
+                self._record_notified_decline(room_id, tool_use_id)
             return PermissionResultDeny(message="User declined tool use")
 
         except asyncio.TimeoutError:
             decision: ApprovalDecision = self.approval_timeout_decision
+            notified = False
             if tools:
                 try:
                     await tools.send_message(
                         f"Approval `{token}` timed out. Decision: **{decision}**.",
                         mentions=mention,
                     )
+                    notified = True
                 except Exception:
                     logger.debug(
                         "Room %s: Failed to send timeout notification", room_id
@@ -1023,6 +1342,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
             if decision == "accept":
                 return PermissionResultAllow()
+            # Suppressing the missing-reply guard requires a delivered notice:
+            # a timeout nobody heard about must still surface as an error.
+            if notified and tool_use_id:
+                self._record_notified_decline(room_id, tool_use_id)
             return PermissionResultDeny(message="Approval timed out, tool use declined")
 
         finally:
@@ -1202,5 +1525,5 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         room_pending = self._pending_approvals.pop(room_id, {})
         for item in room_pending.values():
             if not item.future.done():
-                item.future.set_result("decline")
+                item.future.set_result(_FORCED_DECLINE)
         # Keep the seq counter to avoid token collisions with suspended coroutines

@@ -73,7 +73,7 @@ langgraph = [
     "beautifulsoup4>=4.12.0",
 ]
 claude_sdk = [
-    "claude-agent-sdk>=0.1.16",  # Requires Node.js 20+ and @anthropic-ai/claude-code CLI
+    "claude-agent-sdk>=0.1.81",  # Floor: ResultMessage.errors/api_error_status (used by the failure path). Requires Node.js 20+ and @anthropic-ai/claude-code CLI
 ]
 copilot_sdk = [
     "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
@@ -112,7 +112,11 @@ a2a_gateway_demo = [
     "click>=8.0.0",         # CLI for demo orchestrator
 ]
 acp = [
-    "agent-client-protocol>=0.9.0",  # ACP Python SDK
+    # ACP Python SDK. 0.x minors remove protocol methods (0.11.0 removed
+    # session/set_model). Left uncapped: tests/integrations/acp/
+    # test_server_routing.py dispatches every method through the SDK router,
+    # so a bump that removes a method or changes a handler signature fails CI.
+    "agent-client-protocol>=0.11.0",
     "mcp>=1.25.0,<2",
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
@@ -179,7 +183,7 @@ dev = [
     # Include anthropic for testing
     "anthropic>=0.75.0",
     # Include claude_sdk for testing
-    "claude-agent-sdk>=0.1.16",
+    "claude-agent-sdk>=0.1.81",
     # Include copilot_sdk for testing
     "github-copilot-sdk>=1.0.5",
     # Include langgraph for testing
@@ -200,7 +204,7 @@ dev = [
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
     # Include ACP deps for testing
-    "agent-client-protocol>=0.9.0",
+    "agent-client-protocol>=0.11.0",
     "mcp>=1.25.0,<2",
     # Include Slack deps for testing
     "slack-sdk>=3.27.0",

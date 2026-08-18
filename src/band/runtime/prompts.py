@@ -179,23 +179,28 @@ def render_system_prompt(
     """
     identity = f"You are {agent_name}, {agent_description}."
 
+    # Capability-gated sections: independent of include_base_instructions, so a
+    # minimal-prompt caller (e.g. an adapter whose own CLI/agent already supplies
+    # base behavior) still tells the model about tools its capabilities enabled.
+    capability_sections: list[str] = []
+    if features:
+        if Capability.MEMORY in features.capabilities:
+            capability_sections.append(MEMORY_SECTION.strip())
+        if Capability.CONTACTS in features.capabilities:
+            capability_sections.append(CONTACT_SECTION.strip())
+
     if not include_base_instructions:
-        # Minimal prompt: identity + adapter sections + custom section only
-        parts = [identity, *(s.strip() for s in extra_sections)]
+        # Minimal prompt: identity + capability/adapter sections + custom section.
+        parts = [
+            identity,
+            *capability_sections,
+            *(s.strip() for s in extra_sections),
+        ]
         if custom_section:
             parts.append(custom_section)
         return "\n\n".join(parts)
 
-    parts = [identity]
-    parts.append(BASE_INSTRUCTIONS.strip())
-
-    # Capability-gated sections
-    if features:
-        if Capability.MEMORY in features.capabilities:
-            parts.append(MEMORY_SECTION.strip())
-        if Capability.CONTACTS in features.capabilities:
-            parts.append(CONTACT_SECTION.strip())
-
+    parts = [identity, BASE_INSTRUCTIONS.strip(), *capability_sections]
     parts.extend(s.strip() for s in extra_sections)
 
     # Developer instructions at the end

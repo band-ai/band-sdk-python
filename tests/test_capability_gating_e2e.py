@@ -247,10 +247,10 @@ class TestCapabilityGatingEndToEnd:
         assert "## Environment" not in adapter._system_prompt
         assert "## Communication" not in adapter._system_prompt
 
-    async def test_anthropic_include_base_instructions_false_still_gates_capabilities(
+    async def test_anthropic_include_base_instructions_false_still_renders_capabilities(
         self,
     ) -> None:
-        """Capability sections respect include_base_instructions=False."""
+        """Capability sections render independently of include_base_instructions."""
         from band.adapters.anthropic import AnthropicAdapter
 
         adapter = AnthropicAdapter(
@@ -259,10 +259,11 @@ class TestCapabilityGatingEndToEnd:
         )
         await adapter.on_started("test-agent", "A test agent")
 
-        # Without base instructions, capability sections are also absent
-        # (they are part of the base instructions block)
+        # BASE_INSTRUCTIONS itself stays excluded, but a declared capability's
+        # section must still reach the model -- it's independent of whether the
+        # SDK's own base instructions are included.
         assert "## Environment" not in adapter._system_prompt
-        assert "## Memory Tools" not in adapter._system_prompt
+        assert "## Memory Tools" in adapter._system_prompt
 
     async def test_gemini_include_base_instructions_false_drops_base(self) -> None:
         """GeminiAdapter honors include_base_instructions=False end-to-end."""

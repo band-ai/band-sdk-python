@@ -33,7 +33,6 @@ from band.integrations.acp.client_types import (
     BandACPClient,
 )
 from band.integrations.mcp.backends import (
-    BAND_MCP_SERVER_NAME,
     BandMCPBackend,
     create_band_mcp_backend,
 )
@@ -43,6 +42,7 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
 from band.runtime.mcp_server import LocalMCPServer
 from band.runtime.tools import (
+    BAND_MCP_SERVER_NAME,
     ROOM_POSTING_TOOL_NAMES,
     ToolDefinition,
     canonicalize_mcp_tool_name,
@@ -180,6 +180,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # path already runs under _session_lock and another outside it, and
         # asyncio.Lock is not re-entrant, so the backend cannot reuse it.
         self._mcp_backend_lock = asyncio.Lock()
+        # Set under _mcp_backend_lock by cleanup_all. Without it, a turn parked
+        # on _mcp_backend_lock while cleanup_all tears down would wake to find
+        # _band_mcp_backend None and start a fresh one that outlives shutdown
+        # and is never stopped -- a real leaked server, not just a failed turn.
+        self._stopped = False
 
     @staticmethod
     def _shape_command(command: str | list[str] | None, host: str | None) -> list[str]:
@@ -211,16 +216,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         because they're built similarly would cost more than the duplication
         it removes.
 
-        Memory tools are gated behind ``Capability.MEMORY``: they were
-        previously rejected outright (an enterprise feature the adapter must
-        opt into). Contact tools are NOT gated behind ``Capability.CONTACTS``
-        despite ``iter_tool_definitions`` taking the same shape of flag for
-        both — unlike memory, contacts were already unconditionally
-        registered before this adapter declared any capabilities, and every
-        existing caller (the ACP examples) relies on that default with no
-        ``features=`` of its own. Declaring ``Capability.CONTACTS`` in
-        ``SUPPORTED_CAPABILITIES`` only stops the base class's
-        unsupported-capability warning for a caller that does declare it.
+        Memory tools are gated behind ``Capability.MEMORY`` — an opt-in,
+        enterprise feature. Contact tools are NOT gated behind
+        ``Capability.CONTACTS`` despite ``iter_tool_definitions`` taking the
+        same shape of flag for both: every existing caller (the ACP examples)
+        constructs this adapter with no ``features=`` of its own and expects
+        contacts to just work, so gating them would silently drop
+        ``band_list_contacts`` et al. for every one of them with no warning
+        (``SUPPORTED_CAPABILITIES`` already covers ``CONTACTS``, so the base
+        class's unsupported-capability warning never fires either). Declaring
+        ``Capability.CONTACTS`` in ``SUPPORTED_CAPABILITIES`` only stops that
+        warning for a caller that does declare it.
         """
         definitions = list(
             iter_tool_definitions(
@@ -256,26 +262,25 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return spawn_agent_process
 
     def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
-        # Bind profile as a local rather than closing over self to reach it
-        # (canonicalize_tool_name is a bound method either way, so it retains
-        # self regardless — this narrows what the closure needs self for, not
-        # eliminates the self <-> runtime reference cycle; CPython's cyclic
-        # GC reclaims that fine, and it's one-time construction, not a leak).
-        profile = self._profile
-        canonicalize_tool_name = self._canonical_tool_name
         return ACPRuntime(
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(
-                profile=profile,
-                canonicalize_tool_name=canonicalize_tool_name,
+                profile=self._profile,
+                canonicalize_tool_name=self._canonical_tool_name,
             ),
             spawn_process=self._select_transport(spawn_process, self._host, self._port),
         )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
+        # The other end of cleanup_all(final=True)'s _stopped: Agent.start()
+        # reuses this instance across a restart or a retry after a failed
+        # start, and the ACP connection below self-heals unconditionally, so
+        # the backend must be startable again too.
+        async with self._mcp_backend_lock:
+            self._stopped = False
         await self._spawn_process()
 
     async def _spawn_process(self) -> None:
@@ -502,15 +507,22 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """The shared backend singleton (one ``LocalMCPServer`` per adapter),
         starting it on first use.
 
-        Once started, every later room's first turn hits this — so the
-        unlocked fast-path read (matching ``_get_or_create_session`` below)
-        skips the lock entirely once the backend exists; only actual creation
-        needs it, so two rooms' concurrent first turns cannot each start a
-        server and leak the loser (running, never stopped).
+        Always through the lock, no unlocked fast-path read: a fast path
+        reading ``self._band_mcp_backend`` before acquiring the lock could
+        observe it non-``None`` while ``cleanup_all`` is mid-teardown (already
+        nulled it out but still awaiting ``backend.stop()`` under the same
+        lock). An uncontended ``asyncio.Lock.acquire()`` doesn't suspend, so
+        the lock costs nothing on the hot path it guards.
+
+        Raises once ``cleanup_all`` has run: a turn that was parked on this
+        lock while shutdown completed must fail loudly rather than silently
+        start a fresh backend that outlives shutdown and is never stopped.
         """
-        if self._band_mcp_backend is not None:
-            return self._band_mcp_backend
         async with self._mcp_backend_lock:
+            if self._stopped:
+                raise RuntimeError(
+                    "ACP client adapter is stopped; cannot start the Band MCP backend"
+                )
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
                     kind=self._runtime._agent_mcp_transport,
@@ -648,12 +660,20 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
-    async def cleanup_all(self) -> None:
+    async def cleanup_all(self, *, final: bool = True) -> None:
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
         The ACP subprocess / TCP connection and the local Band MCP server are started
         adapter-wide in ``on_started`` (not per room), so releasing them belongs here,
         not in per-room ``on_cleanup``. Idempotent — safe to call again from ``stop()``.
+
+        ``final`` distinguishes real process shutdown (the default: no future turn
+        can arrive, so a still-parked one must fail rather than start resources
+        nothing will ever stop) from the ``on_message`` error path's use of this
+        same teardown to recover a wedged connection — there, a *later* turn on
+        any room is expected to self-heal by lazily respawning both the ACP
+        connection (``_ensure_connection``'s ``can_respawn``) and the MCP backend,
+        so ``final=False`` must leave that path open.
         """
         async with self._session_lock:
             self._room_to_session.clear()
@@ -664,16 +684,26 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             local_mcp_server = self._band_mcp_server
             self._band_mcp_backend = None
             self._band_mcp_server = None
-        if backend is not None:
-            await backend.stop()
-        elif local_mcp_server is not None:
-            await local_mcp_server.stop()
+            if final:
+                # Set before releasing the lock: a room's first turn parked on
+                # _mcp_backend_lock (e.g. via _load_persisted_session, which awaits
+                # _session_mcp_servers() outside _session_lock) wakes to find
+                # _stopped True and raises instead of starting a backend that
+                # would outlive this teardown and never be stopped again.
+                self._stopped = True
+            # Stop while still holding the lock: closes the window where a
+            # concurrent _ensure_band_mcp_backend's locked slow path could see
+            # None and start a fresh backend while this one is mid-teardown.
+            if backend is not None:
+                await backend.stop()
+            elif local_mcp_server is not None:
+                await local_mcp_server.stop()
         await self._runtime.stop()
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:
         """Tear down now (used by the ``on_message`` error path); see ``cleanup_all``."""
-        await self.cleanup_all()
+        await self.cleanup_all(final=False)
 
     async def _load_persisted_session(
         self,

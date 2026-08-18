@@ -6,7 +6,9 @@ role-setting prompt, ``memory_features()``, and the reusable agent *shapes*
 (``TOOL_AGENT`` / ``MEMORY_AGENT``) passed as ``@per_adapter(..., **SHAPE)`` /
 ``@with_adapters(..., **SHAPE)``. The decorators themselves (``per_adapter`` /
 ``with_adapters`` / ``adapter_params``) live in ``tests.e2e.baseline.agents``. Adding a
-framework is a single ``@adapter`` entry in the registry -- nothing here changes.
+framework is a single ``@adapter`` entry in the registry -- with one exception:
+``USAGE_EXCLUSIONS`` below names adapters that can't report per-turn usage, so a
+framework in that position needs an entry there too.
 
 Following ``sample_tools``/``test_tool_calls``, the agent gets a fixed
 role-setting system prompt and the *user message* carries the instruction (with
