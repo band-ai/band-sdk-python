@@ -196,7 +196,7 @@ async def test_embedded_style_uniform_wrap_room_bound_dispatch(
         assert "chat_id" in tool.inputSchema["properties"]
 
         room_id = await _call(session, "band_create_chatroom", chat_id="room-1")
-        assert isinstance(room_id, str)
+        assert room_id.startswith("room-")
 
 
 async def test_embedded_send_message_round_trip_and_participant_refresh(

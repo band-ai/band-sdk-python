@@ -16,11 +16,15 @@ from collections import OrderedDict
 from typing import Any
 
 from band_rest import AsyncRestClient
-from band.core.exceptions import BandToolError
-from band.integrations.mcp.engine import enrich_send_message_error
+from band.integrations.mcp.engine import dispatch_tool
 from band.runtime.tools import AgentTools, HumanTools, Surface, ToolDefinition
 
 from band_mcp.config import Config, Scope, resolve_credential_for_scope, settings
+
+SEND_MESSAGE_METHOD_NAME = "send_message"
+"""Matches ``ToolDefinition(method_name="send_message", ...)`` in
+``src/band/runtime/tools.py`` -- the one thing that needs to stay in sync
+with :func:`_invoke_agent`'s pre-flight participant refresh below."""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +34,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 AGENT_TOOLS_CACHE_MAX_SIZE = 128
-AGENT_TOOLS_LOCK_STRIPES = 64
+# Matches the cache size: a coarser stripe count lets two unrelated chat_ids
+# share a lock, so one room's in-flight REST call (the send_message
+# participant refresh below) can block an unrelated room's call for no
+# reason. One stripe per possible cache entry removes that false contention.
+AGENT_TOOLS_LOCK_STRIPES = AGENT_TOOLS_CACHE_MAX_SIZE
 
 
 class StandaloneResolver:
@@ -58,6 +66,8 @@ class StandaloneResolver:
     ) -> None:
         self._human_tools = human_tools
         self._agent_rest = agent_rest
+        self._agent_id: str | None = None
+        self._agent_id_resolved = False
         self._agent_tools_cache: OrderedDict[str | None, Any] = OrderedDict()
         self._agent_tools_locks: list[asyncio.Lock] = [
             asyncio.Lock() for _ in range(AGENT_TOOLS_LOCK_STRIPES)
@@ -90,8 +100,7 @@ class StandaloneResolver:
                 definition.name,
             )
             raise RuntimeError(f"{definition.name}: human tools not available")
-        method = getattr(self._human_tools, definition.method_name)
-        return await method(**arguments)
+        return await dispatch_tool(self._human_tools, definition, arguments)
 
     async def _invoke_agent(
         self,
@@ -100,8 +109,8 @@ class StandaloneResolver:
         arguments: dict[str, Any],
     ) -> Any:
         async with self._agent_tools_lock(chat_id):
-            tools = self._get_or_create_agent_tools(chat_id)
-            if definition.method_name == "send_message":
+            tools = await self._get_or_create_agent_tools(chat_id, definition.name)
+            if definition.method_name == SEND_MESSAGE_METHOD_NAME:
                 try:
                     refreshed = tools.get_participants()
                     if asyncio.iscoroutine(refreshed):
@@ -110,13 +119,28 @@ class StandaloneResolver:
                     self._discard_agent_tools(chat_id, tools)
                     raise
 
-            method = getattr(tools, definition.method_name)
-            try:
-                return await method(**arguments)
-            except (ValueError, BandToolError) as error:
-                raise enrich_send_message_error(definition, tools, error) from error
+            return await dispatch_tool(tools, definition, arguments)
 
-    def _get_or_create_agent_tools(self, chat_id: str | None) -> AgentTools:
+    async def _resolve_agent_id(self) -> str | None:
+        """This agent's own id, resolved once and cached for the resolver's lifetime.
+
+        Threaded into every :class:`AgentTools` instance below so
+        ``available_mention_handles()`` can exclude the agent's own
+        participant entry from a failed ``send_message``'s mention hint --
+        the same exclusion the embedded door gets for free via
+        ``AgentTools.from_context(ctx)``.
+        """
+        if self._agent_id_resolved:
+            return self._agent_id
+        assert self._agent_rest is not None
+        identity = await self._agent_rest.agent_api_identity.get_agent_me()
+        self._agent_id = identity.data.id
+        self._agent_id_resolved = True
+        return self._agent_id
+
+    async def _get_or_create_agent_tools(
+        self, chat_id: str | None, tool_name: str
+    ) -> AgentTools:
         cached = self._agent_tools_cache.get(chat_id)
         if cached is not None:
             self._agent_tools_cache.move_to_end(chat_id)
@@ -124,13 +148,17 @@ class StandaloneResolver:
 
         if self._agent_rest is None:
             raise RuntimeError(
-                "agent tools not available (no agent credential configured)"
+                f"{tool_name}: agent tools not available "
+                "(no agent credential configured)"
             )
 
+        agent_id = await self._resolve_agent_id()
         # Room-less agent tools (chat_id is None) still need a string for the
         # SDK constructor -- "" is the sentinel, matching the None cache key.
         instance = AgentTools(
-            room_id=chat_id if chat_id is not None else "", rest=self._agent_rest
+            room_id=chat_id if chat_id is not None else "",
+            rest=self._agent_rest,
+            agent_id=agent_id,
         )
         self._agent_tools_cache[chat_id] = instance
         self._agent_tools_cache.move_to_end(chat_id)

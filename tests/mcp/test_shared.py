@@ -24,6 +24,7 @@ from band_mcp.shared import (
     build_standalone_resolver,
 )
 from band.runtime.tools import ToolDefinition, SendMessageInput, GetParticipantsInput
+from tests.mcp.conftest import FakeHumanTools
 
 
 def _definition(
@@ -33,6 +34,15 @@ def _definition(
     return ToolDefinition(
         name=name, input_model=model, method_name=method_name, surface=surface
     )
+
+
+def _fake_agent_rest(agent_id: str = "self-agent-id") -> MagicMock:
+    """A `MagicMock` agent_rest whose identity lookup resolves to `agent_id`."""
+    rest = MagicMock()
+    identity = MagicMock()
+    identity.data.id = agent_id
+    rest.agent_api_identity.get_agent_me = AsyncMock(return_value=identity)
+    return rest
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +89,7 @@ def test_build_standalone_resolver_constructs_human_tools_singleton(monkeypatch)
 
 
 async def test_invoke_human_dispatches_to_singleton():
-    human_tools = MagicMock()
-    human_tools.get_my_profile = AsyncMock(return_value={"id": "u1"})
+    human_tools = FakeHumanTools(profile={"id": "u1"})
     resolver = StandaloneResolver(human_tools=human_tools)
 
     result = await resolver.invoke(
@@ -88,7 +97,6 @@ async def test_invoke_human_dispatches_to_singleton():
     )
 
     assert result == {"id": "u1"}
-    human_tools.get_my_profile.assert_awaited_once_with()
 
 
 async def test_invoke_human_raises_and_warns_when_unavailable(caplog):
@@ -109,42 +117,60 @@ async def test_invoke_human_raises_and_warns_when_unavailable(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_get_agent_tools_caches_per_room(monkeypatch):
+async def test_get_agent_tools_caches_per_room(monkeypatch):
     constructed: list[str | None] = []
 
     class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object):
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
             self.room_id = room_id
+            self.agent_id = agent_id
             constructed.append(room_id)
 
     monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
-    first = resolver._get_or_create_agent_tools("room_A")
-    second = resolver._get_or_create_agent_tools("room_A")
+    first = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
+    second = await resolver._get_or_create_agent_tools(
+        "room_A", "band_get_participants"
+    )
 
     assert first is second
     assert constructed == ["room_A"]
 
 
-def test_get_agent_tools_returns_distinct_instance_per_room(monkeypatch):
+async def test_get_agent_tools_returns_distinct_instance_per_room(monkeypatch):
     class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object):
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
             self.room_id = room_id
+            self.agent_id = agent_id
 
     monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
-    a = resolver._get_or_create_agent_tools("room_A")
-    b = resolver._get_or_create_agent_tools("room_B")
+    a = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
+    b = await resolver._get_or_create_agent_tools("room_B", "band_get_participants")
 
     assert a is not b
     assert a.room_id == "room_A"
     assert b.room_id == "room_B"
 
 
+async def test_get_agent_tools_passes_resolved_agent_id(monkeypatch):
+    class FakeAgentTools:
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
+            self.room_id = room_id
+            self.agent_id = agent_id
+
+    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest(agent_id="self-agent-id"))
+
+    tools = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
+
+    assert tools.agent_id == "self-agent-id"
+
+
 def test_get_agent_tools_locks_use_fixed_stripes():
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     a1 = resolver._agent_tools_lock("room_A")
     a2 = resolver._agent_tools_lock("room_A")
@@ -156,22 +182,25 @@ def test_get_agent_tools_locks_use_fixed_stripes():
     assert len(resolver._agent_tools_locks) == AGENT_TOOLS_LOCK_STRIPES
 
 
-def test_get_agent_tools_cache_evicts_oldest_room(monkeypatch):
+async def test_get_agent_tools_cache_evicts_oldest_room(monkeypatch):
     class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object):
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
             self.room_id = room_id
+            self.agent_id = agent_id
 
     monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     for i in range(AGENT_TOOLS_CACHE_MAX_SIZE):
-        resolver._get_or_create_agent_tools(f"room_{i}")
+        await resolver._get_or_create_agent_tools(f"room_{i}", "band_get_participants")
 
-    first = resolver._get_or_create_agent_tools("room_0")
-    assert first is resolver._get_or_create_agent_tools("room_0")
+    first = await resolver._get_or_create_agent_tools("room_0", "band_get_participants")
+    assert first is await resolver._get_or_create_agent_tools(
+        "room_0", "band_get_participants"
+    )
     assert len(resolver._agent_tools_cache) == AGENT_TOOLS_CACHE_MAX_SIZE
 
-    resolver._get_or_create_agent_tools("room_overflow")
+    await resolver._get_or_create_agent_tools("room_overflow", "band_get_participants")
 
     assert len(resolver._agent_tools_cache) == AGENT_TOOLS_CACHE_MAX_SIZE
     assert "room_0" in resolver._agent_tools_cache
@@ -179,33 +208,39 @@ def test_get_agent_tools_cache_evicts_oldest_room(monkeypatch):
     assert "room_overflow" in resolver._agent_tools_cache
 
 
-def test_get_agent_tools_accepts_none_cache_key_with_sdk_room_sentinel(monkeypatch):
+async def test_get_agent_tools_accepts_none_cache_key_with_sdk_room_sentinel(
+    monkeypatch,
+):
     seen_room_ids: list[str] = []
 
     class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object):
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
             self.room_id = room_id
+            self.agent_id = agent_id
             seen_room_ids.append(room_id)
 
     monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
-    result = resolver._get_or_create_agent_tools(None)
+    result = await resolver._get_or_create_agent_tools(None, "band_get_participants")
 
     assert result.room_id == ""
     assert seen_room_ids == [""]
     assert resolver._agent_tools_cache == {None: result}
 
 
-def test_discard_agent_tools_only_drops_current_instance(monkeypatch):
+async def test_discard_agent_tools_only_drops_current_instance(monkeypatch):
     class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object):
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
             self.room_id = room_id
+            self.agent_id = agent_id
 
     monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
-    original = resolver._get_or_create_agent_tools("room_A")
+    original = await resolver._get_or_create_agent_tools(
+        "room_A", "band_get_participants"
+    )
     replacement = object()
 
     resolver._discard_agent_tools("room_A", replacement)
@@ -236,7 +271,7 @@ async def test_invoke_send_message_refreshes_participants_first(monkeypatch):
     monkeypatch.setattr(
         shared_mod, "AgentTools", MagicMock(return_value=fake_agent_tools)
     )
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     result = await resolver.invoke(
         _definition("band_send_message", "send_message"),
@@ -258,7 +293,7 @@ async def test_invoke_send_message_discards_cache_entry_on_refresh_failure(monke
     monkeypatch.setattr(
         shared_mod, "AgentTools", MagicMock(return_value=fake_agent_tools)
     )
-    resolver = StandaloneResolver(agent_rest=MagicMock())
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     with pytest.raises(PermissionError, match="denied"):
         await resolver.invoke(

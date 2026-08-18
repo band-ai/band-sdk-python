@@ -1,7 +1,7 @@
 """Compatibility re-export for the old ``band.runtime.mcp_server`` import path.
 
 The embedded MCP front door moved to ``band.integrations.mcp.local_server``
-(INT-1096) -- this module now just re-exports its public names so an
+-- this module now just re-exports its public names so an
 external consumer importing ``band.runtime.mcp_server`` directly (band-sdk is
 published) doesn't break on the move. Keep for at least one minor release;
 new code should import from the new location instead.

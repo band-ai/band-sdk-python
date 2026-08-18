@@ -208,10 +208,9 @@ async def test_codex_acp_http_mcp_server_tool_call(
     from acp import text_block
     from acp.schema import HttpMcpServer
 
-    # execute() must return a wire-serialized string (INT-1096 divergence-matrix
-    # row 15, universal for both doors now): the dynamic handler build_engine()
-    # creates always declares -> str, so FastMCP's structured-output validation
-    # rejects a raw dict here.
+    # execute() must return a wire-serialized string: the dynamic handler
+    # build_engine() creates always declares -> str, so FastMCP's
+    # structured-output validation rejects a raw dict here.
     async def execute(arguments: dict[str, str]) -> str:
         return json.dumps({"echo": arguments["message"]})
 

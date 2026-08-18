@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock
 
@@ -378,9 +379,21 @@ class TestLocalMcpServer:
             port_min=0,
             port_max=0,
         )
+        real_reserve_socket = server._reserve_socket
+        reserve_calls = []
+
+        def counting_reserve_socket() -> tuple[socket.socket, int]:
+            result = real_reserve_socket()
+            reserve_calls.append(result)
+            return result
+
+        server._reserve_socket = counting_reserve_socket  # type: ignore[method-assign]
+
         try:
             await asyncio.gather(server.start(), server.start())
             assert server.port is not None
+            # A broken lock letting both calls bind would call this twice.
+            assert len(reserve_calls) == 1
         finally:
             await server.stop()
 

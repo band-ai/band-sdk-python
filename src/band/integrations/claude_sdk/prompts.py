@@ -177,7 +177,7 @@ Example - mentioning user "john":
 ```
 Input: [chat_id: abc-123][Test User]: What's 2+2?
 Action: mcp__band__band_send_message
-  chat_id: "abc-123"
+  {CHAT_ID_FIELD_NAME}: "abc-123"
   content: "2 + 2 = 4"
   mentions: ["@john"]
 ```

@@ -1,4 +1,4 @@
-"""Tests for transport security configuration (INT-87).
+"""Tests for transport security configuration.
 
 These tests verify that band-mcp properly exposes DNS rebinding protection
 settings, allowing users to configure allowed hosts for Docker/remote deployments.
@@ -103,12 +103,6 @@ class TestMcpTransportSecurityIntegration:
             transport_security=_build_transport_security(),
         )
 
-    def test_mcp_has_transport_security_configured(self) -> None:
-        """The engine's FastMCP instance should have transport_security settings."""
-        mcp = self._build_mcp()
-
-        assert mcp.settings.transport_security is not None
-
     def test_mcp_transport_security_reflects_settings(self) -> None:
         """Transport security should reflect the configured settings."""
         from band_mcp.config import settings
@@ -177,13 +171,29 @@ class TestDnsRebindingProtectionBehavior:
         # Different port does not match
         assert middleware._validate_host("localhost:9000") is False
 
-    def test_disabled_protection_allows_all(self) -> None:
-        """When protection is disabled, validation is skipped."""
+    @pytest.mark.asyncio
+    async def test_disabled_protection_allows_all(
+        self, mock_request_factory: Callable[[str], Request]
+    ) -> None:
+        """When protection is disabled, validate_request skips Host validation.
+
+        `_validate_host` itself has no notion of the flag -- `validate_request`
+        checks `enable_dns_rebinding_protection` before ever calling it -- so
+        this has to go through `validate_request`, not `_validate_host`
+        directly, to actually exercise the disabled path.
+        """
         middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(enable_dns_rebinding_protection=False)
+            TransportSecuritySettings(
+                enable_dns_rebinding_protection=False,
+                allowed_hosts=[],
+            )
         )
 
-        assert middleware.settings.enable_dns_rebinding_protection is False
+        # allowed_hosts=[] would block every host with protection enabled
+        # (test_empty_allowed_hosts_blocks_all_requests above) -- disabling
+        # protection must let it through instead.
+        request = mock_request_factory("evil.com:8000")
+        assert await middleware.validate_request(request) is None
 
     @pytest.fixture
     def mock_request_factory(self) -> Callable[[str], Request]:

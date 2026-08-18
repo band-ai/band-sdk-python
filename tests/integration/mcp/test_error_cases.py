@@ -28,8 +28,9 @@ async def test_missing_required_argument_reports_field(harness: LiveHarness) -> 
         pytest.skip("agent scope not served by this key")
 
     # band_send_message requires both `content` and a room (`chat_id`).
-    with pytest.raises(Exception):
+    with pytest.raises(Exception) as exc_info:
         await harness.call_raw("band_send_message")
+    assert "content" in str(exc_info.value)
 
 
 @requires_api
@@ -38,8 +39,9 @@ async def test_human_send_message_requires_chat_id(harness: LiveHarness) -> None
     if "human" not in harness.scope:
         pytest.skip("human scope not served by this key")
 
-    with pytest.raises(Exception):
+    with pytest.raises(Exception) as exc_info:
         await harness.call_raw("band_send_my_chat_message")
+    assert "chat_id" in str(exc_info.value)
 
 
 @requires_api
@@ -55,5 +57,6 @@ async def test_resolve_unknown_handle_is_handled(harness: LiveHarness) -> None:
     except Exception:
         # An API-level 404/422 surfacing as an exception is acceptable.
         return
-    # Otherwise we should get a structured (non-crashing) response.
-    assert result is not None
+    # Otherwise we should get a structured (non-crashing) response -- not just
+    # any non-None value, which an empty string/list would also satisfy.
+    assert isinstance(result, dict)

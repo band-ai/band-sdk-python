@@ -147,11 +147,43 @@ class EmbeddedResolver:
         tools = self._get_tools(chat_id)
         if tools is None:
             raise ValueError(f"No tools available for room {chat_id}")
-        method = getattr(tools, definition.method_name)
-        try:
-            return await method(**arguments)
-        except (ValueError, BandToolError) as error:
-            raise enrich_send_message_error(definition, tools, error) from error
+        return await dispatch_tool(tools, definition, arguments)
+
+
+def resolve_tool_method(tools: Any, definition: ToolDefinition) -> Callable[..., Any]:
+    """Look up ``definition.method_name`` on ``tools``, or raise an actionable error.
+
+    Every :class:`ToolsResolver` dispatches this way; centralizing the lookup
+    means a ``ToolDefinition.method_name`` registry mistake (a typo, a stale
+    entry) surfaces as this message instead of a raw ``AttributeError`` at
+    whichever call site hit it first.
+    """
+    method = getattr(tools, definition.method_name, None)
+    if method is None or not callable(method):
+        raise RuntimeError(
+            f"{definition.name}: method '{definition.method_name}' not found "
+            f"on {type(tools).__name__}"
+        )
+    return method
+
+
+async def dispatch_tool(
+    tools: Any,
+    definition: ToolDefinition,
+    arguments: dict[str, Any],
+) -> Any:
+    """Resolve and call ``definition``'s method on ``tools``.
+
+    Shared by every :class:`ToolsResolver` implementation (embedded and
+    standalone) so the method-not-found guard and the ``band_send_message``
+    mention-hint enrichment below live in one place instead of being
+    duplicated per resolver.
+    """
+    method = resolve_tool_method(tools, definition)
+    try:
+        return await method(**arguments)
+    except (ValueError, BandToolError) as error:
+        raise enrich_send_message_error(definition, tools, error) from error
 
 
 def enrich_send_message_error(
@@ -218,9 +250,11 @@ def extend_with_chat_id(
                         ...,
                         max_length=CHAT_ID_MAX_LENGTH,
                         validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
-                        description=(
-                            "ID of the chat room (accepted as 'chat_id' or 'room_id')."
-                        ),
+                        # Model-facing text says only "chat_id" -- the alias
+                        # above still accepts a legacy "room_id" caller, but
+                        # that alternate name must never appear in text the
+                        # model sees.
+                        description="ID of the chat room.",
                     ),
                 )
             },
@@ -315,15 +349,23 @@ def _build_handler_signature(input_model: type[BaseModel]) -> inspect.Signature:
     fields injected server-side, which MUST NOT appear in the advertised
     schema. ``validation_alias`` (e.g. the chat_id/room_id alias) is copied
     onto the synthesized parameter so FastMCP's own generated arg model
-    accepts the alternate name too.
+    accepts the alternate name too. ``field_info.metadata`` (the
+    ``annotated_types`` constraint markers a ``Field(ge=..., le=...,
+    max_length=..., pattern=...)`` call attaches) is carried forward via
+    ``rebuild_annotation()`` -- Pydantic's own reconstruction of
+    ``Annotated[type, *metadata]`` -- so FastMCP's schema keeps advertising
+    the same bounds ``input_model.model_json_schema()`` would. Without it,
+    every numeric/length/pattern constraint would silently disappear from the
+    wire schema even though ``validate_tool_arguments`` still enforces it at
+    call time against the original ``input_model``.
     """
     parameters: list[inspect.Parameter] = []
     for field_name, field_info in input_model.model_fields.items():
         if _is_skip_json_schema(field_info):
             continue
-        base_annotation = (
-            field_info.annotation if field_info.annotation is not None else Any
-        )
+        base_annotation = field_info.rebuild_annotation()
+        if base_annotation is None:
+            base_annotation = Any
 
         field_kwargs: dict[str, Any] = {}
         if field_info.validation_alias is not None:

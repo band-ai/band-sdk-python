@@ -1,4 +1,4 @@
-"""Step 1 spike (INT-1096): prove the FastMCP-embedding mount recipe.
+"""Feasibility spike: prove the FastMCP-embedding mount recipe.
 
 Prototypes mounting a bare ``FastMCP`` instance's ``sse_app()`` and
 ``streamable_http_app()`` onto a host Starlette app served by a copy of
@@ -7,8 +7,8 @@ host lifespan entering ``session_manager.run()`` itself (mounting drops
 ``streamable_http_app()``'s own lifespan -- only the top-level ASGI app the
 server was given ever receives lifespan events).
 
-This gates the rest of the INT-1096 migration (see the plan's Execution step
-1 and Feasibility section): if this recipe did not work end-to-end, the
+This gates the rest of the MCP engine migration: if this recipe did not
+work end-to-end, the
 "one engine, two front doors" design would not be buildable. Once step 9
 builds the real ``local_server.py``, this file's helper is superseded by
 that module and this test either moves onto it or is deleted -- it is a

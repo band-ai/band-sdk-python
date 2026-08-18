@@ -39,7 +39,12 @@ async def test_human_profile_and_chats_round_trip(harness: LiveHarness) -> None:
         pytest.skip("human scope not served by this key")
 
     profile = await harness.call("band_get_my_profile")
-    assert isinstance(profile, dict), profile
+    # GetMyProfileResponse wraps UserDetails under "data" (engine._serialize
+    # model_dump()s the whole response, not just its payload).
+    user = profile.get("data") if isinstance(profile, dict) else profile
+    assert isinstance(user, dict), profile
+    assert "id" in user, user
+    assert "handle" in user, user
 
     chats = await harness.call("band_list_my_chats")
     # Responses are typically {"data": [...]} but tolerate a bare list.

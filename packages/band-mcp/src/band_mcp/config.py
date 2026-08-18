@@ -204,6 +204,23 @@ def _normalize_list_value(raw: str | Sequence[str] | None) -> list[str]:
     return out
 
 
+def _is_explicit_empty(cli_value: str | Sequence[str] | None) -> bool:
+    """True when the caller explicitly cleared a list flag (e.g. `--tools ""`).
+
+    argparse's `action="append"` turns a bare `--tools ""` into `[""]` -- a
+    one-element list holding an empty string -- never a bare `""`, so this
+    checks "provided, but every token is blank" rather than testing for an
+    exact string type/value (which only a direct `resolve_config(cli=...)`
+    call bypassing argparse could ever produce). Applies identically to
+    `--scope` and `--tools` so the two flags share one clearing contract.
+    """
+    if cli_value is None:
+        return False
+    if isinstance(cli_value, str):
+        return cli_value == ""
+    return len(cli_value) > 0 and all(not token.strip() for token in cli_value)
+
+
 def _resolve_list(
     cli_value: str | Sequence[str] | None,
     env_value: str | None,
@@ -325,7 +342,7 @@ def resolve_config(
         cli_scope,
         env.get("BAND_MCP_SCOPE"),
         default=list(DEFAULT_SCOPE),
-        explicit_empty=False,
+        explicit_empty=_is_explicit_empty(cli_scope),
     )
     scope_known, scope_warnings = _partition_known(
         scope_raw, VALID_SCOPES, "--scope", "unknown-scope-value"
@@ -341,14 +358,11 @@ def resolve_config(
 
     # --- Tools -------------------------------------------------------------
     cli_tools = cli.get("tools")
-    # `--tools ""` should produce []: detect that here. An empty string from
-    # argparse (default=None) signals the operator explicitly cleared the list.
-    explicit_empty = isinstance(cli_tools, str) and cli_tools == ""
     tools_raw = _resolve_list(
         cli_tools,
         env.get("BAND_MCP_TOOLS"),
         default=list(DEFAULT_TOOLS),
-        explicit_empty=explicit_empty,
+        explicit_empty=_is_explicit_empty(cli_tools),
     )
     tools_known, tools_warnings = _partition_known(
         tools_raw, VALID_TOOLS, "--tools", "unknown-tools-value"

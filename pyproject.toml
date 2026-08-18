@@ -346,8 +346,8 @@ markers = [
 ]
 
 [tool.uv.workspace]
-# packages/band-mcp: the published `band-mcp` CLI, sharing this repo's engine
-# (INT-1096). A plain `uv sync`/`uv run` only installs the root project, not
+# packages/band-mcp: the published `band-mcp` CLI, sharing this repo's engine.
+# A plain `uv sync`/`uv run` only installs the root project, not
 # workspace members that aren't root dependencies — every dev-loop command
 # here and in CLAUDE.md uses `--all-packages`.
 members = ["packages/*"]

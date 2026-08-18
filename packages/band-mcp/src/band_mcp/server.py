@@ -11,7 +11,10 @@ absent.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -107,28 +110,41 @@ def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
     return EngineSpec(name="band-mcp-server", tools=tuple(registrations))
 
 
+async def _probe_surface(
+    name: str, call: Callable[[], Awaitable[Any]]
+) -> tuple[str, Exception | None]:
+    try:
+        await call()
+        return name, None
+    except Exception as exc:  # noqa: BLE001 - surfaced as this probe's own result
+        return name, exc
+
+
 async def _health_check(resolver: StandaloneResolver) -> str:
     """Test MCP server and API connectivity.
 
     A module-level function taking ``resolver`` explicitly (rather than a
     bare ``@mcp.tool()`` closure) so it stays unit-testable in isolation --
     ``run()`` registers a zero-arg wrapper that closes over the real resolver.
+    Human and agent connectivity hit independent credentials/endpoints, so
+    they run concurrently; the first *configured* surface's failure (human
+    before agent) still wins the returned message, matching the sequential
+    version's precedence.
     """
-    checked: list[str] = []
+    probes: list[tuple[str, Callable[[], Awaitable[Any]]]] = []
     if resolver.human_rest is not None:
-        surface = "human"
-        try:
-            await resolver.human_rest.human_api_agents.list_my_agents()
-            checked.append(surface)
-        except Exception as exc:
-            return f"Failed | {surface} | {exc}"
+        probes.append(("human", resolver.human_rest.human_api_agents.list_my_agents))
     if resolver.agent_rest is not None:
-        surface = "agent"
-        try:
-            await resolver.agent_rest.agent_api_identity.get_agent_me()
-            checked.append(surface)
-        except Exception as exc:
-            return f"Failed | {surface} | {exc}"
+        probes.append(("agent", resolver.agent_rest.agent_api_identity.get_agent_me))
+
+    results = await asyncio.gather(
+        *(_probe_surface(name, call) for name, call in probes)
+    )
+    for name, exc in results:
+        if exc is not None:
+            return f"Failed | {name} | {exc}"
+
+    checked = [name for name, _ in results]
     if checked:
         return f"OK | {','.join(checked)} | {settings.band_base_url}"
     return "Failed | no credential configured"

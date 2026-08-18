@@ -15,6 +15,8 @@ import logging
 
 import pytest
 
+from mcp.server.fastmcp.exceptions import ToolError
+
 from tests.integration.mcp.conftest import LiveHarness, _extract_id, requires_api
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,7 @@ logger = logging.getLogger(__name__)
         "created agent room has no other participant to mention. Needs a design "
         "decision (self-mention? skip on room-less peers?), not a mechanical fix."
     ),
-    raises=Exception,
+    raises=ToolError,
 )
 async def test_agent_create_room_send_and_read_back(
     harness: LiveHarness, agent_room: str
@@ -61,7 +63,7 @@ async def test_agent_create_room_send_and_read_back(
         "band_send_message requires a non-empty `mentions` list -- same root "
         "cause as test_agent_create_room_send_and_read_back above."
     ),
-    raises=Exception,
+    raises=ToolError,
 )
 async def test_agent_send_message_accepts_room_id_alias(
     harness: LiveHarness, agent_room: str

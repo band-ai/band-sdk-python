@@ -1,6 +1,6 @@
 """Unit tests for `band_mcp.config`.
 
-Covers Phase 2 (INT-350) acceptance criteria:
+Covers config resolution's acceptance criteria:
 - Precedence per slot: CLI > BAND_* env. There is no single-key fallback.
 - `--scope` / `--tools` parsing (comma-separated, repeatable, explicit empty).
 - Unknown values produce warnings with `did_you_mean` and are dropped.
@@ -284,13 +284,13 @@ def test_validate_passes_with_agent_key_agent_scope():
 
 def test_validate_fails_agent_scope_missing_agent_key():
     cfg = resolve_config(cli={}, env={})
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="agent scope requested"):
         validate(cfg)
 
 
 def test_validate_fails_human_scope_missing_user_key():
     cfg = resolve_config(cli={"scope": "human", "agent_key": "band_a_1"}, env={})
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="human scope requested"):
         validate(cfg)
 
 
@@ -303,7 +303,7 @@ def test_validate_fails_on_empty_scope():
     # Only unknown scope values → resolved scope is empty → validate fails.
     cfg = resolve_config(cli={"scope": "zzzzz"}, env={})
     # Defensive: empty scope should raise, since no scope means "serve nothing".
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="No valid --scope values resolved"):
         validate(cfg)
 
 
