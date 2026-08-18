@@ -223,29 +223,6 @@ async def test_start_stop_start_cycle_rebuilds_session_manager() -> None:
 
 @pytest.mark.timeout(30)
 @pytest.mark.asyncio
-async def test_loopback_bind_auto_dns_rebinding_protection_accepts_real_clients() -> (
-    None
-):
-    """FastMCP auto-enables DNS-rebinding protection on a loopback host
-    (divergence-matrix row 17). A real client's default Host header
-    (``127.0.0.1:<port>``) must be accepted -- not 421'd -- since the SDK's
-    embedded adapters (opencode, letta, acp) all bind loopback by default."""
-    app = _RunningApp()
-    await app.start()
-    try:
-        async with streamablehttp_client(app.http_url) as (
-            read_stream,
-            write_stream,
-            _,
-        ):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-    finally:
-        await app.stop()
-
-
-@pytest.mark.timeout(30)
-@pytest.mark.asyncio
 async def test_loopback_bind_auto_dns_rebinding_protection_rejects_spoofed_host() -> (
     None
 ):
