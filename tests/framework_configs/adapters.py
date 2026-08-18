@@ -118,8 +118,11 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     internals lives in exactly one place.
     """
     from band.adapters.pydantic_ai import PydanticAIAdapter
+    from band.core.types import Capability
 
-    adapter = PydanticAIAdapter(model="test", features=_all_capabilities())
+    adapter = PydanticAIAdapter(
+        model="test", capabilities=Capability.CONTACTS | Capability.MEMORY
+    )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
         name: tool.function_schema

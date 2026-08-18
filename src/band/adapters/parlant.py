@@ -310,7 +310,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 # The context manager owns cleanup even when its __aenter__ fails,
                 # but it is only retained after a successful enter.
                 self._server = None
-                self._parlant_agent = None
+            if self._parlant_agent is None:
+                # A retried start() must redo every guideline against whatever
+                # agent it creates next; the count only survives a failure
+                # alongside the agent it was applied to.
                 self._guidelines_applied_count = 0
             raise
 

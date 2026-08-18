@@ -53,6 +53,7 @@ from band.runtime.custom_tools import (
     is_marked_terminal,
 )
 from band.runtime.tools import (
+    EVENT_TOOL_NAMES,
     append_available_mention_handles,
     get_tool_description,
     is_terminal_success,
@@ -276,7 +277,8 @@ def _execute_tool(
                     getattr(tools, "agent_id", None),
                 )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
-            await reporter.report_result(tools, tool_name, error_msg, is_error=True)
+            if tool_name not in EVENT_TOOL_NAMES:
+                await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
     result = run_async(_execute(), fallback_loop=fallback_loop)
@@ -423,7 +425,8 @@ def _make_platform_tools(
                 args = validate_tool_arguments(
                     "band_send_event", self.args_schema, kwargs
                 )
-                # No execution reporting for send_event to avoid meta-events.
+                # No execution reporting for send_event to avoid meta-events
+                # (the failure path honors this too — see _SEND_EVENT_TOOL).
                 await tools.send_event(
                     args["content"], args["message_type"], metadata=args.get("metadata")
                 )
