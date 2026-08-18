@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from band.core.delegation import parse_delegation
 from band.core.protocols import Preprocessor
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.event import MessageEvent, PlatformEvent
@@ -60,6 +61,15 @@ class DefaultPreprocessor(Preprocessor):
         if msg_data.sender_type == "Agent" and msg_data.sender_id == agent_id:
             logger.debug("Room %s: Skipping own message %s", room_id, msg_data.id)
             return None
+
+        # Lift the platform-minted identity envelope (INT-992) once, at this
+        # single preprocessing seam: handler/tool code reads it off
+        # ctx.delegation; the LLM never sees it (format_message_for_llm strips
+        # the key from history, format_for_llm renders name + content only).
+        # Assigned unconditionally so an undelegated message clears any
+        # previous turn's envelope. parse_delegation never raises (a malformed
+        # envelope logs at DEBUG and lifts as None).
+        ctx.delegation = parse_delegation(msg_data.metadata)
 
         # Look up sender name from participants list
         sender_name = self._lookup_sender_name(ctx, msg_data.sender_id)

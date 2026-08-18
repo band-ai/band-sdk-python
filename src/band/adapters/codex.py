@@ -46,6 +46,7 @@ from band.integrations.codex.types import (
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     custom_tool_to_openai_schema,
     execute_custom_tool,
     find_custom_tool,
@@ -1355,7 +1356,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
-                    result = await execute_custom_tool(custom_tool, arguments)
+                    result = await execute_custom_tool(
+                        custom_tool, arguments, ctx=ctx_from_tools(tools)
+                    )
                     success = True
                 else:
                     # Structured: a base tool (e.g. band_send_message) can fail without

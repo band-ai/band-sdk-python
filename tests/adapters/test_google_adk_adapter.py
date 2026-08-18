@@ -1446,3 +1446,42 @@ class TestConcurrentMessages:
 async def _empty_async_iter(**kwargs):
     return
     yield  # Make it an async generator
+
+
+class TestCtxThreading:
+    """INT-994: the tool bridge threads tools._ctx to custom handlers."""
+
+    @pytest.mark.asyncio
+    async def test_ctx_threads_to_custom_handler(self):
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            question: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        mock_tools = MagicMock()
+        sentinel_ctx = object()
+        mock_tools._ctx = sentinel_ctx
+
+        bridge = _BandToolBridge(
+            tool_name="ctxprobe",
+            tool_description="Report who is asking.",
+            parameters_schema={
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+            },
+            tools=mock_tools,
+            custom_tools=[(CtxProbeInput, probe)],
+        )
+
+        result = await bridge.run_async(
+            args={"question": "who?"}, tool_context=MagicMock()
+        )
+
+        assert result == "probed"
+        assert received == [sentinel_ctx]

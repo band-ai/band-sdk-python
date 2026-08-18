@@ -48,20 +48,53 @@ async def test_converter_reports_bad_args_to_the_model() -> None:
     assert isinstance(result, str) and "text" in result
 
 
-def test_adapter_normalizes_custom_tool_defs_and_passes_native_through() -> None:
+def test_adapter_splits_custom_tool_defs_from_native_tools() -> None:
+    """Deliberately amended for INT-994: tuples are no longer converted once at
+    init — they are held raw on _custom_tool_defs and converted per turn, so
+    the conversion can bind that turn's ExecutionContext. Native LangChain
+    tools still pass through at init.
+    """
+
     @lc_tool
     def native(x: str) -> str:
         """A ready-made LangChain tool."""
         return x
 
-    # Advanced pattern (graph_factory) keeps additional_tools on the instance, so we
-    # can assert the normalization. A CustomToolDef tuple + a native tool go in.
     adapter = LangGraphAdapter(
         graph_factory=lambda tools: MagicMock(),
         additional_tools=[(EchoInput, echo), native],
     )
 
-    assert len(adapter.additional_tools) == 2
+    assert adapter._custom_tool_defs == [(EchoInput, echo)]
+    assert adapter.additional_tools == [native]
     assert not any(isinstance(t, tuple) for t in adapter.additional_tools)
-    names = {getattr(t, "name", None) for t in adapter.additional_tools}
-    assert names == {"echo", "native"}
+
+
+async def test_converter_threads_ctx_to_opt_in_handler() -> None:
+    """INT-994: the converter binds the given ctx into the tool closure, and a
+    two-param handler receives it."""
+    received = []
+
+    async def probe(args: EchoInput, ctx) -> str:
+        received.append(ctx)
+        return f"echo:{args.text}"
+
+    sentinel_ctx = object()
+    (converted,) = custom_tool_defs_to_langchain([(EchoInput, probe)], ctx=sentinel_ctx)
+
+    assert await converted.ainvoke({"text": "hi"}) == "echo:hi"
+    assert received == [sentinel_ctx]
+
+
+async def test_converter_defaults_to_no_ctx() -> None:
+    """Without a bound ctx the opt-in handler still runs, receiving None."""
+    received = []
+
+    async def probe(args: EchoInput, ctx) -> str:
+        received.append(ctx)
+        return "ok"
+
+    (converted,) = custom_tool_defs_to_langchain([(EchoInput, probe)])
+
+    assert await converted.ainvoke({"text": "hi"}) == "ok"
+    assert received == [None]

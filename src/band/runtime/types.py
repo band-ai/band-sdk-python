@@ -57,6 +57,7 @@ def normalize_handle(handle: str | None) -> str | None:
 
 
 if TYPE_CHECKING:
+    from band.core.delegation import DelegationEnvelope
     from band.platform.event import (
         ContactEvent,
         ParticipantAddedEvent,
@@ -177,6 +178,12 @@ class PlatformMessage:
     message_type: str
     metadata: dict[str, Any]
     created_at: datetime
+    # Typed view of the platform's cross-owner identity envelope
+    # (metadata["delegation"], INT-992). BandLink populates it when building
+    # messages off the REST backlog endpoints; None when the message is not
+    # delegated (or the envelope is malformed — parsing is tolerant). For
+    # handler/tool code only: format_for_llm never renders it.
+    delegation: "DelegationEnvelope | None" = None
 
     def format_for_llm(self) -> str:
         """

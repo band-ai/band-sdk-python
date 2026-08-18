@@ -199,3 +199,37 @@ class TestToolBridging:
 
         assert not first_tools.tool_calls
         assert second_tools.tool_calls
+
+
+class TestCtxThreading:
+    """INT-994: the session tool handler threads room tools._ctx to custom handlers."""
+
+    @pytest.mark.asyncio
+    async def test_ctx_threads_to_custom_handler(self):
+        class CtxProbeInput(BaseModel):
+            text: str
+
+        received = []
+
+        async def probe(params: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return f"probe: {params.text}"
+
+        client = FakeCopilotClient()
+        adapter = await make_started_adapter(
+            client, additional_tools=[(CtxProbeInput, probe)]
+        )
+        tools = ToolSchemaFakeTools()
+        sentinel_ctx = object()
+        tools._ctx = sentinel_ctx
+        await run_message(adapter, tools)
+
+        session = client.sessions[0]
+        result = await session.find_tool("ctxprobe").handler(
+            ToolInvocation(
+                tool_call_id="c1", tool_name="ctxprobe", arguments={"text": "hi"}
+            )
+        )
+
+        assert result.text_result_for_llm == "probe: hi"
+        assert received == [sentinel_ctx]

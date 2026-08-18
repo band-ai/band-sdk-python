@@ -365,3 +365,162 @@ class TestExecuteCustomTool:
         await execute_custom_tool(tool, {"query": "test"})  # No max_results
 
         assert received_args[0].max_results == 10  # Default value
+
+
+class TestContextThreading:
+    """Optional second handler parameter receives the ExecutionContext (INT-994)."""
+
+    @pytest.mark.asyncio
+    async def test_two_param_async_handler_receives_ctx(self):
+        received = []
+
+        async def handler(args: WeatherInput, ctx) -> str:
+            received.append(ctx)
+            return f"{args.city} with ctx"
+
+        sentinel_ctx = object()
+        tool: CustomToolDef = (WeatherInput, handler)
+
+        result = await execute_custom_tool(tool, {"city": "NYC"}, ctx=sentinel_ctx)
+
+        assert result == "NYC with ctx"
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
+    async def test_two_param_sync_handler_receives_ctx(self):
+        received = []
+
+        def handler(args: WeatherInput, ctx) -> str:
+            received.append(ctx)
+            return "sync ok"
+
+        sentinel_ctx = object()
+        tool: CustomToolDef = (WeatherInput, handler)
+
+        result = await execute_custom_tool(tool, {"city": "NYC"}, ctx=sentinel_ctx)
+
+        assert result == "sync ok"
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
+    async def test_two_param_handler_gets_none_when_no_ctx_threads(self):
+        """An adapter that has not threaded ctx must still run the handler —
+        the second parameter is Optional by contract."""
+        received = []
+
+        async def handler(args: WeatherInput, ctx) -> str:
+            received.append(ctx)
+            return "ok"
+
+        tool: CustomToolDef = (WeatherInput, handler)
+
+        await execute_custom_tool(tool, {"city": "NYC"})
+
+        assert received == [None]
+
+    @pytest.mark.asyncio
+    async def test_one_param_handler_never_sees_ctx(self):
+        """Legacy one-arg handlers keep their exact call shape even when the
+        adapter passes a live ctx."""
+        tool: CustomToolDef = (WeatherInput, async_weather)
+
+        result = await execute_custom_tool(tool, {"city": "NYC"}, ctx=object())
+
+        assert result == "Weather in NYC: Sunny, 72F"
+
+    @pytest.mark.asyncio
+    async def test_zero_arg_handler_unchanged_with_ctx(self):
+        class EmptyInput(BaseModel):
+            """Takes nothing."""
+
+        async def handler() -> str:
+            return "no args at all"
+
+        tool: CustomToolDef = (EmptyInput, handler)
+
+        result = await execute_custom_tool(tool, {}, ctx=object())
+
+        assert result == "no args at all"
+
+    @pytest.mark.asyncio
+    async def test_var_positional_handler_stays_legacy(self):
+        """A (args, *rest) signature is NOT a ctx opt-in — only an explicit
+        second positional parameter is."""
+        received = []
+
+        async def handler(args: WeatherInput, *rest) -> str:
+            received.append(rest)
+            return "legacy"
+
+        tool: CustomToolDef = (WeatherInput, handler)
+
+        await execute_custom_tool(tool, {"city": "NYC"}, ctx=object())
+
+        assert received == [()]
+
+    @pytest.mark.asyncio
+    async def test_invoke_validated_threads_ctx(self):
+        from band.runtime.custom_tools import invoke_validated_custom_tool
+
+        received = []
+
+        async def handler(args: WeatherInput, ctx) -> str:
+            received.append(ctx)
+            return "validated ok"
+
+        sentinel_ctx = object()
+        tool: CustomToolDef = (WeatherInput, handler)
+
+        result = await invoke_validated_custom_tool(
+            tool, WeatherInput(city="LA"), ctx=sentinel_ctx
+        )
+
+        assert result == "validated ok"
+        assert received == [sentinel_ctx]
+
+    @pytest.mark.asyncio
+    async def test_two_param_unhashable_callable_receives_ctx(self):
+        """The arity cache must tolerate unhashable callables, same as the
+        accepts-input path."""
+        received = []
+
+        class UnhashableCtxTool:
+            def __eq__(self, other: object) -> bool:
+                return isinstance(other, UnhashableCtxTool)
+
+            async def __call__(self, args: WeatherInput, ctx) -> str:
+                received.append(ctx)
+                return "unhashable ctx ok"
+
+        sentinel_ctx = object()
+        tool: CustomToolDef = (WeatherInput, UnhashableCtxTool())
+
+        result = await execute_custom_tool(tool, {"city": "SF"}, ctx=sentinel_ctx)
+
+        assert result == "unhashable ctx ok"
+        assert received == [sentinel_ctx]
+
+
+class TestCtxFromTools:
+    """ctx_from_tools — the defensive per-call-site accessor."""
+
+    def test_reads_the_private_ctx_slot(self):
+        from band.runtime.custom_tools import ctx_from_tools
+
+        class ToolsWithCtx:
+            _ctx = "the-execution-context"
+
+        assert ctx_from_tools(ToolsWithCtx()) == "the-execution-context"
+
+    def test_fake_agent_tools_without_slot_yields_none(self):
+        """FakeAgentTools (band.testing) carries no _ctx; call sites must get
+        None, never an AttributeError."""
+        from band.runtime.custom_tools import ctx_from_tools
+        from band.testing import FakeAgentTools
+
+        assert ctx_from_tools(FakeAgentTools()) is None
+
+    def test_none_tools_yields_none(self):
+        from band.runtime.custom_tools import ctx_from_tools
+
+        assert ctx_from_tools(None) is None

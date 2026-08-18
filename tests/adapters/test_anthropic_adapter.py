@@ -868,3 +868,95 @@ class TestCustomTools:
         assert (
             "message" in results[0]["content"].lower()
         )  # Error mentions missing field
+
+
+class TestCtxThreading:
+    """INT-994: the tool loop threads the ExecutionContext to custom handlers."""
+
+    @pytest.mark.asyncio
+    async def test_ctx_threads_from_tools_to_custom_handler_end_to_end(
+        self, sample_message, mock_tools
+    ):
+        """End-to-end proof: on_message -> tool loop -> execute_custom_tool
+        delivers the ExecutionContext stashed on tools._ctx, with the INT-992
+        envelope and the INT-993 resolver live on it."""
+        from anthropic.types import ToolUseBlock
+
+        from band.core.delegation import DelegationEnvelope
+        from band.platform.delegation_exchange import CredentialResolver
+        from band.runtime.execution import ExecutionContext
+
+        class CtxProbeInput(BaseModel):
+            """Report who is asking."""
+
+            question: str
+
+        received = []
+
+        async def probe(args: CtxProbeInput, ctx) -> str:
+            received.append(ctx)
+            return "probed"
+
+        adapter = AnthropicAdapter(additional_tools=[(CtxProbeInput, probe)])
+        await adapter.on_started("TestBot", "Test bot")
+
+        ctx = ExecutionContext("room-123", MagicMock(), AsyncMock())
+        ctx.delegation = DelegationEnvelope(message_id="msg-123")
+        mock_tools._ctx = ctx
+        mock_tools.get_anthropic_tool_schemas = MagicMock(return_value=[])
+
+        tool_response = MagicMock()
+        tool_response.stop_reason = "tool_use"
+        tool_response.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="t1",
+                name="ctxprobe",
+                input={"question": "who is asking?"},
+            )
+        ]
+        tool_response.usage = make_usage(1, 1)
+        final_response = MagicMock()
+        final_response.stop_reason = "end_turn"
+        final_response.content = []
+        final_response.usage = make_usage(1, 1)
+
+        with patch.object(
+            adapter,
+            "_call_anthropic",
+            AsyncMock(side_effect=[tool_response, final_response]),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert len(received) == 1
+        assert received[0] is ctx
+        assert received[0].delegation is ctx.delegation
+        assert isinstance(received[0].credentials, CredentialResolver)
+        assert received[0].credentials.envelope is ctx.delegation
+
+    @pytest.mark.asyncio
+    async def test_legacy_one_param_handler_unchanged(self, mock_tools):
+        """A pre-INT-994 handler keeps its exact call shape even with a live
+        _ctx on the tools."""
+        from anthropic.types import ToolUseBlock
+
+        adapter = AnthropicAdapter(additional_tools=[(EchoInput, echo_message)])
+        mock_tools._ctx = object()
+
+        mock_response = MagicMock()
+        mock_response.content = [
+            ToolUseBlock(type="tool_use", id="t1", name="echo", input={"message": "hi"})
+        ]
+
+        results = await adapter._process_tool_calls(mock_response, mock_tools)
+
+        assert results[0]["is_error"] is False
+        assert "Echo: hi" in results[0]["content"]

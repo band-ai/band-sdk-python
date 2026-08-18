@@ -138,7 +138,11 @@ def agent_tools_to_langchain(
     return platform_tools
 
 
-def custom_tool_defs_to_langchain(tools: list[CustomToolDef]) -> list[StructuredTool]:
+def custom_tool_defs_to_langchain(
+    tools: list[CustomToolDef],
+    *,
+    ctx: Any = None,
+) -> list[StructuredTool]:
     """Convert band ``CustomToolDef`` tuples to LangChain ``StructuredTool``s.
 
     Lets the LangGraph adapter accept the SDK's portable custom-tool form —
@@ -146,6 +150,11 @@ def custom_tool_defs_to_langchain(tools: list[CustomToolDef]) -> list[Structured
     than only ready-made LangChain tools. Each tuple becomes a StructuredTool whose
     schema is the ``InputModel`` and whose body validates + runs the handler via
     ``execute_custom_tool`` (which handles sync and async handlers alike).
+
+    ``ctx`` is the turn's ExecutionContext (INT-994), bound into the tool
+    closure at conversion time — LangChain's tool call carries only model
+    kwargs, so the adapter converts tuples per turn to thread it. Handlers
+    that declare the second parameter receive it; others are untouched.
     """
     langchain_tools: list[StructuredTool] = []
     for input_model, handler in tools:
@@ -156,10 +165,11 @@ def custom_tool_defs_to_langchain(tools: list[CustomToolDef]) -> list[Structured
             *,
             _tool: CustomToolDef = (input_model, handler),
             _name: str = name,
+            _ctx: Any = ctx,
             **kwargs: Any,
         ) -> Any:
             try:
-                return await execute_custom_tool(_tool, kwargs)
+                return await execute_custom_tool(_tool, kwargs, ctx=_ctx)
             except ValueError as e:
                 # Bad-argument / validation errors feed back to the LLM to retry.
                 return str(e)

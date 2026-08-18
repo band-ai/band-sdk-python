@@ -133,26 +133,24 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=features,
         )
 
-        # Accept the SDK's portable custom-tool form: convert any CustomToolDef
-        # (InputModel, handler) tuples in additional_tools to LangChain tools — the
-        # same shape every other adapter takes — while passing ready-made LangChain
-        # tools through untouched. Done once here so both the simple and advanced
-        # patterns get a uniform tool list, and a tool written once works across
-        # adapters (LangChain would otherwise reject a bare tuple).
+        # Accept the SDK's portable custom-tool form — (InputModel, handler)
+        # tuples — alongside ready-made LangChain tools. Tuples are NOT
+        # converted here: conversion happens per turn (see on_message) so the
+        # tool closure can bind that turn's ExecutionContext (INT-994) — an
+        # init-time StructuredTool could never see it. Native tools pass
+        # through untouched, exactly as before.
+        custom_tool_defs: list[Any] = []
         if additional_tools:
-            from band.integrations.langgraph.langchain_tools import (
-                custom_tool_defs_to_langchain,
-            )
-
-            normalized: list[Any] = []
+            passthrough: list[Any] = []
             for item in additional_tools:
                 if isinstance(
                     item, tuple
                 ):  # a band CustomToolDef (InputModel, handler)
-                    normalized.extend(custom_tool_defs_to_langchain([item]))
+                    custom_tool_defs.append(item)
                 else:  # already a LangChain tool / callable
-                    normalized.append(item)
-            additional_tools = normalized
+                    passthrough.append(item)
+            additional_tools = passthrough
+        self._custom_tool_defs = custom_tool_defs
 
         uses_simple_pattern = (
             llm is not None and graph_factory is None and graph is None
@@ -275,17 +273,23 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         """Handle message with LangGraph."""
         from band.integrations.langgraph.langchain_tools import (
             agent_tools_to_langchain,
+            custom_tool_defs_to_langchain,
         )
+        from band.runtime.custom_tools import ctx_from_tools
 
         logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
 
-        # Get LangChain tools
+        # Get LangChain tools. CustomToolDef tuples convert HERE, per turn,
+        # so their closures carry this turn's ExecutionContext (INT-994).
         langchain_tools = (
             agent_tools_to_langchain(
                 tools,
                 features=self.features,
             )
             + self.additional_tools
+            + custom_tool_defs_to_langchain(
+                self._custom_tool_defs, ctx=ctx_from_tools(tools)
+            )
         )
 
         # Build or get graph

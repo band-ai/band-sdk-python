@@ -63,6 +63,7 @@ from band.core.types import (
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
+    ctx_from_tools,
     execute_custom_tool,
     get_custom_tool_name,
     is_marked_terminal,
@@ -1049,7 +1050,11 @@ def _make_custom_tools(
                     async def execute(_tools: AgentToolsProtocol) -> str:
                         try:
                             await reporter.report_call(_tools, _tool_name, kwargs)
-                            result = await execute_custom_tool((model, handler), kwargs)
+                            result = await execute_custom_tool(
+                                (model, handler),
+                                kwargs,
+                                ctx=ctx_from_tools(_tools),
+                            )
                             await reporter.report_result(_tools, _tool_name, result)
                             if isinstance(result, str):
                                 return json.dumps(
