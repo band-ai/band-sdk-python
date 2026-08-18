@@ -313,17 +313,24 @@ def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
 # enum -- the old registrar's widened model made the identical choice
 # (`model.__doc__ = original.__doc__`), and the wire-schema snapshot test
 # pins this exactly.
-class SendEventWideInput(BaseModel):
-    content: str = Field(..., description="Human-readable event content")
-    message_type: WideEventMessageType = Field(
-        ...,
-        description="Type of event: tool_call, tool_result, thought, error, or task.",
-    )
-    metadata: dict[str, Any] | None = Field(
-        None, description="Optional structured data for the event"
-    )
-
-
+#
+# content/metadata are unchanged from the master -- reused directly from its
+# own FieldInfo (create_model copies rather than shares it, so this creates
+# no link back to SendEventInput) instead of retyping their descriptions,
+# which would silently drift from the master on an edit there. Only
+# message_type is a genuine override, for the widened enum.
+SendEventWideInput = create_model(  # type: ignore[call-overload]
+    "SendEventWideInput",
+    content=(str, SendEventInput.model_fields["content"]),
+    message_type=(
+        WideEventMessageType,
+        Field(
+            ...,
+            description="Type of event: tool_call, tool_result, thought, error, or task.",
+        ),
+    ),
+    metadata=(dict[str, Any] | None, SendEventInput.model_fields["metadata"]),
+)
 SendEventWideInput.__doc__ = SendEventInput.__doc__
 
 

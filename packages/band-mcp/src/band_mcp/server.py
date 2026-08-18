@@ -36,6 +36,10 @@ from band.runtime.tools import (
 
 from band_mcp import __version__
 from band_mcp.config import (
+    DEFAULT_SCOPE,
+    DEFAULT_TOOLS,
+    VALID_SCOPES,
+    VALID_TOOLS,
     CliArgs,
     Config,
     ConfigError,
@@ -170,10 +174,18 @@ def _build_transport_security(transport: Transport) -> TransportSecuritySettings
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
+    # Derived from config.py's Scope/ToolGroup vocabulary and their defaults
+    # rather than retyped here, so a future scope/tool addition can't leave
+    # --help advertising a stale, incomplete value/default list.
+    scope_values = ", ".join(VALID_SCOPES)
+    scope_default = ", ".join(DEFAULT_SCOPE) or "none"
+    tools_values = ", ".join(VALID_TOOLS)
+    tools_default = ", ".join(DEFAULT_TOOLS) or "none"
+
     parser = argparse.ArgumentParser(
         description="Band MCP Server - Connect AI agents to Band platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
 Transport Modes:
   stdio   Default mode for IDE integration (Cursor, Claude Desktop, etc.)
           Communication via standard input/output streams.
@@ -191,8 +203,8 @@ Examples:
 Environment Variables:
   BAND_USER_KEY         User (human scope) API key
   BAND_AGENT_KEY        Agent scope API key
-  BAND_MCP_SCOPE        Comma-separated scopes (default: agent)
-  BAND_MCP_TOOLS        Opt-in tool groups: contacts, memory
+  BAND_MCP_SCOPE        Comma-separated scopes (default: {scope_default})
+  BAND_MCP_TOOLS        Opt-in tool groups: {tools_values}
   BAND_MCP_ROOM_ID      Optional pinned room id
   BAND_BASE_URL         Base URL for Band API (default: https://app.band.ai)
   TRANSPORT             Transport mode: stdio or sse (default: stdio)
@@ -216,8 +228,8 @@ Environment Variables:
         action="append",
         default=None,
         help=(
-            "Scope to serve. Repeatable or comma-separated. "
-            "Values: agent, human. Default: agent."
+            f"Scope to serve. Repeatable or comma-separated. "
+            f"Values: {scope_values}. Default: {scope_default}."
         ),
     )
     parser.add_argument(
@@ -226,8 +238,8 @@ Environment Variables:
         action="append",
         default=None,
         help=(
-            "Opt-in tool groups. Repeatable or comma-separated. "
-            "Values: contacts, memory. Default: none. "
+            f"Opt-in tool groups. Repeatable or comma-separated. "
+            f"Values: {tools_values}. Default: {tools_default}. "
             "Note: operators who relied on implicit contacts tools must now "
             "pass --tools contacts."
         ),
