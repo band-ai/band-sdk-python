@@ -710,8 +710,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 room_id,
                 e,
             )
-            await self._session_manager.invalidate_session(room_id)
-            self._session_ids.pop(room_id, None)
+            await self._invalidate_session(room_id)
 
             await self._report_error(tools, str(e))
             raise
@@ -722,6 +721,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             raise
 
         logger.debug("Message %s processed successfully", msg.id)
+
+    async def _invalidate_session(self, room_id: str) -> None:
+        """Evict the cached session and client so the next message for this
+        room creates a fresh one instead of reusing a corpse."""
+        if self._session_manager:
+            await self._session_manager.invalidate_session(room_id)
+        self._session_ids.pop(room_id, None)
 
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
@@ -763,9 +769,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "reply was delivered — invalidating session",
                 room_id,
             )
-            if self._session_manager:
-                await self._session_manager.invalidate_session(room_id)
-            self._session_ids.pop(room_id, None)
+            await self._invalidate_session(room_id)
             return
         # Nothing was delivered: use the normal dead-client path so the
         # runtime marks this turn failed and the cached client is not reused.
@@ -791,7 +795,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     logger.debug("Room %s: Text: %s...", room_id, block.text[:100])
                 case ThinkingBlock() if block.thinking:
                     await self._narrate_thinking(block, room_id, tools)
-                case ToolUseBlock() | ToolResultBlock():
+                case _:
                     replied_this_turn |= await self._dispatch_tool_block(
                         block, pending_tool_names, room_id, tools
                     )
@@ -1231,6 +1235,28 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             room_id, tool_name, tool_input, summary, tool_use_id, requester=requester
         )
 
+    async def _send_best_effort(
+        self,
+        tools: AgentToolsProtocol,
+        message: str,
+        mentions: list[str] | None,
+        *,
+        room_id: str,
+        failure_note: str,
+        log_level: int = logging.WARNING,
+    ) -> bool:
+        """Send ``message``, returning whether it was actually delivered.
+
+        Swallows the send failure -- callers use the returned bool to decide
+        whether a missing-reply guard still applies.
+        """
+        try:
+            await tools.send_message(message, mentions=mentions)
+            return True
+        except Exception as e:
+            logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
+            return False
+
     async def _notify_auto_decision(
         self,
         room_id: str,
@@ -1250,15 +1276,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if not tools:
             return False
         mention = [requester["id"]] if requester else None
-        try:
-            await tools.send_message(
-                f"Approval requested ({summary}). Policy decision: **{decision}**.",
-                mentions=mention,
-            )
-            return True
-        except Exception as e:
-            logger.warning("Failed to send approval policy notification: %s", e)
-            return False
+        return await self._send_best_effort(
+            tools,
+            f"Approval requested ({summary}). Policy decision: **{decision}**.",
+            mention,
+            room_id=room_id,
+            failure_note="Failed to send approval policy notification",
+        )
 
     async def _resolve_manual_approval(
         self,
@@ -1344,16 +1368,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             decision: ApprovalDecision = self.approval_timeout_decision
             notified = False
             if tools:
-                try:
-                    await tools.send_message(
-                        f"Approval `{token}` timed out. Decision: **{decision}**.",
-                        mentions=mention,
-                    )
-                    notified = True
-                except Exception:
-                    logger.debug(
-                        "Room %s: Failed to send timeout notification", room_id
-                    )
+                notified = await self._send_best_effort(
+                    tools,
+                    f"Approval `{token}` timed out. Decision: **{decision}**.",
+                    mention,
+                    room_id=room_id,
+                    failure_note="Failed to send timeout notification",
+                    log_level=logging.DEBUG,
+                )
 
             if decision == "accept":
                 return PermissionResultAllow()
@@ -1454,20 +1476,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return
 
         decision: ApprovalDecision = "accept" if command == "approve" else "decline"
-        notified = True
-        try:
-            await tools.send_message(
-                f"Approval `{token}` resolved as **{decision}**.",
-                mentions=mention,
-            )
-        except Exception as e:
-            notified = False
-            logger.warning(
-                "Room %s: Failed to send approval resolution notice for token %s: %s",
-                room_id,
-                token,
-                e,
-            )
+        notified = await self._send_best_effort(
+            tools,
+            f"Approval `{token}` resolved as **{decision}**.",
+            mention,
+            room_id=room_id,
+            failure_note=f"Failed to send approval resolution notice for token {token}",
+        )
 
         if not selected.future.done():
             # A failed notice for a decline must not claim delivery --
