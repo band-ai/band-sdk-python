@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from uuid import uuid4
 
 import httpx
+import pytest
 import pytest_asyncio
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -14,7 +17,15 @@ from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
 
-from band.integrations.a2a.gateway.server import GatewayServer
+# Side effect, not used directly: importing this module disables
+# sse_starlette's automatic graceful drain process-wide (see its own
+# AppStatus.disable_automatic_graceful_drain() call) -- the exact real-world
+# coexistence (an ACP/opencode backend in the same process as this gateway)
+# that test_stop_returns_promptly_with_a_still_open_message_stream guards
+# against. Imported explicitly so the test is deterministic regardless of
+# whether some other test file happened to import it first.
+import band.integrations.mcp.local_server  # noqa: F401
+from band.integrations.a2a.gateway.server import SERVER_STOP_TIMEOUT_S, GatewayServer
 from tests.integrations.a2a.gateway.helpers import make_peer
 
 
@@ -335,3 +346,99 @@ async def test_v03_jsonrpc_stream_accepts_legacy_payload(
 
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
+
+
+class NeverFinishingExecutor(AgentExecutor):
+    """Enqueues one event, then never returns -- holding the SSE response
+    open indefinitely, the way a real long-running agent task would."""
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        task = context.current_task
+        if task is None:
+            if context.message is None:
+                raise ValueError("A2A request is missing its message")
+            task = new_task_from_user_message(context.message)
+        if context.current_task is None:
+            await event_queue.enqueue_event(task)
+        await asyncio.sleep(3600)  # never closes on its own
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+
+@pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
+async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
+    """Regression: sse_starlette's cooperative shutdown drain is a process-
+    global switch that band.integrations.mcp.local_server permanently
+    disables the moment it's imported anywhere in the process -- a real
+    coexistence scenario (an ACP/opencode backend sharing the process with
+    this gateway). A live message:stream connection then has no other way
+    to end on its own, so stop() must bound its wait via
+    timeout_graceful_shutdown instead of hanging forever.
+
+    Measures wall-clock time around a bare ``await server.stop()`` (no
+    wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
+    outside and mask a real hang as a false pass) -- same rationale as
+    LocalMCPServer's own equivalent regression test.
+    """
+    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
+    server = GatewayServer(
+        peers={"weather-agent": peer},
+        gateway_url="http://localhost:0",
+        port=0,
+        executor_factory=lambda _slug: NeverFinishingExecutor(),
+    )
+    await server.start()
+    # start() doesn't wait for uvicorn's own startup phase to finish -- it
+    # only schedules serve() as a background task. Poll for it directly
+    # since GatewayServer exposes no readiness signal of its own.
+    for _ in range(50):
+        if server._uvicorn.started:
+            break
+        await asyncio.sleep(0.05)
+    port = server._uvicorn.servers[0].sockets[0].getsockname()[1]
+
+    connection_ready = asyncio.Event()
+
+    async def hold_connection_open() -> None:
+        with suppress(Exception):
+            # timeout=None: httpx's default 5s read timeout would otherwise
+            # give up waiting for the next chunk and disconnect on its own
+            # around the same mark as SERVER_STOP_TIMEOUT_S -- masking a real
+            # server-side hang as a false pass, since the connection would
+            # end for the wrong reason (a bored client) rather than proving
+            # stop() itself is bounded.
+            async with (
+                httpx.AsyncClient(timeout=None) as client,
+                client.stream(
+                    "POST",
+                    f"http://127.0.0.1:{port}/agents/weather-agent/message:stream",
+                    headers={"A2A-Version": "1.0"},
+                    json={
+                        "message": {
+                            "messageId": "message-1",
+                            "role": "ROLE_USER",
+                            "parts": [{"text": "Hello"}],
+                        }
+                    },
+                ) as response,
+            ):
+                async for _ in response.aiter_bytes():
+                    connection_ready.set()
+
+    holder = asyncio.create_task(hold_connection_open())
+    try:
+        await asyncio.wait_for(connection_ready.wait(), timeout=5.0)
+
+        started_at = asyncio.get_running_loop().time()
+        await server.stop()
+        elapsed = asyncio.get_running_loop().time() - started_at
+
+        assert elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
+            f"stop() took {elapsed:.1f}s -- graceful shutdown is not "
+            "bounded by SERVER_STOP_TIMEOUT_S"
+        )
+    finally:
+        holder.cancel()
+        with suppress(asyncio.CancelledError):
+            await holder

@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 
 ExecutorFactory = Callable[[str], AgentExecutor]
 
+# uvicorn's own default (None) waits forever for existing connections to close
+# on stop() -- and a live message:stream SSE response has no other way to end
+# on its own. sse_starlette normally closes it cooperatively on shutdown, but
+# that mechanism is a process-global switch any co-located
+# band.integrations.mcp.local_server permanently disables (see that module's
+# AppStatus.disable_automatic_graceful_drain() call) -- so this bound is the
+# only thing that keeps stop() from hanging once that happens.
+SERVER_STOP_TIMEOUT_S = 5
+
 # The REST endpoints the gateway serves per peer: the messaging binding and
 # the compat card. The upstream factory also returns task read/cancel/list
 # and push-config routes — an unauthenticated window into past conversations.
@@ -234,7 +243,11 @@ class GatewayServer:
         self._app = self._build_app()
         self._uvicorn = uvicorn.Server(
             uvicorn.Config(
-                self._app, host="0.0.0.0", port=self.port, log_level="warning"
+                self._app,
+                host="0.0.0.0",
+                port=self.port,
+                log_level="warning",
+                timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
             )
         )
         self._server_task = asyncio.create_task(self._uvicorn.serve())

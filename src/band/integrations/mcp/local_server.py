@@ -74,6 +74,14 @@ RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 # disabling it removes the dependency on that global entirely. Process-wide
 # and one-time by nature (AppStatus has no per-instance scope), so this is a
 # module-level call, not something threaded through LocalMCPServer's API.
+#
+# Cost of that global scope: any *other* sse_starlette consumer in the same
+# process -- e.g. the A2A gateway's own message:stream responses
+# (src/band/integrations/a2a/gateway/server.py) -- loses this same
+# cooperative-drain signal too, permanently, the moment this module is
+# imported anywhere in the process. That server's own uvicorn.Config sets
+# timeout_graceful_shutdown precisely so its stop() still bounds how long it
+# waits on a live stream, rather than relying on the now-disabled signal.
 AppStatus.disable_automatic_graceful_drain()
 
 
