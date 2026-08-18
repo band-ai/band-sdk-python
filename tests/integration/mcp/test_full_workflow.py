@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 @requires_api
 # loop_scope="session" matches asyncio_default_fixture_loop_scope: the async
 # `agent_room` fixture and this test must share one event loop, or the
-# AppContext's asyncio.Lock (bound on first use inside agent_room) raises
+# StandaloneResolver's asyncio.Lock (bound on first use inside agent_room) raises
 # "bound to a different event loop" when the test's own harness.call() runs.
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.xfail(

@@ -51,7 +51,7 @@ async def test_human_profile_and_chats_round_trip(harness: LiveHarness) -> None:
 @requires_api
 # loop_scope="session" matches asyncio_default_fixture_loop_scope: the async
 # `agent_room` fixture and this test must share one event loop, or the
-# AppContext's asyncio.Lock (bound on first use inside agent_room) raises
+# StandaloneResolver's asyncio.Lock (bound on first use inside agent_room) raises
 # "bound to a different event loop" when the test's own harness.call() runs.
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agent_lookup_peers_returns_list(

@@ -1,12 +1,12 @@
 """Configuration for band-mcp.
 
-This module replaces the single-key `BAND_API_KEY` + prefix
-inference config with explicit dual credentials, `--scope` / `--tools` /
-`--room-id` flags, and typo suggestions. The legacy `BAND_API_KEY` path is
-retained as a fallback — existing deployments keep working.
+Explicit dual credentials (`--user-key`/`--agent-key` or
+`BAND_USER_KEY`/`BAND_AGENT_KEY`), `--scope` / `--tools` / `--room-id`
+flags, and typo suggestions. There is no single-key fallback -- a
+credential is either scope-specific or absent.
 
 Resolution precedence per credential/field:
-    CLI flag > BAND_* env > BAND_API_KEY (legacy only)
+    CLI flag > BAND_* env
 
 `resolve_config(cli, env)` is pure — it takes a CLI-args-ish mapping and an
 environment mapping, and returns a `Config`. `validate(config)` raises
@@ -58,7 +58,6 @@ DEFAULT_SCOPE: list[Scope] = [Scope.AGENT]
 DEFAULT_TOOLS: list[ToolGroup] = []
 
 ConfigWarningKind = Literal[
-    "legacy-key-ignored",
     "unknown-scope-value",
     "unknown-tools-value",
 ]
@@ -102,10 +101,8 @@ class ConfigWarning:
 class Config:
     """Resolved configuration for a single band-mcp process.
 
-    `user_key` and `agent_key` are the explicit dual credentials. `legacy_key`
-    holds `BAND_API_KEY` and is consulted ONLY as a fallback when the
-    scope-specific slot is empty. Its prefix (`band_u_` / `band_a_` / `band_`)
-    determines which scopes it can serve.
+    `user_key` and `agent_key` are the explicit dual credentials -- there is
+    no single-key fallback.
 
     `scope` / `tools` are already normalized (trimmed, lowercased, deduped,
     unknown values dropped). `warnings` captures anything that couldn't be
@@ -120,7 +117,6 @@ class Config:
     # same default as instances produced via `resolve_config({}, {})`.
     scope: list[Scope] = field(default_factory=lambda: list(DEFAULT_SCOPE))
     tools: list[ToolGroup] = field(default_factory=lambda: list(DEFAULT_TOOLS))
-    legacy_key: str | None = None
     warnings: list[ConfigWarning] = field(default_factory=list)
 
 
@@ -132,7 +128,6 @@ class Settings(BaseSettings):
     """
 
     # API configuration
-    band_api_key: str = ""
     band_base_url: str = "https://app.band.ai"
 
     # Transport configuration
@@ -156,33 +151,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
-# ---------------------------------------------------------------------------
-# Key-prefix inference (legacy only)
-# ---------------------------------------------------------------------------
-
-
-def _legacy_key_capabilities(legacy_key: str | None) -> tuple[bool, bool]:
-    """Return (can_serve_human, can_serve_agent) for a legacy key.
-
-    - `band_u_...` — user key, human only.
-    - `band_a_...` — agent key, agent only.
-    - `band_...`   — legacy all-capable, both scopes.
-    - Anything else (including None / empty) — serves neither scope.
-
-    The thenvoi-era `thnv_*` prefixes are not recognized (INT-1096: dropped
-    per user decision -- no surviving key needs the old rebrand fallback).
-    """
-    if not legacy_key:
-        return (False, False)
-    if legacy_key.startswith("band_u_"):
-        return (True, False)
-    if legacy_key.startswith("band_a_"):
-        return (False, True)
-    if legacy_key.startswith("band_"):
-        return (True, True)
-    return (False, False)
 
 
 # ---------------------------------------------------------------------------
@@ -337,8 +305,7 @@ def resolve_config(
     `env` is typically `os.environ`. Anything not supplied is treated as unset.
 
     The returned `Config` is already normalized: unknown `--scope` / `--tools`
-    values are dropped and surfaced in `config.warnings`, and cross-slot
-    legacy-key masking is resolved.
+    values are dropped and surfaced in `config.warnings`.
     """
     cli = cli or {}
     env = env or {}
@@ -346,8 +313,6 @@ def resolve_config(
     # --- Credentials -------------------------------------------------------
     user_key = _resolve_scalar(cli.get("user_key"), env.get("BAND_USER_KEY"))
     agent_key = _resolve_scalar(cli.get("agent_key"), env.get("BAND_AGENT_KEY"))
-    legacy_key_raw = env.get("BAND_API_KEY")
-    legacy_key: str | None = legacy_key_raw if legacy_key_raw else None
 
     # --- Room id -----------------------------------------------------------
     room_id = _resolve_scalar(cli.get("room_id"), env.get("BAND_MCP_ROOM_ID"))
@@ -391,43 +356,12 @@ def resolve_config(
     warnings.extend(tools_warnings)
     tools = [ToolGroup(t) for t in tools_known]
 
-    # --- Cross-slot legacy-key masking ------------------------------------
-    # If a scope-specific key is set AND legacy_key is populated, the legacy
-    # key is ignored for that scope. Emit a warning if legacy_key would have
-    # been consulted but is now ignored. We only warn once per process; the
-    # value of `value` is the semantic slot label ("legacy_key") so tests can
-    # assert on it deterministically.
-    if legacy_key is not None:
-        legacy_human, legacy_agent = _legacy_key_capabilities(legacy_key)
-        # A legacy key is "ignored" when BOTH of these hold:
-        #   - the scope-specific slot that would otherwise have been filled
-        #     from it is already populated, AND
-        #   - that scope-specific slot would have been served by legacy_key.
-        # Put differently: if user_key is set AND legacy_key could serve human,
-        # legacy's human role is masked. Same for agent.
-        human_masked = user_key is not None and legacy_human
-        agent_masked = agent_key is not None and legacy_agent
-        if human_masked or agent_masked:
-            warnings.append(
-                ConfigWarning(
-                    kind="legacy-key-ignored",
-                    value="legacy_key",
-                    did_you_mean=None,
-                    message=(
-                        "BAND_API_KEY is set but scope-specific keys "
-                        "(BAND_USER_KEY / BAND_AGENT_KEY) take precedence; "
-                        "legacy key ignored for overlapping scope(s)."
-                    ),
-                )
-            )
-
     return Config(
         user_key=user_key,
         agent_key=agent_key,
         room_id=room_id,
         scope=scope,
         tools=tools,
-        legacy_key=legacy_key,
         warnings=warnings,
     )
 
@@ -436,8 +370,8 @@ def validate(config: Config) -> None:
     """Fail-fast validation. Raises ConfigError if credentials are missing.
 
     For each scope requested in `config.scope`:
-    - "agent" requires `agent_key` OR an agent-capable `legacy_key`.
-    - "human" requires `user_key` OR a human-capable `legacy_key`.
+    - "agent" requires `agent_key`.
+    - "human" requires `user_key`.
     """
     if not config.scope:
         raise ConfigError(
@@ -445,42 +379,26 @@ def validate(config: Config) -> None:
             f"{', '.join(VALID_SCOPES)}."
         )
 
-    legacy_human, legacy_agent = _legacy_key_capabilities(config.legacy_key)
-
     missing: list[str] = []
-    if Scope.HUMAN in config.scope:
-        if config.user_key is None and not legacy_human:
-            missing.append(
-                "human scope requested but no user credential available "
-                "(set --user-key / BAND_USER_KEY, or use a "
-                "human-capable BAND_API_KEY)"
-            )
-    if Scope.AGENT in config.scope:
-        if config.agent_key is None and not legacy_agent:
-            missing.append(
-                "agent scope requested but no agent credential available "
-                "(set --agent-key / BAND_AGENT_KEY, or use an "
-                "agent-capable BAND_API_KEY)"
-            )
+    if Scope.HUMAN in config.scope and config.user_key is None:
+        missing.append(
+            "human scope requested but no user credential available "
+            "(set --user-key / BAND_USER_KEY)"
+        )
+    if Scope.AGENT in config.scope and config.agent_key is None:
+        missing.append(
+            "agent scope requested but no agent credential available "
+            "(set --agent-key / BAND_AGENT_KEY)"
+        )
 
     if missing:
         raise ConfigError("; ".join(missing))
 
 
 def resolve_credential_for_scope(config: Config, scope: Scope) -> str | None:
-    """Return the API key that should be used for `scope`.
-
-    Scope-specific key wins; legacy key is a fallback. Returns None if nothing
-    serves the scope (validate() would have raised earlier).
-    """
+    """Return the API key configured for `scope`, if any."""
     match scope:
         case Scope.HUMAN:
-            if config.user_key is not None:
-                return config.user_key
-            legacy_human, _ = _legacy_key_capabilities(config.legacy_key)
-            return config.legacy_key if legacy_human else None
+            return config.user_key
         case Scope.AGENT:
-            if config.agent_key is not None:
-                return config.agent_key
-            _, legacy_agent = _legacy_key_capabilities(config.legacy_key)
-            return config.legacy_key if legacy_agent else None
+            return config.agent_key

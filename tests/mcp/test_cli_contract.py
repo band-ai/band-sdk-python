@@ -28,7 +28,6 @@ import pytest
 _BAND_CREDENTIAL_ENV_VARS = (
     "BAND_USER_KEY",
     "BAND_AGENT_KEY",
-    "BAND_API_KEY",
     "BAND_MCP_SCOPE",
     "BAND_MCP_TOOLS",
     "BAND_MCP_ROOM_ID",

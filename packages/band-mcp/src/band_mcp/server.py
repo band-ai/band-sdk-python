@@ -4,17 +4,14 @@ Dual-credential configuration: `--user-key`, `--agent-key`,
 `--room-id`, `--scope`, `--tools` CLI flags (plus matching env vars). Tool
 registration builds an ``EngineSpec`` (``standalone_spec``, below) and hands
 it to the shared engine (``band.integrations.mcp.engine.build_engine``).
-
-Legacy `BAND_API_KEY` is still supported as a fallback. When it's the only
-credential supplied, `config.scope` is rewritten from the key's capabilities
-so the advertised tool surface matches what the key can actually call.
+There is no single-key fallback -- a credential is either scope-specific or
+absent.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import replace
 
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -38,10 +35,8 @@ from band_mcp.config import (
     CliArgs,
     Config,
     ConfigError,
-    Scope,
     ToolGroup,
     Transport,
-    _legacy_key_capabilities,
     resolve_config,
     settings,
     validate,
@@ -182,7 +177,6 @@ Environment Variables:
   BAND_MCP_SCOPE        Comma-separated scopes (default: agent)
   BAND_MCP_TOOLS        Opt-in tool groups: contacts, memory
   BAND_MCP_ROOM_ID      Optional pinned room id
-  BAND_API_KEY          Legacy single-key path (still supported as fallback)
   BAND_BASE_URL         Base URL for Band API (default: https://app.band.ai)
   TRANSPORT             Transport mode: stdio or sse (default: stdio)
   HOST                  Host to bind for SSE mode (default: 127.0.0.1)
@@ -265,46 +259,17 @@ def _cli_mapping(args: argparse.Namespace) -> CliArgs:
     }
 
 
-def _is_pure_legacy_invocation(args: argparse.Namespace, config: Config) -> bool:
-    """True when the operator set only BAND_API_KEY and no new flags/envs.
-
-    Used to preserve backward compatibility: an operator who never touched the
-    new flags should keep booting even if `validate()` would otherwise fail on
-    the default `--scope agent` with no agent credential, as long as the
-    legacy key is present and can serve something. Also triggers the scope
-    write-back so the advertised surface matches what the legacy key can call.
-    """
-    if config.legacy_key is None:
-        return False
-    if any(
-        getattr(args, attr) is not None
-        for attr in ("user_key", "agent_key", "room_id", "scope", "tools")
-    ):
-        return False
-    new_envs = (
-        "BAND_USER_KEY",
-        "BAND_AGENT_KEY",
-        "BAND_MCP_SCOPE",
-        "BAND_MCP_TOOLS",
-        "BAND_MCP_ROOM_ID",
-    )
-    return not any(os.environ.get(name) for name in new_envs)
-
-
 def run() -> None:
     """Run the MCP server with configurable transport mode.
 
     Order of operations:
     1. Parse CLI flags.
     2. Resolve the Config (dual-credential + scope/tools/room_id).
-    3. Validate; raise ConfigError to exit before the engine builds, unless
-       this is a pure-legacy (BAND_API_KEY-only) invocation.
+    3. Validate; raise ConfigError to exit before the engine builds.
     4. Emit every ConfigWarning entry at WARN level.
-    5. For pure-legacy invocations, rewrite `config.scope` from the legacy
-       key's capabilities so the advertised surface matches.
-    6. Build the EngineSpec (standalone_spec) and the engine (build_engine).
-    7. Register the health_check tool.
-    8. Start the engine over the requested transport.
+    5. Build the EngineSpec (standalone_spec) and the engine (build_engine).
+    6. Register the health_check tool.
+    7. Start the engine over the requested transport.
     """
     args = parse_args()
 
@@ -319,33 +284,8 @@ def run() -> None:
     try:
         validate(config)
     except ConfigError as exc:
-        # Fall back to the pure-legacy path: if BAND_API_KEY is set and the
-        # operator supplied no explicit scope/keys, honor the old behavior.
-        # This keeps existing deployments booting even when validate() would
-        # otherwise complain.
-        legacy_human, legacy_agent = _legacy_key_capabilities(config.legacy_key)
-        if _is_pure_legacy_invocation(args, config) and (legacy_human or legacy_agent):
-            logger.info(
-                "Proceeding via legacy BAND_API_KEY path (no new-style "
-                "credentials or scope supplied)."
-            )
-        else:
-            logger.error("Configuration error: %s", exc)
-            raise SystemExit(2) from exc
-
-    # Escape-hatch scope write-back: when this is a pure-legacy invocation,
-    # replace the default scope (["agent"]) with whatever the legacy key
-    # actually serves. This keeps the advertised tool surface consistent with
-    # the credential's capabilities — a `band_u_*` legacy key lands as
-    # ["human"], not ["agent"].
-    if _is_pure_legacy_invocation(args, config):
-        legacy_human, legacy_agent = _legacy_key_capabilities(config.legacy_key)
-        legacy_scope: list[Scope] = []
-        if legacy_agent:
-            legacy_scope.append(Scope.AGENT)
-        if legacy_human:
-            legacy_scope.append(Scope.HUMAN)
-        config = replace(config, scope=legacy_scope)
+        logger.error("Configuration error: %s", exc)
+        raise SystemExit(2) from exc
 
     resolver = build_standalone_resolver(config)
     try:

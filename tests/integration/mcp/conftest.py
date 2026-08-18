@@ -1,14 +1,14 @@
-"""Fixtures for live-API band-mcp integration tests (post-INT-352 architecture).
+"""Fixtures for live-API band-mcp integration tests (INT-1096 engine architecture).
 
-These tests exercise the SDK-driven registrar end-to-end against a real Band
-API. Unlike the in-process ``test_forwarding.py`` suite (which mocks the SDK
-tools), these build a real ``AppContext`` — real ``AsyncRestClient`` plus real
-``band-sdk`` ``HumanTools`` / ``AgentTools`` — register the tools on a
-``FastMCP`` instance, and dispatch through ``mcp._tool_manager.call_tool`` so
-the full register -> validate -> dispatch -> HTTP path is covered.
+These tests exercise the CLI door's real path end-to-end against a real Band
+API: ``standalone_spec(config, resolver)`` builds an ``EngineSpec`` from a
+resolved ``Config``, ``build_engine(spec)`` mounts it on a real ``FastMCP``,
+and dispatch goes through ``mcp._tool_manager.call_tool`` -- the same
+register -> validate -> dispatch -> HTTP path a real ``band-mcp`` process
+takes, minus the transport.
 
 Credentials are loaded from ``.env.test``. Every test is skipped unless
-``BAND_API_KEY`` is set.
+``BAND_AGENT_KEY`` is set.
 
 Run:
     uv run --all-packages pytest tests/integration/mcp/ -v -s --no-cov
@@ -21,16 +21,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+from band.integrations.mcp.engine import build_engine
 from band_mcp import shared
-from band_mcp.config import Config, _legacy_key_capabilities
-from band_mcp.shared import build_app_context
-from band_mcp.tools.registrar import register_tools
+from band_mcp.config import Config, Scope, ToolGroup
+from band_mcp.server import standalone_spec
+from band_mcp.shared import StandaloneResolver, build_standalone_resolver
 from thenvoi_testing.markers import skip_without_env
 from thenvoi_testing.settings import BaseTestSettings
 
@@ -40,7 +40,8 @@ from tests.paths import ENV_TEST_FILE
 class BandTestSettings(BaseTestSettings):
     """Settings for band-mcp integration tests, loaded from ``.env.test``."""
 
-    band_api_key: str = ""
+    band_user_key: str = ""
+    band_agent_key: str = ""
     band_base_url: str = "https://app.band.ai"
     test_agent_id: str = ""
 
@@ -50,8 +51,12 @@ class BandTestSettings(BaseTestSettings):
 test_settings = BandTestSettings()
 
 
-def get_api_key() -> str | None:
-    return test_settings.band_api_key or None
+def get_user_key() -> str | None:
+    return test_settings.band_user_key or None
+
+
+def get_agent_key() -> str | None:
+    return test_settings.band_agent_key or None
 
 
 def get_base_url() -> str:
@@ -63,7 +68,7 @@ def get_test_agent_id() -> str | None:
 
 
 # Skip marker for the whole live suite.
-requires_api = skip_without_env("BAND_API_KEY")
+requires_api = skip_without_env("BAND_AGENT_KEY")
 
 
 def _extract_id(payload: Any) -> str | None:
@@ -87,28 +92,24 @@ def _extract_id(payload: Any) -> str | None:
 
 
 class LiveHarness:
-    """Drives the SDK registrar end-to-end against a live API.
+    """Drives the standalone engine end-to-end against a live API.
 
     ``call(name, **args)`` validates and dispatches a tool exactly as the MCP
     server would, returning the parsed JSON payload (or the raw string when the
     result is not JSON).
     """
 
-    def __init__(self, mcp: FastMCP, app_context: Any, scope: list[str]) -> None:
+    def __init__(self, mcp: FastMCP, scope: list[str]) -> None:
         self._mcp = mcp
-        self._ctx = SimpleNamespace(
-            request_context=SimpleNamespace(lifespan_context=app_context)
-        )
         self.scope = scope
-        self.app_context = app_context
 
     async def names(self) -> set[str]:
         return {t.name for t in await self._mcp.list_tools()}
 
     async def call_raw(self, name: str, **args: Any) -> str:
-        result = await self._mcp._tool_manager.call_tool(name, args, context=self._ctx)
+        result = await self._mcp._tool_manager.call_tool(name, args)
         # FastMCP returns the handler's string return wrapped in content; the
-        # registrar handlers return a JSON string via ``_serialize``.
+        # engine's registrations return a JSON string via ``_serialize``.
         if isinstance(result, str):
             return result
         if isinstance(result, (list, tuple)) and result:
@@ -126,43 +127,36 @@ class LiveHarness:
 
 @pytest.fixture(scope="session")
 def live_config() -> Config:
-    """Resolve a Config from ``BAND_API_KEY``, scoped to the key's capabilities.
+    """Resolve a Config from whichever live credentials `.env.test` sets."""
+    user_key = get_user_key()
+    agent_key = get_agent_key()
+    if not user_key and not agent_key:
+        pytest.skip("Neither BAND_USER_KEY nor BAND_AGENT_KEY is set")
 
-    Mirrors the server's pure-legacy path: the legacy key's prefix decides
-    which scopes are served.
-    """
-    key = get_api_key()
-    if not key:
-        pytest.skip("BAND_API_KEY not set")
+    scope: list[Scope] = []
+    if agent_key:
+        scope.append(Scope.AGENT)
+    if user_key:
+        scope.append(Scope.HUMAN)
 
-    can_human, can_agent = _legacy_key_capabilities(key)
-    scope: list[Any] = []
-    if can_agent:
-        scope.append("agent")
-    if can_human:
-        scope.append("human")
-    if not scope:
-        pytest.skip(f"BAND_API_KEY prefix serves no known scope: {key[:8]}...")
-
-    return Config(scope=scope, tools=["contacts", "memory"], legacy_key=key)
+    return Config(
+        user_key=user_key,
+        agent_key=agent_key,
+        scope=scope,
+        tools=[ToolGroup.CONTACTS, ToolGroup.MEMORY],
+    )
 
 
 @pytest.fixture
 def harness(live_config: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness:
-    """Build a live ``AppContext`` + registered ``FastMCP`` and return a driver."""
-    # build_app_context reads the global settings for the base URL; the
-    # per-scope credentials come from ``live_config`` (whose legacy_key is
-    # resolved per scope). Passing the config — not None — is what triggers
-    # construction of the HumanTools singleton.
-    monkeypatch.setattr(shared.settings, "band_api_key", get_api_key())
+    """Build a real engine (standalone_spec + build_engine) and return a driver."""
     monkeypatch.setattr(shared.settings, "band_base_url", get_base_url())
 
-    app_context = build_app_context(live_config)
+    resolver: StandaloneResolver = build_standalone_resolver(live_config)
+    spec = standalone_spec(live_config, resolver)
+    mcp = build_engine(spec)
 
-    mcp = FastMCP(name="integration")
-    register_tools(mcp, live_config)
-
-    return LiveHarness(mcp, app_context, list(live_config.scope))
+    return LiveHarness(mcp, list(live_config.scope))
 
 
 @pytest.fixture

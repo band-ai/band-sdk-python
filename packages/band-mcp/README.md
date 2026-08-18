@@ -27,13 +27,18 @@ Notable behavior changes:
 
   | Old (`THENVOI_*`) | New (`BAND_*`) |
   | --- | --- |
-  | `THENVOI_API_KEY` | `BAND_API_KEY` |
+  | `THENVOI_API_KEY` | *(removed — set `BAND_USER_KEY` and/or `BAND_AGENT_KEY`)* |
   | `THENVOI_BASE_URL` | `BAND_BASE_URL` |
   | `THENVOI_USER_KEY` | `BAND_USER_KEY` |
   | `THENVOI_AGENT_KEY` | `BAND_AGENT_KEY` |
   | `THENVOI_MCP_SCOPE` | `BAND_MCP_SCOPE` |
   | `THENVOI_MCP_TOOLS` | `BAND_MCP_TOOLS` |
   | `THENVOI_MCP_ROOM_ID` | `BAND_MCP_ROOM_ID` |
+
+  The single-key `BAND_API_KEY` path (a later, separate fallback added after
+  the `THENVOI_*` rename) has also been removed — there is no unscoped
+  credential any more. Set `BAND_USER_KEY` (human scope) and/or
+  `BAND_AGENT_KEY` (agent scope) explicitly.
 
 ## 🚀 Quick Start
 
@@ -90,7 +95,7 @@ Configure your AI assistant to use the Band MCP Server with the following JSON s
 
 > **Note:** This assumes `band-mcp` is installed via `pip` or `uv tool install` so the `band-mcp` command is on your PATH. If you prefer to run from a local checkout, see the [Development setup](#-development) section.
 
-> **Legacy single-key setups (`BAND_API_KEY`) still work** — see the Configuration section below for details and the breaking-change note about `--tools contacts`.
+> See the Configuration section below for the breaking-change note about `--tools contacts`.
 
 <details>
 <summary><strong>Cursor Setup</strong></summary>
@@ -143,7 +148,7 @@ The Band tools will appear in the tools panel.
     "band": {
       "command": "band-mcp",
       "env": {
-        "BAND_API_KEY": "your_api_key_here",
+        "BAND_AGENT_KEY": "band_a_your_agent_key",
         "BAND_BASE_URL": "https://app.band.ai"
       }
     }
@@ -168,7 +173,7 @@ For testing or standalone usage without an IDE:
 
 ```bash
 # After installing band-mcp from PyPI
-BAND_API_KEY=your-key band-mcp
+BAND_AGENT_KEY=your-agent-key band-mcp
 
 # Or, from a local checkout
 uv run band-mcp
@@ -395,7 +400,7 @@ Uses LangGraph's StateGraph for building agents with MCP tools.
 ```bash
 # Set your API keys
 export OPENAI_API_KEY="sk-..."
-export BAND_API_KEY="band_..."
+export BAND_AGENT_KEY="band_a_..."
 
 # Run the interactive agent
 uv run examples/langgraph_agent.py
@@ -417,7 +422,7 @@ Uses LangChain's classic AgentExecutor pattern with OpenAI functions.
 ```bash
 # Set your API keys
 export OPENAI_API_KEY="sk-..."
-export BAND_API_KEY="band_..."
+export BAND_AGENT_KEY="band_a_..."
 
 # Run the interactive agent
 uv run examples/langchain_agent.py
@@ -453,8 +458,8 @@ uv run band-mcp --scope agent --tools contacts,memory
 uv run band-mcp --scope agent --room-id r_123
 ```
 
-Resolution precedence per field: `CLI flag > BAND_* env`. The
-legacy `BAND_API_KEY` env is still honored as a fallback — see below.
+Resolution precedence per field: `CLI flag > BAND_* env`. There is no
+single-key fallback — a credential is either scope-specific or absent.
 
 **Breaking change note for `--tools`.** Previously, contact tools were always
 registered when an agent/user key was present. The new default is `--tools []`
@@ -478,23 +483,13 @@ WARN  unknown --scope value 'huamn' — did you mean 'human'? ignoring.
 | `BAND_MCP_SCOPE`     | Comma-separated scope list (default: `agent`)     |
 | `BAND_MCP_TOOLS`     | Opt-in tool groups: `contacts`, `memory`          |
 | `BAND_MCP_ROOM_ID`   | Pinned room id (optional)                         |
-| `BAND_API_KEY`       | Legacy single-key path — **still supported**      |
 | `BAND_BASE_URL`      | API base URL (default: `https://app.band.ai`)     |
 | `TRANSPORT`          | `stdio` (default) or `sse`                        |
 | `HOST` / `PORT`      | SSE bind host/port                                |
 
-Legacy `.env` setups keep working unchanged:
-
-```bash
-# Legacy, still supported
-BAND_API_KEY=your-api-key-here
-BAND_BASE_URL=https://app.band.ai
-```
-
-When both a scope-specific key (`BAND_USER_KEY` / `BAND_AGENT_KEY`) and
-`BAND_API_KEY` are set, the scope-specific key wins for its scope. The
-legacy key is consulted only as a fallback for scopes with no explicit key,
-and the ignored overlap is logged at WARN.
+There is no single unscoped credential — set `BAND_USER_KEY` for the human
+scope and/or `BAND_AGENT_KEY` for the agent scope, matching whichever
+`--scope` values you serve.
 
 > **Important:** Never commit your `.env` file to version control. It's already in `.gitignore`.
 
@@ -519,14 +514,14 @@ BAND_LOG_LEVEL=debug band-mcp
 - Regenerate API key at [app.band.ai/settings/api-keys](https://app.band.ai/settings/api-keys)
 - Test API directly:
   ```bash
-  curl -H "Authorization: Bearer $BAND_API_KEY" \
+  curl -H "Authorization: Bearer $BAND_AGENT_KEY" \
     https://app.band.ai/api/v1/health
   ```
 
 ### AI Assistant Not Detecting Tools
 
 1. Confirm `band-mcp` is on PATH: `which band-mcp`
-2. Test server manually: `BAND_API_KEY=... band-mcp`
+2. Test server manually: `BAND_AGENT_KEY=... band-mcp`
 3. Restart your AI assistant completely
 4. Check logs:
    ```bash
@@ -574,7 +569,7 @@ git clone --recurse-submodules https://github.com/thenvoi/thenvoi-mcp
 cd thenvoi-mcp
 
 # Copy environment template
-cp .env.example .env  # then edit and set BAND_API_KEY
+cp .env.example .env  # then edit and set BAND_USER_KEY / BAND_AGENT_KEY
 
 # Install with dev dependencies
 uv sync --extra dev
@@ -692,7 +687,7 @@ Add Context7 to your existing MCP configuration alongside Band:
     "band": {
       "command": "band-mcp",
       "env": {
-        "BAND_API_KEY": "your_api_key_here",
+        "BAND_AGENT_KEY": "band_a_your_agent_key",
         "BAND_BASE_URL": "https://app.band.ai"
       }
     },

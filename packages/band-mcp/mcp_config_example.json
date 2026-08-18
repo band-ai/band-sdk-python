@@ -13,14 +13,6 @@
         "BAND_USER_KEY": "band_u_your_user_key",
         "BAND_BASE_URL": "https://app.band.ai"
       }
-    },
-    "band_legacy": {
-      "_comment": "Legacy single-key setup. Still supported; prefer BAND_USER_KEY / BAND_AGENT_KEY for new deployments.",
-      "command": "band-mcp",
-      "env": {
-        "BAND_API_KEY": "your_api_key_here",
-        "BAND_BASE_URL": "https://app.band.ai"
-      }
     }
   }
 }
