@@ -239,6 +239,27 @@ class TestGetToolDocstringWithArgs:
             "mentions": "first line second line"
         }
 
+    def test_whitespace_only_description_is_omitted(self, monkeypatch):
+        """A whitespace-only Field(description=...) is truthy, so it must be
+
+        filtered before reaching format_arg_doc's splitlines unpack — that
+        unpack has no floor and raises ValueError on an empty result, which
+        would crash any adapter importing this tool's schema.
+        """
+        from pydantic import BaseModel, Field
+
+        class ProbeInput(BaseModel):
+            """Probe tool for a whitespace-only field description."""
+
+            blank: str = Field(..., description="   ")
+            real: str = Field(..., description="Has text")
+
+        monkeypatch.setitem(TOOL_MODELS, "band_probe_whitespace", ProbeInput)
+
+        docstring = get_tool_docstring_with_args("band_probe_whitespace")
+
+        assert args_section(docstring) == {"real": "Has text"}
+
 
 class TestPlatformTool:
     def test_decorator_applies_master_docstring(self):
