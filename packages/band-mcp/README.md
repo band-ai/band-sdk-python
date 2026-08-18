@@ -182,7 +182,7 @@ uv run band-mcp
 **Expected output:**
 
 ```
-2025-11-19 17:09:51,621 - band-mcp - INFO - Starting band-mcp-server v1.0.0
+2025-11-19 17:09:51,621 - band-mcp - INFO - Starting band-mcp-server v1.3.2
 2025-11-19 17:09:51,621 - band-mcp - INFO - Base URL: https://app.band.ai
 2025-11-19 17:09:51,621 - band-mcp - INFO - Server ready - listening for MCP protocol messages on STDIO
 ```
@@ -204,7 +204,7 @@ band-mcp --transport sse --host 0.0.0.0 --port 3000
 **Expected output:**
 
 ```
-2025-12-18 17:15:55 - band-mcp - INFO - Starting band-mcp-server v1.0.0
+2025-12-18 17:15:55 - band-mcp - INFO - Starting band-mcp-server v1.3.2
 2025-12-18 17:15:55 - band-mcp - INFO - Base URL: https://app.band.ai
 2025-12-18 17:15:55 - band-mcp - INFO - Transport: SSE (HTTP server mode)
 2025-12-18 17:15:55 - band-mcp - INFO - Server ready - listening on http://127.0.0.1:3000
@@ -275,7 +275,7 @@ npx @modelcontextprotocol/inspector band-mcp
 
 ## 🔨 Available Tools
 
-Tool definitions live in [`band-sdk`](https://github.com/thenvoi/thenvoi-sdk-python) (see `band.runtime.tools.iter_tool_definitions`). The MCP server enumerates them at startup based on `--scope` and `--tools`. Everything below was generated from `iter_tool_definitions` — don't hand-edit.
+Tool definitions live in [`band-sdk`](https://github.com/band-ai/band-sdk-python) (see `band.runtime.tools.iter_tool_definitions`). The MCP server enumerates them at startup based on `--scope` and `--tools`. Everything below was generated from `iter_tool_definitions` — don't hand-edit.
 
 Tool counts:
 
@@ -367,74 +367,22 @@ For users authenticated with a user API key (`band_u_*`).
 | `band_restore_user_memory`   | Restore an archived user memory            |
 | `band_delete_user_memory`    | Delete a user memory permanently           |
 
-## 💡 Usage Examples
+## 💡 Using band-mcp with an Agent Framework
 
-### Agent Framework Examples
+`band-mcp` speaks stock MCP over STDIO or SSE, so it works with any MCP-aware
+client library — [`langchain-mcp-adapters`](https://github.com/langchain-ai/langchain-mcp-adapters),
+LangGraph's `MultiServerMCPClient`, or a framework's own MCP tool loader.
+Point the client at the `band-mcp` command (STDIO) or a running
+`band-mcp --transport sse` process (SSE), then load its tools like any other
+MCP server — no Band-specific glue code beyond the credentials in
+[Configuration](#-configuration) below.
 
-We provide complete examples showing how to integrate Band MCP tools with popular agent frameworks. All examples use `langchain-mcp-adapters` to load the MCP tools.
-
-**Prerequisites for all examples:**
-
-- OpenAI API key (for the LLM)
-- Band API key
-
-**Installation Options:**
-
-```bash
-# Install dependencies for ALL examples
-uv sync --extra examples
-
-# OR install dependencies for specific frameworks:
-
-# LangGraph only
-uv sync --extra langgraph
-
-# LangChain only
-uv sync --extra langchain
-```
-
-#### LangGraph Agent
-
-Uses LangGraph's StateGraph for building agents with MCP tools.
-
-```bash
-# Set your API keys
-export OPENAI_API_KEY="sk-..."
-export BAND_AGENT_KEY="band_a_..."
-
-# Run the interactive agent
-uv run examples/langgraph_agent.py
-```
-
-**What it does:**
-
-- Loads the Band MCP tools advertised by the server (see the tool counts table above)
-- Creates an interactive chat loop with a GPT-4o powered agent
-- The agent can manage chats, send messages, manage participants, and more
-- Type `exit`, `quit`, or `q` to exit
-
-See `examples/langgraph_agent.py` for the complete implementation.
-
-#### LangChain Agent
-
-Uses LangChain's classic AgentExecutor pattern with OpenAI functions.
-
-```bash
-# Set your API keys
-export OPENAI_API_KEY="sk-..."
-export BAND_AGENT_KEY="band_a_..."
-
-# Run the interactive agent
-uv run examples/langchain_agent.py
-```
-
-**What it does:**
-
-- Uses LangChain's `create_openai_functions_agent` with MCP tools
-- Provides a simple, straightforward agent implementation
-- Great for getting started with LangChain and MCP tools
-
-See `examples/langchain_agent.py` for the complete implementation.
+For an end-to-end worked example instead of a from-scratch integration, see
+the Docker Compose and sandbox setups under
+[`examples/acp/copilot_docker`](https://github.com/band-ai/band-sdk-python/tree/main/examples/acp/copilot_docker)
+and
+[`examples/acp/copilot_sandbox`](https://github.com/band-ai/band-sdk-python/tree/main/examples/acp/copilot_sandbox),
+which run `band-mcp` over SSE alongside a real agent.
 
 ## ⚙️ Configuration
 
@@ -539,132 +487,78 @@ BAND_LOG_LEVEL=debug band-mcp
 
 ## 💻 Development
 
+`band-mcp` is published from [`band-ai/band-sdk-python`](https://github.com/band-ai/band-sdk-python)
+— it lives at `packages/band-mcp` as a `uv` workspace member of that repo, not
+a standalone project. There's no separate clone or wheel-building step: the
+workspace resolves `band-sdk` straight from `src/band` in the same checkout,
+so an edit there is picked up by `band-mcp` immediately.
+
 ### Project Structure
 
 ```
-band-mcp-server/
+packages/band-mcp/
 ├── src/
-│   └── band_mcp/              # Main package
-│       ├── __init__.py            # Package initialization
-│       ├── config.py              # CLI/env resolution, scope/tools parsing
-│       ├── server.py              # MCP server entry point
-│       ├── shared.py              # AppContext, HumanTools / AgentTools helpers
-│       └── tools/
-│           ├── __init__.py
-│           └── registrar.py       # SDK-driven tool registration
-├── tests/                         # Unit tests
-├── examples/                      # Usage examples (LangGraph, LangChain)
+│   └── band_mcp/
+│       ├── __init__.py    # Package version
+│       ├── config.py      # CLI/env resolution, scope/tools parsing
+│       ├── server.py      # CLI entry point, EngineSpec construction
+│       └── shared.py      # StandaloneResolver: dispatches tool calls to AgentTools/HumanTools
+├── mcp_config_example.json
 ├── pyproject.toml
-├── .env.example
 └── README.md
 ```
 
-Tool *implementations* live in [`band-sdk`](https://github.com/thenvoi/thenvoi-sdk-python) (`band.runtime.tools`). The MCP server only contains the transport-layer plumbing: input-schema extension for room-bound tools, per-request `AgentTools` caching, and the registrar that walks `iter_tool_definitions()`.
+Tool *implementations* live one level up, in `band-sdk`
+(`src/band/runtime/tools.py`, `src/band/integrations/mcp/engine.py`).
+`band_mcp` only contains the CLI's transport-layer plumbing: input-schema
+extension for room-bound tools, the per-room `AgentTools` cache, and wiring
+the resolved `Config` into `build_engine()`. Its own tests live with the rest
+of the repo's suite, at `tests/mcp/`.
 
 ### Setup Development Environment
 
 ```bash
-# Clone the repository (with submodules for shared rules)
-git clone --recurse-submodules https://github.com/thenvoi/thenvoi-mcp
-cd thenvoi-mcp
+# Clone the SDK repo (band-mcp is a workspace member of it, not its own repo)
+git clone https://github.com/band-ai/band-sdk-python
+cd band-sdk-python
 
-# Copy environment template
-cp .env.example .env  # then edit and set BAND_USER_KEY / BAND_AGENT_KEY
+# Install dependencies for the whole workspace, including band-mcp
+uv sync --extra dev --all-packages
 
-# Install with dev dependencies
-uv sync --extra dev
-
-# Install with ALL examples dependencies
-uv sync --extra examples
-
-# Install specific agent framework dependencies
-uv sync --extra langgraph    # LangGraph only
-uv sync --extra langchain    # LangChain only
-
-# Install both dev and all examples dependencies
-uv sync --extra dev --extra examples
+# Run band-mcp from the workspace
+BAND_AGENT_KEY=your-agent-key uv run --package band-mcp band-mcp
 
 # Install pre-commit hooks
 uv run pre-commit install
 ```
 
+Credentials for local runs come from the repo-root `.env.test` (see the SDK's
+`CLAUDE.md` for the full variable list), not a `band-mcp`-local `.env` file.
+
 ### Pre-Commit Hooks
 
-This repository uses automated code quality tools:
+Repo-wide, shared with the rest of `band-sdk-python`:
 
-- **Gitleaks:** Prevents secrets from being committed
-- **Ruff:** Fast linter and formatter for code style, imports, and PEP8 compliance
+- **Gitleaks:** prevents secrets from being committed
+- **Ruff:** linting and formatting
+- **Pyrefly:** type checking
+- **Commitizen / actionlint:** commit-message and workflow-file linting
 
-The hooks will automatically check and format your code before each commit.
-
-### Local SDK Development
-
-To develop against a local `band-client-rest` SDK instead of PyPI:
-
-```bash
-# 1. Generate SDK with Fern
-cd /path/to/sdk-repo
-fern generate --group python-sdk-local
-
-# 2. Create package structure (Fern output needs wrapping)
-mkdir -p sdk_package/band_rest
-cp -r generated_sdk/* sdk_package/band_rest/
-
-# 3. Create pyproject.toml for the package
-cat > sdk_package/pyproject.toml << 'EOF'
-[project]
-name = "band-client-rest"
-version = "0.0.1"
-requires-python = ">=3.11"
-dependencies = ["httpx>=0.25.0", "pydantic>=2.0.0"]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-EOF
-
-# 4. Build wheel
-cd sdk_package && uv build
-
-# 5. Use local SDK in MCP project
-export UV_FIND_LINKS="/path/to/sdk-repo/sdk_package/dist/"
-cd /path/to/thenvoi-mcp
-uv lock && uv sync --all-extras
-```
-
-**After SDK changes:**
-
-```bash
-# 1. Regenerate and rebuild wheel
-cd /path/to/sdk-repo
-fern generate --group python-sdk-local
-rm -rf sdk_package/band_rest && mkdir -p sdk_package/band_rest
-cp -r generated_sdk/* sdk_package/band_rest/
-cd sdk_package && rm -rf dist && uv build
-
-# 2. Clear uv cache and force reinstall
-cd /path/to/thenvoi-mcp
-uv cache clean --force band-client-rest
-uv lock --upgrade-package band-client-rest
-uv sync --all-extras
-```
-
-> **Important:** You must clear the uv cache with `uv cache clean --force band-client-rest` before re-resolving. Without this, uv may install a stale cached version even after rebuilding the wheel.
+The hooks run automatically on `git commit`.
 
 ### Running Tests
 
 ```bash
-# Run all tests with coverage
-uv run pytest
+# band-mcp's own tests, from the repo root
+uv run pytest tests/mcp/ -v
 
-# Verbose output
-uv run pytest -v
+# The whole workspace's unit tests
+uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 
-# Run specific test file
-uv run pytest tests/test_agents.py -v
-
-# Generate HTML coverage report
-uv run pytest --cov=src/band_mcp --cov-report=html
+# Lint / format / typecheck (also repo-wide)
+uv run ruff check .
+uv run ruff format .
+uv run pyrefly check
 ```
 
 ## 📚 Resources
