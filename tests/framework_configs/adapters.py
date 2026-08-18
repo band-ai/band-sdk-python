@@ -10,14 +10,22 @@ from __future__ import annotations
 import functools
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from unittest.mock import MagicMock
 
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK
 
-__all__ = ["AdapterConfig", "ADAPTER_CONFIGS", "ADAPTER_EXCLUDED_MODULES"]
+__all__ = [
+    "AdapterConfig",
+    "ADAPTER_CONFIGS",
+    "ADAPTER_EXCLUDED_MODULES",
+    "AdvertisedArgTextProbe",
+]
+
+# {tool_name: {arg_name: description | None}} as advertised to the LLM.
+AdvertisedArgTextProbe = Callable[[], Awaitable[dict[str, dict[str, str | None]]]]
 
 # Populated lazily via __getattr__ to avoid top-level adapter imports.
 ADAPTER_CONFIGS: list[AdapterConfig]
@@ -80,6 +88,81 @@ class AdapterConfig:
 
     # Skip on_started conformance test when adapter needs live client (e.g. PydanticAI)
     skip_on_started_conformance: bool = False
+
+    # Optional probe returning the per-argument text this adapter actually
+    # advertises, as {tool_name: {arg_name: description | None}}, verified
+    # against the master models by test_tool_text_drift. Leave None when the
+    # adapter hands the master schema to its framework untouched — there is
+    # nothing that can drift, and a probe would only assert the obvious.
+    advertised_arg_text: AdvertisedArgTextProbe | None = None
+
+
+# ---------------------------------------------------------------------------
+# Advertised argument-text probes
+# ---------------------------------------------------------------------------
+
+
+def _all_capabilities() -> Any:
+    """Every capability, so a probe sees the whole platform tool surface."""
+    from band.core.types import AdapterFeatures, Capability
+
+    return AdapterFeatures(
+        capabilities={Capability.CONTACTS, Capability.MEMORY},
+    )
+
+
+async def pydantic_ai_probe_tools() -> dict[str, Any]:
+    """The pydantic-ai function schemas a started adapter advertises.
+
+    Kept here rather than inline in a test so the walk through pydantic-ai's
+    internals lives in exactly one place.
+    """
+    from band.adapters.pydantic_ai import PydanticAIAdapter
+
+    adapter = PydanticAIAdapter(model="test", features=_all_capabilities())
+    await adapter.on_started(agent_name="Probe", agent_description="probe")
+    return {
+        name: tool.function_schema
+        for name, tool in adapter._agent._function_toolset.tools.items()
+    }
+
+
+async def _pydantic_ai_advertised_arg_text() -> dict[str, dict[str, str | None]]:
+    """pydantic-ai derives argument text by parsing the function docstring.
+
+    Bare type hints therefore advertise no argument text at all, silently — the
+    failure mode this probe exists to catch.
+    """
+    return {
+        name: {
+            arg: spec.get("description")
+            for arg, spec in schema.json_schema.get("properties", {}).items()
+        }
+        for name, schema in (await pydantic_ai_probe_tools()).items()
+    }
+
+
+async def _crewai_advertised_arg_text() -> dict[str, dict[str, str | None]]:
+    """CrewAI is the one adapter that still mints a schema class of its own.
+
+    ``band_send_message`` is a ``create_model`` subclass carrying the master's
+    text plus CrewAI-specific mentions leniency, so a field re-declared on that
+    subclass would drift silently — this is the probe that catches it.
+    """
+    from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
+
+    tools = build_band_crewai_tools(
+        get_context=lambda: None,
+        reporter=NoopReporter(),
+        features=_all_capabilities(),
+    )
+    return {
+        tool.name: {
+            arg: field.description
+            for arg, field in tool.args_schema.model_fields.items()
+        }
+        for tool in tools
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +412,9 @@ def _build_crewai_config() -> AdapterConfig:
         # on_started does a runtime `from crewai import Agent, LLM` which fails
         # when crewai is not installed (conflict group with parlant/pydantic-ai).
         skip_on_started_conformance=not _crewai_available,
+        # Same gate: building the tools needs crewai.tools.BaseTool, so this
+        # probe only runs in the crewai lane.
+        advertised_arg_text=_crewai_advertised_arg_text if _crewai_available else None,
     )
 
 
@@ -483,6 +569,7 @@ def _build_pydantic_ai_config() -> AdapterConfig:
             "instrument": True,
         },
         skip_on_started_conformance=True,  # on_started creates real OpenAI client; tested in test_pydantic_ai_adapter
+        advertised_arg_text=_pydantic_ai_advertised_arg_text,
     )
 
 
