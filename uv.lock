@@ -508,55 +508,14 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
-examples = [
-    { name = "langchain" },
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "python-dotenv" },
-]
-langchain = [
-    { name = "langchain" },
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "python-dotenv" },
-]
-langgraph = [
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "python-dotenv" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "band-client-rest", specifier = "==0.0.27" },
     { name = "band-sdk", editable = "." },
-    { name = "langchain", marker = "extra == 'examples'", specifier = ">=0.3.0" },
-    { name = "langchain", marker = "extra == 'langchain'", specifier = ">=0.3.0" },
-    { name = "langchain-core", marker = "extra == 'examples'", specifier = ">=1.2.5" },
-    { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=1.2.5" },
-    { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=1.2.5" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'examples'", specifier = ">=0.1.0" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'langchain'", specifier = ">=0.1.0" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'langgraph'", specifier = ">=0.1.0" },
-    { name = "langchain-openai", marker = "extra == 'examples'", specifier = ">=0.2.0" },
-    { name = "langchain-openai", marker = "extra == 'langchain'", specifier = ">=0.2.0" },
-    { name = "langchain-openai", marker = "extra == 'langgraph'", specifier = ">=0.2.0" },
-    { name = "langgraph", marker = "extra == 'examples'", specifier = ">=0.2.0" },
-    { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1,<2" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
-    { name = "python-dotenv", marker = "extra == 'examples'", specifier = ">=1.0.0" },
-    { name = "python-dotenv", marker = "extra == 'langchain'", specifier = ">=1.0.0" },
-    { name = "python-dotenv", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
-provides-extras = ["langgraph", "langchain", "examples"]
 
 [[package]]
 name = "band-sdk"
@@ -3912,21 +3871,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5c/05/986c4bb148285791eb59994e0b28947bed96cac7f24467079e4274952a37/langchain_core-1.5.0.tar.gz", hash = "sha256:e1fa09d55b354192c8f60dade06a55bd6add2318c822a684555b8d4a30a16143", size = 967401, upload-time = "2026-07-21T03:37:26.48Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/56/5ef7ba14bac95b0344da18c6e8ec108dce0baf5fc054d1117702f92af29d/langchain_core-1.5.0-py3-none-any.whl", hash = "sha256:f122efee35446632b38687119fca33711abbf3b6b555e31156762298fbe78a65", size = 558510, upload-time = "2026-07-21T03:37:24.423Z" },
-]
-
-[[package]]
-name = "langchain-mcp-adapters"
-version = "0.3.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "langchain-core" },
-    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
-    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/05/49/f3b8497b64024ab50d10011f27e94d149668fef754da74c1c2ce6ebe4a30/langchain_mcp_adapters-0.3.2.tar.gz", hash = "sha256:61cd1a09597adb619a9bafb0642938ffc2a9463d699a753f7af0420ea46c381a", size = 47129, upload-time = "2026-08-06T06:15:04.094Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/5e/4f117d2500a661079a1895a6eb18954a906e458b1e45fa04a301fcdabd61/langchain_mcp_adapters-0.3.2-py3-none-any.whl", hash = "sha256:094e6b3096dbcc408417d5722f6915f164772e50c502ae3d8989405bf12c3c84", size = 28879, upload-time = "2026-08-06T06:15:02.832Z" },
 ]
 
 [[package]]

@@ -11,8 +11,9 @@ dependencies = [
     # Floor raised from the old repo's uncapped mcp[cli]>=1.23.0, whose
     # fresh installs resolve mcp 2.0.0 and fail at import.
     #
-    # Floor pinned to exactly crewai's own transitive pin (mcp~=1.28.1, as of
-    # crewai 1.15.16 -- checked 2026-08-18), not the latest 1.x: band-mcp is
+    # Floor pinned to exactly crewai's own transitive pin (mcp~=1.28.1, per
+    # both this repo's pinned crewai==1.15.5 and the latest crewai 1.15.16 on
+    # PyPI -- checked 2026-08-18), not the latest 1.x: band-mcp is
     # an unconditional workspace member, not an extra, so it can't be forked
     # away from the dev-crewai extra the way `[tool.uv] conflicts` forks
     # crewai from parlant/pydantic-ai. A tighter floor here makes the shared
@@ -30,33 +31,6 @@ dependencies = [
     # engine docs / the release-please component ownership policy).
     "band-sdk>=1.6.0",
     "uvicorn>=0.30.0",  # Required for SSE transport mode
-]
-
-[project.optional-dependencies]
-# LangGraph agent example dependencies
-langgraph = [
-    "langchain-core>=1.2.5",
-    "langchain-mcp-adapters>=0.1.0",
-    "langchain-openai>=0.2.0",
-    "langgraph>=0.2.0",
-    "python-dotenv>=1.0.0",
-]
-# LangChain agent example dependencies
-langchain = [
-    "langchain-core>=1.2.5",
-    "langchain-mcp-adapters>=0.1.0",
-    "langchain-openai>=0.2.0",
-    "langchain>=0.3.0",
-    "python-dotenv>=1.0.0",
-]
-# All examples dependencies (convenience group)
-examples = [
-    "langchain-core>=1.2.5",
-    "langchain-mcp-adapters>=0.1.0",
-    "langchain-openai>=0.2.0",
-    "langchain>=0.3.0",
-    "langgraph>=0.2.0",
-    "python-dotenv>=1.0.0",
 ]
 
 [project.scripts]
