@@ -91,6 +91,11 @@ def _extract_id(payload: Any) -> str | None:
     return None
 
 
+def _unwrap(payload: Any) -> Any:
+    """Unwrap a ``{"data": ...}`` envelope; return payload unchanged if bare."""
+    return payload.get("data") if isinstance(payload, dict) else payload
+
+
 class LiveHarness:
     """Drives the standalone engine end-to-end against a live API.
 

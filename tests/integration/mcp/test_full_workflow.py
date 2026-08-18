@@ -17,7 +17,12 @@ import pytest
 
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tests.integration.mcp.conftest import LiveHarness, _extract_id, requires_api
+from tests.integration.mcp.conftest import (
+    LiveHarness,
+    _extract_id,
+    _unwrap,
+    requires_api,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +56,7 @@ async def test_agent_create_room_send_and_read_back(
     assert send_result is not None, "send_message returned nothing"
 
     participants = await harness.call("band_get_participants", chat_id=agent_room)
-    data = participants.get("data") if isinstance(participants, dict) else participants
+    data = _unwrap(participants)
     assert isinstance(data, list), participants
     logger.info("Room %s has %d participants", agent_room, len(data))
 

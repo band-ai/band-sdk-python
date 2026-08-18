@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from tests.integration.mcp.conftest import LiveHarness, requires_api
+from tests.integration.mcp.conftest import LiveHarness, _unwrap, requires_api
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +41,13 @@ async def test_human_profile_and_chats_round_trip(harness: LiveHarness) -> None:
     profile = await harness.call("band_get_my_profile")
     # GetMyProfileResponse wraps UserDetails under "data" (engine._serialize
     # model_dump()s the whole response, not just its payload).
-    user = profile.get("data") if isinstance(profile, dict) else profile
+    user = _unwrap(profile)
     assert isinstance(user, dict), profile
     assert "id" in user, user
     assert "handle" in user, user
 
     chats = await harness.call("band_list_my_chats")
-    # Responses are typically {"data": [...]} but tolerate a bare list.
-    data = chats.get("data") if isinstance(chats, dict) else chats
+    data = _unwrap(chats)
     assert isinstance(data, list), chats
     logger.info("Human sees %d chats", len(data))
 
@@ -71,6 +70,6 @@ async def test_agent_lookup_peers_returns_list(
     takes none directly.
     """
     peers = await harness.call("band_lookup_peers", chat_id=agent_room)
-    data = peers.get("data") if isinstance(peers, dict) else peers
+    data = _unwrap(peers)
     assert isinstance(data, list), peers
     logger.info("Agent sees %d peers", len(data))
