@@ -240,11 +240,12 @@ class TestGetToolDocstringWithArgs:
         }
 
     def test_whitespace_only_description_is_omitted(self, monkeypatch):
-        """A whitespace-only Field(description=...) is truthy, so it must be
+        """A whitespace-only Field(description=...) must be filtered out.
 
-        filtered before reaching format_arg_doc's splitlines unpack — that
-        unpack has no floor and raises ValueError on an empty result, which
-        would crash any adapter importing this tool's schema.
+        It's truthy, so without filtering it reaches format_arg_doc's
+        splitlines unpack — that unpack has no floor and raises ValueError on
+        an empty result, which would crash any adapter importing this tool's
+        schema.
         """
         from pydantic import BaseModel, Field
 

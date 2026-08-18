@@ -1303,10 +1303,11 @@ class TestToolExecution:
     def test_send_event_run_rejects_missing_message_type(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        """A direct `_run` call bypasses args_schema validation (crewai Flows do
+        """A direct `_run` call must enforce the requiredness the schema enforces.
 
-        this), so the requiredness enforced by the schema must be enforced here
-        too, or an omitted message_type silently posts as "thought" again.
+        crewai Flows call `_run` directly, bypassing args_schema validation, so
+        without this an omitted message_type would silently post as "thought"
+        again.
         """
         crewai_mocks.Agent.reset_mock()
 

@@ -58,6 +58,7 @@ from band.runtime.tools import (
     is_terminal_success,
     platform_args_schema,
     serialize_tool_result,
+    validate_tool_arguments,
 )
 
 logger = logging.getLogger(__name__)
@@ -415,18 +416,16 @@ def _make_platform_tools(
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            content: str = kwargs.get("content", "")
-            metadata: dict[str, Any] | None = kwargs.get("metadata")
-
             async def execute(tools: AgentToolsProtocol) -> str:
-                if "message_type" not in kwargs:
-                    raise ValueError(
-                        "Invalid arguments for band_send_event: "
-                        "message_type: Field required"
-                    )
+                # Validated here, not in _run: _run is also called directly,
+                # bypassing args_schema validation, and _exec turns the
+                # ValueError into the error result the caller expects.
+                args = validate_tool_arguments(
+                    "band_send_event", self.args_schema, kwargs
+                )
                 # No execution reporting for send_event to avoid meta-events.
                 await tools.send_event(
-                    content, kwargs["message_type"], metadata=metadata
+                    args["content"], args["message_type"], metadata=args.get("metadata")
                 )
                 return json.dumps({"status": "success", "message": "Event sent"})
 
