@@ -204,35 +204,28 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     def _registered_tools(self) -> tuple[list[ToolDefinition], frozenset[str]]:
         """The tools this adapter registers on the loopback MCP server.
 
-        Band platform tools plus custom tools. Computed once at construction
-        — both inputs are known here — so MCP registration and tool-name
-        canonicalization share one vocabulary. This resembles OpenCodeAdapter's
-        equivalent block (same idea: compute the vocabulary once, up front),
-        but is not extracted into a shared helper — the two sets already serve
-        different consumers (opencode's gates auto-approve/permission
-        matching; this one gates narration canonicalization and includes the
-        legacy alias below) and, per contacts below, no longer share the same
-        gating rule either. Merging genuinely-different vocabularies just
-        because they're built similarly would cost more than the duplication
-        it removes.
-
-        Memory tools are gated behind ``Capability.MEMORY`` — an opt-in,
-        enterprise feature. Contact tools are NOT gated behind
-        ``Capability.CONTACTS`` despite ``iter_tool_definitions`` taking the
-        same shape of flag for both: every existing caller (the ACP examples)
-        constructs this adapter with no ``features=`` of its own and expects
-        contacts to just work, so gating them would silently drop
-        ``band_list_contacts`` et al. for every one of them with no warning
-        (``SUPPORTED_CAPABILITIES`` already covers ``CONTACTS``, so the base
-        class's unsupported-capability warning never fires either). Declaring
-        ``Capability.CONTACTS`` in ``SUPPORTED_CAPABILITIES`` only stops that
-        warning for a caller that does declare it.
+        Band platform tools plus custom tools, computed once at construction
+        so MCP registration and tool-name canonicalization share one
+        vocabulary.
         """
         definitions = list(
             iter_tool_definitions(
+                # Memory is an opt-in enterprise capability; contacts are not
+                # gated on Capability.CONTACTS despite the same flag shape —
+                # every existing caller (the ACP examples) builds this adapter
+                # with no features= and expects contacts to just work, so
+                # gating them would silently drop band_list_contacts et al.
+                # with no warning (SUPPORTED_CAPABILITIES already covers
+                # CONTACTS, so the base class's unsupported-capability warning
+                # never fires either way).
                 include_memory=Capability.MEMORY in self.features.capabilities,
             )
         )
+        # Resembles OpenCodeAdapter's equivalent vocabulary block but isn't
+        # extracted into a shared helper: the two sets serve different
+        # consumers (opencode's gates auto-approve/permission matching; this
+        # one gates narration canonicalization and includes the legacy alias
+        # below) and no longer share the same gating rule either.
         names = frozenset(
             {definition.name for definition in definitions}
             | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
