@@ -54,6 +54,7 @@ from band.runtime.retry_tracker import MessageRetryTracker
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
+    from band.core.delegation import DelegationEnvelope
     from band.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
@@ -279,6 +280,13 @@ class ExecutionContext:
 
         # LLM context tracking
         self._llm_initialized = False
+
+        # Cross-owner identity envelope for the message currently being
+        # processed (INT-992). DefaultPreprocessor.process assigns it on every
+        # message it lifts — the parsed envelope for a delegated message, None
+        # otherwise — so it can never carry over from a previous turn. Typed,
+        # read-only view for handler/tool code; never rendered for the LLM.
+        self.delegation: DelegationEnvelope | None = None
 
         # Message ownership ledger (in-flight claims, completed LRU, pending
         # acks) shared by /next and WebSocket processing. Runtime-provided so

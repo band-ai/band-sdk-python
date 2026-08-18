@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from band.client.streaming import MessageCreatedPayload, MessageMetadata
+from band.core.delegation import DelegationEnvelope
 from band.core.protocols import Preprocessor
 from band.core.types import AgentInput, HistoryProvider
 from band.platform.event import (
@@ -15,6 +16,9 @@ from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.types import SessionConfig
 
 
+_DEFAULT_METADATA = object()  # sentinel: "caller didn't pass metadata"
+
+
 def make_message_payload(
     *,
     id: str = "msg-1",
@@ -23,13 +27,16 @@ def make_message_payload(
     sender_type: str = "User",
     room_id: str = "room-1",
     message_type: str = "text",
+    metadata: MessageMetadata | None | object = _DEFAULT_METADATA,
 ) -> MessageCreatedPayload:
     """Create test MessageCreatedPayload."""
+    if metadata is _DEFAULT_METADATA:
+        metadata = MessageMetadata(mentions=[], status="sent")
     return MessageCreatedPayload(
         id=id,
         content=content,
         message_type=message_type,
-        metadata=MessageMetadata(mentions=[], status="sent"),
+        metadata=metadata,  # type: ignore[arg-type]
         sender_id=sender_id,
         sender_type=sender_type,
         chat_room_id=room_id,
@@ -45,6 +52,7 @@ def make_message_event(
     content: str = "Hello",
     sender_id: str = "user-1",
     sender_type: str = "User",
+    metadata: MessageMetadata | None | object = _DEFAULT_METADATA,
 ) -> MessageEvent:
     """Create test MessageEvent."""
     return MessageEvent(
@@ -54,6 +62,7 @@ def make_message_event(
             sender_id=sender_id,
             sender_type=sender_type,
             room_id=room_id,
+            metadata=metadata,
         ),
     )
 
@@ -499,6 +508,121 @@ class TestHistoryLoadingErrors:
         # Should still return AgentInput with empty history
         assert result is not None
         assert len(result.history) == 0
+
+
+class TestDelegationLift:
+    """INT-992: the preprocessor is the single lift point for the platform's
+    identity envelope — parsed once off the inbound metadata and set on
+    ``ctx.delegation`` for handler/tool code. The LLM never sees it (the
+    formatter strips the key from history; format_for_llm renders name +
+    content only)."""
+
+    ENVELOPE = {
+        "version": 1,
+        "originator": {
+            "uuid": "0b7a3c2e-9d1f-4e8a-b6c5-2f4a8d9e1c3b",
+            "handle": "alice.asker",
+            "display_name": "Alice Asker",
+        },
+        "message_id": "7f3e9a1b-5c2d-4f6e-8a9b-1c3d5e7f9a2b",
+        "minted_at": "2026-08-13T09:30:00Z",
+        "hop": None,
+    }
+
+    async def _process(self, ctx, event):
+        preprocessor = DefaultPreprocessor()
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "band.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                return await preprocessor.process(ctx, event, agent_id="agent-1")
+
+    async def test_lifts_the_envelope_onto_ctx(self):
+        ctx = make_mock_ctx()
+        metadata = MessageMetadata.model_validate(
+            {"mentions": [], "status": "sent", "delegation": dict(self.ENVELOPE)}
+        )
+        event = make_message_event(metadata=metadata)
+
+        result = await self._process(ctx, event)
+
+        assert result is not None
+        assert isinstance(ctx.delegation, DelegationEnvelope)
+        assert ctx.delegation.originator is not None
+        assert ctx.delegation.originator.handle == "alice.asker"
+        assert ctx.delegation.message_id == self.ENVELOPE["message_id"]
+
+    async def test_clears_a_stale_envelope_when_the_next_message_is_not_delegated(
+        self,
+    ):
+        """ctx.delegation is per-message state: an undelegated message must
+        overwrite the previous turn's envelope with None."""
+        ctx = make_mock_ctx()
+        ctx.delegation = DelegationEnvelope.model_validate(self.ENVELOPE)  # stale
+        event = make_message_event()  # default metadata, no envelope
+
+        result = await self._process(ctx, event)
+
+        assert result is not None
+        assert ctx.delegation is None
+
+    async def test_none_metadata_lifts_none(self):
+        ctx = make_mock_ctx()
+        ctx.delegation = "stale-sentinel"
+        event = make_message_event(metadata=None)
+
+        result = await self._process(ctx, event)
+
+        assert result is not None
+        assert ctx.delegation is None
+
+    async def test_malformed_envelope_lifts_none_and_does_not_raise(self):
+        """I3 end to end: a malformed platform envelope arriving over the wire
+        must neither raise nor surface as anything but None."""
+        ctx = make_mock_ctx()
+        payload = MessageCreatedPayload.model_validate(
+            {
+                "id": "msg-1",
+                "content": "Hello",
+                "message_type": "text",
+                "metadata": {
+                    "mentions": [],
+                    "status": "sent",
+                    "delegation": "junk-not-an-envelope",
+                },
+                "sender_id": "user-1",
+                "sender_type": "User",
+                "chat_room_id": "room-1",
+                "inserted_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+            }
+        )
+        event = MessageEvent(room_id="room-1", payload=payload)
+
+        result = await self._process(ctx, event)
+
+        assert result is not None
+        assert ctx.delegation is None
+
+    async def test_the_envelope_does_not_leak_into_msg_content(self):
+        """The AgentInput message the adapters format for the model carries no
+        envelope content."""
+        ctx = make_mock_ctx()
+        metadata = MessageMetadata.model_validate(
+            {"mentions": [], "status": "sent", "delegation": dict(self.ENVELOPE)}
+        )
+        event = make_message_event(content="delegated ask", metadata=metadata)
+
+        result = await self._process(ctx, event)
+
+        assert result is not None
+        rendered = result.msg.format_for_llm()
+        assert "alice.asker" not in rendered
+        assert "Alice Asker" not in rendered
+        assert "delegation" not in rendered
+        assert rendered.endswith("delegated ask")
 
 
 class TestBootstrapHistoryTruncation:
