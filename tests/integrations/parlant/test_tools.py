@@ -1,6 +1,7 @@
 """Tests for Parlant tools module."""
 
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,7 +19,7 @@ from band.integrations.parlant.tools import (
     set_session_tools,
     was_message_sent,
 )
-from band.runtime.tools import TOOL_MODELS
+from band.runtime.tools import TOOL_MODELS, ListContactRequestsInput
 
 try:
     import parlant.sdk  # noqa: F401
@@ -291,6 +292,26 @@ class TestCreateParlantTools:
 
         assert description is not None
         assert "comma" in description
+
+    def test_list_contact_requests_sent_status_description_lists_literal_choices(self):
+        """sent_status's master field is Literal[...]; handing that type to
+        Parlant directly crashes tool registration (Parlant's schema builder
+        only turns a real enum.Enum into an ``enum``), so its choices must
+        reach the LLM as prose in the description instead of vanishing.
+        """
+        choices = get_args(
+            ListContactRequestsInput.model_fields["sent_status"].annotation
+        )
+
+        tools = create_parlant_tools(
+            features=AdapterFeatures(capabilities={Capability.CONTACTS})
+        )
+        entry = next(t for t in tools if t.tool.name == "band_list_contact_requests")
+        description = entry.tool.parameters["sent_status"][1].description
+
+        assert description is not None
+        for choice in choices:
+            assert choice in description
 
     def test_send_message_tool_has_required_parameters(self):
         """send_message should have content and mentions parameters."""

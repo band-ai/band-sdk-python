@@ -26,7 +26,7 @@ import inspect
 import json
 import logging
 import warnings
-from typing import Annotated, Any, Callable, Optional
+from typing import Annotated, Any, Callable, Literal, Optional, get_args, get_origin
 
 from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
@@ -73,6 +73,22 @@ LOOKUP_PEERS_RETURN_NOTE = (
     "\n\nThis tool returns a formatted text summary of matching agents, not "
     "the 'data'/'metadata' dict described above."
 )
+
+
+def _literal_choices(annotation: Any) -> tuple[str, ...] | None:
+    """String choices of a master field's ``Literal[...]`` annotation, if any.
+
+    Parlant's schema builder turns a real ``enum.Enum`` class into a JSON
+    Schema ``enum``, but a bare ``Literal[...]`` isn't one — it falls into
+    the builder's list-only generic-container branch and raises. So a
+    Literal-typed master field can't be passed through as the parameter's own
+    annotation; its choices are folded into the description as prose instead.
+    """
+    if get_origin(annotation) is Literal:
+        args = get_args(annotation)
+        if args and all(isinstance(a, str) for a in args):
+            return args
+    return None
 
 
 def set_session_tools(session_id: str, tools: Optional[Any]) -> None:
@@ -174,7 +190,11 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         wraps each parameter's annotation from the master model's
         ``Field(description=...)`` before registering, skipping ``context``
         (must stay exactly ``ToolContext``) and any parameter with no master
-        description.
+        description. A master field typed ``Literal[...]`` has its string
+        choices folded into that same description text (see
+        ``_literal_choices``) — the function keeps its own ``str``
+        annotation, since handing Parlant the ``Literal`` itself crashes
+        registration.
         """
 
         def decorator(func: Callable[..., Any]) -> Any:
@@ -189,6 +209,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                     description = field.description if field else None
                     if not description:
                         continue
+                    if field is not None and (
+                        choices := _literal_choices(field.annotation)
+                    ):
+                        description = (
+                            description.rstrip() + f" One of: {', '.join(choices)}."
+                        )
                     if param_overrides and param_name in param_overrides:
                         description = description.rstrip() + param_overrides[param_name]
                     func.__annotations__[param_name] = Annotated[
