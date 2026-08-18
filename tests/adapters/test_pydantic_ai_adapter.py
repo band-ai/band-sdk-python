@@ -55,6 +55,8 @@ from band.adapters.pydantic_ai import (
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import Capability, Emit, PlatformMessage
 from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.tools import get_tool_description
+from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
 
 def make_stream_events(
@@ -667,6 +669,25 @@ class TestOnStarted:
 
         for tool in expected_tools:
             assert tool in tool_names, f"Tool {tool} not found"
+
+
+class TestAdvertisedToolSchemas:
+    """Per-argument text fidelity is asserted in test_tool_text_drift.
+
+    What is pydantic-ai-specific, and checked here, is the split: griffe
+    consumes the rendered ``Args:`` section into the argument schema, so the
+    tool's own blurb must come back as the plain master docstring.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_blurb_is_the_master_docstring(self):
+        blurbs = {
+            name: schema.description
+            for name, schema in (await pydantic_ai_probe_tools()).items()
+        }
+
+        assert blurbs, "no tools registered, so nothing was actually checked"
+        assert blurbs == {name: get_tool_description(name).strip() for name in blurbs}
 
 
 class TestOnMessage:

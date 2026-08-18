@@ -60,6 +60,19 @@ def runtime_mod(crewai_mocks):
     return importlib.import_module("band.integrations.crewai.runtime")
 
 
+@pytest.fixture
+def platform_args_schemas(builder_mod):
+    """Tool name -> the args schema CrewAI actually advertises to the LLM."""
+    from band.core.types import Capability
+
+    tools = builder_mod.build_band_crewai_tools(
+        get_context=lambda: None,
+        reporter=builder_mod.NoopReporter(),
+        capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
+    )
+    return {tool.name: tool.args_schema for tool in tools}
+
+
 # --- Tool-set composition ---
 
 
@@ -206,13 +219,13 @@ class TestToolSetComposition:
             ("band_list_contacts", {"page": 0}),
             ("band_list_contact_requests", {"sent_status": "done"}),
             ("band_respond_contact_request", {"action": "maybe"}),
-            ("band_list_memories", {"memory_type": "fact"}),
+            ("band_list_memories", {"type": "fact"}),
             (
                 "band_store_memory",
                 {
                     "content": "remember this",
                     "system": "working",
-                    "memory_type": "fact",
+                    "type": "fact",
                     "segment": "user",
                     "thought": "useful later",
                     "scope": "organization",
@@ -221,45 +234,26 @@ class TestToolSetComposition:
         ],
     )
     def test_platform_tool_schemas_reject_invalid_values(
-        self, builder_mod, tool_name, payload
+        self, platform_args_schemas, tool_name, payload
     ):
         from pydantic import ValidationError
 
-        from band.core.types import Capability
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
-        )
-        tool = next(t for t in tools if t.name == tool_name)
-
         with pytest.raises(ValidationError):
-            tool.args_schema.model_validate(payload)
+            platform_args_schemas[tool_name].model_validate(payload)
 
-    def test_platform_tool_schemas_accept_metadata_fields(self, builder_mod):
-        from band.core.types import Capability
-
-        tools = builder_mod.build_band_crewai_tools(
-            get_context=lambda: None,
-            reporter=builder_mod.NoopReporter(),
-            capabilities=frozenset({Capability.MEMORY}),
-        )
-        send_event = next(t for t in tools if t.name == "band_send_event")
-        store_memory = next(t for t in tools if t.name == "band_store_memory")
-
-        assert send_event.args_schema.model_validate(
+    def test_platform_tool_schemas_accept_metadata_fields(self, platform_args_schemas):
+        assert platform_args_schemas["band_send_event"].model_validate(
             {
                 "content": "state update",
                 "message_type": "task",
                 "metadata": {"run_id": "run-1"},
             }
         ).metadata == {"run_id": "run-1"}
-        assert store_memory.args_schema.model_validate(
+        assert platform_args_schemas["band_store_memory"].model_validate(
             {
                 "content": "remember this",
                 "system": "working",
-                "memory_type": "semantic",
+                "type": "semantic",
                 "segment": "user",
                 "thought": "useful later",
                 "scope": "organization",
@@ -301,7 +295,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "success"
         tools_obj.send_message.assert_awaited_once()
@@ -371,7 +365,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "error"
         assert tracker.replied is False
@@ -406,7 +400,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "error"
         assert "@john" in result["message"]
@@ -440,7 +434,7 @@ class TestToolSetComposition:
         )
         send_message = next(t for t in tools if t.name == "band_send_message")
 
-        result = json.loads(send_message._run(content="hello", mentions="[]"))
+        result = json.loads(send_message._run(content="hello", mentions=[]))
 
         assert result["status"] == "error"
         assert "@john" in result["message"]
@@ -571,7 +565,7 @@ class TestMissingContext:
             capabilities=frozenset(),
         )
         send_message_tool = next(t for t in tools if t.name == "band_send_message")
-        result_str = send_message_tool._run(content="hi", mentions="[]")
+        result_str = send_message_tool._run(content="hi", mentions=[])
         result = json.loads(result_str)
         assert result["status"] == "error"
         assert "No room context available" in result["message"]
@@ -597,47 +591,43 @@ class TestRunAsyncLazyPatch:
         assert crewai_mocks.apply.call_count == 1
 
 
-class TestStoreMemoryInputDescription:
-    def test_crewai_store_memory_type_description_is_generated(self, builder_mod):
-        """CrewAI store_memory args schema should use memory_type_field_description()."""
+class TestStoreMemoryArgsSchema:
+    """CrewAI advertises the master model, so master text and validators apply."""
+
+    def test_type_description_comes_from_master(self, platform_args_schemas) -> None:
         from band.core.memory_types import memory_type_field_description
 
-        expected = memory_type_field_description()
+        schema = platform_args_schemas["band_store_memory"]
         assert (
-            builder_mod._StoreMemoryInput.model_fields["memory_type"].description
-            == expected
+            schema.model_fields["type"].description == memory_type_field_description()
         )
 
-    def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
-        self, builder_mod
+    def test_rejects_subject_scope_without_subject_id(
+        self, platform_args_schemas
     ) -> None:
-        """CrewAI input validation rejects missing subject IDs."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError, match="requires a subject_id"):
-            builder_mod._StoreMemoryInput.model_validate(
+            platform_args_schemas["band_store_memory"].model_validate(
                 {
                     "content": "remember this",
                     "system": "working",
-                    "memory_type": "semantic",
+                    "type": "semantic",
                     "segment": "user",
                     "thought": "useful later",
                     "scope": "subject",
                 }
             )
 
-    def test_crewai_store_memory_rejects_type_for_wrong_system(
-        self, builder_mod
-    ) -> None:
-        """CrewAI input validation rejects system/type mismatches."""
+    def test_rejects_type_for_wrong_system(self, platform_args_schemas) -> None:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError, match='type="semantic" is not valid'):
-            builder_mod._StoreMemoryInput.model_validate(
+            platform_args_schemas["band_store_memory"].model_validate(
                 {
                     "content": "remember this",
                     "system": "sensory",
-                    "memory_type": "semantic",
+                    "type": "semantic",
                     "segment": "user",
                     "thought": "useful later",
                     "scope": "organization",
