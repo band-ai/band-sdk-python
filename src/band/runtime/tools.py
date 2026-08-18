@@ -11,6 +11,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pydantic import (
@@ -189,6 +190,13 @@ def append_available_mention_handles(
     )
 
 
+class Surface(StrEnum):
+    """The two surfaces a built-in Band tool can be registered on."""
+
+    AGENT = "agent"
+    HUMAN = "human"
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Metadata for a built-in Band tool."""
@@ -196,7 +204,7 @@ class ToolDefinition:
     name: str
     input_model: type[BaseModel]
     method_name: str
-    surface: Literal["agent", "human"] = "agent"
+    surface: Surface = Surface.AGENT
 
 
 # --- Tool input models (single source of truth for schemas) ---
@@ -835,6 +843,14 @@ AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# The model-facing room-identifier argument name every MCP front door and
+# adapter prompt advertises -- the published band-mcp 1.3.2 wire contract's
+# canonical field name. The Python-side variable is still `room_id`
+# everywhere; only text the model sees (schemas, prompts) uses this. Single
+# source of truth so a producer (schema field name) and its consumers
+# (per-turn prompt text in opencode/letta/acp/claude_sdk) can't drift apart.
+CHAT_ID_FIELD_NAME = "chat_id"
+
 
 def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
     """Return ``(is_agent_room_bound, is_human_room_bound)`` for a definition.
@@ -851,11 +867,13 @@ def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
     contract). The embedded front door does not call this for agent tools --
     it wraps every agent tool uniformly instead (divergence-matrix row 2).
     """
-    if definition.surface == "agent":
-        return (definition.name in AGENT_ROOM_BOUND_TOOL_NAMES, False)
-    if definition.surface == "human":
-        return (False, "chat_id" in definition.input_model.model_fields)
-    return (False, False)
+    match definition.surface:
+        case Surface.AGENT:
+            return (definition.name in AGENT_ROOM_BOUND_TOOL_NAMES, False)
+        case Surface.HUMAN:
+            return (False, CHAT_ID_FIELD_NAME in definition.input_model.model_fields)
+        case _:
+            return (False, False)
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
@@ -953,176 +971,176 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         name="band_list_my_agents",
         input_model=ListMyAgentsInput,
         method_name="list_my_agents",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_register_my_agent": ToolDefinition(
         name="band_register_my_agent",
         input_model=RegisterMyAgentInput,
         method_name="register_my_agent",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_my_chats": ToolDefinition(
         name="band_list_my_chats",
         input_model=ListMyChatsInput,
         method_name="list_my_chats",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_create_my_chat_room": ToolDefinition(
         name="band_create_my_chat_room",
         input_model=CreateMyChatRoomInput,
         method_name="create_my_chat_room",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_get_my_chat_room": ToolDefinition(
         name="band_get_my_chat_room",
         input_model=GetMyChatRoomInput,
         method_name="get_my_chat_room",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_my_contacts": ToolDefinition(
         name="band_list_my_contacts",
         input_model=ListMyContactsInput,
         method_name="list_my_contacts",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_create_contact_request": ToolDefinition(
         name="band_create_contact_request",
         input_model=CreateContactRequestInput,
         method_name="create_contact_request",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_received_contact_requests": ToolDefinition(
         name="band_list_received_contact_requests",
         input_model=ListReceivedContactRequestsInput,
         method_name="list_received_contact_requests",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_sent_contact_requests": ToolDefinition(
         name="band_list_sent_contact_requests",
         input_model=ListSentContactRequestsInput,
         method_name="list_sent_contact_requests",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_approve_contact_request": ToolDefinition(
         name="band_approve_contact_request",
         input_model=ApproveContactRequestInput,
         method_name="approve_contact_request",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_reject_contact_request": ToolDefinition(
         name="band_reject_contact_request",
         input_model=RejectContactRequestInput,
         method_name="reject_contact_request",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_cancel_contact_request": ToolDefinition(
         name="band_cancel_contact_request",
         input_model=CancelContactRequestInput,
         method_name="cancel_contact_request",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_resolve_handle": ToolDefinition(
         name="band_resolve_handle",
         input_model=ResolveHandleInput,
         method_name="resolve_handle",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_remove_my_contact": ToolDefinition(
         name="band_remove_my_contact",
         input_model=RemoveMyContactInput,
         method_name="remove_my_contact",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_my_chat_messages": ToolDefinition(
         name="band_list_my_chat_messages",
         input_model=ListMyChatMessagesInput,
         method_name="list_my_chat_messages",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_send_my_chat_message": ToolDefinition(
         name="band_send_my_chat_message",
         input_model=SendMyChatMessageInput,
         method_name="send_my_chat_message",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_my_chat_participants": ToolDefinition(
         name="band_list_my_chat_participants",
         input_model=ListMyChatParticipantsInput,
         method_name="list_my_chat_participants",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_add_my_chat_participant": ToolDefinition(
         name="band_add_my_chat_participant",
         input_model=AddMyChatParticipantInput,
         method_name="add_my_chat_participant",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_remove_my_chat_participant": ToolDefinition(
         name="band_remove_my_chat_participant",
         input_model=RemoveMyChatParticipantInput,
         method_name="remove_my_chat_participant",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_user_memories": ToolDefinition(
         name="band_list_user_memories",
         input_model=ListUserMemoriesInput,
         method_name="list_user_memories",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_get_user_memory": ToolDefinition(
         name="band_get_user_memory",
         input_model=GetUserMemoryInput,
         method_name="get_user_memory",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_supersede_user_memory": ToolDefinition(
         name="band_supersede_user_memory",
         input_model=SupersedeUserMemoryInput,
         method_name="supersede_user_memory",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_archive_user_memory": ToolDefinition(
         name="band_archive_user_memory",
         input_model=ArchiveUserMemoryInput,
         method_name="archive_user_memory",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_restore_user_memory": ToolDefinition(
         name="band_restore_user_memory",
         input_model=RestoreUserMemoryInput,
         method_name="restore_user_memory",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_delete_user_memory": ToolDefinition(
         name="band_delete_user_memory",
         input_model=DeleteUserMemoryInput,
         method_name="delete_user_memory",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_get_my_profile": ToolDefinition(
         name="band_get_my_profile",
         input_model=GetMyProfileInput,
         method_name="get_my_profile",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_update_my_profile": ToolDefinition(
         name="band_update_my_profile",
         input_model=UpdateMyProfileInput,
         method_name="update_my_profile",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
     "band_list_my_peers": ToolDefinition(
         name="band_list_my_peers",
         input_model=ListMyPeersInput,
         method_name="list_my_peers",
-        surface="human",
+        surface=Surface.HUMAN,
     ),
 }
 
 TOOL_MODELS: dict[str, type[BaseModel]] = {
     name: definition.input_model
     for name, definition in TOOL_DEFINITIONS.items()
-    if definition.surface == "agent"
+    if definition.surface == Surface.AGENT
 }
 
 # Memory tools - optional, only available for enterprise customers.
@@ -1446,7 +1464,7 @@ def platform_args_schema(
 
 def iter_tool_definitions(
     *,
-    surface: Literal["agent", "human"] | None = "agent",
+    surface: Surface | None = Surface.AGENT,
     include_memory: bool = False,
     include_contacts: bool = True,
 ) -> list[ToolDefinition]:

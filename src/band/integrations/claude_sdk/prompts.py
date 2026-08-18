@@ -13,6 +13,7 @@ except ImportError:
     SystemPromptPreset = None  # type: ignore[assignment,misc]
 
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.tools import CHAT_ID_FIELD_NAME
 
 
 def generate_claude_sdk_agent_prompt(
@@ -93,7 +94,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 **mcp__band__band_send_message** - Send a message to the chat
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "content": "Your message here",
   "mentions": ["@john"]
 }}
@@ -104,7 +105,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 **mcp__band__band_lookup_peers** - Find users/agents to add
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "page": 1,
   "page_size": 50
 }}
@@ -113,7 +114,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 **mcp__band__band_add_participant** - Add someone to chat
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "identifier": "@john/weather-agent",
   "role": "member"
 }}
@@ -122,14 +123,14 @@ Plain text responses will NOT be delivered. Always call the tool.
 **mcp__band__band_get_participants** - List who's in the chat
 ```json
 {{
-  "chat_id": "abc-123-def"
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def"
 }}
 ```
 
 **mcp__band__band_remove_participant** - Remove someone from chat
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "identifier": "@john/weather-agent"
 }}
 ```
@@ -137,7 +138,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 **mcp__band__band_send_event** - Send status events (thoughts, errors, task updates)
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "content": "Searching for weather data...",
   "message_type": "thought"
 }}
@@ -148,7 +149,7 @@ Plain text responses will NOT be delivered. Always call the tool.
 **mcp__band__band_create_chatroom** - Create a new chat room
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "task_id": "optional-task-uuid"
 }}
 ```
@@ -164,7 +165,7 @@ To mention someone, use their handle in the mentions array:
 Example - mentioning user "john":
 ```json
 {{
-  "chat_id": "abc-123-def",
+  "{CHAT_ID_FIELD_NAME}": "abc-123-def",
   "content": "@john here is your answer...",
   "mentions": ["@john"]
 }}

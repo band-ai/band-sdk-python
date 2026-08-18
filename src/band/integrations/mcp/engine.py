@@ -47,6 +47,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
     SendEventInput,
     ToolDefinition,
     append_available_mention_handles,
@@ -211,31 +212,35 @@ def extend_with_chat_id(
         model = create_model(  # type: ignore[call-overload]
             f"{original.__name__}WithChatId",
             __base__=original,
-            chat_id=(
-                str,
-                Field(
-                    ...,
-                    max_length=CHAT_ID_MAX_LENGTH,
-                    validation_alias=AliasChoices("chat_id", "room_id"),
-                    description=(
-                        "ID of the chat room (accepted as 'chat_id' or 'room_id')."
+            **{
+                CHAT_ID_FIELD_NAME: (
+                    str,
+                    Field(
+                        ...,
+                        max_length=CHAT_ID_MAX_LENGTH,
+                        validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
+                        description=(
+                            "ID of the chat room (accepted as 'chat_id' or 'room_id')."
+                        ),
                     ),
-                ),
-            ),
+                )
+            },
         )
     else:
         model = create_model(  # type: ignore[call-overload]
             f"{original.__name__}WithChatIdPinned",
             __base__=original,
-            chat_id=(
-                SkipJsonSchema[str | None],
-                Field(
-                    default=None,
-                    max_length=CHAT_ID_MAX_LENGTH,
-                    validation_alias=AliasChoices("chat_id", "room_id"),
-                    description="Pinned room id (hidden from advertised schema).",
-                ),
-            ),
+            **{
+                CHAT_ID_FIELD_NAME: (
+                    SkipJsonSchema[str | None],
+                    Field(
+                        default=None,
+                        max_length=CHAT_ID_MAX_LENGTH,
+                        validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
+                        description="Pinned room id (hidden from advertised schema).",
+                    ),
+                )
+            },
         )
     model.__doc__ = original.__doc__
     return model
@@ -257,15 +262,17 @@ def pin_existing_chat_id(
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",
         __base__=original,
-        chat_id=(
-            SkipJsonSchema[str | None],
-            Field(
-                default=None,
-                max_length=CHAT_ID_MAX_LENGTH,
-                validation_alias=AliasChoices("chat_id", "room_id"),
-                description="Pinned room id (hidden from advertised schema).",
-            ),
-        ),
+        **{
+            CHAT_ID_FIELD_NAME: (
+                SkipJsonSchema[str | None],
+                Field(
+                    default=None,
+                    max_length=CHAT_ID_MAX_LENGTH,
+                    validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
+                    description="Pinned room id (hidden from advertised schema).",
+                ),
+            )
+        },
     )
     model.__doc__ = original.__doc__
     return model
@@ -401,12 +408,12 @@ def build_tool_registration(
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         if pinned_room_id is not None:
-            kwargs["chat_id"] = pinned_room_id
+            kwargs[CHAT_ID_FIELD_NAME] = pinned_room_id
         validated = validate_tool_arguments(definition.name, input_model, kwargs)
         chat_id = (
-            validated.pop("chat_id", None)
+            validated.pop(CHAT_ID_FIELD_NAME, None)
             if strip_chat_id
-            else validated.get("chat_id")
+            else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
         return _serialize(result)
@@ -440,7 +447,7 @@ def build_custom_tool_registration(
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
-        kwargs.pop("chat_id", None)
+        kwargs.pop(CHAT_ID_FIELD_NAME, None)
         result = await execute_custom_tool(tool_def, kwargs)
         return _serialize(result)
 

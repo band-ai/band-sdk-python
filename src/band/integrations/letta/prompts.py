@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.runtime.tools import CHAT_ID_FIELD_NAME
+
 # Known names of the message/event send tools across the Band MCP surfaces the
 # adapter can be pointed at: the SDK's self-hosted LocalMCPServer exposes the
 # band_* names, the external band-mcp exposes create_agent_chat_*. The adapter
@@ -37,7 +39,8 @@ def render_tool_enforcement(
     room_section = (
         (
             "## Tool arguments\n\n"
-            f"Every tool call REQUIRES a `chat_id` argument. Your chat_id is:\n"
+            f"Every tool call REQUIRES a `{CHAT_ID_FIELD_NAME}` argument. "
+            f"Your {CHAT_ID_FIELD_NAME} is:\n"
             f"{room_id}\n\n"
         )
         if room_id

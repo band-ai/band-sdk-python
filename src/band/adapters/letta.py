@@ -30,7 +30,7 @@ from band.integrations.letta.config import (
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 __all__ = [
     "LettaAdapter",
@@ -364,8 +364,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         if self.config.mcp.mode == "self_host" and self.config.mode == "shared":
             parts.append(
-                f"[System]: Current chat_id: {room_id} — pass it as the "
-                "`chat_id` argument in every tool call."
+                f"[System]: Current {CHAT_ID_FIELD_NAME}: {room_id} — pass it as "
+                f"the `{CHAT_ID_FIELD_NAME}` argument in every tool call."
             )
 
         if participants_msg:

@@ -23,9 +23,9 @@ from typing import Any
 from band_rest import AsyncRestClient
 from band.core.exceptions import BandToolError
 from band.integrations.mcp.engine import enrich_send_message_error
-from band.runtime.tools import AgentTools, HumanTools, ToolDefinition
+from band.runtime.tools import AgentTools, HumanTools, Surface, ToolDefinition
 
-from band_mcp.config import Config, resolve_credential_for_scope, settings
+from band_mcp.config import Config, Scope, resolve_credential_for_scope, settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,7 +82,7 @@ class StandaloneResolver:
         chat_id: str | None,
         arguments: dict[str, Any],
     ) -> Any:
-        if definition.surface == "human":
+        if definition.surface == Surface.HUMAN:
             return await self._invoke_human(definition, arguments)
         return await self._invoke_agent(definition, chat_id, arguments)
 
@@ -164,15 +164,15 @@ def build_standalone_resolver(config: Config) -> StandaloneResolver:
     base_url = settings.band_base_url
 
     human_tools: Any = None
-    if "human" in config.scope:
-        human_cred = resolve_credential_for_scope(config, "human")
+    if Scope.HUMAN in config.scope:
+        human_cred = resolve_credential_for_scope(config, Scope.HUMAN)
         if human_cred is not None:
             human_rest = AsyncRestClient(api_key=human_cred, base_url=base_url)
             human_tools = HumanTools(rest=human_rest)
 
     agent_rest: AsyncRestClient | None = None
-    if "agent" in config.scope:
-        agent_cred = resolve_credential_for_scope(config, "agent")
+    if Scope.AGENT in config.scope:
+        agent_cred = resolve_credential_for_scope(config, Scope.AGENT)
         if agent_cred is not None:
             agent_rest = AsyncRestClient(api_key=agent_cred, base_url=base_url)
 

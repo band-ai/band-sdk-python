@@ -43,6 +43,7 @@ from band.runtime.formatters import messages_before
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
+    CHAT_ID_FIELD_NAME,
     ROOM_POSTING_TOOL_NAMES,
     ToolDefinition,
     canonicalize_mcp_tool_name,
@@ -466,12 +467,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             f"room on your behalf. Never both — reply exactly once, and do "
             f"not narrate the tool calls you are about to make.\n"
             f"\n"
-            f"Current chat_id: {room_id}\n"
+            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             f"\n"
             f"Use each MCP tool's schema for its argument names. When a tool needs "
-            f"the current room, use the Current chat_id value above.\n"
+            f"the current room, use the Current {CHAT_ID_FIELD_NAME} value above.\n"
         )
 
         return f"[System Context]\n{system_prompt}\n{room_context}"

@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import replace
-from typing import Literal
 
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -29,14 +28,19 @@ from band.integrations.mcp.engine import (
 )
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
+    Surface,
     classify_room_binding,
     iter_tool_definitions,
 )
 
 from band_mcp import __version__
 from band_mcp.config import (
+    CliArgs,
     Config,
     ConfigError,
+    Scope,
+    ToolGroup,
+    Transport,
     _legacy_key_capabilities,
     resolve_config,
     settings,
@@ -59,15 +63,20 @@ def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
     ``SendEventWideInput`` (row 6): a standalone agent has no adapter
     narrating tool_call/tool_result for it.
     """
-    include_contacts = "contacts" in config.tools
-    include_memory = "memory" in config.tools
+    include_contacts = ToolGroup.CONTACTS in config.tools
+    include_memory = ToolGroup.MEMORY in config.tools
     pinned_room_id = config.room_id
 
     registrations = []
     seen_names: dict[str, str] = {}
     for surface in config.scope:
         for definition in iter_tool_definitions(
-            surface=surface,
+            # Deliberately crossing into `runtime.tools`'s own `Surface`
+            # vocabulary here: it happens to share `Scope`'s two string
+            # values today, but the two are conceptually distinct closed
+            # vocabularies, so the boundary is converted explicitly rather
+            # than merged.
+            surface=Surface(surface),
             include_contacts=include_contacts,
             include_memory=include_memory,
         ):
@@ -216,8 +225,8 @@ Environment Variables:
     parser.add_argument(
         "--transport",
         "-t",
-        type=str,
-        choices=["stdio", "sse"],
+        type=Transport,
+        choices=list(Transport),
         default=None,
         help="Transport mode: stdio (default) or sse",
     )
@@ -240,7 +249,7 @@ Environment Variables:
     return parser.parse_args(argv)
 
 
-def _cli_mapping(args: argparse.Namespace) -> dict[str, object]:
+def _cli_mapping(args: argparse.Namespace) -> CliArgs:
     """Flatten argparse results into the shape `resolve_config` expects.
 
     `scope` and `tools` use argparse `action="append"`, so they arrive as
@@ -331,11 +340,11 @@ def run() -> None:
     # ["human"], not ["agent"].
     if _is_pure_legacy_invocation(args, config):
         legacy_human, legacy_agent = _legacy_key_capabilities(config.legacy_key)
-        legacy_scope: list[Literal["agent", "human"]] = []
+        legacy_scope: list[Scope] = []
         if legacy_agent:
-            legacy_scope.append("agent")
+            legacy_scope.append(Scope.AGENT)
         if legacy_human:
-            legacy_scope.append("human")
+            legacy_scope.append(Scope.HUMAN)
         config = replace(config, scope=legacy_scope)
 
     resolver = build_standalone_resolver(config)
@@ -364,24 +373,25 @@ def run() -> None:
         logger.info("Pinned room id: %s", config.room_id)
 
     # Determine transport mode (CLI args override env vars)
-    transport: Literal["stdio", "sse"] = args.transport or settings.transport
+    transport: Transport = args.transport or settings.transport
 
     if args.host is not None:
         mcp.settings.host = args.host
     if args.port is not None:
         mcp.settings.port = args.port
 
-    if transport == "stdio":
-        logger.info("Transport: STDIO (for IDE integration)")
-        logger.info("Server ready - listening for MCP protocol messages on STDIO")
-        mcp.run(transport="stdio")
-    else:
-        host = args.host or settings.host
-        port = args.port or settings.port
-        logger.info("Transport: SSE (HTTP server mode)")
-        logger.info("Server ready - listening on http://%s:%s", host, port)
-        logger.info("SSE endpoint: /sse | Messages endpoint: /messages/")
-        mcp.run(transport="sse")
+    match transport:
+        case Transport.STDIO:
+            logger.info("Transport: STDIO (for IDE integration)")
+            logger.info("Server ready - listening for MCP protocol messages on STDIO")
+            mcp.run(transport="stdio")
+        case Transport.SSE:
+            host = args.host or settings.host
+            port = args.port or settings.port
+            logger.info("Transport: SSE (HTTP server mode)")
+            logger.info("Server ready - listening on http://%s:%s", host, port)
+            logger.info("SSE endpoint: /sse | Messages endpoint: /messages/")
+            mcp.run(transport="sse")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     BASE_TOOL_NAMES,
+    CHAT_ID_FIELD_NAME,
     CHAT_TOOL_NAMES,
     ToolDefinition,
     append_mention_handles_hint,
@@ -187,8 +188,8 @@ def _build_builtin_sdk_tool(
         schema,
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
-        room_id = args.get("chat_id", "") if include_room_id else ""
-        raw_args = {k: v for k, v in args.items() if k != "chat_id"}
+        room_id = args.get(CHAT_ID_FIELD_NAME, "") if include_room_id else ""
+        raw_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
         tools = get_tools(room_id)
         if tools is None:
             return _make_error(f"No tools available for room {room_id}")
@@ -241,7 +242,7 @@ def _build_custom_sdk_tool(
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
-            tool_args = {k: v for k, v in args.items() if k != "chat_id"}
+            tool_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
             result = await execute_custom_tool(tool_def, tool_args)
             return _make_result(result)
         except Exception as error:

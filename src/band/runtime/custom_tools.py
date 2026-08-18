@@ -13,6 +13,8 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
 
+from band.runtime.tools import CHAT_ID_FIELD_NAME
+
 logger = logging.getLogger(__name__)
 
 # Type alias for custom tool definition: (InputModel, callable)
@@ -27,7 +29,7 @@ def custom_tool_to_mcp_schema(
     """Convert a Pydantic tool model to the simple MCP SDK schema format."""
     schema = input_model.model_json_schema()
     properties = schema.get("properties", {})
-    mcp_schema: dict[str, type] = {"chat_id": str} if include_chat_id else {}
+    mcp_schema: dict[str, type] = {CHAT_ID_FIELD_NAME: str} if include_chat_id else {}
 
     for prop_name, prop_def in properties.items():
         prop_type = prop_def.get("type", "string")

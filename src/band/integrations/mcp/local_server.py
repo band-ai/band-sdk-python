@@ -44,7 +44,7 @@ from band.integrations.mcp.engine import (
     validate_unique_tool_names,
 )
 from band.runtime.custom_tools import CustomToolDef
-from band.runtime.tools import ToolDefinition, iter_tool_definitions
+from band.runtime.tools import Surface, ToolDefinition, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def _filter_to_agent_surface(
     """
     filtered: list[ToolDefinition] = []
     for definition in definitions:
-        if definition.surface != "agent":
+        if definition.surface != Surface.AGENT:
             logger.warning(
                 "Dropping non-agent tool definition %r (surface=%r) from MCP "
                 "registrations; LocalMCPServer is agent-only.",
@@ -117,7 +117,9 @@ def _resolve_agent_definitions(
 ) -> list[ToolDefinition]:
     if tool_definitions is not None:
         return _filter_to_agent_surface(list(tool_definitions))
-    return list(iter_tool_definitions(surface="agent", include_memory=include_memory))
+    return list(
+        iter_tool_definitions(surface=Surface.AGENT, include_memory=include_memory)
+    )
 
 
 def build_band_mcp_tool_registrations(

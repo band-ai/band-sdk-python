@@ -22,17 +22,39 @@ from __future__ import annotations
 
 import difflib
 from dataclasses import dataclass, field
-from typing import Literal, Mapping, Sequence, cast
+from enum import StrEnum
+from typing import Literal, Mapping, Sequence, TypedDict
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Scope = Literal["agent", "human"]
-ToolGroup = Literal["contacts", "memory"]
 
-VALID_SCOPES: list[str] = ["agent", "human"]
-VALID_TOOLS: list[str] = ["contacts", "memory"]
+class Scope(StrEnum):
+    """The two surfaces band-mcp can serve -- the CLI's `--scope` vocabulary."""
 
-DEFAULT_SCOPE: list[Scope] = ["agent"]
+    AGENT = "agent"
+    HUMAN = "human"
+
+
+class ToolGroup(StrEnum):
+    """Opt-in tool groups -- the CLI's `--tools` vocabulary."""
+
+    CONTACTS = "contacts"
+    MEMORY = "memory"
+
+
+class Transport(StrEnum):
+    """How the server talks to its client -- the CLI's `--transport` vocabulary."""
+
+    STDIO = "stdio"
+    SSE = "sse"
+
+
+# Single source of truth for each closed vocabulary's valid values: derived
+# from the enum above, not re-typed as a parallel list that could drift.
+VALID_SCOPES: list[str] = list(Scope)
+VALID_TOOLS: list[str] = list(ToolGroup)
+
+DEFAULT_SCOPE: list[Scope] = [Scope.AGENT]
 DEFAULT_TOOLS: list[ToolGroup] = []
 
 ConfigWarningKind = Literal[
@@ -40,6 +62,22 @@ ConfigWarningKind = Literal[
     "unknown-scope-value",
     "unknown-tools-value",
 ]
+
+
+class CliArgs(TypedDict, total=False):
+    """The shape `resolve_config`'s `cli` parameter expects.
+
+    Matches `_cli_mapping`'s (`server.py`) output exactly -- a concrete type
+    here means every field is already narrowed to what `resolve_config`
+    actually consumes, so no `isinstance` re-narrowing or `# type: ignore` is
+    needed at the call sites below.
+    """
+
+    user_key: str | None
+    agent_key: str | None
+    room_id: str | None
+    scope: str | Sequence[str] | None
+    tools: str | Sequence[str] | None
 
 
 class ConfigError(Exception):
@@ -80,15 +118,8 @@ class Config:
     # Default honors ticket AC #6 ("default scope is ['agent']"). Instances
     # produced directly via `Config(user_key="x")` in tests/fixtures get the
     # same default as instances produced via `resolve_config({}, {})`.
-    # The `cast` is needed because `list(DEFAULT_SCOPE)` loses the Literal
-    # narrowing even though DEFAULT_SCOPE itself is typed list[Scope]; pyrefly
-    # otherwise flags this as list[str] being assigned to list[Scope].
-    scope: list[Scope] = field(
-        default_factory=lambda: cast("list[Scope]", list(DEFAULT_SCOPE))
-    )
-    tools: list[ToolGroup] = field(
-        default_factory=lambda: cast("list[ToolGroup]", list(DEFAULT_TOOLS))
-    )
+    scope: list[Scope] = field(default_factory=lambda: list(DEFAULT_SCOPE))
+    tools: list[ToolGroup] = field(default_factory=lambda: list(DEFAULT_TOOLS))
     legacy_key: str | None = None
     warnings: list[ConfigWarning] = field(default_factory=list)
 
@@ -105,7 +136,7 @@ class Settings(BaseSettings):
     band_base_url: str = "https://app.band.ai"
 
     # Transport configuration
-    transport: Literal["stdio", "sse"] = "stdio"
+    transport: Transport = Transport.STDIO
 
     # SSE server configuration (only used when transport="sse")
     host: str = "127.0.0.1"
@@ -120,6 +151,7 @@ class Settings(BaseSettings):
         env_file=".env",
         case_sensitive=False,
         extra="ignore",
+        env_ignore_empty=True,
     )
 
 
@@ -292,15 +324,15 @@ def _resolve_scalar(
 
 
 def resolve_config(
-    cli: Mapping[str, object] | None = None,
+    cli: CliArgs | None = None,
     env: Mapping[str, str] | None = None,
 ) -> Config:
     """Resolve a `Config` from CLI args and environment.
 
-    `cli` keys (all optional): `user_key`, `agent_key`, `room_id`, `scope`,
-    `tools`. Values are what argparse produces. For `scope` / `tools`, accept
-    either a comma-separated string or a list of strings (argparse `append`
-    action).
+    `cli` keys (all optional, see `CliArgs`): `user_key`, `agent_key`,
+    `room_id`, `scope`, `tools`. Values are what argparse produces. For
+    `scope` / `tools`, accept either a comma-separated string or a list of
+    strings (argparse `append` action).
 
     `env` is typically `os.environ`. Anything not supplied is treated as unset.
 
@@ -312,39 +344,20 @@ def resolve_config(
     env = env or {}
 
     # --- Credentials -------------------------------------------------------
-    # Narrow through a local so the type checker can see the isinstance/is-None
-    # check and the value it guards are the same object, not two separate
-    # `cli.get(...)` calls on a `Mapping[str, object]`.
-    cli_user_key = cli.get("user_key")
-    user_key = _resolve_scalar(
-        cli_user_key if isinstance(cli_user_key, str) or cli_user_key is None else None,
-        env.get("BAND_USER_KEY"),
-    )
-    cli_agent_key = cli.get("agent_key")
-    agent_key = _resolve_scalar(
-        cli_agent_key
-        if isinstance(cli_agent_key, str) or cli_agent_key is None
-        else None,
-        env.get("BAND_AGENT_KEY"),
-    )
+    user_key = _resolve_scalar(cli.get("user_key"), env.get("BAND_USER_KEY"))
+    agent_key = _resolve_scalar(cli.get("agent_key"), env.get("BAND_AGENT_KEY"))
     legacy_key_raw = env.get("BAND_API_KEY")
     legacy_key: str | None = legacy_key_raw if legacy_key_raw else None
 
     # --- Room id -----------------------------------------------------------
-    cli_room_id = cli.get("room_id")
-    room_id = _resolve_scalar(
-        cli_room_id if isinstance(cli_room_id, str) or cli_room_id is None else None,
-        env.get("BAND_MCP_ROOM_ID"),
-    )
+    room_id = _resolve_scalar(cli.get("room_id"), env.get("BAND_MCP_ROOM_ID"))
 
     warnings: list[ConfigWarning] = []
 
     # --- Scope -------------------------------------------------------------
     cli_scope = cli.get("scope")
     scope_raw = _resolve_list(
-        cli_scope
-        if cli_scope is None or isinstance(cli_scope, (str, list, tuple))
-        else None,  # type: ignore[arg-type]
+        cli_scope,
         env.get("BAND_MCP_SCOPE"),
         default=list(DEFAULT_SCOPE),
         explicit_empty=False,
@@ -359,7 +372,7 @@ def resolve_config(
     # loudly, which is the right behavior when the operator typed something
     # that could not be matched at all. Prefer explicit (possibly empty) user
     # intent over a silent default here.
-    scope = [s for s in scope_known if s in VALID_SCOPES]
+    scope = [Scope(s) for s in scope_known]
 
     # --- Tools -------------------------------------------------------------
     cli_tools = cli.get("tools")
@@ -367,9 +380,7 @@ def resolve_config(
     # argparse (default=None) signals the operator explicitly cleared the list.
     explicit_empty = isinstance(cli_tools, str) and cli_tools == ""
     tools_raw = _resolve_list(
-        cli_tools
-        if cli_tools is None or isinstance(cli_tools, (str, list, tuple))
-        else None,  # type: ignore[arg-type]
+        cli_tools,
         env.get("BAND_MCP_TOOLS"),
         default=list(DEFAULT_TOOLS),
         explicit_empty=explicit_empty,
@@ -378,7 +389,7 @@ def resolve_config(
         tools_raw, VALID_TOOLS, "--tools", "unknown-tools-value"
     )
     warnings.extend(tools_warnings)
-    tools = [t for t in tools_known if t in VALID_TOOLS]
+    tools = [ToolGroup(t) for t in tools_known]
 
     # --- Cross-slot legacy-key masking ------------------------------------
     # If a scope-specific key is set AND legacy_key is populated, the legacy
@@ -414,8 +425,8 @@ def resolve_config(
         user_key=user_key,
         agent_key=agent_key,
         room_id=room_id,
-        scope=scope,  # type: ignore[arg-type]
-        tools=tools,  # type: ignore[arg-type]
+        scope=scope,
+        tools=tools,
         legacy_key=legacy_key,
         warnings=warnings,
     )
@@ -437,14 +448,14 @@ def validate(config: Config) -> None:
     legacy_human, legacy_agent = _legacy_key_capabilities(config.legacy_key)
 
     missing: list[str] = []
-    if "human" in config.scope:
+    if Scope.HUMAN in config.scope:
         if config.user_key is None and not legacy_human:
             missing.append(
                 "human scope requested but no user credential available "
                 "(set --user-key / BAND_USER_KEY, or use a "
                 "human-capable BAND_API_KEY)"
             )
-    if "agent" in config.scope:
+    if Scope.AGENT in config.scope:
         if config.agent_key is None and not legacy_agent:
             missing.append(
                 "agent scope requested but no agent credential available "
@@ -462,14 +473,14 @@ def resolve_credential_for_scope(config: Config, scope: Scope) -> str | None:
     Scope-specific key wins; legacy key is a fallback. Returns None if nothing
     serves the scope (validate() would have raised earlier).
     """
-    if scope == "human":
-        if config.user_key is not None:
-            return config.user_key
-        legacy_human, _ = _legacy_key_capabilities(config.legacy_key)
-        return config.legacy_key if legacy_human else None
-    if scope == "agent":
-        if config.agent_key is not None:
-            return config.agent_key
-        _, legacy_agent = _legacy_key_capabilities(config.legacy_key)
-        return config.legacy_key if legacy_agent else None
-    return None
+    match scope:
+        case Scope.HUMAN:
+            if config.user_key is not None:
+                return config.user_key
+            legacy_human, _ = _legacy_key_capabilities(config.legacy_key)
+            return config.legacy_key if legacy_human else None
+        case Scope.AGENT:
+            if config.agent_key is not None:
+                return config.agent_key
+            _, legacy_agent = _legacy_key_capabilities(config.legacy_key)
+            return config.legacy_key if legacy_agent else None

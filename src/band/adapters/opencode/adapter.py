@@ -55,6 +55,7 @@ from band.integrations.opencode import (
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
     ToolDefinition,
     is_room_posting_tool,
     iter_tool_definitions,
@@ -332,12 +333,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         requester_id = msg.sender_id or "unknown"
         room_context = (
             "## Room Context\n"
-            f"Current chat_id: {room_id}\n"
+            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             "\n"
             "Use each MCP tool's schema for its argument names. When a tool "
-            "needs the current room, use the Current chat_id value above.\n"
+            f"needs the current room, use the Current {CHAT_ID_FIELD_NAME} "
+            "value above.\n"
         )
         return f"{self._system_prompt}\n\n{room_context}".strip()
 
