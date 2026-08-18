@@ -16,6 +16,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from band.integrations.mcp.engine import (
@@ -275,6 +276,17 @@ def _cli_mapping(args: argparse.Namespace) -> CliArgs:
     }
 
 
+def _register_health_check_tool(mcp: FastMCP, resolver: StandaloneResolver) -> None:
+    # Named health_check directly (not e.g. _health_check_tool): FastMCP
+    # derives the advertised schema's "title" from the function's own
+    # __name__, independent of the tool() name= override below -- a wrapper
+    # named differently would leak into the wire-visible schema title.
+    @mcp.tool(name="health_check")
+    async def health_check() -> str:
+        """Test MCP server and API connectivity."""
+        return await _health_check(resolver)
+
+
 def run() -> None:
     """Run the MCP server with configurable transport mode.
 
@@ -316,15 +328,7 @@ def run() -> None:
     transport: Transport = args.transport or settings.transport
 
     mcp = build_engine(spec, transport_security=_build_transport_security(transport))
-
-    # Named health_check directly (not e.g. _health_check_tool): FastMCP
-    # derives the advertised schema's "title" from the function's own
-    # __name__, independent of the tool() name= override below -- a wrapper
-    # named differently would leak into the wire-visible schema title.
-    @mcp.tool(name="health_check")
-    async def health_check() -> str:
-        """Test MCP server and API connectivity."""
-        return await _health_check(resolver)
+    _register_health_check_tool(mcp, resolver)
 
     logger.info("Starting band-mcp-server v%s", __version__)
     logger.info("Base URL: %s", settings.band_base_url)
