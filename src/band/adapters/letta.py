@@ -364,8 +364,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         if self.config.mcp.mode == "self_host" and self.config.mode == "shared":
             parts.append(
-                f"[System]: Current room_id: {room_id} — pass it as the "
-                "`room_id` argument in every tool call."
+                f"[System]: Current chat_id: {room_id} — pass it as the "
+                "`chat_id` argument in every tool call."
             )
 
         if participants_msg:

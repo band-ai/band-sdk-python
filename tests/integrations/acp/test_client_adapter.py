@@ -418,7 +418,7 @@ class TestACPClientAdapterLocalMcpConfig:
         system_context = adapter._build_system_context("room-123", msg)
 
         assert "Band tools" in system_context
-        assert "Current room_id: room-123" in system_context
+        assert "Current chat_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
         assert "Use each MCP tool's schema" in system_context
 

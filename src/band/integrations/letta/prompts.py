@@ -31,13 +31,13 @@ def render_tool_enforcement(
     conflicts with ours.  This aggressive enforcement partially mitigates the
     issue but does not fully resolve it.
 
-    ``room_id`` is included when the tool schemas carry a required ``room_id``
+    ``room_id`` is included when the tool schemas carry a required ``chat_id``
     argument (the self-hosted MCP server resolves tools per room at call time).
     """
     room_section = (
         (
             "## Tool arguments\n\n"
-            f"Every tool call REQUIRES a `room_id` argument. Your room_id is:\n"
+            f"Every tool call REQUIRES a `chat_id` argument. Your chat_id is:\n"
             f"{room_id}\n\n"
         )
         if room_id

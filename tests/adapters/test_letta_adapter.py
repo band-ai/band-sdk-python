@@ -568,7 +568,7 @@ class TestLettaAdapterSharedMode:
         content = mock_client.conversations.messages.create.call_args.kwargs[
             "messages"
         ][0]["content"]
-        assert "Current room_id: room-42" in content
+        assert "Current chat_id: room-42" in content
 
 
 # ──────────────────────────────────────────────────────────────────────

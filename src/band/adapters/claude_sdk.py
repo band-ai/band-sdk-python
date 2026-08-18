@@ -538,7 +538,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         - Store tools for MCP server access
         - Get or create ClaudeSDKClient for this room
-        - Include room_id in the message so Claude can pass it to tools
+        - Include chat_id in the message so Claude can pass it to tools
         - Stream response and log events (tools execute via MCP)
         """
         logger.debug("Handling message %s in room %s", msg.id, room_id)
@@ -636,8 +636,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             else:
                 raise
 
-        # Add room_id context (Claude needs this for tool calls)
-        room_context = f"[room_id: {room_id}]"
+        # Add chat_id context (Claude needs this for tool calls)
+        room_context = f"[chat_id: {room_id}]"
 
         # Initialize history for this room on first message
         if is_session_bootstrap:

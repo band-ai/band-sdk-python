@@ -323,7 +323,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
         """Per-turn system prompt: the static base plus this room's context.
 
-        The band MCP tools' schemas require a ``room_id`` argument (the shared
+        The band MCP tools' schemas require a ``chat_id`` argument (the shared
         backend dispatches tool calls by room), so the model must be told the
         current room id every turn or the platform tools are uncallable —
         the same per-turn room context the ACP client adapter injects.
@@ -332,12 +332,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         requester_id = msg.sender_id or "unknown"
         room_context = (
             "## Room Context\n"
-            f"Current room_id: {room_id}\n"
+            f"Current chat_id: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             "\n"
             "Use each MCP tool's schema for its argument names. When a tool "
-            "needs the current room, use the Current room_id value above.\n"
+            "needs the current room, use the Current chat_id value above.\n"
         )
         return f"{self._system_prompt}\n\n{room_context}".strip()
 
