@@ -73,12 +73,13 @@ jobs:
       - name: Wait for the declared band-sdk floor to be indexed on PyPI
         run: |
           set -euo pipefail
-          FLOOR=$(python3 -c "
+          FLOOR=$(python3 <<'PYEOF'
           import re, tomllib
           deps = tomllib.load(open('packages/band-mcp/pyproject.toml', 'rb'))['project']['dependencies']
           band_sdk = next(d for d in deps if d.startswith('band-sdk'))
           print(re.search(r'>=([0-9]+\.[0-9]+\.[0-9]+)', band_sdk).group(1))
-          ")
+          PYEOF
+          )
           echo "Waiting for band-sdk==${FLOOR} to be indexed on PyPI..."
           for _ in $(seq 1 60); do
             if uv pip install "band-sdk==${FLOOR}" --dry-run --python "$(which python3)" >/dev/null 2>&1; then
@@ -100,12 +101,12 @@ jobs:
 
       - name: Verify imports and CLI entry point
         run: |
-          /tmp/band-mcp-verify/bin/python -c "
+          /tmp/band-mcp-verify/bin/python <<'PYEOF'
           from band_mcp import __version__
           from band_mcp.server import run, standalone_spec
           from band_mcp.shared import StandaloneResolver, build_standalone_resolver
           print(f'band-mcp {__version__} imports successful')
-          "
+          PYEOF
           /tmp/band-mcp-verify/bin/band-mcp --version
 
       - name: Upload distributions
