@@ -242,8 +242,7 @@ class GateResult:
     """CI's pass/fail verdict on a merged scorecard.
 
     ``failing`` is every ``fail`` cell. ``missing`` is a ``skip`` cell whose expected
-    lane (the row's own ``expected_lane`` — override-aware — or, failing that, the
-    registry's ``ci_lanes()`` home lane) was expected to run this invocation but
+    lane (see ``ScorecardRow.expected_lane``) was expected to run this invocation but
     reported nothing for it, e.g. a lane job that crashed before writing its
     scorecard fragment. A ``skip`` cell whose expected lane wasn't expected this run
     (an out-of-scope lane on a scoped dispatch) is neither — it is simply not
@@ -263,11 +262,9 @@ def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult
     dispatch) — never inferred from the rows themselves, so an intentionally
     out-of-scope lane's cells can never be mistaken for a silent failure.
 
-    A row's own ``expected_lane`` (override-aware — see ``ScorecardRow``) is used
-    when present; falling back to the adapter's home lane only for a row collected
-    before that field existed. Using the home lane alone here would misreport a
-    cell legitimately pinned elsewhere by ``@lane`` as a silent failure in its
-    adapter's home lane's run.
+    A row's own ``expected_lane`` (see ``ScorecardRow``) is used when present,
+    falling back to the adapter's home lane only for a row collected before that
+    field existed.
     """
     home_lane = adapter_home_lanes()
     failing = tuple(r for r in rows if r.status == "fail")

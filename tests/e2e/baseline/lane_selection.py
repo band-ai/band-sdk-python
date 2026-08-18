@@ -91,6 +91,24 @@ def _require_known_lane(lane: str, lanes: list[CILane]) -> None:
         )
 
 
+def _resolve_target_lane(
+    override: str | None, item: pytest.Item, lane_of: dict[str, str]
+) -> str | None:
+    """``override`` if given, else ``item``'s single shared home lane, else ``None``.
+
+    Split out from :func:`expected_lane` so a caller that already has ``override``
+    (``_lane_skip_reason`` below, which also needs it to word its skip reason) can
+    reuse it instead of re-deriving it via a second ``_override_lane`` call.
+    """
+    if override is not None:
+        return override
+    homes = _home_lanes(item, lane_of)
+    if len(homes) == 1:
+        (home,) = homes
+        return home
+    return None
+
+
 def expected_lane(item: pytest.Item, lane_of: dict[str, str]) -> str | None:
     """The one lane ``item`` is expected to run in, override-aware.
 
@@ -103,14 +121,7 @@ def expected_lane(item: pytest.Item, lane_of: dict[str, str]) -> str | None:
     "which lane owns this cell", so a ``@lane`` pin can never make one call the cell
     scheduled while the other calls it missing.
     """
-    override = _override_lane(item)
-    if override is not None:
-        return override
-    homes = _home_lanes(item, lane_of)
-    if len(homes) == 1:
-        (home,) = homes
-        return home
-    return None
+    return _resolve_target_lane(_override_lane(item), item, lane_of)
 
 
 def _lane_skip_reason(
@@ -128,11 +139,12 @@ def _lane_skip_reason(
       here too (``assert_every_item_is_schedulable`` has already failed collection for
       it; this just never lets it run in an arbitrary lane).
     """
-    target = expected_lane(item, lane_of)
+    override = _override_lane(item)
+    target = _resolve_target_lane(override, item, lane_of)
     if target is not None:
         if target == lane:
             return None
-        if _override_lane(item) is not None:
+        if override is not None:
             return f"assigned to lane {target!r} (@lane), not active lane {lane!r}"
         return f"runs in lane {target!r}, not active lane {lane!r}"
     homes = _home_lanes(item, lane_of)

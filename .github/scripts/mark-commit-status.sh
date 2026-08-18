@@ -3,11 +3,11 @@
 # decide whether the release-please PR may merge. Reads GH_TOKEN / REPO / RUN_URL /
 # PASSED / SHA from the environment.
 #
-# PASSED defaults to false rather than requiring it: it is the scorecard job's
-# verdict output, which is empty if that job's own gate-verdict step aborted before
-# writing one. A verdict that could not be computed must still post a red status,
-# not silently skip posting one (a missing status here just makes the release gate
-# fall back to an older green — see check-release-baseline.sh).
+# PASSED defaults to false rather than requiring it — see merge-scorecard.sh's
+# EXPECTED_LANES comment for the shared "default to red instead of aborting" policy
+# this is one link in. A missing status here just makes the release gate fall back
+# to an older green (see check-release-baseline.sh), so posting red beats not
+# posting at all.
 set -euo pipefail
 
 : "${REPO:?REPO is required}"

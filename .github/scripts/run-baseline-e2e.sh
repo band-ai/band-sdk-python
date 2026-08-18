@@ -58,18 +58,17 @@ fi
 # merge_code is folded into $code below rather than trusting pytest's own exit
 # status alone: without it, a lane whose first attempt passed (code=0) but whose
 # overlay/cp here failed would still `exit 0` -- reporting green while $FINAL was
-# never written, an empty scorecard fragment for the lane.
-merge_code=0
+# never written, an empty scorecard fragment for the lane. `$?` right after `fi` is
+# 0 when no branch ran (both attempts absent -- bash's own rule for an untaken
+# if/elif with no `else`), so a single read after the block already covers that case.
 if [ -f "$ATTEMPT1" ] && [ -f "$ATTEMPT2" ]; then
   uv run python -m tests.e2e.baseline.scorecard overlay "$ATTEMPT1" "$ATTEMPT2" --out "$FINAL"
-  merge_code=$?
 elif [ -f "$ATTEMPT2" ]; then
   cp "$ATTEMPT2" "$FINAL"
-  merge_code=$?
 elif [ -f "$ATTEMPT1" ]; then
   cp "$ATTEMPT1" "$FINAL"
-  merge_code=$?
 fi
+merge_code=$?
 if [ "$merge_code" -ne 0 ]; then
   code=$merge_code
 fi
