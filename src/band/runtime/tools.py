@@ -436,12 +436,13 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
-# --- Human-tool input models (copied from band-mcp/src/band_mcp/tools/human/*.py) ---
+# --- Human-tool input models ---
 #
-# These models mirror the current band-mcp human tool handler signatures
-# field-for-field. They are the canonical contract preserved by Phase 1 of
-# INT-338: the observable tool surface stays identical to today's MCP
-# behavior. Widening to full Fern parity is out of scope for this ticket.
+# These models mirror band-mcp's human tool handler signatures field-for-field
+# (now the same repo, packages/band-mcp — see INT-1096). They are the
+# canonical contract preserved by Phase 1 of INT-338: the observable tool
+# surface stays identical to the MCP behavior it was modeled on. Widening to
+# full Fern parity is out of scope for this ticket.
 
 
 # human_agents.py
@@ -807,6 +808,54 @@ def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> st
     through untouched -- including another MCP server's own tool.
     """
     return _resolve_mcp_tool_name(tool_name, own_names) or tool_name
+
+
+# The agent tools whose MCP handler takes a room id (``chat_id`` on the wire)
+# as a kwarg -- i.e. the handler is room-scoped. Related to but distinct from
+# ROOM_POSTING_TOOL_NAMES above (that set is about which *successful calls*
+# post a room message; this one is about which tools need a room id at all).
+#
+# AgentTools is constructor-scoped (``AgentTools(room_id=..., rest=...)``), so
+# these method signatures don't carry a room field themselves -- an MCP front
+# door has to re-add it at the transport layer. This is the published band-mcp
+# 1.3.2 contract (canonical field name ``chat_id``); the CLI front door
+# (packages/band-mcp) classifies per-tool against this set, while the embedded
+# front door (src/band/integrations/mcp/local_server.py) wraps every agent
+# tool uniformly instead, since chat_id is its routing key for AgentTools
+# instance selection -- see INT-1096's divergence-matrix row 2 for why the two
+# doors deliberately differ here.
+AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_send_message",
+        "band_send_event",
+        "band_add_participant",
+        "band_remove_participant",
+        "band_get_participants",
+        "band_lookup_peers",
+    }
+)
+
+
+def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
+    """Return ``(is_agent_room_bound, is_human_room_bound)`` for a definition.
+
+    Agent tools are classified against the hard-coded
+    ``AGENT_ROOM_BOUND_TOOL_NAMES`` set (their SDK input models carry no room
+    field to inspect -- see that set's docstring). Human tools are classified
+    by inspecting ``input_model.model_fields`` for ``chat_id``: ``HumanTools``
+    is not constructor-scoped, so its room-bound methods already carry
+    ``chat_id`` as a normal parameter, and that model field is the source of
+    truth.
+
+    This is the CLI front door's classifier (the published band-mcp 1.3.2
+    contract). The embedded front door does not call this for agent tools --
+    it wraps every agent tool uniformly instead (divergence-matrix row 2).
+    """
+    if definition.surface == "agent":
+        return (definition.name in AGENT_ROOM_BOUND_TOOL_NAMES, False)
+    if definition.surface == "human":
+        return (False, "chat_id" in definition.input_model.model_fields)
+    return (False, False)
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
