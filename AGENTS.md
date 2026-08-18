@@ -494,7 +494,7 @@ await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 
 ## Workarounds for band-client-rest Bugs
 
-`band-client-rest` is pinned exactly (`pyproject.toml`, e.g. `==0.0.26`). Before
+`band-client-rest` is pinned exactly (`pyproject.toml`, currently `==0.0.27`). Before
 writing a workaround, check whether a newer release already fixes it upstream:
 
 - `pip index versions band-client-rest`, then diff the relevant model/method
@@ -510,8 +510,9 @@ writing a workaround, check whether a newer release already fixes it upstream:
 
 Example (PR #531): a `resolve_handle` workaround for missing `data.id` was
 scoped to `0.0.10`. `0.0.15` already dropped the `id` field from
-`ResolvedEntity` upstream. Bumped straight to `0.0.26`, deleted the
-workaround — no version guard needed once the fix is already upstream.
+`ResolvedEntity` upstream. Bumped straight to `0.0.26` (the pin has since moved
+further), deleted the workaround — no version guard needed once the fix is
+already upstream.
 
 ## Code Structure
 
@@ -602,10 +603,10 @@ uv run pyrefly check
 **crewai cannot coexist** with parlant or pydantic-ai in the same Python
 environment due to conflicting transitive dependencies:
 
-| Conflict | crewai 1.14.3 requires | Other package requires |
+| Conflict | crewai requires | Other package requires |
 |---|---|---|
-| pydantic | `~=2.11.9` (<2.12) | pydantic-ai-slim >=1.61 needs `>=2.12` |
-| opentelemetry-sdk | `~=1.34.0` (<1.35) | parlant >=3.1 needs `>=1.37` |
+| pydantic | `<2.13` | pydantic-ai-slim 2.x needs `>=2.12` |
+| opentelemetry-sdk | `~=1.42.0` | parlant needs `>=1.37` |
 
 This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
 resolves each in a separate fork.
@@ -618,8 +619,8 @@ Installing both corrupts that path (whichever wheel's files land last wins per
 file, nondeterministic by install order). Also declared via `[tool.uv] conflicts`.
 Separately, `parlant` itself pulls `fastmcp` (a `griffelib` dependency as of
 `fastmcp>=3.2.4`) alongside its own direct `griffe` dependency, so a `[tool.uv]
-constraint-dependencies` entry caps `fastmcp<3.2.4` — otherwise parlant collides
-with itself even with pydantic-ai nowhere in the picture.
+constraint-dependencies` entry pins `fastmcp>=3.2.0,<3.2.4` — otherwise parlant
+collides with itself even with pydantic-ai nowhere in the picture.
 
 **Extras layout:**
 - `dev` — includes all framework deps **except** crewai and parlant
@@ -756,8 +757,8 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 ### Other Requirements
 
 - Use `load_agent_config("agent_name")` for credentials, NOT direct `os.environ.get()`
-- Always load and validate `BAND_WS_URL` and `BAND_REST_URL` with `ValueError`
-- Use `raise ValueError(...)` for missing required config, NOT `logger.error()` + `sys.exit()`
+- Always load and validate `BAND_WS_URL` and `BAND_REST_URL`, raising `ValueError`
+  when missing (see Coding Standards)
 - Use single sys.path line: `sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))`
 - Never hardcode UUIDs in docstrings - reference `agent_config.yaml` instead
 - All `async def main()` functions must have `-> None` return type hint
@@ -903,7 +904,9 @@ uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 
 ### Pydantic ValidationError
 
-- Catch `pydantic.ValidationError` separately from generic `Exception`
+Catch `pydantic.ValidationError` separately from generic `Exception` (see Coding
+Standards). Beyond that:
+
 - Format validation errors for LLM readability: `"Invalid arguments for tool_name: field: message"`
 - Handle ValidationError at the lowest common point to avoid duplication
 - Log full error details but return concise messages to LLM
@@ -939,11 +942,8 @@ except Exception as e:
 
 ### Required Configuration
 
-- Use `raise ValueError(...)` for missing required configuration
-- Do NOT use `logger.error()` + `sys.exit()` pattern
-- Fail fast with clear error messages
-
-Example:
+`raise ValueError(...)` for missing required config, not `logger.error()` +
+`sys.exit()` (see Coding Standards) — fail fast with a clear message:
 ```python notest
 # Good
 if not api_key:
@@ -1033,24 +1033,10 @@ See [Pre-Commit Checklist](#pre-commit-checklist) above — one checklist, not t
 
 ### Adding Inline Review Comments
 
-To add inline comments at specific lines in a PR, use the GitHub Reviews API with `gh api`:
-
-```bash
-cat << 'EOF' | gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --method POST --input -
-{
-  "commit_id": "<commit_sha>",
-  "event": "COMMENT",
-  "body": "Review summary",
-  "comments": [
-    {
-      "path": "src/path/to/file.py",
-      "line": 42,
-      "body": "Your comment here"
-    }
-  ]
-}
-EOF
-```
+Use the GitHub Reviews API via `gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews`
+(`--method POST --input -`, JSON piped through a heredoc) — see "Example: Full
+Workflow" below for the exact shape (`commit_id`, `event`, `body`, `comments[]`
+with `path`/`line`/`body`).
 
 ### Getting the Correct Line Numbers
 
@@ -1082,6 +1068,9 @@ EOF
 
 ### Example: Full Workflow
 
+Get the commit SHA, find line numbers in the real file, then post one review with
+one or more inline comments:
+
 ```bash
 # 1. Get commit SHA
 COMMIT=$(gh pr view 83 --json headRefOid -q .headRefOid)
@@ -1089,28 +1078,7 @@ COMMIT=$(gh pr view 83 --json headRefOid -q .headRefOid)
 # 2. Find the line number for a specific pattern
 curl -s "https://raw.githubusercontent.com/owner/repo/${COMMIT}/src/file.py" | grep -n "def my_function"
 
-# 3. Add inline comment at that line
-cat << 'EOF' | gh api repos/owner/repo/pulls/83/reviews --method POST --input -
-{
-  "commit_id": "abc123...",
-  "event": "COMMENT",
-  "body": "Code review",
-  "comments": [
-    {
-      "path": "src/file.py",
-      "line": 25,
-      "body": "Consider renaming this function for clarity"
-    }
-  ]
-}
-EOF
-```
-
-### Multiple Comments
-
-Add multiple inline comments in a single review:
-
-```bash
+# 3. Add inline comments at those lines (a review can carry more than one)
 cat << 'EOF' | gh api repos/owner/repo/pulls/83/reviews --method POST --input -
 {
   "commit_id": "abc123...",
