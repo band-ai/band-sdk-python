@@ -1346,7 +1346,7 @@ def get_tool_docstring_with_args(name: str) -> str:
     arg_lines = [
         format_arg_doc(field_name, field.description)
         for field_name, field in model.model_fields.items()
-        if field.description
+        if field.description and field.description.strip()
     ]
     if not arg_lines:
         return description

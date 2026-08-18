@@ -416,12 +416,18 @@ def _make_platform_tools(
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
             content: str = kwargs.get("content", "")
-            message_type: str = kwargs.get("message_type", "thought")
             metadata: dict[str, Any] | None = kwargs.get("metadata")
 
             async def execute(tools: AgentToolsProtocol) -> str:
+                if "message_type" not in kwargs:
+                    raise ValueError(
+                        "Invalid arguments for band_send_event: "
+                        "message_type: Field required"
+                    )
                 # No execution reporting for send_event to avoid meta-events.
-                await tools.send_event(content, message_type, metadata=metadata)
+                await tools.send_event(
+                    content, kwargs["message_type"], metadata=metadata
+                )
                 return json.dumps({"status": "success", "message": "Event sent"})
 
             return _exec("band_send_event", execute)

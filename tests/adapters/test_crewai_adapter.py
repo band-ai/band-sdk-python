@@ -1300,6 +1300,31 @@ class TestToolExecution:
         # and every other adapter already makes the agent state the event type.
         assert schema_fields["message_type"].is_required()
 
+    def test_send_event_run_rejects_missing_message_type(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
+        """A direct `_run` call bypasses args_schema validation (crewai Flows do
+
+        this), so the requiredness enforced by the schema must be enforced here
+        too, or an omitted message_type silently posts as "thought" again.
+        """
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        send_event = next(t for t in tools if t.name == "band_send_event")
+
+        with room_context("room-123"):
+            result = send_event._run(content="no type given")
+
+        result_data = json.loads(result)
+        assert result_data["status"] == "error"
+        assert "message_type" in result_data["message"]
+        mock_tools.send_event.assert_not_called()
+
     def test_successful_tool_execution_with_room_context(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
