@@ -193,9 +193,9 @@ def enrich_send_message_error(
 ) -> ValueError | BandToolError:
     """Append available mention handles to a failed ``band_send_message`` call.
 
-    A gain for the published CLI (divergence-matrix row 10): this used to
-    only benefit embedded consumers. Any other tool's error passes through
-    unchanged. ``tools`` needs only a ``.participants`` attribute and an
+    Benefits both the published CLI and embedded consumers. Any other
+    tool's error passes through unchanged. ``tools`` needs only a
+    ``.participants`` attribute and an
     optional ``.agent_id`` -- resolver-agnostic on purpose, so both
     ``EmbeddedResolver`` above and the CLI's ``StandaloneResolver`` can call
     this with whatever tools instance they hold.
@@ -217,6 +217,21 @@ def _is_skip_json_schema(field_info: FieldInfo) -> bool:
         if meta.__class__.__name__ == "SkipJsonSchema":
             return True
     return "SkipJsonSchema" in repr(field_info.annotation)
+
+
+def _pinned_chat_id_field() -> tuple[Any, Any]:
+    """The ``create_model`` field spec for a hidden, pre-pinned ``chat_id``:
+    shared by :func:`extend_with_chat_id`'s pinned branch and
+    :func:`pin_existing_chat_id`, which otherwise build the identical spec."""
+    return (
+        SkipJsonSchema[str | None],
+        Field(
+            default=None,
+            max_length=CHAT_ID_MAX_LENGTH,
+            validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
+            description="Pinned room id (hidden from advertised schema).",
+        ),
+    )
 
 
 def extend_with_chat_id(
@@ -263,17 +278,7 @@ def extend_with_chat_id(
         model = create_model(  # type: ignore[call-overload]
             f"{original.__name__}WithChatIdPinned",
             __base__=original,
-            **{
-                CHAT_ID_FIELD_NAME: (
-                    SkipJsonSchema[str | None],
-                    Field(
-                        default=None,
-                        max_length=CHAT_ID_MAX_LENGTH,
-                        validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
-                        description="Pinned room id (hidden from advertised schema).",
-                    ),
-                )
-            },
+            **{CHAT_ID_FIELD_NAME: _pinned_chat_id_field()},
         )
     model.__doc__ = original.__doc__
     return model
@@ -295,17 +300,7 @@ def pin_existing_chat_id(
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",
         __base__=original,
-        **{
-            CHAT_ID_FIELD_NAME: (
-                SkipJsonSchema[str | None],
-                Field(
-                    default=None,
-                    max_length=CHAT_ID_MAX_LENGTH,
-                    validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
-                    description="Pinned room id (hidden from advertised schema).",
-                ),
-            )
-        },
+        **{CHAT_ID_FIELD_NAME: _pinned_chat_id_field()},
     )
     model.__doc__ = original.__doc__
     return model

@@ -791,10 +791,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     logger.debug("Room %s: Text: %s...", room_id, block.text[:100])
                 case ThinkingBlock() if block.thinking:
                     await self._narrate_thinking(block, room_id, tools)
-                case ToolUseBlock():
-                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
-                case ToolResultBlock():
-                    replied_this_turn |= await self._on_tool_result(
+                case ToolUseBlock() | ToolResultBlock():
+                    replied_this_turn |= await self._dispatch_tool_block(
                         block, pending_tool_names, room_id, tools
                     )
         return replied_this_turn
@@ -816,14 +814,31 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return False
         replied_this_turn = False
         for block in message.content:
-            match block:
-                case ToolUseBlock():
-                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
-                case ToolResultBlock():
-                    replied_this_turn |= await self._on_tool_result(
-                        block, pending_tool_names, room_id, tools
-                    )
+            replied_this_turn |= await self._dispatch_tool_block(
+                block, pending_tool_names, room_id, tools
+            )
         return replied_this_turn
+
+    async def _dispatch_tool_block(
+        self,
+        block: Any,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Handle one ToolUseBlock/ToolResultBlock entry, shared by assistant-
+        and user-envelope message handling; any other block type is a no-op.
+        Returns True when the block was terminal work (a tool result)."""
+        match block:
+            case ToolUseBlock():
+                await self._on_tool_use(block, pending_tool_names, room_id, tools)
+                return False
+            case ToolResultBlock():
+                return await self._on_tool_result(
+                    block, pending_tool_names, room_id, tools
+                )
+            case _:
+                return False
 
     async def _send_narration_event(
         self,

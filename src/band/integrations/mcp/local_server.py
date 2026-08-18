@@ -126,29 +126,15 @@ def build_band_mcp_tool_registrations(
     """Build MCP tool registrations bound to a single, already-live ``AgentTools``.
 
     For a caller with exactly one room per server instance (e.g. an ACP
-    session) -- no room resolution needed, ``chat_id`` is still advertised
-    and accepted (uniform wrap, divergence-matrix row 2) but always routes to
-    the same ``agent_tools``.
+    session) -- no room resolution needed, so every ``chat_id`` resolves to
+    the same ``agent_tools`` regardless of its value.
     """
-    definitions = _resolve_agent_definitions(
-        include_memory=include_memory, tool_definitions=tool_definitions
+    return build_resolved_band_mcp_tool_registrations(
+        get_tools=lambda _chat_id: agent_tools,
+        include_memory=include_memory,
+        additional_tools=additional_tools,
+        tool_definitions=tool_definitions,
     )
-    resolver = EmbeddedResolver(get_tools=lambda _chat_id: agent_tools)
-    registrations = [
-        build_tool_registration(
-            definition,
-            extend_with_chat_id(definition.input_model, None),
-            resolver=resolver,
-            strip_chat_id=True,
-        )
-        for definition in definitions
-    ]
-    registrations.extend(
-        build_custom_tool_registration(tool_def, room_bound=True)
-        for tool_def in additional_tools or []
-    )
-    validate_unique_tool_names(registrations)
-    return registrations
 
 
 def build_resolved_band_mcp_tool_registrations(
@@ -160,12 +146,11 @@ def build_resolved_band_mcp_tool_registrations(
 ) -> list[MCPToolRegistration]:
     """Build MCP registrations that resolve room-scoped tools at call time.
 
-    Uniform room-wrap (divergence-matrix row 2): every agent tool gets a
-    ``chat_id`` field here, regardless of the CLI door's
-    ``AGENT_ROOM_BOUND_TOOL_NAMES`` classification -- ``chat_id`` is this
-    door's routing key for ``AgentTools`` instance selection (e.g. opencode's
-    ``_get_room_tools``), so even a CLI-room-less tool like
-    ``band_create_chatroom`` needs one here.
+    Uniform room-wrap: every agent tool gets a ``chat_id`` field here,
+    regardless of the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES``
+    classification -- ``chat_id`` is this door's routing key for
+    ``AgentTools`` instance selection (e.g. opencode's ``_get_room_tools``),
+    so even a CLI-room-less tool like ``band_create_chatroom`` needs one here.
     """
     definitions = _resolve_agent_definitions(
         include_memory=include_memory, tool_definitions=tool_definitions

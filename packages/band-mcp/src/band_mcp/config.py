@@ -233,8 +233,8 @@ def _resolve_list(
     Precedence: CLI > BAND_* env > default.
 
     `explicit_empty` lets a caller pass `--tools ""` (empty CLI value) and have
-    it override the env/default, matching the ticket's `--tools ""` -> []
-    requirement.
+    it override the env/default, resolving to `[]` instead of falling through
+    to the env value or default.
     """
     if explicit_empty:
         return []
@@ -287,6 +287,26 @@ def _partition_known(
     return known, warnings
 
 
+def _resolve_and_partition(
+    cli_value: str | Sequence[str] | None,
+    env_value: str | None,
+    *,
+    default: list[str],
+    valid: list[str],
+    flag_label: str,
+    kind: ConfigWarningKind,
+) -> tuple[list[str], list[ConfigWarning]]:
+    """Resolve a list-valued flag (CLI > env > default) and drop unknown values.
+
+    Shared by ``--scope`` and ``--tools``, which apply this exact sequence
+    (resolve, then partition known/unknown) identically.
+    """
+    raw = _resolve_list(
+        cli_value, env_value, default, explicit_empty=_is_explicit_empty(cli_value)
+    )
+    return _partition_known(raw, valid, flag_label, kind)
+
+
 # ---------------------------------------------------------------------------
 # Per-slot precedence for scalar values
 # ---------------------------------------------------------------------------
@@ -337,35 +357,28 @@ def resolve_config(
     warnings: list[ConfigWarning] = []
 
     # --- Scope -------------------------------------------------------------
-    cli_scope = cli.get("scope")
-    scope_raw = _resolve_list(
-        cli_scope,
+    # Unknown values are dropped, not collapsed to []: an empty resolved
+    # scope is preserved as-is, since validate() already fails loudly on an
+    # empty scope, which is the right behavior when nothing could be matched.
+    scope_known, scope_warnings = _resolve_and_partition(
+        cli.get("scope"),
         env.get("BAND_MCP_SCOPE"),
         default=list(DEFAULT_SCOPE),
-        explicit_empty=_is_explicit_empty(cli_scope),
-    )
-    scope_known, scope_warnings = _partition_known(
-        scope_raw, VALID_SCOPES, "--scope", "unknown-scope-value"
+        valid=VALID_SCOPES,
+        flag_label="--scope",
+        kind="unknown-scope-value",
     )
     warnings.extend(scope_warnings)
-    # If every caller-supplied value was unknown, fall back to the default.
-    # The ticket requires unknown values to be dropped, not to collapse scope
-    # to []; an empty resolved scope would also trigger validate() to fail
-    # loudly, which is the right behavior when the operator typed something
-    # that could not be matched at all. Prefer explicit (possibly empty) user
-    # intent over a silent default here.
     scope = [Scope(s) for s in scope_known]
 
     # --- Tools -------------------------------------------------------------
-    cli_tools = cli.get("tools")
-    tools_raw = _resolve_list(
-        cli_tools,
+    tools_known, tools_warnings = _resolve_and_partition(
+        cli.get("tools"),
         env.get("BAND_MCP_TOOLS"),
         default=list(DEFAULT_TOOLS),
-        explicit_empty=_is_explicit_empty(cli_tools),
-    )
-    tools_known, tools_warnings = _partition_known(
-        tools_raw, VALID_TOOLS, "--tools", "unknown-tools-value"
+        valid=VALID_TOOLS,
+        flag_label="--tools",
+        kind="unknown-tools-value",
     )
     warnings.extend(tools_warnings)
     tools = [ToolGroup(t) for t in tools_known]
