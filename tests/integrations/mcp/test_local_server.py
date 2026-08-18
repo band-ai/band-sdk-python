@@ -11,6 +11,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
 from band.integrations.mcp.engine import EngineSpec, MCPToolRegistration
@@ -33,6 +34,13 @@ class EchoInput(BaseModel):
 
 async def echo_tool(input_data: EchoInput) -> dict[str, str]:
     return {"echo": input_data.message}
+
+
+def _text_of(result: CallToolResult) -> str:
+    """Narrow the first content block to `TextContent` and return its text."""
+    block = result.content[0]
+    assert isinstance(block, TextContent), block
+    return block.text
 
 
 class TestBuildBandMcpToolRegistrations:
@@ -62,8 +70,8 @@ class TestBuildBandMcpToolRegistrations:
 
     @pytest.mark.asyncio
     async def test_resolved_registrations_advertise_chat_id(self) -> None:
-        """The embedded door's uniform wrap advertises ``chat_id`` (canonical
-        name, INT-1096); ``room_id`` remains a accepted input alias only --
+        """The embedded door's uniform wrap advertises ``chat_id`` (the
+        canonical name); ``room_id`` remains an accepted input alias only --
         see test_resolved_registrations_dispatch_by_room_id below."""
         tools_by_room = {
             "room-123": AgentTools("room-123", MagicMock(), []),
@@ -149,8 +157,7 @@ class TestLocalMcpServer:
 
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
-        # A registration's execute() always returns a wire-serialized string
-        # (INT-1096 divergence-matrix row 15, universal for both doors now):
+        # A registration's execute() always returns a wire-serialized string:
         # the dynamic handler build_engine() creates always declares -> str,
         # so FastMCP's structured-output validation rejects a raw dict here.
         async def execute(arguments: dict[str, str]) -> str:
@@ -183,7 +190,7 @@ class TestLocalMcpServer:
 
                     result = await session.call_tool("echo", {"message": "hello"})
                     assert not result.isError
-                    assert json.loads(result.content[0].text) == {"echo": "hello"}
+                    assert json.loads(_text_of(result)) == {"echo": "hello"}
         finally:
             await server.stop()
 
@@ -282,7 +289,7 @@ class TestLocalMcpServer:
 
                     result = await session.call_tool("echo", {"message": "hello"})
                     assert not result.isError
-                    assert json.loads(result.content[0].text) == {"echo": "hello"}
+                    assert json.loads(_text_of(result)) == {"echo": "hello"}
         finally:
             await server.stop()
 
@@ -412,6 +419,6 @@ class TestLocalMcpServer:
                     await session.initialize()
                     result = await session.call_tool("echo", {"message": "hi"})
                     assert not result.isError
-                    assert json.loads(result.content[0].text) == {"echo": "hi"}
+                    assert json.loads(_text_of(result)) == {"echo": "hi"}
         finally:
             await server.stop()
