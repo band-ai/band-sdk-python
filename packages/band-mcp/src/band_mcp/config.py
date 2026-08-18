@@ -225,18 +225,15 @@ def _resolve_list(
     cli_value: str | Sequence[str] | None,
     env_value: str | None,
     default: list[str],
-    *,
-    explicit_empty: bool,
 ) -> list[str]:
     """Apply per-field precedence for list-valued settings.
 
     Precedence: CLI > BAND_* env > default.
 
-    `explicit_empty` lets a caller pass `--tools ""` (empty CLI value) and have
-    it override the env/default, resolving to `[]` instead of falling through
-    to the env value or default.
+    An explicit `--tools ""` (empty CLI value) overrides the env/default,
+    resolving to `[]` instead of falling through to the env value or default.
     """
-    if explicit_empty:
+    if _is_explicit_empty(cli_value):
         return []
     if cli_value is not None and (
         not isinstance(cli_value, (list, tuple)) or len(cli_value) > 0
@@ -301,9 +298,7 @@ def _resolve_and_partition(
     Shared by ``--scope`` and ``--tools``, which apply this exact sequence
     (resolve, then partition known/unknown) identically.
     """
-    raw = _resolve_list(
-        cli_value, env_value, default, explicit_empty=_is_explicit_empty(cli_value)
-    )
+    raw = _resolve_list(cli_value, env_value, default)
     return _partition_known(raw, valid, flag_label, kind)
 
 

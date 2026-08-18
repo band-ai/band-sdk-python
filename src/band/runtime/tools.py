@@ -874,10 +874,14 @@ def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
             return (False, False)
 
 
+# The one tool name referenced by name outside its own ToolDefinition entry
+# (engine.py's mention-handle error enrichment, band-mcp's SEND_MESSAGE_METHOD_NAME).
+SEND_MESSAGE_TOOL_NAME = "band_send_message"
+
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
-    "band_send_message": ToolDefinition(
-        name="band_send_message",
+    SEND_MESSAGE_TOOL_NAME: ToolDefinition(
+        name=SEND_MESSAGE_TOOL_NAME,
         input_model=SendMessageInput,
         method_name="send_message",
     ),

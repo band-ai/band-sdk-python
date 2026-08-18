@@ -47,6 +47,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
+    SEND_MESSAGE_TOOL_NAME,
     SendEventInput,
     ToolDefinition,
     append_available_mention_handles,
@@ -201,7 +202,7 @@ def enrich_send_message_error(
     ``EmbeddedResolver`` above and the CLI's ``StandaloneResolver`` can call
     this with whatever tools instance they hold.
     """
-    if definition.name != "band_send_message":
+    if definition.name != SEND_MESSAGE_TOOL_NAME:
         return error
     message = append_available_mention_handles(
         str(error),
@@ -218,21 +219,6 @@ def _is_skip_json_schema(field_info: FieldInfo) -> bool:
         if meta.__class__.__name__ == "SkipJsonSchema":
             return True
     return "SkipJsonSchema" in repr(field_info.annotation)
-
-
-def _pinned_chat_id_field() -> tuple[Any, Any]:
-    """The ``create_model`` field spec for a hidden, pre-pinned ``chat_id``:
-    shared by :func:`extend_with_chat_id`'s pinned branch and
-    :func:`pin_existing_chat_id`, which otherwise build the identical spec."""
-    return (
-        SkipJsonSchema[str | None],
-        Field(
-            default=None,
-            max_length=CHAT_ID_MAX_LENGTH,
-            validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
-            description="Pinned room id (hidden from advertised schema).",
-        ),
-    )
 
 
 def extend_with_chat_id(
@@ -275,14 +261,9 @@ def extend_with_chat_id(
                 )
             },
         )
-    else:
-        model = create_model(  # type: ignore[call-overload]
-            f"{original.__name__}WithChatIdPinned",
-            __base__=original,
-            **{CHAT_ID_FIELD_NAME: _pinned_chat_id_field()},
-        )
-    model.__doc__ = original.__doc__
-    return model
+        model.__doc__ = original.__doc__
+        return model
+    return pin_existing_chat_id(original)
 
 
 def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
@@ -300,7 +281,17 @@ def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
     model = create_model(  # type: ignore[call-overload]
         f"{original.__name__}Pinned",
         __base__=original,
-        **{CHAT_ID_FIELD_NAME: _pinned_chat_id_field()},
+        **{
+            CHAT_ID_FIELD_NAME: (
+                SkipJsonSchema[str | None],
+                Field(
+                    default=None,
+                    max_length=CHAT_ID_MAX_LENGTH,
+                    validation_alias=AliasChoices(CHAT_ID_FIELD_NAME, "room_id"),
+                    description="Pinned room id (hidden from advertised schema).",
+                ),
+            )
+        },
     )
     model.__doc__ = original.__doc__
     return model

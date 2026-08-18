@@ -19,6 +19,7 @@ from band.config.logs import LogSettings
 from band.integrations.mcp.engine import dispatch_tool
 from band.logging_config import LogStream
 from band.runtime.tools import (
+    SEND_MESSAGE_TOOL_NAME,
     AgentTools,
     HumanTools,
     Surface,
@@ -28,7 +29,7 @@ from band.runtime.tools import (
 
 from band_mcp.config import Config, Scope, resolve_credential_for_scope, settings
 
-SEND_MESSAGE_METHOD_NAME = TOOL_DEFINITIONS["band_send_message"].method_name
+SEND_MESSAGE_METHOD_NAME = TOOL_DEFINITIONS[SEND_MESSAGE_TOOL_NAME].method_name
 """The one thing that needs to stay in sync with :func:`_invoke_agent`'s
 pre-flight participant refresh below -- read off the registry directly so a
 future rename can't silently drift out of sync with a hand-typed sibling."""
