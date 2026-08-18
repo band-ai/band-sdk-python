@@ -247,6 +247,50 @@ adapter = A2AGatewayAdapter(port=10000)
 | A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
 | A2A Types | `src/band/integrations/a2a/types.py` |
 
+## MCP Engine
+
+One MCP-framework-neutral engine (`src/band/integrations/mcp/engine.py`)
+builds every Band MCP tool registration; two front doors consume it instead
+of each hand-rolling their own FastMCP/lowlevel-Server wiring:
+
+| Front door | Module | Runs |
+|---|---|---|
+| Published CLI | `packages/band-mcp` (`band_mcp.server`, `band_mcp.shared`) | Standalone `band-mcp` process, stdio or SSE, against a real Band room over REST |
+| Embedded server | `src/band/integrations/mcp/local_server.py` (`LocalMCPServer`) | In-process, for adapters that need to hand an already-live `AgentTools` to an external agent (OpenCode, the desktop app, ACP client sessions) |
+
+`EngineSpec`/`MCPToolRegistration` describe *what* to register (name,
+description, Pydantic input model, an async `execute`); `build_engine(spec)`
+turns that into a real `FastMCP` instance. Each front door supplies its own
+`ToolsResolver` (a single `invoke(definition, chat_id, arguments)` method)
+that decides *how* a call reaches Band:
+
+- `EmbeddedResolver` (embedded door): no cache, resolves straight to a
+  caller-supplied `AgentTools`/`AgentToolsProtocol`.
+- `StandaloneResolver` (`band_mcp.shared`, CLI door): human-tools singleton
+  dispatch plus an LRU-cached (128), lock-striped (64) per-room `AgentTools`
+  pool, since one CLI process can serve many rooms over its lifetime.
+
+The model-facing argument is always `chat_id`, never `room_id` — the
+Python-side variable/field is still `room_id` throughout the codebase, only
+the text the model sees (tool descriptions, schema field names, prompt
+blocks like OpenCode's per-turn Room Context) says `chat_id`.
+
+**MCP-package imports are confined to an explicit allowlist**
+(`tests/mcp/test_import_boundary.py`): `engine.py`, `local_server.py`,
+`desktop_app/server.py`, and `band_mcp/{shared,server}.py`. This is enforced
+by an AST scan, not a convention — it exists so an MCP Python SDK major-
+version migration only has to touch those five files, not audit the tree for
+stray `mcp`-package imports. A new module that genuinely needs to import
+`mcp` directly belongs on that allowlist with a comment saying why; anything
+else should go through the engine or a resolver instead.
+
+**The published CLI's wire contract is pinned by snapshot, not by review.**
+`tests/mcp/test_wire_schema_snapshot.py` diffs a real `list_tools()`
+round-trip against checked-in JSON fixtures (`tests/fixtures/wire_schemas/`)
+— tool names, schemas, and descriptions the CLI advertised before this
+engine existed still have to match today, byte for byte, unless a change is
+an intentional, reviewed contract break.
+
 ## OpenCode Integration
 
 `OpencodeAdapter` maps each Band room to an OpenCode session on a running
@@ -274,9 +318,9 @@ Four invariants are easy to break and expensive to rediscover:
   its Band identity, and every prompt scopes tool visibility to that
   registration (deny the shared namespace, then re-allow its own — OpenCode
   applies the last matching rule).
-- **The model is told its `room_id` every turn.** The band MCP tools' schemas
-  require it, so without the per-turn Room Context block the platform tools are
-  uncallable.
+- **The model is told the current `chat_id` every turn.** The band MCP tools'
+  schemas require it, so without the per-turn Room Context block the platform
+  tools are uncallable.
 
 `turn_timeout_s` bounds *compute*: time parked on a manual approval is excluded,
 since the ask carries its own `approval_wait_timeout_s` expiry.
