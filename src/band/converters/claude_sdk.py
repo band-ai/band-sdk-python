@@ -10,6 +10,11 @@ from band.core.protocols import HistoryConverter
 
 logger = logging.getLogger(__name__)
 
+# Metadata key the adapter writes the resumable session id under on its
+# "Claude SDK session" task event, and the only thing this converter reads
+# back out of it — single source of truth for both sides.
+SESSION_ID_METADATA_KEY = "claude_sdk_session_id"
+
 
 @dataclass
 class ClaudeSDKSessionState:
@@ -91,7 +96,7 @@ class ClaudeSDKHistoryConverter(HistoryConverter[ClaudeSDKSessionState]):
         for hist in reversed(raw):
             if hist.get("message_type") == "task":
                 metadata = hist.get("metadata") or {}
-                sid = metadata.get("claude_sdk_session_id")
+                sid = metadata.get(SESSION_ID_METADATA_KEY)
                 if sid:
                     session_id = sid
                     break
