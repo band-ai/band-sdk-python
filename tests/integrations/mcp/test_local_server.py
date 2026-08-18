@@ -185,22 +185,32 @@ class TestLocalMcpServer:
             port_max=0,
         )
 
+        print("CHECKPOINT: server.start() returned", flush=True)
         await server.start()
         try:
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
+            print(f"CHECKPOINT: url={server.url}", flush=True)
 
+            print("CHECKPOINT: entering sse_client", flush=True)
             async with sse_client(server.url) as (read_stream, write_stream):
+                print("CHECKPOINT: sse_client connected", flush=True)
                 async with ClientSession(read_stream, write_stream) as session:
+                    print("CHECKPOINT: entering session.initialize", flush=True)
                     await session.initialize()
+                    print("CHECKPOINT: session initialized", flush=True)
 
                     tools_result = await session.list_tools()
+                    print("CHECKPOINT: list_tools returned", flush=True)
                     assert [tool.name for tool in tools_result.tools] == ["echo"]
 
                     result = await session.call_tool("echo", {"message": "hello"})
+                    print("CHECKPOINT: call_tool returned", flush=True)
                     assert not result.isError
                     assert json.loads(_text_of(result)) == {"echo": "hello"}
         finally:
+            print("CHECKPOINT: entering server.stop", flush=True)
             await server.stop()
+            print("CHECKPOINT: server.stop returned", flush=True)
 
     @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
     @pytest.mark.asyncio
