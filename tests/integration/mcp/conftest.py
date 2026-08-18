@@ -1,4 +1,4 @@
-"""Fixtures for live-API band-mcp integration tests (INT-1096 engine architecture).
+"""Fixtures for live-API band-mcp integration tests.
 
 These tests exercise the CLI door's real path end-to-end against a real Band
 API: ``standalone_spec(config, resolver)`` builds an ``EngineSpec`` from a

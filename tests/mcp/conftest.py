@@ -61,9 +61,8 @@ class FakeHumanTools:
     """Fake implementation of the ``HumanTools`` surface for testing.
 
     Mirrors ``band.testing.FakeAgentTools``' style (behavioral fake with
-    observable state, not a ``MagicMock``) for the human surface, which had
-    no equivalent (INT-1096's testing toolkit, step 7). Test-local for now —
-    promote to ``band.testing`` only if a second consumer appears.
+    observable state, not a ``MagicMock``) for the human surface. Test-local
+    for now -- promote to ``band.testing`` only if a second consumer appears.
 
     Returns plain dicts, not exact Fern models: unlike ``FakeAgentTools``
     (whose peers/contacts/memories back real adapter assertions today),
@@ -340,8 +339,8 @@ async def advertised_schemas(session: ClientSession) -> dict[str, dict[str, Any]
 
     Keyed by tool name (sorted, for a deterministic diff), each entry carries
     exactly the fields a wire-contract change would touch: description and
-    input schema. Used by the wire-schema snapshot test (INT-1096 step 7) to
-    guard the published band-mcp contract across the engine consolidation.
+    input schema. Used by the wire-schema snapshot test to guard the
+    published band-mcp contract.
     """
     result = await session.list_tools()
     return {

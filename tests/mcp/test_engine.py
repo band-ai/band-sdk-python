@@ -1,4 +1,4 @@
-"""Real protocol-level tests for the MCP engine (INT-1096 step 8).
+"""Real protocol-level tests for the MCP engine.
 
 Real MCP round trips over the SDK's in-memory transport
 (``mcp.shared.memory.create_connected_server_and_client_session``); the only

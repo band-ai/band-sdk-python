@@ -1,15 +1,11 @@
 """Unit tests for `band_mcp.shared`.
 
-INT-1096: replaces the old AppContext/lifespan-based tests (build_app_context,
-get_human_tools, get_agent_tools, get_agent_tools_lock, discard_agent_tools --
-all deleted with the AppContext design). Covers the same invariants against
-the real `StandaloneResolver` instead: human singleton dispatch, per-room
-`AgentTools` caching for the server lifespan, LRU eviction, lock-stripe
-serialization, the room-less None-key/"" sentinel, and the send_message
-pre-flight participant refresh + discard-on-failure (divergence-matrix rows
-9, 11, 24). One old test dropped outright, not ported: SDK-import-failure
-handling (row 21) -- band-sdk is this same package now, so AgentTools/
-HumanTools import unconditionally; there is no failure mode left to test.
+Covers `StandaloneResolver`: human singleton dispatch, per-room `AgentTools`
+caching for the server lifespan, LRU eviction, lock-stripe serialization,
+the room-less None-key/"" sentinel, and the send_message pre-flight
+participant refresh + discard-on-failure. AgentTools/HumanTools import
+unconditionally (band-sdk is this same package), so there is no
+SDK-import-failure mode to test.
 """
 
 from __future__ import annotations

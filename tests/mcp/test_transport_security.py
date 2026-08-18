@@ -85,10 +85,9 @@ class TestTransportSecuritySettings:
 class TestMcpTransportSecurityIntegration:
     """The engine, built via the CLI's own factories, carries transport security.
 
-    INT-1096 step 11: there's no module-level FastMCP singleton to import any
-    more -- ``server.py`` builds a fresh engine per ``run()``. Build one here
-    the same way ``run()`` does (``standalone_spec`` + ``build_engine`` with
-    ``_build_transport_security()``) instead.
+    ``server.py`` builds a fresh engine per ``run()`` call -- no
+    module-level FastMCP singleton to import. Build one here the same way
+    (``standalone_spec`` + ``build_engine`` with ``_build_transport_security()``).
     """
 
     def _build_mcp(self) -> object:

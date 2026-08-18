@@ -1,15 +1,10 @@
 """Shared resolver, logger, and settings for band-mcp.
 
-INT-1096: this module used to build an ``AppContext`` threaded through
-FastMCP's lifespan/``Context`` machinery (``app_lifespan``,
-``set_pending_config``, ``get_app_context``) because the old registrar
-needed a way to reach per-room state from inside a FastMCP-injected
-``Context`` parameter. The new engine's registrations capture their
-resolver directly in a closure instead (see
-``band.integrations.mcp.engine.build_tool_registration``), so none of that
-indirection is needed any more: ``build_standalone_resolver(config)``
-constructs everything synchronously, before the FastMCP instance is even
-built (``server.py`` calls it, then ``build_engine(standalone_spec(config))``).
+``build_standalone_resolver(config)`` constructs everything synchronously,
+before the FastMCP instance is even built (``server.py`` calls it, then
+``build_engine(standalone_spec(config))``). The engine's registrations
+capture this resolver directly in a closure, so no FastMCP-injected
+``Context`` parameter or lifespan machinery is needed to reach it.
 """
 
 from __future__ import annotations

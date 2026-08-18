@@ -100,9 +100,9 @@ def _build_sdk_schema(
     """Convert a Pydantic model to Claude SDK JSON schema format.
 
     Room-field injection reuses the engine's canonical
-    ``extend_with_chat_id`` (INT-1096) rather than hand-splicing a schema
-    dict: same uniform-wrap shape every embedded consumer uses, one
-    definition of "how a room field gets added to a tool's schema."
+    ``extend_with_chat_id`` rather than hand-splicing a schema dict: same
+    uniform-wrap shape every embedded consumer uses, one definition of
+    "how a room field gets added to a tool's schema."
     """
     model = extend_with_chat_id(input_model, None) if include_room_id else input_model
     schema: dict[str, Any] = dict(model.model_json_schema())

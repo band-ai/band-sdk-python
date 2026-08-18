@@ -1,16 +1,12 @@
-"""Real protocol-level exercise of ``FakeHumanTools`` (INT-1096 step 7).
+"""Real protocol-level exercise of ``FakeHumanTools``.
 
 Registers the human surface on a real ``FastMCP`` instance (via the engine +
 the CLI's ``standalone_spec``) and dispatches through it, proving the fake is
-a faithful stand-in for ``HumanTools`` -- not just that it type-checks.
-Governing rule from the plan's testing-toolkit section: real MCP protocol
-round-trips, the REST boundary is the only fake.
+a faithful stand-in for ``HumanTools`` -- not just that it type-checks. Real
+MCP protocol round-trips; the REST boundary is the only fake.
 
-Simpler than it was pre-INT-1096-step-11: the old registrar threaded
-``human_tools`` through a FastMCP ``Context``/``AppContext``, so exercising a
-fake meant monkeypatching the registrar's context accessors. The new
 ``StandaloneResolver`` takes ``human_tools`` as a constructor argument
-directly -- the fake plugs in with no patching at all.
+directly, so the fake plugs in with no patching at all.
 """
 
 from __future__ import annotations

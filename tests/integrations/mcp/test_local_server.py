@@ -9,9 +9,11 @@ import pytest
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel
 
-from band.integrations.mcp.engine import MCPToolRegistration
+from band.integrations.mcp.engine import EngineSpec, MCPToolRegistration
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     SERVER_STOP_TIMEOUT_S,
@@ -323,9 +325,24 @@ class TestLocalMcpServer:
         seen_hosts: list[str] = []
         real_build_engine = local_server_mod.build_engine
 
-        def spy_build_engine(*args: object, **kwargs: object) -> object:
-            seen_hosts.append(kwargs["host"])
-            return real_build_engine(*args, **kwargs)
+        def spy_build_engine(
+            spec: EngineSpec,
+            *,
+            host: str = "127.0.0.1",
+            transport_security: TransportSecuritySettings | None = None,
+            sse_path: str = "/sse",
+            message_path: str = "/messages/",
+            streamable_http_path: str = "/mcp",
+        ) -> FastMCP:
+            seen_hosts.append(host)
+            return real_build_engine(
+                spec,
+                host=host,
+                transport_security=transport_security,
+                sse_path=sse_path,
+                message_path=message_path,
+                streamable_http_path=streamable_http_path,
+            )
 
         monkeypatch.setattr(local_server_mod, "build_engine", spy_build_engine)
 

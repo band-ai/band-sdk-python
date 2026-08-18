@@ -7,9 +7,9 @@ authors = [{ name = "band" }]
 requires-python = ">=3.11"
 dependencies = [
     # Capped like every other mcp consumer in this repo: 2.x drops the
-    # lowlevel Server decorator registration the engine builds tools with
-    # (see INT-1150). Floor raised from the old repo's uncapped mcp[cli]>=1.23.0,
-    # whose fresh installs resolve mcp 2.0.0 and fail at import.
+    # lowlevel Server decorator registration the engine builds tools with.
+    # Floor raised from the old repo's uncapped mcp[cli]>=1.23.0, whose
+    # fresh installs resolve mcp 2.0.0 and fail at import.
     #
     # Floor pinned to exactly crewai's own transitive pin (mcp~=1.28.1, as of
     # crewai 1.15.16 -- checked 2026-08-18), not the latest 1.x: band-mcp is
@@ -21,8 +21,8 @@ dependencies = [
     # it still resolves the latest available 1.x.
     "mcp[cli]>=1.28.1,<2",
     "pydantic-settings>=2.1.0",
-    # Aligned to the root repo's exact pin (INT-1096) -- see CLAUDE.md's
-    # "Workarounds for band-client-rest Bugs" for why this stays exact.
+    # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
+    # for band-client-rest Bugs" for why this stays exact.
     "band-client-rest==0.0.27",
     # Real published floor: the version currently on PyPI. Bumped to the
     # exact band-sdk version that first ships src/band/integrations/mcp/engine.py

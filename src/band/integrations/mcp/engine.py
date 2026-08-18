@@ -1,4 +1,4 @@
-"""The one MCP tool-registration engine (INT-1096).
+"""The one MCP tool-registration engine.
 
 Collapses band-mcp's FastMCP-based registrar and ``LocalMCPServer``'s
 hand-rolled lowlevel-``Server`` registration into a single, FastMCP-based
@@ -13,11 +13,10 @@ Each factory normalizes its door's configuration into a tuple of
 override applied, custom tools included) and hands the engine an immutable
 ``EngineSpec``. ``build_engine`` is a pure function of that spec: it carries
 zero door-conditionals -- every per-door difference is resolved by the
-factory *before* the engine ever sees it (see the INT-1096 migration plan's
-"Per-door variation" section for the full rationale).
+factory before the engine ever sees it.
 
-MCP-version isolation (INT-1150 requirement, enforced now): this module is
-one of the few allowlisted places ``mcp``-package types may appear.
+MCP-version isolation: this module is one of the few allowlisted places
+``mcp``-package types may appear.
 ``EngineSpec``, ``MCPToolRegistration``, ``CustomToolSpec``, and
 ``ToolsResolver`` are themselves framework-neutral -- no ``mcp``-package type
 appears in their own fields -- so a v1->v2 migration only has to touch this

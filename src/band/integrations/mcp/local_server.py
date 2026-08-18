@@ -1,19 +1,13 @@
-"""The embedded MCP front door (INT-1096).
+"""The embedded MCP front door.
 
-Replaces ``runtime/mcp_server.py``. Keeps that module's hard-won lifecycle
-shell verbatim -- ephemeral-port scanning from a random offset (dodges the
-just-freed-port wedge bug), ``EmbeddedUvicornServer``'s signal-capture
-disabling (dodges the ``sse_starlette`` global-shutdown-latch bug), bounded
-graceful shutdown -- and replaces its internals (a hand-rolled lowlevel
-``Server`` with ``list_tools``/``call_tool`` decorators) with mounting
-``engine.py``'s FastMCP app instead.
+Ephemeral-port scanning starts from a random offset (dodges a just-freed-
+port wedge), and ``EmbeddedUvicornServer`` disables signal capture (dodges
+an ``sse_starlette`` global-shutdown-latch bug). Mounts ``engine.py``'s
+FastMCP app rather than hand-rolling a lowlevel ``Server``.
 
-Two lifecycle bugs fixed here, not ported (see the INT-1096 migration plan's
-step 9): ``stop()`` used to skip socket close and state reset when the serve
-task crashed with anything but ``CancelledError`` (the bare ``await
-self._serve_task`` re-raised past the cleanup code below it); and
-``start()``/``stop()`` had no concurrency guard. Both are fixed by routing
-every lifecycle transition through one lock, with cleanup in ``finally``.
+Every lifecycle transition (``start()``/``stop()``) routes through one lock,
+with cleanup in ``finally`` -- so a serve-task crash always closes the
+socket and resets state, and concurrent start/stop calls can't race.
 """
 
 from __future__ import annotations

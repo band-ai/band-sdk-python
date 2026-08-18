@@ -28,11 +28,9 @@ logger = logging.getLogger(__name__)
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.xfail(
     reason=(
-        "Pre-existing (found live during INT-1096 migration, not introduced by it): "
         "band_send_message requires a non-empty `mentions` list, but a freshly "
-        "created agent room has no other participant to mention. Fixing this needs "
-        "a design decision (self-mention? skip on room-less peers?), not a mechanical "
-        "test fix -- left for the INT-1096 engine work to resolve deliberately."
+        "created agent room has no other participant to mention. Needs a design "
+        "decision (self-mention? skip on room-less peers?), not a mechanical fix."
     ),
     raises=Exception,
 )
@@ -60,9 +58,8 @@ async def test_agent_create_room_send_and_read_back(
 @pytest.mark.asyncio(loop_scope="session")  # see loop_scope note above
 @pytest.mark.xfail(
     reason=(
-        "Pre-existing (found live during INT-1096 migration, not introduced by it): "
-        "band_send_message requires a non-empty `mentions` list -- same root cause "
-        "as test_agent_create_room_send_and_read_back above."
+        "band_send_message requires a non-empty `mentions` list -- same root "
+        "cause as test_agent_create_room_send_and_read_back above."
     ),
     raises=Exception,
 )

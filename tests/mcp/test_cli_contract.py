@@ -1,14 +1,11 @@
 """Subprocess-level contract tests for the published `band-mcp` CLI.
 
-INT-1096 step 11: real ``band-mcp`` (via ``python -m band_mcp.server``)
+Runs the real ``band-mcp`` (via ``python -m band_mcp.server``) as a
 subprocess, not an in-process call -- proves what a real MCP client actually
 sees, including stdio stdout purity. Minimal on purpose (a handful of
-configurations, not the plan's full agent-full/agent-pinned/human-full
-battery) -- this exists to close a specific gap it already caught during
-development: ``health_check`` is registered by ``run()`` itself, outside
-``standalone_spec``, so the wire-schema snapshot test never covers it. A
-more exhaustive subprocess contract suite (per-config schema/validation-text
-parity) is still step 12's job, alongside the CLI package's release wiring.
+configurations): ``health_check`` is registered by ``run()`` itself, outside
+``standalone_spec``, so the wire-schema snapshot test never covers it; this
+closes that gap.
 
 Uses a syntactically-valid but fake credential: nothing here calls a tool
 (only initialize/tools-list), so no network request ever happens.

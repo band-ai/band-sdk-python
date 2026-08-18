@@ -447,10 +447,9 @@ class ArchiveMemoryInput(BaseModel):
 # --- Human-tool input models ---
 #
 # These models mirror band-mcp's human tool handler signatures field-for-field
-# (now the same repo, packages/band-mcp — see INT-1096). They are the
-# canonical contract preserved by Phase 1 of INT-338: the observable tool
-# surface stays identical to the MCP behavior it was modeled on. Widening to
-# full Fern parity is out of scope for this ticket.
+# (packages/band-mcp, same repo): the observable tool surface stays identical
+# to the MCP behavior it was modeled on. Widening to full Fern parity is out
+# of scope.
 
 
 # human_agents.py
@@ -830,8 +829,7 @@ def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> st
 # (packages/band-mcp) classifies per-tool against this set, while the embedded
 # front door (src/band/integrations/mcp/local_server.py) wraps every agent
 # tool uniformly instead, since chat_id is its routing key for AgentTools
-# instance selection -- see INT-1096's divergence-matrix row 2 for why the two
-# doors deliberately differ here.
+# instance selection.
 AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_send_message",
@@ -2703,9 +2701,8 @@ class HumanTools:
     ``chat_id`` argument.
 
     Each method is a thin wrapper around a Fern ``human_api_*`` call. The
-    observable tool surface mirrors today's ``band-mcp`` human tool
-    handlers (Phase 1 of INT-338 copies those signatures verbatim); widening
-    to full Fern parity is explicitly out of scope.
+    observable tool surface mirrors ``band-mcp``'s human tool handlers
+    verbatim; widening to full Fern parity is explicitly out of scope.
     """
 
     def __init__(self, rest: "AsyncRestClient") -> None:

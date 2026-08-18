@@ -1,12 +1,11 @@
-"""MCP-import boundary test (INT-1096 / INT-1150).
+"""MCP-import boundary test.
 
-MCP-version isolation is a hard design constraint, not a posture: it's what
-INT-1150 (the SDK's MCP Python SDK v2 migration, sequenced right after this
-consolidation) requires -- "MCP-facing imports are confined to explicit
-integration/transport modules" and "the framework-neutral engine does not
-expose MCPServer, transport-security, or wire-model types." Making it a real
-test now means the v2 migration only has to touch the allowlisted modules
-below, not audit the whole tree for stray ``mcp``-package imports.
+MCP-version isolation is a hard design constraint: MCP-facing imports are
+confined to explicit integration/transport modules, and the framework-
+neutral engine never exposes MCPServer, transport-security, or wire-model
+types. A future MCP Python SDK v2 migration only has to touch the
+allowlisted modules below, not audit the whole tree for stray
+``mcp``-package imports.
 
 This scans real source files for ``import mcp`` / ``from mcp...`` at module
 level -- no import-time side effects, no needing every extra installed.
@@ -21,10 +20,8 @@ from tests.paths import REPO_ROOT
 
 # The only places an `mcp`-package import may appear.
 #
-# src/band/runtime/mcp_server.py is NOT on this list: it's now a pure
-# re-export shim (see that module) with no mcp-package import of its own.
-# packages/band-mcp/src/band_mcp/tools/registrar.py is NOT on this list
-# either: deleted in step 11, fully absorbed into engine.py.
+# src/band/runtime/mcp_server.py is NOT on this list: it's a pure re-export
+# shim (see that module) with no mcp-package import of its own.
 _ALLOWED_MCP_IMPORT_FILES: frozenset[Path] = frozenset(
     REPO_ROOT / path
     for path in (
@@ -63,7 +60,7 @@ def test_mcp_package_imports_are_confined_to_the_allowlist() -> None:
                 offenders.append(path.relative_to(REPO_ROOT))
 
     assert not offenders, (
-        "Found mcp-package imports outside the INT-1096/INT-1150 allowlist: "
+        f"Found mcp-package imports outside the allowlist: "
         f"{sorted(str(p) for p in offenders)}. Either this file belongs on the "
         "allowlist (update _ALLOWED_MCP_IMPORT_FILES with why), or the import "
         "needs to move into an allowlisted transport/translation module."

@@ -1,10 +1,9 @@
 """Wire-schema snapshot test for the published ``band-mcp`` contract.
 
-INT-1096 step 7: locks in band-mcp 1.3.2's advertised tool schemas *before*
-the engine consolidation (steps 8-9) touches anything, so any accidental
-wire-contract change (field rename, dropped alias, schema shape) during that
-work fails loudly here instead of silently shipping. Real MCP protocol round
-trip via the SDK's in-memory transport -- no patching, no hand-rolled stubs.
+Locks in band-mcp's advertised tool schemas so any accidental wire-contract
+change (field rename, dropped alias, schema shape) fails loudly here instead
+of silently shipping. Real MCP protocol round trip via the SDK's in-memory
+transport -- no patching, no hand-rolled stubs.
 
 To regenerate after an *intentional* contract change, review the diff and
 run (module form -- the script imports the ``tests`` package):
