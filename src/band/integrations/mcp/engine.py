@@ -505,6 +505,7 @@ def validate_unique_tool_names(registrations: Sequence[MCPToolRegistration]) -> 
 def build_engine(
     spec: EngineSpec,
     *,
+    host: str = "127.0.0.1",
     transport_security: TransportSecuritySettings | None = None,
     sse_path: str = "/sse",
     message_path: str = "/messages/",
@@ -521,10 +522,22 @@ def build_engine(
     The path overrides default to FastMCP's own defaults; they exist so
     ``local_server.py`` can preserve ``LocalMCPServer``'s existing
     constructor surface (published band-sdk API) unchanged.
+
+    ``host`` must be the caller's *real* bind address, even though this
+    engine never binds a socket itself (every caller mounts its ASGI app on
+    a socket/uvicorn config of its own). FastMCP's own constructor
+    auto-enables loopback-only DNS-rebinding protection when
+    ``transport_security is None and host in ("127.0.0.1", "localhost",
+    "::1")`` -- if a caller bound to a non-loopback host (e.g.
+    ``LocalMCPServer``'s documented ``0.0.0.0`` support for a Docker
+    callback) never told FastMCP that, FastMCP would still see its own
+    ``host="127.0.0.1"`` default and wrongly lock the allowlist to loopback,
+    rejecting every real non-loopback caller with a 421.
     """
     validate_unique_tool_names(spec.tools)
     mcp = FastMCP(
         name=spec.name,
+        host=host,
         transport_security=transport_security,
         sse_path=sse_path,
         message_path=message_path,

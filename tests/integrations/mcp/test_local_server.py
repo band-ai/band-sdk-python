@@ -310,6 +310,40 @@ class TestLocalMcpServer:
         assert server._uvicorn_server is None
 
     @pytest.mark.asyncio
+    async def test_start_forwards_real_host_to_build_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (found live via the Letta lane): build_engine must be
+        told the real bind host, or FastMCP wrongly assumes loopback and
+        locks DNS-rebinding protection to 127.0.0.1/localhost only -- even
+        for a server explicitly bound to a non-loopback host for a Docker
+        callback (see LocalMCPServer's own class docstring)."""
+        import band.integrations.mcp.local_server as local_server_mod
+
+        seen_hosts: list[str] = []
+        real_build_engine = local_server_mod.build_engine
+
+        def spy_build_engine(*args: object, **kwargs: object) -> object:
+            seen_hosts.append(kwargs["host"])
+            return real_build_engine(*args, **kwargs)
+
+        monkeypatch.setattr(local_server_mod, "build_engine", spy_build_engine)
+
+        server = LocalMCPServer(
+            name="test-host-forwarding",
+            tool_registrations=[],
+            host="0.0.0.0",
+            port_min=0,
+            port_max=0,
+        )
+        try:
+            await server.start()
+        finally:
+            await server.stop()
+
+        assert seen_hosts == ["0.0.0.0"]
+
+    @pytest.mark.asyncio
     async def test_concurrent_start_calls_are_serialized(self) -> None:
         """start()/start() must not race: the second call, once it acquires
         the lifecycle lock, sees the first's already-running server and

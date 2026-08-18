@@ -280,6 +280,7 @@ class LocalMCPServer:
             # restarted one.
             mcp = build_engine(
                 EngineSpec(name=self._name, tools=tuple(self._tool_registrations)),
+                host=self._host,
                 sse_path=self._sse_path,
                 message_path=self._message_path,
                 streamable_http_path=self._http_path,
