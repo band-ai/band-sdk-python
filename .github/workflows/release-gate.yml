@@ -1,0 +1,99 @@
+name: Release baseline gate
+
+# A narrow, PR-triggered check — not a blanket "E2E is a required PR check" (that
+# stays explicitly out of scope; PR-level gating is already covered by the existing
+# required Tier-1 checks, which run fast and without a live platform). It is an
+# instant no-op for every ordinary PR and only does real work for the standing
+# release-please PR (head branch release-please--branches--main--components--*): it
+# reads the `baseline-green` commit status the nightly e2e.yml run posts (its
+# mark-baseline job) and fails unless the baseline is green. That is what actually
+# blocks the release-please PR from merging until a nightly run has vouched for main.
+#
+# It gates on the most recently *tested* commit of the base branch, not the live tip:
+# a nightly marks one commit, so a tip-only check would go red the moment anything
+# merged after that nightly and the gate would be red by default. The bounds that keep
+# it meaningful (non-green blocks; a stale green stops vouching) live in
+# .github/scripts/check-release-baseline.sh.
+#
+# Both triggers mirror ci.yml's required checks: `pull_request` for immediate
+# feedback while the PR is open, `merge_group` so the check also reports against the
+# merge queue's temporary merge commit — without it the queue would wait forever once
+# this job's name is added as a required status check.
+#
+# Known limitation: this check only re-evaluates on the PR events above, so a
+# baseline that turns green overnight does not by itself clear an already-red gate
+# on the release-please PR — nothing re-triggers `pull_request` if no further
+# commits land on main in the meantime. Re-run this job by hand (Actions tab) once
+# the nightly is green, or push any commit that triggers release-please to
+# resynchronize its PR.
+#
+# Registered as a required status check on main-branch-protection under the context
+# "release-baseline-gate" (this job's name) — a live ruleset setting, not a file in
+# this repo.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+  statuses: read
+  pull-requests: read
+
+jobs:
+  release-baseline-gate:
+    name: release-baseline-gate
+    runs-on: ubuntu-latest
+    steps:
+    # The gate step invokes a repository script, so the repo has to be here. Cheap
+    # enough to pay on every PR (the step itself still no-ops in milliseconds).
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Check the release-please PR's baseline-green status
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_HEAD_REF: ${{ github.head_ref }}
+        MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+      run: |
+        if [ "$EVENT_NAME" = "merge_group" ]; then
+          # The queue's temp ref embeds the PR number: gh-readonly-queue/<base>/pr-<n>-<sha>.
+          pr_number=$(echo "$MERGE_GROUP_HEAD_REF" | sed -E 's#.*/pr-([0-9]+)-.*#\1#')
+          case "$pr_number" in
+            ''|*[!0-9]*)
+              # The ref didn't match the expected shape — treat as "not the release
+              # PR" rather than calling `gh pr view` with garbage and hard-failing
+              # every PR's merge-queue entry over a format this check doesn't own.
+              echo "Could not read a PR number from merge_group head_ref '$MERGE_GROUP_HEAD_REF' — nothing to gate."
+              exit 0
+              ;;
+          esac
+          head_ref=$(gh pr view "$pr_number" --repo "$REPO" --json headRefName --jq '.headRefName')
+        else
+          head_ref="$PR_HEAD_REF"
+        fi
+
+        case "$head_ref" in
+          release-please--branches--main*)
+            ;;
+          *)
+            echo "Not the release-please PR (head: $head_ref) — nothing to gate."
+            exit 0
+            ;;
+        esac
+
+        # Only reached for the release-please PR, so the baseline lookup (a handful of
+        # API calls every ordinary PR would otherwise pay for above) happens now, not
+        # before the head_ref check. On the merge-queue path the queue's own base sha
+        # is the branch state being released; otherwise walk main itself.
+        if [ "$EVENT_NAME" = "merge_group" ]; then
+          export BASE_REF="$MERGE_GROUP_BASE_SHA"
+        else
+          export BASE_REF=main
+        fi
+        .github/scripts/check-release-baseline.sh

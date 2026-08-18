@@ -294,7 +294,7 @@ Two-layer pattern (mirrors A2A Gateway):
 
 | File | Purpose |
 |------|---------|
-| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
+| `src/band/integrations/acp/server.py` | `ACPServer` — handles ACP JSON-RPC methods, does not subclass `acp.Agent`; `run_acp_server` — runs it with `use_unstable_protocol` (required for `session/fork`, `session/resume`, `session/close`) |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
 | `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
@@ -365,6 +365,12 @@ Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn pos
 
 Every tool call is narrated as `tool_call`/`tool_result`, including Band messaging tools (`band_send_message`/`band_send_event`) — there is no "self-reporting" special case. Because emission is live and causally ordered (above), a Band messaging tool's own room post lands *between* its `tool_call` and `tool_result` narration, so the room naturally reads `tool_call -> message -> tool_result` without any special-casing.
 
+Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copilot registers the loopback server's tools as `band-<tool>`) has the prefix stripped at chunk construction when the name reveals one of the adapter's own registered tools (`canonicalize_mcp_tool_name` in `src/band/runtime/tools.py`, sharing one resolver with `is_room_posting_tool`). Foreign tool names pass through untouched.
+
+### Capabilities (Client Adapter)
+
+`ACPClientAdapter` supports `Capability.MEMORY` and `Capability.CONTACTS`. Only memory tools are gated on the declared capability (an enterprise feature the adapter must opt into); contact tools register unconditionally, matching the adapter's pre-existing default that every caller without `features=` (every ACP example) relies on — declaring `Capability.CONTACTS` only stops the base class's unsupported-capability warning for a caller that does declare it. The registered tool vocabulary (computed once at construction) drives tool-name canonicalization too. `render_system_prompt` carries the matching capability sections.
+
 ### Permission pairing (Client Adapter)
 
 Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
@@ -401,8 +407,13 @@ injectable `spawn_process` seam, so the runtime and downstream code are transpor
 profile). Auth is flexible — an env token (`COPILOT_GITHUB_TOKEN`>`GH_TOKEN`>`GITHUB_TOKEN`),
 a stored `copilot login`, `gh`, or BYOK; for stdio pass any of it via the config `env`
 (`github_token` is a convenience for `GITHUB_TOKEN`), unset to use the ambient login.
-Registered in the baseline matrix under the `backends` lane (gated on the CLI only, like
-codex — auth is out-of-band); excluded from framework-conformance as a bridge.
+Registered in the baseline matrix under the `backends` lane, gated on the CLI + the
+Anthropic key: the baseline builder spawns it Anthropic-BYOK (`COPILOT_PROVIDER_*` env,
+see `copilot_acp_env` in `tests/e2e/baseline/toolkit/builders.py`) so lane runs don't
+burn the monthly Copilot-hosted quota, and BYOK mode needs no GitHub auth. One bespoke
+smoke (`test_copilot_hosted_auth_replies`) keeps the Copilot-hosted auth path proven
+with a single turn; it reads `GITHUB_TOKEN` and skips when unset. Excluded from
+framework-conformance as a bridge.
 
 - stdio example: `examples/acp/clients/copilot.py`.
 - Copilot-in-a-container over TCP + Band tools via a `band-mcp` (SSE) server:
@@ -587,7 +598,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
-- `GITHUB_TOKEN`: A Copilot-entitled GitHub token for Copilot-hosted `copilot_sdk` examples and the `copilot_acp` adapter. Optional when a stored `copilot login` is present. The baseline `copilot_sdk` builder uses singular Anthropic BYOK and does not require GitHub auth. Read by `tests/e2e/baseline/settings.py`.
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline reader is the single Copilot-hosted auth smoke (`test_copilot_hosted_auth_replies`, skips when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
@@ -743,6 +754,19 @@ test, where the markdown-docs run actually executes it.
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` as the first import in every file
+- **Imports go at the top of the file, full absolute path (`from band.x.y
+  import Z`), never inside a function body.** This gets missed constantly —
+  check it explicitly before finishing any edit that touches an import. The
+  one legitimate exception: a module gated behind an optional extra not
+  installed in every lane's venv (e.g. `band.adapters.copilot_acp` imports
+  `acp`, the `agent-client-protocol` package — importing it at module level
+  would break test *collection* for a venv that lacks that extra, such as
+  `dev-crewai`). Even then the deferred import belongs only at the specific
+  call site that needs it, and only because collection-time safety genuinely
+  requires it — never as a default habit. If the module has no such
+  extra-gated dependency (true for the vast majority, including every
+  adapter that only shells out to a CLI, like `codex`), the import is
+  top-level, full stop.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,
@@ -774,10 +798,25 @@ test, where the markdown-docs run actually executes it.
 - Write intent-oriented code: the reader should see *what* is meant, not decode
   *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
   early returns over nested branches), and hide bookkeeping behind a small helper
-  or property with an intent-revealing name. In tests especially, assert on a
-  readable projection of the observable outcome, not raw internals — e.g.
-  `assert reply.outline == ["tool_call (permission)", "message", ...]` over a
-  hand-rolled comprehension pulling `message_type` out of each event dict.
+  or property with an intent-revealing name. Branch on *what to do*, not *which
+  function to call*, and prefer computing the varying part once over
+  duplicating a call across both branches of an `if`/`else` — e.g. a log
+  statement that only varies by level: `level = logging.DEBUG if known else
+  logging.WARNING; logger.log(level, msg, ...)`, never `log = logger.debug if
+  known else logger.warning; log(msg, ...)` (a ternary-selected callable) and
+  never `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`
+  (the message and args retyped in both branches).
+- **Tests must be declarative and intent-revealing, not a transcript of the
+  implementation.** Assert on a readable projection of the observable outcome
+  — the thing the test is actually about — never on raw internals or on a
+  side effect that merely implies the real answer. Concretely:
+  - `assert reply.outline == ["tool_call (permission)", "message", ...]` over
+    a hand-rolled comprehension pulling `message_type` out of each event dict.
+  - `assert record.levelno == logging.DEBUG` over inferring a log level
+    indirectly from whether two separate capture windows came back empty.
+  If writing the assertion requires re-deriving *how* the code decided
+  something, the test is checking the wrong thing — assert the decision
+  itself.
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a

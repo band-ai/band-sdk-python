@@ -10,7 +10,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
@@ -31,7 +31,7 @@ from band.core.memory_types import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.types import EventMessageType
+from band.core.types import ContactRequestSentStatus, EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -333,7 +333,7 @@ class ListContactRequestsInput(BaseModel):
     page_size: int = Field(
         50, description="Items per page per direction (max 100)", ge=1, le=100
     )
-    sent_status: Literal["pending", "approved", "rejected", "cancelled", "all"] = Field(
+    sent_status: ContactRequestSentStatus = Field(
         "pending", description="Filter sent requests by status"
     )
 
@@ -524,14 +524,12 @@ class ListReceivedContactRequestsInput(BaseModel):
 class ListSentContactRequestsInput(BaseModel):
     """List contact requests sent by the user."""
 
-    status: Literal["pending", "approved", "rejected", "cancelled", "all"] | None = (
-        Field(
-            None,
-            description=(
-                "Filter by status: 'pending', 'approved', 'rejected', "
-                "'cancelled', or 'all' (optional)."
-            ),
-        )
+    status: ContactRequestSentStatus | None = Field(
+        None,
+        description=(
+            "Filter by status: 'pending', 'approved', 'rejected', "
+            "'cancelled', or 'all' (optional)."
+        ),
     )
     page: int | None = Field(None, description="Page number for pagination (optional).")
     page_size: int | None = Field(
@@ -739,6 +737,13 @@ class ListMyPeersInput(BaseModel):
     page_size: int | None = Field(None, description="Items per page (optional).")
 
 
+# The name the Band MCP server registers under. MCP clients key tool
+# namespacing off it (e.g. Copilot's hyphen-joined ``band-<tool>``), and
+# adapters reference it when advertising the server in a session config.
+# The one source of truth: ``_resolve_mcp_tool_name`` anchors its prefix
+# match here, and ``integrations.mcp.backends`` names the server from it.
+BAND_MCP_SERVER_NAME = "band"
+
 # Tool names whose successful call posts a visible message into the room.
 # Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
 # fallback text relay once the turn has already replied in the room, so the
@@ -752,24 +757,49 @@ ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _matches_tool_name(tool_name: str, names: frozenset[str]) -> bool:
-    """Match a native tool name or the ``<server>-<tool>`` MCP spelling."""
+def _resolve_mcp_tool_name(tool_name: str, names: Collection[str]) -> str | None:
+    """The member of ``names`` behind ``tool_name``'s MCP spelling, if any.
+
+    The one resolver for the one MCP naming convention seen in practice: the
+    Band loopback server's own hyphen-joined ``band-<tool>`` prefix (e.g.
+    Copilot CLI surfaces ``band_send_message`` as ``band-band_send_message``;
+    band-mcp <=1.3.1's legacy spelling arrives as
+    ``band-create_agent_chat_message``). Anchored to ``BAND_MCP_SERVER_NAME``
+    specifically -- not any prefix before a hyphen -- so an unrelated MCP
+    server's own tool (e.g. ``other-band_send_message``) never resolves as a
+    Band tool. Other spellings (``mcp__server__tool``, ``server.tool``) are
+    not matched either -- no wired backend uses them. Extend here when such a
+    backend is added.
+    """
     if tool_name in names:
-        return True
-    return tool_name.endswith(tuple(f"-{name}" for name in names))
+        return tool_name
+    prefix = f"{BAND_MCP_SERVER_NAME}-"
+    suffix = tool_name.removeprefix(prefix)
+    return suffix if suffix != tool_name and suffix in names else None
 
 
 def is_room_posting_tool(tool_name: str) -> bool:
     """True when a successful call of ``tool_name`` posts a message to the room.
 
-    Tolerates the one MCP naming convention seen in practice: a ``<server>-``
-    prefix (e.g. ``band-band_send_message`` from band-mcp 1.3.2+, or the legacy
-    ``band-create_agent_chat_message`` from band-mcp <=1.3.1). Other spellings
-    (``mcp__server__tool``, ``server.tool``) are not matched — no wired backend
-    uses them, and a miss only costs a duplicate reply (the pre-suppression
-    behavior), never a wrong post. Extend here when such a backend is added.
+    Tolerates the Band MCP server's own ``band-`` spelling (see
+    ``_resolve_mcp_tool_name``) but nothing else -- an unrelated MCP server's
+    tool that merely ends in ``-band_send_message`` (e.g.
+    ``other-band_send_message``) never resolves as room-posting, since its
+    prefix isn't ``band``. A miss only costs a duplicate reply (the
+    pre-suppression behavior), never a wrong post.
     """
-    return _matches_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES)
+    return _resolve_mcp_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES) is not None
+
+
+def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> str:
+    """The canonical band tool name behind the Band MCP server's ``band-`` spelling.
+
+    Narrated ``tool_call``/``tool_result`` events must carry the canonical
+    name like every other adapter's, so consumers match on one vocabulary.
+    A name that doesn't reveal one of ``own_names`` behind ``band-`` passes
+    through untouched -- including another MCP server's own tool.
+    """
+    return _resolve_mcp_tool_name(tool_name, own_names) or tool_name
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.

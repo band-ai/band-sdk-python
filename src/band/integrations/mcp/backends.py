@@ -15,7 +15,7 @@ from band.runtime.mcp_server import (
     LocalMCPServer,
     build_resolved_band_mcp_tool_registrations,
 )
-from band.runtime.tools import ToolDefinition
+from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 BandMCPBackendKind = TypeAliasType(
     "BandMCPBackendKind",
@@ -92,7 +92,7 @@ async def create_band_mcp_backend(
         )
 
     local_server = LocalMCPServer(
-        name="band",
+        name=BAND_MCP_SERVER_NAME,
         tool_registrations=build_resolved_band_mcp_tool_registrations(
             get_tools=get_tools,
             additional_tools=resolved_tools,

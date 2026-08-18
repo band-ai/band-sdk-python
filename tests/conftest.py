@@ -18,12 +18,17 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import datetime, timezone
+from functools import cache
+from itertools import count
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band.client.rest import AsyncRestClient
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -378,6 +383,130 @@ def make_participant_mock(
     mock.name = name
     mock.model_dump.return_value = dict(fields)
     return mock
+
+
+@cache
+def agent_api_namespace_classes() -> dict[str, type]:
+    """The Fern client's agent-side namespace classes, keyed by attribute name.
+
+    The namespaces are lazy properties, so the classes are harvested from a
+    throwaway client instance (constructing one performs no I/O).
+    """
+    harvest = AsyncRestClient(api_key="spec-harvest", base_url="http://localhost:0")
+    return {
+        name: type(getattr(harvest, name))
+        for name in dir(type(harvest))
+        if name.startswith("agent_api_")
+    }
+
+
+@pytest.fixture
+def mock_rest_client() -> MagicMock:
+    """Mock AsyncRestClient shared by AgentTools, ContactTools and the ACP
+    server adapter tests — the three suites that instantiate a REST-backed
+    client directly.
+
+    Spec'd against the real Fern client: every ``agent_api_*`` namespace is an
+    autospec of its real class, so async methods are awaitable AsyncMocks with
+    the real call signatures, and a ``band-client-rest`` bump that renames a
+    namespace, drops a method, or changes a signature fails these tests
+    instead of passing silently (the pin-bump tripwire the workarounds policy
+    relies on).
+
+    A test overrides whichever method's return value it needs; the ids below
+    (``room-new-123``, ``msg-123``, ``evt-123``, ``user-1``, ``agent-2``) are
+    asserted on directly by existing tests, so they are fixed rather than
+    incidental.
+
+    ``list_agent_chat_participants`` defaults to one non-self participant
+    (``user-1``) rather than an empty list, since AgentTools/ContactTools
+    tests assert mentions are generated from it. A test asserting exact
+    message content after a call that mentions participants (e.g. ACP's
+    ``handle_prompt``) must override ``list_agent_chat_participants`` to
+    ``data=[]`` itself rather than relying on an empty default.
+    """
+    client = MagicMock(spec=AsyncRestClient)
+    for name, namespace_class in agent_api_namespace_classes().items():
+        # spec_set so overriding a method the real class no longer has fails
+        # at the assignment, not as a dead attribute nothing ever calls.
+        setattr(
+            client, name, create_autospec(namespace_class, instance=True, spec_set=True)
+        )
+
+    # Chat creation (ACP: new/fork session). Each call gets its own room id
+    # (first call is the fixed "room-new-123" existing tests assert on) so a
+    # test creating two sessions (e.g. a fork) doesn't collide them onto one
+    # room.
+    room_ids = (f"room-new-{n}" for n in count(123))
+
+    def _create_agent_chat_response(*_args: Any, **_kwargs: Any) -> MagicMock:
+        response = MagicMock()
+        response.data = MagicMock()
+        response.data.id = next(room_ids)
+        return response
+
+    client.agent_api_chats.create_agent_chat.side_effect = _create_agent_chat_response
+
+    # Message creation (AgentTools.send_message / ACP prompt forwarding)
+    message_response = MagicMock()
+    message_response.data = MagicMock()
+    message_response.data.model_dump.return_value = {
+        "id": "msg-123",
+        "content": "Hello",
+        "sender_id": "agent-1",
+    }
+    client.agent_api_messages.create_agent_chat_message.return_value = message_response
+
+    # Event creation (AgentTools.send_event / ACP prompt forwarding)
+    event_response = MagicMock()
+    event_response.data = MagicMock()
+    event_response.data.model_dump.return_value = {
+        "id": "evt-123",
+        "content": "Thinking...",
+        "message_type": "thought",
+    }
+    client.agent_api_events.create_agent_chat_event.return_value = event_response
+
+    # Participant listing (AgentTools.get_participants / ACP session bootstrap)
+    participant1 = make_participant_mock(
+        "user-1", "User One", "User", handle="user-one"
+    )
+    client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+        data=[participant1]
+    )
+
+    # Peer lookup (AgentTools.lookup_peers)
+    peer1 = make_participant_mock(
+        "agent-2", "Agent Two", "Agent", handle="agent-two", description="Another agent"
+    )
+    peers_response = MagicMock()
+    peers_response.data = [peer1]
+    peers_response.metadata = MagicMock()
+    peers_response.metadata.page = 1
+    peers_response.metadata.page_size = 50
+    peers_response.metadata.total_count = 1
+    peers_response.metadata.total_pages = 1
+    peers_response.model_dump = MagicMock(
+        return_value={
+            "data": [
+                {
+                    "id": "agent-2",
+                    "name": "Agent Two",
+                    "type": "Agent",
+                    "description": "Another agent",
+                }
+            ],
+            "metadata": {
+                "page": 1,
+                "page_size": 50,
+                "total_count": 1,
+                "total_pages": 1,
+            },
+        }
+    )
+    client.agent_api_peers.list_agent_peers.return_value = peers_response
+
+    return client
 
 
 def make_participant_added_event(

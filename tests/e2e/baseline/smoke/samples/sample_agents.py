@@ -6,7 +6,9 @@ role-setting prompt, ``memory_features()``, and the reusable agent *shapes*
 (``TOOL_AGENT`` / ``MEMORY_AGENT``) passed as ``@per_adapter(..., **SHAPE)`` /
 ``@with_adapters(..., **SHAPE)``. The decorators themselves (``per_adapter`` /
 ``with_adapters`` / ``adapter_params``) live in ``tests.e2e.baseline.agents``. Adding a
-framework is a single ``@adapter`` entry in the registry -- nothing here changes.
+framework is a single ``@adapter`` entry in the registry -- with one exception:
+``USAGE_EXCLUSIONS`` below names adapters that can't report per-turn usage, so a
+framework in that position needs an entry there too.
 
 Following ``sample_tools``/``test_tool_calls``, the agent gets a fixed
 role-setting system prompt and the *user message* carries the instruction (with
@@ -28,6 +30,7 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool
 
@@ -109,6 +112,17 @@ COST_MULTI_TURN_AGENT = {
     "prompt": COST_MULTI_TURN_SYSTEM_PROMPT,
     "features": usage_features(),
 }
+
+# Adapters excluded from every per-turn-usage gate (the usage smokes and the
+# restart usage split). Keep this registry-derived fan honest: only adapters
+# unable to observe per-turn usage belong here.
+USAGE_EXCLUSIONS = (
+    ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
+    ExcludedAdapter(
+        Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+    ),
+    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
+)
 
 
 # Reply-oriented driving glue shared by the context-recall and rehydration

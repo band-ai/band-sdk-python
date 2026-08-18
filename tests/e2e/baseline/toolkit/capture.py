@@ -64,6 +64,7 @@ from tests.e2e.baseline.toolkit.observations import (
     Tasks,
     Thoughts,
     ToolCalls,
+    ToolResults,
     Usage,
 )
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -379,6 +380,26 @@ class ReplyCapture:
         turns' calls.
         """
         return await ToolCalls.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+            include_memory=include_memory,
+        )
+
+    async def tool_results(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+        include_memory: bool = False,
+    ) -> ToolResults:
+        """Read this room's tool results (call after the turn settles). Same
+        read contract as ``tool_calls`` (including the memory-tool exclusion
+        default)."""
+        return await ToolResults.read(
             self._require_user_ops(),
             self.room_id,
             sender_id=sender_id,

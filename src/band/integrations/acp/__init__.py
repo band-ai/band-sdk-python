@@ -21,14 +21,13 @@ This module provides bidirectional ACP support:
 
 Example (ACP Server):
     from band import Agent
-    from band.integrations.acp import BandACPServerAdapter, ACPServer
-    from acp import run_agent
+    from band.integrations.acp import BandACPServerAdapter, ACPServer, run_acp_server
 
     adapter = BandACPServerAdapter()
     server = ACPServer(adapter)
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.start()
-    await run_agent(server)
+    await run_acp_server(server)
 
 Example (ACP Client):
     from band import Agent
@@ -52,7 +51,7 @@ if TYPE_CHECKING:
     from band.integrations.acp.event_converter import EventConverter
     from band.integrations.acp.push_handler import ACPPushHandler
     from band.integrations.acp.router import AgentRouter
-    from band.integrations.acp.server import ACPServer
+    from band.integrations.acp.server import ACPServer, run_acp_server
     from band.integrations.acp.server_adapter import BandACPServerAdapter
     from band.integrations.acp.types import (
         ACPSessionState,
@@ -72,6 +71,7 @@ __all__ = [
     "CollectedChunk",
     "EventConverter",
     "PendingACPPrompt",
+    "run_acp_server",
 ]
 
 _IMPORT_MAP: dict[str, tuple[str, str]] = {
@@ -92,6 +92,7 @@ _IMPORT_MAP: dict[str, tuple[str, str]] = {
     "ACPSessionState": ("band.integrations.acp.types", "ACPSessionState"),
     "CollectedChunk": ("band.integrations.acp.types", "CollectedChunk"),
     "PendingACPPrompt": ("band.integrations.acp.types", "PendingACPPrompt"),
+    "run_acp_server": ("band.integrations.acp.server", "run_acp_server"),
 }
 
 

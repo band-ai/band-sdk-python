@@ -1,9 +1,18 @@
 name: E2E (baseline)
 
-# Manually triggered live end-to-end run of the baseline toolkit suite. These
-# tests provision real agents against a real Band platform and call real model
-# providers, so they are not run on every PR (cost + external state); trigger
-# them on demand from the Actions tab.
+# Live end-to-end run of the baseline toolkit suite: runs nightly, unattended, over
+# the full lane x OS matrix. A green full-matrix run marks the tested commit
+# baseline-green (the `mark-baseline` job below); `release-gate.yml` reads that mark
+# to decide whether the standing release-please PR may merge — see
+# tests/e2e/baseline/README.md's "CI gating & flake policy" for the full design.
+# These tests provision real agents against a real Band platform and call real model
+# providers, so they are not run on every PR (cost + external state) — only on the
+# nightly schedule or on demand from the Actions tab.
+#
+# A `workflow_dispatch` with the default `lane: all` / `os: all` reproduces the
+# nightly run exactly, including marking the commit baseline-green/red — it is not a
+# lesser "manual mode". Only a *scoped* dispatch (one lane and/or one OS) skips the
+# mark, since it only exercises part of the matrix.
 #
 # Lanes are DERIVED FROM THE REGISTRY, not hand-listed here. The `lanes` job
 # imports the adapter registry and emits one CI lane per `ci_lanes()` entry; the
@@ -29,7 +38,7 @@ name: E2E (baseline)
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
 #                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
-#                  (copilot CLI over ACP; auth via the Copilot-entitled GITHUB_TOKEN).
+#                  (copilot CLI over ACP; Anthropic BYOK, no GitHub auth).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -37,14 +46,22 @@ name: E2E (baseline)
 #                  server it stands up.
 #
 # CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
-# CLI runtime (no setup step), so it needs no isolated lane or GitHub auth. The
-# Copilot-entitled GITHUB_TOKEN remains for CopilotACPAdapter in `backends`.
+# CLI runtime (no setup step), so it needs no isolated lane or GitHub auth.
+# CopilotACPAdapter in `backends` is BYOK on Anthropic too (the monthly
+# Copilot-hosted quota exhausted mid-run and poisoned cells; a BYOK key does
+# not), so no job here needs a Copilot-entitled GitHub token.
 #
 # An unwired backend still fails loudly (the @requires gate reports the missing
 # CLI/server) until its setup block lands. `fail-fast: false`
 # keeps a red lane from blocking the others.
 
 on:
+  # Nightly, full lane x OS matrix, unattended — an off-peak UTC minute (not :00) to
+  # avoid GitHub's top-of-hour scheduling thundering herd. `lanes`/`e2e` resolve
+  # `github.event.inputs` as empty on a schedule event, which already falls back to
+  # 'all'/'all' (the full matrix) — no separate schedule-only code path needed.
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       lane:
@@ -68,15 +85,22 @@ on:
           - ubuntu
           - windows
 
-# Concurrency is scoped per (lane, OS) on the e2e job below — NOT workflow-wide.
-# A fresh dispatch cancels only the same lane+OS still in flight, so re-running
-# one lane (e.g. to iterate on a fix) leaves the others alone. Cross-lane races
-# on the shared platform are safe: each run provisions uniquely-named agents and
-# the orphan sweep only reaps agents older than BAND_E2E_ORPHAN_MAX_AGE_MINUTES,
-# so a concurrent run's fresh agents are never swept out from under it.
+# Concurrency is scoped per (event kind, lane, OS) on the e2e job below — NOT
+# workflow-wide. A fresh dispatch cancels only the same lane+OS still in flight
+# from the same trigger kind, so re-running one lane (e.g. to iterate on a fix)
+# leaves the others alone. The event kind is part of the group so a scoped manual
+# dispatch can never cancel — and falsely redden — the nightly's leg for the same
+# lane+OS, or vice versa; each trigger kind only ever supersedes its own prior run.
+# Cross-lane races on the shared platform are safe: each run provisions
+# uniquely-named agents and the orphan sweep only reaps agents older than
+# BAND_E2E_ORPHAN_MAX_AGE_MINUTES, so a concurrent run's fresh agents are never
+# swept out from under it.
 
-# Every job here only reads the repo. The GitHub API work uses E2E_GITHUB_TOKEN,
-# and the scorecard artifacts are downloaded from this same run.
+# Default for every job: read-only. The two reporting jobs (mark-baseline,
+# report-scoped-run) narrowly widen this at job level — `statuses: write` to post
+# `baseline-green`, `issues: write` to comment on the tracking issue — using the
+# ambient `secrets.GITHUB_TOKEN`. E2E_GITHUB_TOKEN is unrelated to that: it is the
+# Copilot-entitled PAT the `backends` lane needs as a model provider credential.
 permissions:
   contents: read
 
@@ -106,67 +130,37 @@ jobs:
         SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
         # The dispatch `os` input; defaults to 'all' (Linux + Windows).
         SELECTED_OS: ${{ github.event.inputs.os || 'all' }}
-      run: |
-        uv run python - <<'PY' >> "$GITHUB_OUTPUT"
-        import json
-        import os
-        from tests.e2e.baseline.toolkit.adapters import (
-            assert_registry_covers_discovered,
-        )
-        from tests.e2e.baseline.toolkit.ci_lanes import (
-            assert_every_adapter_has_a_ci_home,
-            assert_workflow_lane_gates_known,
-            ci_lanes,
-        )
-        # Fail before any test runs if the registry or lane partition has drifted.
-        assert_registry_covers_discovered()
-        assert_every_adapter_has_a_ci_home()
-        # Fail if a `matrix.lane ==` gate below names a lane the registry no longer
-        # emits (its step would silently never run).
-        assert_workflow_lane_gates_known()
-        lanes = list(ci_lanes())
-        # The registry stays authoritative: a chosen lane must be one it emits, so
-        # a stale dropdown option fails loudly here instead of running nothing.
-        selected = os.environ.get("SELECTED_LANE") or "all"
-        known = {lane.id for lane in lanes}
-        if selected != "all" and selected not in known:
-            raise SystemExit(
-                f"Requested lane {selected!r} is not one the registry emits "
-                f"(known: {sorted(known)}). Pick 'all' or a known lane."
-            )
-        # OS is a workflow concern (runner image), not a registry fact: every lane
-        # runs on each selected OS. `runner` is the runs-on image; `os` is the short
-        # id surfaced in the job name.
-        runners = {"ubuntu": "ubuntu-latest", "windows": "windows-latest"}
-        selected_os = os.environ.get("SELECTED_OS") or "all"
-        if selected_os != "all" and selected_os not in runners:
-            raise SystemExit(
-                f"Requested os {selected_os!r} is not known "
-                f"(known: {sorted(runners)}). Pick 'all', 'ubuntu', or 'windows'."
-            )
-        oses = list(runners) if selected_os == "all" else [selected_os]
-        # A lane that can only run on Linux (its backend has no Windows story —
-        # ``LINUX_ONLY_LANES``, surfaced as ``lane.linux_only``) contributes no
-        # windows cell, so a full-matrix dispatch never emits a cell that can't run.
-        include = [
-            {"lane": lane.id, "extra": lane.extra, "os": osid, "runner": runners[osid]}
-            for lane in lanes
-            if selected == "all" or lane.id == selected
-            for osid in oses
-            if not (osid == "windows" and lane.linux_only)
-        ]
-        print("lanes=" + json.dumps({"include": include}))
-        PY
+        # `python <file>` puts the file's own directory on sys.path, not the repo
+        # root — unlike the stdin (`python -`) form this replaces, which got cwd for
+        # free. PYTHONPATH makes `tests.e2e.baseline...` importable the same way.
+        PYTHONPATH: .
+      run: uv run python .github/scripts/emit-lane-matrix.py >> "$GITHUB_OUTPUT"
 
   e2e:
     name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
     runs-on: ${{ matrix.runner }}
-    # Per-(lane, OS) concurrency: a new dispatch cancels only the matching
-    # lane+OS still running, never the whole matrix — so one lane can be
-    # re-run in isolation. (See the note above the jobs block.)
+    # Without this, GitHub's own default (360 minutes) is the only ceiling on a
+    # genuinely stuck leg — observed live: three real multi-agent-collaboration
+    # tests each burned their full rerun budget (attempt + 2 retries, ~6 min each)
+    # before failing, ~40 minutes for just those three. This caps a leg well
+    # short of the platform default while leaving headroom above that.
+    #
+    # Raised from 120: a full-matrix run showed healthy legs still working well
+    # past 90 minutes, so 120 risked killing legs that were making progress
+    # rather than only ones that were stuck — and a timeout is indistinguishable
+    # from a real failure in the digest, so a too-tight cap manufactures red runs.
+    # This is the *only* place the cap is defined; the digest text and the docs
+    # deliberately describe it without restating the number.
+    timeout-minutes: 240
+    # Per-(event kind, lane, OS) concurrency: a new dispatch cancels only the
+    # matching lane+OS still running from the same trigger kind, never the whole
+    # matrix and never the other trigger's run — so one lane can be re-run in
+    # isolation without a scoped manual dispatch stealing (and falsely reddening)
+    # a nightly leg for the same lane+OS, or vice versa. (See the note above the
+    # jobs block.)
     concurrency:
-      group: e2e-baseline-${{ matrix.lane }}-${{ matrix.os }}
+      group: e2e-baseline-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.os }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
@@ -206,15 +200,17 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
-      # A PAT from a GitHub account with Copilot entitlement — NOT the ambient
-      # secrets.GITHUB_TOKEN (a repo-scoped installation token with no such
-      # entitlement). CopilotACPAdapter in the `backends` lane needs it; the
-      # Anthropic-BYOK copilot_sdk adapter does not.
+      # A Copilot-entitled PAT for the single Copilot-hosted (non-BYOK) auth
+      # smoke — NOT the ambient secrets.GITHUB_TOKEN (a repo-scoped installation
+      # token with no Copilot entitlement). One reply turn per backends run, so
+      # quota use is minimal; the smoke skips when the secret is unset. Every
+      # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
       # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
       # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
-      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py.
-      BAND_E2E_SCORECARD_JSON: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
+      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py. Set per
+      # invocation (not here) by the run step below, since a retry attempt needs its
+      # own path — see that step's comment.
 
     steps:
     - name: Checkout code
@@ -243,10 +239,11 @@ jobs:
       # resolving the shebang; `bash <script>` sidesteps both. No-op on Linux.
       run: bash .github/scripts/setup-codex.sh
 
-    # copilot_acp drives `copilot --acp`; auth is the job-env GITHUB_TOKEN (no login).
+    # copilot_acp drives `copilot --acp`; auth is Anthropic BYOK via the spawn env
+    # (builders.py copilot_acp_env) — the job-level ANTHROPIC_API_KEY, no login.
     - name: Install the GitHub Copilot CLI (copilot_acp)
       if: matrix.lane == 'backends'
-      run: .github/scripts/setup-copilot.sh
+      run: bash .github/scripts/setup-copilot.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
@@ -268,16 +265,55 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
-    # Flaky reply-latency tests opt into reruns per-test via @pytest.mark.flaky;
-    # the run itself stays plain so only those tests are retried, not the lane.
+    # Retries the lane once (`--last-failed`) on any failure before finalizing its
+    # scorecard — see .github/scripts/run-baseline-e2e.sh for the full rationale,
+    # including why it deliberately does not `set -e`. Invoked via `bash` explicitly:
+    # this step runs on windows-latest too (only the letta lane is Linux-only), and a
+    # directly executed .sh there depends on the exec bit surviving checkout and Git
+    # Bash resolving the shebang (see the codex step's comment above).
     - name: Run baseline E2E (lane ${{ matrix.lane }})
-      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
+      env:
+        ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
+        ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
+        FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
+      run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
     - name: Run codex-acp e2e (codex)
       if: matrix.lane == 'backends'
       run: uv run pytest tests/integrations/acp/test_e2e_codex_acp.py -v --no-cov
+
+    # Environment metadata for the scorecard evidence: the validated Copilot CLI
+    # version, OS, and the BYOK model (read from the same settings the builder
+    # uses, so the record can't drift from the run).
+    - name: Record backends environment metadata
+      if: always() && matrix.lane == 'backends'
+      run: |
+        uv run python - <<'PY'
+        import json, pathlib, platform, shutil, subprocess
+        from tests.e2e.baseline.settings import BaselineSettings
+        s = BaselineSettings()
+        cli = shutil.which("copilot")  # the npm shim is copilot.cmd on windows
+        # copilot.cmd is a batch shim: raw CreateProcess (no shell=True) can't
+        # execute it directly on Windows -- shell=True lets cmd.exe resolve it.
+        # Both argv pieces are static/trusted (a resolved local path + a literal
+        # flag), so shell=True carries no injection risk here.
+        meta = {
+            "copilot_cli": subprocess.run(
+                f'"{cli}" --version', shell=True, capture_output=True, text=True
+            ).stdout.strip() if cli else "unavailable",
+            "os": platform.platform(),
+            "copilot_auth": {"mode": "byok", "provider": "anthropic",
+                             "model": s.llm_models.anthropic_model},
+        }
+        # OS-qualified: the scorecard job downloads every OS's artifact for this
+        # lane with merge-multiple=true into one shared directory, so a
+        # same-named file across ubuntu/windows would silently overwrite.
+        out = pathlib.Path(f"artifacts/environment-backends-{platform.system()}.json")
+        out.parent.mkdir(exist_ok=True)
+        out.write_text(json.dumps(meta, indent=2) + "\n")
+        PY
 
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
@@ -290,20 +326,28 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: scorecard-${{ matrix.lane }}-${{ matrix.os }}
-        path: artifacts/scorecard-*.json
+        path: |
+          artifacts/scorecard-*.json
+          artifacts/environment-*.json
         if-no-files-found: ignore
 
-  # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A).
-  # `if: always()` so a failed lane still yields a scorecard; this job reports the
-  # matrix, it does not gate on it (gating policy is tracked separately).
+  # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A)
+  # and gate on it. `if: always()` so a failed lane still yields a scorecard and a
+  # verdict — the run must go red, not silently green, when a lane failed,
+  # crashed, or timed out outright.
   scorecard:
-    name: scorecard (merge lanes)
-    needs: e2e
+    name: scorecard (merge + gate)
+    needs: [lanes, e2e]
     if: always()
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
+    outputs:
+      # Consumed by mark-baseline to decide the baseline-green commit status and the
+      # nightly digest's header/warning.
+      passed: ${{ steps.verdict.outputs.ok }}
+      matrix_ok: ${{ needs.e2e.result == 'success' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -321,16 +365,32 @@ jobs:
         path: artifacts
         merge-multiple: true
 
-    - name: Merge into one scorecard
+    # The lane ids this invocation actually selected (every registry lane for a full
+    # 'all' run, or just the dispatched one) — the gate's notion of "in scope", never
+    # inferred from the merged rows themselves.
+    - name: Resolve expected lanes for this run
+      id: expected-lanes
+      env:
+        LANES_JSON: ${{ needs.lanes.outputs.lanes }}
       run: |
-        shopt -s nullglob
-        files=(artifacts/scorecard-*.json)
-        if [ ${#files[@]} -eq 0 ]; then
-          echo "no lane scorecards to merge (all lanes failed before session end)"
-          exit 0
+        lanes=$(echo "$LANES_JSON" | jq -r '[.include[].lane] | unique | join(",")')
+        echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
+
+    - name: Merge into one scorecard
+      id: merge
+      env:
+        EXPECTED_LANES: ${{ steps.expected-lanes.outputs.lanes }}
+      run: .github/scripts/merge-scorecard.sh
+
+    # Readable on the run page without downloading the artifact.
+    - name: Write step summary
+      if: always()
+      run: |
+        if [ -f artifacts/scorecard.md ]; then
+          cat artifacts/scorecard.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "no scorecard produced" >> "$GITHUB_STEP_SUMMARY"
         fi
-        uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
-          --out artifacts/scorecard.json --markdown artifacts/scorecard.md
 
     - name: Upload scorecard
       if: always()
@@ -340,4 +400,176 @@ jobs:
         path: |
           artifacts/scorecard.json
           artifacts/scorecard.md
+          artifacts/gate-summary.md
         if-no-files-found: ignore
+
+    # See .github/scripts/compute-gate-verdict.sh for why this combines the per-cell
+    # merge gate with a whole-matrix-leg backstop instead of trusting either alone.
+    - name: Compute gate verdict
+      id: verdict
+      if: always()
+      env:
+        MERGE_OK: ${{ steps.merge.outputs.passed }}
+        MATRIX_OK: ${{ needs.e2e.result == 'success' }}
+        E2E_RESULT: ${{ needs.e2e.result }}
+      run: .github/scripts/compute-gate-verdict.sh
+
+    - name: Fail the job on a red verdict
+      if: steps.verdict.outputs.ok != 'true'
+      run: exit 1
+
+  # Only a full matrix may certify the commit and update the canonical nightly issue:
+  # its state means the entire baseline is green/red. Scoped manual runs report through
+  # the separate job below, so their limited coverage can never affect release gating.
+  mark-baseline:
+    name: mark baseline-green
+    needs: scorecard
+    # `!cancelled()` rather than `always()`: this job writes durable, externally
+    # visible state (a commit status, plus reopening the tracking issue), and a
+    # cancelled run is not evidence of anything — under `always()` a nightly whose
+    # legs were cancelled mid-flight (the per-(lane,OS) concurrency group, or a
+    # human cancelling the run) posts `baseline-green: failure` and reopens the
+    # issue with nothing actually broken. Declining to post instead leaves this
+    # commit with no status at all, so check-release-baseline.sh's backward scan
+    # simply skips it and gates on whichever earlier commit was actually tested
+    # (bounded by MAX_BASELINE_AGE_DAYS) — the honest read of "this run proved
+    # nothing" rather than asserting a false red. A `timeout-minutes` leg kill does
+    # NOT cancel the run, so it still reddens here.
+    #
+    # Both dispatch inputs are normalized with `|| 'all'`, matching every other
+    # consumer (the `lanes`/`e2e` jobs): compared bare, an input that resolved
+    # empty would read as "scoped", so a full-matrix run would silently never
+    # certify the commit while `lanes` had in fact fanned out the whole matrix.
+    #
+    # The ref check matters only for the dispatch branch: `schedule` always fires
+    # on the default branch, but `workflow_dispatch` can be run from any branch a
+    # user picks in the Actions UI. Without it, a full-matrix dispatch from a
+    # feature branch certifies `github.sha` on that branch — and since this repo
+    # allows merge and rebase merges, that SHA can land in main's history verbatim,
+    # letting a feature-branch baseline vouch for main once check-release-
+    # baseline.sh's scan reaches it.
+    if: >-
+      !cancelled() &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'schedule' ||
+       ((github.event.inputs.lane || 'all') == 'all' &&
+        (github.event.inputs.os || 'all') == 'all'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+      issues: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
+      PASSED: ${{ needs.scorecard.outputs.passed }}
+      MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    # continue-on-error: the commit status below is the more important of the two
+    # things this job does (it's what release-gate.yml reads) and depends only on
+    # $PASSED/$MATRIX_OK (job outputs, already resolved) — never on this download
+    # succeeding. A transient artifact-service hiccup here must not silently skip it;
+    # the downstream steps already fall back gracefully when the scorecard files
+    # never arrive (e.g. "No scorecard was produced this run").
+    - name: Download the merged scorecard
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: scorecard
+        path: artifacts
+        if-no-files-found: warn
+
+    - name: Mark the commit baseline-green or baseline-red
+      run: .github/scripts/mark-commit-status.sh
+
+    # .github/integrations-team.txt (one GitHub username per line) is kept as a
+    # plain data file, not inline here, so updating band-ai/integrations
+    # membership never means editing workflow YAML. Individual @username
+    # mentions, not the @band-ai/integrations team handle — verified live that a
+    # bot-authored (secrets.GITHUB_TOKEN) team mention does not reliably fan out
+    # a per-member notification, even with every member's own settings correctly
+    # configured.
+    - name: Read integrations mentions list
+      id: mentions
+      run: .github/scripts/read-integrations-mentions.sh
+
+    # One persistent issue is the canonical full-matrix digest; its open/closed state
+    # reflects the current full baseline only.
+    - name: Find or create the nightly results issue
+      id: issue
+      env:
+        ISSUE_TITLE: Nightly baseline results
+        ISSUE_BODY: Running log of nightly baseline E2E results. ${{ steps.mentions.outputs.mentions }}
+      run: .github/scripts/find-or-create-tracking-issue.sh
+
+    - name: Post the night's scorecard and sync open/closed state
+      env:
+        ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        REPORT_LABEL: Nightly baseline
+        RECIPIENTS: ${{ steps.mentions.outputs.mentions }}
+        SYNC_ISSUE_STATE: "true"
+      run: .github/scripts/post-baseline-digest.sh
+
+  # A scoped dispatch is useful evidence for its requester, but is never evidence of
+  # the complete release baseline. Report it in its own thread and mention only the
+  # initiating user; GitHub then delivers the normal mention notification/email based
+  # on that user's settings without broadcasting exploratory runs to the whole team.
+  report-scoped-run:
+    name: report scoped E2E
+    needs: scorecard
+    # `!cancelled()` + normalized inputs, for the same reasons as mark-baseline
+    # above (this job comments on an issue, so a cancelled run must not report).
+    # The two conditions stay exact complements of each other.
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' &&
+      ((github.event.inputs.lane || 'all') != 'all' ||
+       (github.event.inputs.os || 'all') != 'all')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
+      PASSED: ${{ needs.scorecard.outputs.passed }}
+      MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
+      RECIPIENTS: "@${{ github.triggering_actor }}"
+      SCOPE_NOTICE: "Selected scope: lane=${{ github.event.inputs.lane }}, os=${{ github.event.inputs.os }}. This is not a full baseline and does not affect the release gate or nightly baseline state."
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Download the merged scorecard
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: scorecard
+        path: artifacts
+        if-no-files-found: warn
+
+    - name: Find or create the manual results issue
+      id: issue
+      env:
+        ISSUE_TITLE: Manual E2E results
+        ISSUE_BODY: Running log of scoped manual baseline E2E results. These reports do not certify the full release baseline.
+      run: .github/scripts/find-or-create-tracking-issue.sh
+
+    - name: Post the scoped scorecard
+      env:
+        ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        REPORT_LABEL: Manual E2E (scoped)
+        SYNC_ISSUE_STATE: "false"
+      run: .github/scripts/post-baseline-digest.sh

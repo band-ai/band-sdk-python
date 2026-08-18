@@ -39,12 +39,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from acp import run_agent
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import ACPServer, BandACPServerAdapter
+from band.integrations.acp import run_acp_server
 from band.config import load_agent_config
 from band.integrations.acp import AgentRouter
 
@@ -122,7 +122,7 @@ async def main() -> None:
     await agent.start()
     try:
         # Block on stdio until editor disconnects
-        await run_agent(server)
+        await run_acp_server(server)
     finally:
         await agent.stop()
 

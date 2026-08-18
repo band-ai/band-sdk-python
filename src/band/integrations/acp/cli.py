@@ -82,11 +82,9 @@ async def main(args: argparse.Namespace | None = None) -> None:
         raise ValueError("API key is required. Use --api-key or set BAND_API_KEY.")
 
     # Lazy imports to avoid import errors when ACP deps are not installed
-    from acp import run_agent
-
     from band import Agent
     from band.integrations.acp.push_handler import ACPPushHandler
-    from band.integrations.acp.server import ACPServer
+    from band.integrations.acp.server import ACPServer, run_acp_server
     from band.integrations.acp.server_adapter import BandACPServerAdapter
 
     adapter = BandACPServerAdapter()
@@ -110,7 +108,7 @@ async def main(args: argparse.Namespace | None = None) -> None:
     # Start Band agent in background, run ACP server in foreground
     async with agent:
         try:
-            await run_agent(server)
+            await run_acp_server(server)
         finally:
             await adapter.close()
 

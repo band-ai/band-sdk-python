@@ -295,6 +295,13 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 }
 
 
+# event_created has no PlatformEvent/payload model anywhere in the codebase --
+# event rows (thought/error/task/tool_call/tool_result) are read back over REST
+# instead (see tests/e2e/baseline/toolkit/observations/tool_calls.py), so this
+# is expected, not a bug. Any other unregistered event name still warns.
+KNOWN_UNHANDLED_EVENTS = frozenset({"event_created"})
+
+
 def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
     delay = min(
         policy.max_delay_s, policy.base_delay_s * (policy.factor ** max(attempt, 0))
@@ -403,7 +410,13 @@ class WebSocketClient:
 
         # Check if we have a handler for this event
         if message.event not in event_handlers:
-            logger.warning(
+            level = (
+                logging.DEBUG
+                if message.event in KNOWN_UNHANDLED_EVENTS
+                else logging.WARNING
+            )
+            logger.log(
+                level,
                 "[WebSocket] Received event '%s' but no handler registered. "
                 "Available handlers: %s",
                 message.event,

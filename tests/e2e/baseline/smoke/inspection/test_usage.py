@@ -39,25 +39,15 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     COST_AGENT,
     COST_MULTI_TURN_AGENT,
+    USAGE_EXCLUSIONS,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
-
-# Adapters excluded from both usage smokes. Keep this registry-derived fan honest:
-# only adapters unable to observe per-turn usage belong here.
-USAGE_EXCLUSIONS = (
-    ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
-    ExcludedAdapter(
-        Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
-    ),
-    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
-)
 
 
 @per_adapter(

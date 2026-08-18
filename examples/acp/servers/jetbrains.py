@@ -66,7 +66,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from acp import run_agent
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -74,7 +73,7 @@ from band import Agent, configure_logging
 from band.config import load_agent_config
 from band.integrations.acp.push_handler import ACPPushHandler
 from band.integrations.acp.router import AgentRouter
-from band.integrations.acp.server import ACPServer
+from band.integrations.acp.server import ACPServer, run_acp_server
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 configure_logging(
@@ -152,7 +151,7 @@ async def main() -> None:
 
     await agent.start()
     try:
-        await run_agent(server)
+        await run_acp_server(server)
     finally:
         await agent.stop()
 

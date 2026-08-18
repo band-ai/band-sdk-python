@@ -42,6 +42,13 @@ class ToolEventKey(StrEnum):
 # event kinds. Derived from MessageType so the taxonomy stays single-sourced.
 EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
+# Status filter vocabulary shared by every list-contact-requests-family tool
+# (master models and each adapter's own schema), so the choices have one
+# definition instead of a hand-copied tuple per call site.
+ContactRequestSentStatus = Literal[
+    "pending", "approved", "rejected", "cancelled", "all"
+]
+
 
 class _FlagEnum(StrEnum):
     """A StrEnum whose members combine with ``|`` into a ``frozenset``.

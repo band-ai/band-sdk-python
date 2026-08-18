@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,7 @@ import pytest
 from acp.helpers import update_agent_message_text
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
+from band.core.types import Capability
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -20,7 +22,7 @@ from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
 from band.testing import FakeAgentTools
 
-from .conftest import make_platform_message
+from tests.integrations.acp.conftest import make_platform_message
 
 
 def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
@@ -172,6 +174,30 @@ class TestACPClientAdapterShutdown:
         assert adapter._runtime._ctx is None  # ...and released
         assert adapter._runtime._conn is None
 
+    @pytest.mark.asyncio
+    async def test_restart_after_a_full_stop_allows_backend_creation(
+        self, make_acp_transport
+    ) -> None:
+        """Agent.start() reuses the same adapter instance across a
+        stop()-then-start() restart (and across a retry after a failed
+        start -- both go through cleanup_all's final=True default). The ACP
+        connection self-heals unconditionally; the MCP backend must too, or a
+        perfectly healthy restarted adapter can never call a Band tool again."""
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(command="codex", spawn_process=transport)
+        await adapter.on_started("Codex", "bridge")
+
+        await adapter.cleanup_all()  # Agent.stop(), final=True
+
+        await adapter.on_started("Codex", "bridge")  # Agent.start() again
+
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=backend),
+        ):
+            assert await adapter._ensure_band_mcp_backend() is backend
+
 
 class TestACPClientAdapterLocalMcpConfig:
     """Tests for local Band MCP injection."""
@@ -233,6 +259,144 @@ class TestACPClientAdapterLocalMcpConfig:
 
         assert first.url == second.url
         mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_turns_share_one_backend(self) -> None:
+        """Two rooms' concurrent first turns must not each start a backend —
+        the loser would leak a running LocalMCPServer (started, never stopped)."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+
+        async def slow_create(**kwargs: object) -> MagicMock:
+            await asyncio.sleep(0)  # yield, so the second caller can interleave
+            return backend
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(side_effect=slow_create),
+        ) as mock_create_backend:
+            await asyncio.gather(
+                adapter._get_or_start_band_mcp_server(),
+                adapter._get_or_start_band_mcp_server(),
+            )
+
+        mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_final_cleanup_blocks_backend_recreation(self) -> None:
+        """A turn arriving after real shutdown must fail loudly, not leak a
+        fresh LocalMCPServer nothing will ever stop again."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend.stop = AsyncMock()
+        adapter._band_mcp_backend = backend
+
+        await adapter.cleanup_all()  # final=True default, matches Agent.stop()
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(),
+        ) as mock_create_backend:
+            with pytest.raises(RuntimeError, match="stopped"):
+                await adapter._ensure_band_mcp_backend()
+
+        mock_create_backend.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_turn_recovery_stop_allows_backend_recreation(self) -> None:
+        """The on_message error path's ``stop()`` tears down to recover a wedged
+        turn, not to end the adapter -- a later turn on any room must still be
+        able to self-heal by starting a fresh backend."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        backend.stop = AsyncMock()
+        adapter._band_mcp_backend = backend
+
+        await adapter.stop()  # the on_message except-handler's call, not shutdown
+
+        fresh_backend = MagicMock(
+            local_server=MagicMock(http_url="http://127.0.0.1:2/mcp")
+        )
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=fresh_backend),
+        ) as mock_create_backend:
+            recreated = await adapter._ensure_band_mcp_backend()
+
+        assert recreated is fresh_backend
+        mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_racing_a_parked_first_turn_fails_loudly(self) -> None:
+        """The exact reachability the review named: a room's first-turn
+        bootstrap is genuinely parked on ``_mcp_backend_lock`` (not just
+        sequenced after) while real shutdown holds it -- it must wake to a
+        raise, never a backend that outlives shutdown unstopped."""
+        adapter = ACPClientAdapter(command="codex")
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+
+        async def slow_stop() -> None:
+            await asyncio.sleep(0)  # yield while holding the lock, so the
+            # parked _ensure_band_mcp_backend call can interleave here
+
+        backend.stop = AsyncMock(side_effect=slow_stop)
+        adapter._band_mcp_backend = backend
+
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(),
+        ) as mock_create_backend:
+            results = await asyncio.gather(
+                adapter.cleanup_all(),
+                adapter._ensure_band_mcp_backend(),
+                return_exceptions=True,
+            )
+
+        assert results[0] is None  # cleanup_all completed normally
+        assert isinstance(results[1], RuntimeError)
+        mock_create_backend.assert_not_awaited()
+        backend.stop.assert_awaited_once()  # stopped exactly once, not raced
+
+    async def _registered_tool_names(self, adapter: ACPClientAdapter) -> set[str]:
+        """The tool names the adapter would hand to ``create_band_mcp_backend``."""
+        backend = MagicMock(local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"))
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=backend),
+        ) as mock_create_backend:
+            await adapter._get_or_start_band_mcp_server()
+        return {
+            d.name for d in mock_create_backend.await_args.kwargs["tool_definitions"]
+        }
+
+    @pytest.mark.asyncio
+    async def test_memory_tools_registered_when_declared(self) -> None:
+        """Declared MEMORY capability puts its tool group on the loopback server."""
+        adapter = ACPClientAdapter(
+            command="codex",
+            capabilities=Capability.MEMORY,
+        )
+        assert "band_store_memory" in await self._registered_tool_names(adapter)
+
+    @pytest.mark.asyncio
+    async def test_memory_tools_absent_without_declaration(self) -> None:
+        """Undeclared MEMORY keeps its tool group off the server (an
+        enterprise feature the adapter must opt into)."""
+        registered = await self._registered_tool_names(
+            ACPClientAdapter(command="codex")
+        )
+        assert "band_store_memory" not in registered
+        assert "band_send_message" in registered
+
+    @pytest.mark.asyncio
+    async def test_contact_tools_registered_regardless_of_declaration(self) -> None:
+        """Contact tools stay unconditionally registered — the pre-existing
+        default every caller without ``features=`` (every ACP example) relies
+        on. Only memory is capability-gated."""
+        registered = await self._registered_tool_names(
+            ACPClientAdapter(command="codex")
+        )
+        assert "band_list_contacts" in registered
 
     def test_build_system_context_mentions_band_tools(self) -> None:
         """Should keep ACP system context minimal and room-aware."""
@@ -810,6 +974,48 @@ class TestACPClientAdapterPermissionHandler:
         assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_denied_permission_pair_carries_the_canonical_tool_name(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A denied ask naming a band tool under its MCP spelling must post its
+        synthetic pair under the canonical name — the pair is the only record
+        of the call, so it must speak the same vocabulary as real narration."""
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "band-band_send_event"
+            tool_call.tool_call_id = "tc-band"
+            await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "p-rej", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert all(
+            event["metadata"]["tool_name"] == "band_send_event" for event in perm_events
+        )
+        call = parse_tool_call(str(perm_events[0]["content"]))
+        assert call is not None and call.name == "band_send_event"
+
+    @pytest.mark.asyncio
     async def test_permission_handler_uses_name_fallback(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
@@ -1197,6 +1403,20 @@ class TestTurnRepliedInRoom:
         chunks = [
             self._chunk(
                 "tool_call", "get_weather", tool_call_id="tc-1", status="completed"
+            )
+        ]
+        assert not turn_replied_in_room(chunks)
+
+    def test_foreign_mcp_servers_own_tool_never_counts(self) -> None:
+        """A non-Band MCP server's own tool that happens to end in
+        ``-band_send_message`` must not suppress the text fallback -- only the
+        Band loopback server's own ``band-`` prefix counts as a room post."""
+        chunks = [
+            self._chunk(
+                "tool_call",
+                "other-band_send_message",
+                tool_call_id="tc-1",
+                status="completed",
             )
         ]
         assert not turn_replied_in_room(chunks)

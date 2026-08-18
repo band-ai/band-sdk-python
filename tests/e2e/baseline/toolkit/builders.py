@@ -315,6 +315,29 @@ def _build_crewai_flow(
     )
 
 
+def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str, Any]:
+    """``CodexAdapterConfig`` kwargs shared by the matrix builder and any bespoke
+    codex construction (see ``test_codex.py``) that needs a field the matrix
+    builder doesn't expose -- so both stay in sync on cwd/model/command instead
+    of a bespoke test hand-copying this logic and silently drifting from it.
+
+    Only overrides what's explicitly configured. ``CODEX_MODEL`` is left unset by
+    default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
+    catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
+    adapter discover/select a valid Codex model. ``CODEX_COMMAND`` likewise: an absent
+    value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
+    """
+    config_kwargs: dict[str, Any] = {
+        "cwd": s.backends.codex_cwd,
+        "custom_section": prompt or "",
+    }
+    if s.backends.codex_model.strip():
+        config_kwargs["model"] = s.backends.codex_model
+    if s.backends.codex_command.strip():
+        config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
+    return config_kwargs
+
+
 @adapter(Adapter.CODEX, requires=[Dep.CODEX_CLI, Dep.CODEX_CWD], runs_tool_loop=False)
 def _build_codex(
     s: BaselineSettings,
@@ -325,22 +348,8 @@ def _build_codex(
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
-    # Only override what's explicitly configured. CODEX_MODEL is left unset by
-    # default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
-    # catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
-    # adapter discover/select a valid Codex model. CODEX_COMMAND likewise: an absent
-    # value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
-    config_kwargs: dict[str, Any] = {
-        "cwd": s.backends.codex_cwd,
-        "custom_section": prompt or "",
-    }
-    if s.backends.codex_model.strip():
-        config_kwargs["model"] = s.backends.codex_model
-    if s.backends.codex_command.strip():
-        config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
-
     return CodexAdapter(
-        config=CodexAdapterConfig(**config_kwargs),
+        config=CodexAdapterConfig(**codex_config_kwargs(s, prompt=prompt)),
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
@@ -378,7 +387,47 @@ def _build_opencode(
     )
 
 
-@adapter(Adapter.COPILOT_ACP, requires=[Dep.COPILOT_CLI], runs_tool_loop=False)
+def copilot_home_dir(work_dir: str) -> str:
+    """Create and return the ``copilot-home`` subdirectory of ``work_dir``.
+
+    The one place the subdirectory name and its creation live — the registry
+    builder and the bespoke test configs (``test_copilot_acp.py``) all call
+    this rather than each re-picking the name and an os.path/pathlib API.
+    """
+    home = os.path.join(work_dir, "copilot-home")
+    os.makedirs(home, exist_ok=True)
+    return home
+
+
+def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
+    """Environment for a hermetic, Anthropic-BYOK ``copilot --acp`` spawn.
+
+    BYOK (per ``copilot help providers``): COPILOT_PROVIDER_BASE_URL activates
+    it, GitHub authentication is then not required, and a model must be named
+    — the same Anthropic key + model the copilot_sdk builder uses, so cells
+    validate Copilot CLI on a BYOK model rather than the quota-bound
+    Copilot-hosted default. ``copilot_home`` (see ``copilot_home_dir``) should
+    be a fresh directory so host-installed extensions and session state
+    cannot steer the turn — an installed extension whose description mentions
+    Band was observed hijacking a turn (the agent loaded it and never made
+    the requested tool call). BYOK auth rides entirely on this env, so hiding
+    the home never hides auth.
+    """
+    return {
+        "COPILOT_HOME": copilot_home,
+        "COPILOT_PROVIDER_TYPE": "anthropic",
+        "COPILOT_PROVIDER_BASE_URL": "https://api.anthropic.com",
+        "COPILOT_PROVIDER_API_KEY": s.llm_credentials.anthropic_api_key,
+        "COPILOT_MODEL": s.llm_models.anthropic_model,
+    }
+
+
+@adapter(
+    Adapter.COPILOT_ACP,
+    requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
+    supports=_LLM_TOOL_LOOP,
+    runs_tool_loop=False,
+)
 def _build_copilot_acp(
     s: BaselineSettings,
     *,
@@ -389,45 +438,30 @@ def _build_copilot_acp(
     from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
 
     # stdio spawn of `copilot --acp` co-located with the SDK, so Band tools reach
-    # Copilot over the loopback MCP server (inject_band_tools default True). Tools are
-    # delegated to Copilot over ACP/MCP, so runs_tool_loop=False (matches codex/opencode).
+    # Copilot over the loopback MCP server (inject_band_tools default True).
+    # `supports` and `runs_tool_loop` are separate axes (see AdapterSpec):
+    # memory tools are registered and gated on declared capabilities (this
+    # adapter is in the capability matrix); contacts stay unconditionally
+    # registered like every other caller with no `features=` of its own
+    # (see ACPClientAdapter._registered_tools' docstring). The
+    # custom-tool round trip (`runs_tool_loop=True`) needs its own live proof —
+    # matching codex/opencode/letta, which all delegate tool execution
+    # out-of-process and stay `runs_tool_loop=False` until proven. Flip once
+    # test_custom_tool_round_trips is observed green.
     #
-    # Gate on the CLI only — not a token. Copilot accepts several auth methods (env
-    # token, stored login in the OS keychain, `gh`, BYOK), and a stored login isn't
-    # reliably detectable from settings; so, like codex (which gates on the CLI, not
-    # its API key, and logs in out-of-band via setup-codex.sh), auth is provided
-    # out-of-band: a stored login locally, or GITHUB_TOKEN in the CI job env (see
-    # setup-copilot.sh). We still forward a configured token as a convenience.
+    # Auth is Anthropic BYOK (copilot_acp_env above), so the gate is the CLI +
+    # the Anthropic key — no GitHub token or stored login involved. The spawn
+    # is fully hermetic, mirroring codex's disposable CODEX_CWD: a per-cell
+    # temp cwd (Copilot discovers project skills and instructions from its
+    # working directory — the repo's own .claude/ skills would otherwise leak
+    # into the agent under test) and a per-cell COPILOT_HOME.
     # COPILOT_COMMAND overrides the binary + args.
-    # Isolate the spawned CLI from host state, mirroring codex's disposable
-    # CODEX_CWD: always a per-cell temp cwd (Copilot discovers project skills
-    # and instructions from its working directory — the repo's own .claude/
-    # skills would otherwise leak into the agent under test), and, when token
-    # auth is configured, a per-cell COPILOT_HOME so host-installed extensions
-    # and session state cannot steer the turn — an installed extension whose
-    # description mentions Band was observed hijacking the turn (the agent
-    # loaded it and never made the requested tool call).
-    #
-    # COPILOT_HOME isolation is gated on the token because auth is not always
-    # outside it: `copilot login` stores its credential in the OS credential
-    # store *or falls back to a plain-text file under ~/.copilot/* (per
-    # `copilot login --help`). Hiding the home would break the documented
-    # ambient-login lane auth for developers on that fallback; a configured
-    # token takes precedence over stored credentials, so with one present the
-    # home carries no auth the cell needs. CI always configures the token, so
-    # CI cells are always hermetic.
     sandbox = tempfile.mkdtemp(prefix="band-e2e-copilot-acp-")
-    env: dict[str, str] | None = None
-    if s.backends.github_token:
-        copilot_home = os.path.join(sandbox, "copilot-home")
-        os.makedirs(copilot_home)
-        env = {"COPILOT_HOME": copilot_home}
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
-        "github_token": s.backends.github_token or None,
         "cwd": sandbox,
-        "env": env,
+        "env": copilot_acp_env(s, copilot_home_dir(sandbox)),
     }
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())

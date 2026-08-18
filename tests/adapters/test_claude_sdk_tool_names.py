@@ -31,7 +31,7 @@ def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_call_event_uses_bare_name() -> None:
-    from claude_agent_sdk import AssistantMessage, ToolUseBlock
+    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
     adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
 
@@ -55,9 +55,21 @@ async def test_tool_call_event_uses_bare_name() -> None:
         ],
         model="claude-test",
     )
+    result = ResultMessage(
+        subtype="success",
+        duration_ms=100,
+        duration_api_ms=100,
+        is_error=False,
+        num_turns=1,
+        session_id="sess-1",
+        result=None,
+        errors=None,
+        api_error_status=None,
+    )
 
     async def receive():
         yield assistant
+        yield result
 
     client = MagicMock()
     client.query = AsyncMock()

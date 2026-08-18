@@ -23,85 +23,9 @@ from band.runtime.tools import (
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    canonicalize_mcp_tool_name,
     is_room_posting_tool,
 )
-
-
-@pytest.fixture
-def mock_rest_client():
-    """Mock AsyncRestClient for testing AgentTools."""
-    client = MagicMock()
-
-    # Mock create_agent_chat_message
-    message_response = MagicMock()
-    message_response.data = MagicMock()
-    message_response.data.model_dump.return_value = {
-        "id": "msg-123",
-        "content": "Hello",
-        "sender_id": "agent-1",
-    }
-    client.agent_api_messages.create_agent_chat_message = AsyncMock(
-        return_value=message_response
-    )
-
-    # Mock create_agent_chat_event
-    event_response = MagicMock()
-    event_response.data = MagicMock()
-    event_response.data.model_dump.return_value = {
-        "id": "evt-123",
-        "content": "Thinking...",
-        "message_type": "thought",
-    }
-    client.agent_api_events.create_agent_chat_event = AsyncMock(
-        return_value=event_response
-    )
-
-    # Mock list_agent_chat_participants
-    participant1 = make_participant_mock(
-        "user-1", "User One", "User", handle="user-one"
-    )
-    client.agent_api_participants.list_agent_chat_participants = AsyncMock(
-        return_value=MagicMock(data=[participant1])
-    )
-
-    # Mock list_agent_peers
-    peer1 = make_participant_mock(
-        "agent-2", "Agent Two", "Agent", handle="agent-two", description="Another agent"
-    )
-    peers_response = MagicMock()
-    peers_response.data = [peer1]
-    peers_response.metadata = MagicMock()
-    peers_response.metadata.page = 1
-    peers_response.metadata.page_size = 50
-    peers_response.metadata.total_count = 1
-    peers_response.metadata.total_pages = 1
-    peers_response.model_dump = MagicMock(
-        return_value={
-            "data": [
-                {
-                    "id": "agent-2",
-                    "name": "Agent Two",
-                    "type": "Agent",
-                    "description": "Another agent",
-                }
-            ],
-            "metadata": {
-                "page": 1,
-                "page_size": 50,
-                "total_count": 1,
-                "total_pages": 1,
-            },
-        }
-    )
-    client.agent_api_peers.list_agent_peers = AsyncMock(return_value=peers_response)
-
-    # Mock add_agent_chat_participant
-    client.agent_api_participants.add_agent_chat_participant = AsyncMock()
-
-    # Mock remove_agent_chat_participant
-    client.agent_api_participants.remove_agent_chat_participant = AsyncMock()
-
-    return client
 
 
 @pytest.fixture
@@ -1408,6 +1332,41 @@ class TestIsRoomPostingTool:
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
         assert is_room_posting_tool("band_send_message_draft") is False
+
+    def test_non_band_server_prefix_does_not_resolve(self):
+        """An unrelated MCP server's own tool must never be treated as a Band
+        room-posting tool just because it ends in ``-band_send_message``."""
+        assert is_room_posting_tool("other-band_send_message") is False
+
+
+class TestCanonicalizeMcpToolName:
+    """Recovering the canonical band name from an MCP ``<server>-`` spelling."""
+
+    OWN = frozenset({"band_send_message", "echo"})
+
+    def test_strips_server_prefix_off_own_tool(self):
+        name = canonicalize_mcp_tool_name("band-band_send_message", self.OWN)
+        assert name == "band_send_message"
+
+    def test_custom_tool_prefix_stripped(self):
+        assert canonicalize_mcp_tool_name("band-echo", self.OWN) == "echo"
+
+    def test_non_band_server_prefix_passes_through(self):
+        """Only the Band MCP server's own ``band-`` prefix resolves -- an
+        unrelated server's tool that happens to end in one of our names must
+        not be misattributed to us (e.g. narrated/suppressed as our own)."""
+        name = canonicalize_mcp_tool_name("platform-band_send_message", self.OWN)
+        assert name == "platform-band_send_message"
+
+    def test_foreign_tool_passes_through(self):
+        """A prefixed name that reveals none of ours stays as reported."""
+        assert canonicalize_mcp_tool_name("band-grep", self.OWN) == "band-grep"
+
+    def test_unprefixed_name_passes_through(self):
+        assert (
+            canonicalize_mcp_tool_name("band_send_message", self.OWN)
+            == "band_send_message"
+        )
 
 
 class TestFetchRoomContext:
