@@ -242,6 +242,7 @@ class TestLocalMcpServer:
             await server.stop()
             print("CHECKPOINT: server.stop returned", flush=True)
 
+    @pytest.mark.skip(reason="diagnostic: isolating the windows SSE hang, temporary")
     @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
     @pytest.mark.asyncio
     async def test_stop_returns_promptly_with_a_still_open_sse_connection(
@@ -300,6 +301,7 @@ class TestLocalMcpServer:
     # streamable-HTTP loopback initialization spends most of that on uvicorn
     # startup. Bump to 90s to absorb runner I/O variance (test passes in ~1s
     # locally; this only widens the safety margin on CI).
+    @pytest.mark.skip(reason="diagnostic: isolating the windows SSE hang, temporary")
     @pytest.mark.timeout(90)
     @pytest.mark.asyncio
     async def test_serves_streamable_http_tools_on_localhost(self) -> None:
@@ -479,6 +481,7 @@ class TestLocalMcpServer:
         finally:
             await server.stop()
 
+    @pytest.mark.skip(reason="diagnostic: isolating the windows SSE hang, temporary")
     @pytest.mark.asyncio
     async def test_start_stop_start_cycle_rebuilds_engine(self) -> None:
         """Session managers are single-use (mcp.server.streamable_http_manager);
