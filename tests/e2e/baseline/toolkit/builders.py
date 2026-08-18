@@ -314,6 +314,29 @@ def _build_crewai_flow(
     )
 
 
+def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str, Any]:
+    """``CodexAdapterConfig`` kwargs shared by the matrix builder and any bespoke
+    codex construction (see ``test_codex.py``) that needs a field the matrix
+    builder doesn't expose -- so both stay in sync on cwd/model/command instead
+    of a bespoke test hand-copying this logic and silently drifting from it.
+
+    Only overrides what's explicitly configured. ``CODEX_MODEL`` is left unset by
+    default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
+    catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
+    adapter discover/select a valid Codex model. ``CODEX_COMMAND`` likewise: an absent
+    value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
+    """
+    config_kwargs: dict[str, Any] = {
+        "cwd": s.backends.codex_cwd,
+        "custom_section": prompt or "",
+    }
+    if s.backends.codex_model.strip():
+        config_kwargs["model"] = s.backends.codex_model
+    if s.backends.codex_command.strip():
+        config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
+    return config_kwargs
+
+
 @adapter(Adapter.CODEX, requires=[Dep.CODEX_CLI, Dep.CODEX_CWD], runs_tool_loop=False)
 def _build_codex(
     s: BaselineSettings,
@@ -324,22 +347,8 @@ def _build_codex(
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
-    # Only override what's explicitly configured. CODEX_MODEL is left unset by
-    # default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
-    # catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
-    # adapter discover/select a valid Codex model. CODEX_COMMAND likewise: an absent
-    # value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
-    config_kwargs: dict[str, Any] = {
-        "cwd": s.backends.codex_cwd,
-        "custom_section": prompt or "",
-    }
-    if s.backends.codex_model.strip():
-        config_kwargs["model"] = s.backends.codex_model
-    if s.backends.codex_command.strip():
-        config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
-
     return CodexAdapter(
-        config=CodexAdapterConfig(**config_kwargs),
+        config=CodexAdapterConfig(**codex_config_kwargs(s, prompt=prompt)),
         additional_tools=_custom_tool_defs(tools),
         features=features,
     )

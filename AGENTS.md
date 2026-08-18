@@ -719,6 +719,19 @@ test, where the markdown-docs run actually executes it.
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` as the first import in every file
+- **Imports go at the top of the file, full absolute path (`from band.x.y
+  import Z`), never inside a function body.** This gets missed constantly —
+  check it explicitly before finishing any edit that touches an import. The
+  one legitimate exception: a module gated behind an optional extra not
+  installed in every lane's venv (e.g. `band.adapters.copilot_acp` imports
+  `acp`, the `agent-client-protocol` package — importing it at module level
+  would break test *collection* for a venv that lacks that extra, such as
+  `dev-crewai`). Even then the deferred import belongs only at the specific
+  call site that needs it, and only because collection-time safety genuinely
+  requires it — never as a default habit. If the module has no such
+  extra-gated dependency (true for the vast majority, including every
+  adapter that only shells out to a CLI, like `codex`), the import is
+  top-level, full stop.
 - No underscores in file names or class names: modules get a clean single word
   (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
   PascalCase with no leading underscore. Exception: patterns a tool requires,
@@ -750,10 +763,25 @@ test, where the markdown-docs run actually executes it.
 - Write intent-oriented code: the reader should see *what* is meant, not decode
   *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
   early returns over nested branches), and hide bookkeeping behind a small helper
-  or property with an intent-revealing name. In tests especially, assert on a
-  readable projection of the observable outcome, not raw internals — e.g.
-  `assert reply.outline == ["tool_call (permission)", "message", ...]` over a
-  hand-rolled comprehension pulling `message_type` out of each event dict.
+  or property with an intent-revealing name. Branch on *what to do*, not *which
+  function to call*, and prefer computing the varying part once over
+  duplicating a call across both branches of an `if`/`else` — e.g. a log
+  statement that only varies by level: `level = logging.DEBUG if known else
+  logging.WARNING; logger.log(level, msg, ...)`, never `log = logger.debug if
+  known else logger.warning; log(msg, ...)` (a ternary-selected callable) and
+  never `if known: logger.debug(msg, ...) else: logger.warning(msg, ...)`
+  (the message and args retyped in both branches).
+- **Tests must be declarative and intent-revealing, not a transcript of the
+  implementation.** Assert on a readable projection of the observable outcome
+  — the thing the test is actually about — never on raw internals or on a
+  side effect that merely implies the real answer. Concretely:
+  - `assert reply.outline == ["tool_call (permission)", "message", ...]` over
+    a hand-rolled comprehension pulling `message_type` out of each event dict.
+  - `assert record.levelno == logging.DEBUG` over inferring a log level
+    indirectly from whether two separate capture windows came back empty.
+  If writing the assertion requires re-deriving *how* the code decided
+  something, the test is checking the wrong thing — assert the decision
+  itself.
 - Prefer a single source of truth for a value or closed vocabulary consumed in more
   than one place: give it one definition — a constant, a `StrEnum`, or a small helper
   — that every site references, rather than re-typing the same magic literal in a
