@@ -29,7 +29,7 @@ name: E2E (baseline)
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
 #                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
-#                  (copilot CLI over ACP; auth via the Copilot-entitled GITHUB_TOKEN).
+#                  (copilot CLI over ACP; Anthropic BYOK, no GitHub auth).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -37,8 +37,10 @@ name: E2E (baseline)
 #                  server it stands up.
 #
 # CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
-# CLI runtime (no setup step), so it needs no isolated lane or GitHub auth. The
-# Copilot-entitled GITHUB_TOKEN remains for CopilotACPAdapter in `backends`.
+# CLI runtime (no setup step), so it needs no isolated lane or GitHub auth.
+# CopilotACPAdapter in `backends` is BYOK on Anthropic too (the monthly
+# Copilot-hosted quota exhausted mid-run and poisoned cells; a BYOK key does
+# not), so no job here needs a Copilot-entitled GitHub token.
 #
 # An unwired backend still fails loudly (the @requires gate reports the missing
 # CLI/server) until its setup block lands. `fail-fast: false`
@@ -75,8 +77,8 @@ on:
 # the orphan sweep only reaps agents older than BAND_E2E_ORPHAN_MAX_AGE_MINUTES,
 # so a concurrent run's fresh agents are never swept out from under it.
 
-# Every job here only reads the repo. The GitHub API work uses E2E_GITHUB_TOKEN,
-# and the scorecard artifacts are downloaded from this same run.
+# Every job here only reads the repo; the scorecard artifacts are downloaded
+# from this same run.
 permissions:
   contents: read
 
@@ -206,10 +208,11 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
-      # A PAT from a GitHub account with Copilot entitlement — NOT the ambient
-      # secrets.GITHUB_TOKEN (a repo-scoped installation token with no such
-      # entitlement). CopilotACPAdapter in the `backends` lane needs it; the
-      # Anthropic-BYOK copilot_sdk adapter does not.
+      # A Copilot-entitled PAT for the single Copilot-hosted (non-BYOK) auth
+      # smoke — NOT the ambient secrets.GITHUB_TOKEN (a repo-scoped installation
+      # token with no Copilot entitlement). One reply turn per backends run, so
+      # quota use is minimal; the smoke skips when the secret is unset. Every
+      # copilot_acp matrix cell runs Anthropic BYOK and ignores this.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
       # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
       # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
@@ -243,10 +246,11 @@ jobs:
       # resolving the shebang; `bash <script>` sidesteps both. No-op on Linux.
       run: bash .github/scripts/setup-codex.sh
 
-    # copilot_acp drives `copilot --acp`; auth is the job-env GITHUB_TOKEN (no login).
+    # copilot_acp drives `copilot --acp`; auth is Anthropic BYOK via the spawn env
+    # (builders.py copilot_acp_env) — the job-level ANTHROPIC_API_KEY, no login.
     - name: Install the GitHub Copilot CLI (copilot_acp)
       if: matrix.lane == 'backends'
-      run: .github/scripts/setup-copilot.sh
+      run: bash .github/scripts/setup-copilot.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
@@ -279,6 +283,37 @@ jobs:
       if: matrix.lane == 'backends'
       run: uv run pytest tests/integrations/acp/test_e2e_codex_acp.py -v --no-cov
 
+    # Environment metadata for the scorecard evidence: the validated Copilot CLI
+    # version, OS, and the BYOK model (read from the same settings the builder
+    # uses, so the record can't drift from the run).
+    - name: Record backends environment metadata
+      if: always() && matrix.lane == 'backends'
+      run: |
+        uv run python - <<'PY'
+        import json, pathlib, platform, shutil, subprocess
+        from tests.e2e.baseline.settings import BaselineSettings
+        s = BaselineSettings()
+        cli = shutil.which("copilot")  # the npm shim is copilot.cmd on windows
+        # copilot.cmd is a batch shim: raw CreateProcess (no shell=True) can't
+        # execute it directly on Windows -- shell=True lets cmd.exe resolve it.
+        # Both argv pieces are static/trusted (a resolved local path + a literal
+        # flag), so shell=True carries no injection risk here.
+        meta = {
+            "copilot_cli": subprocess.run(
+                f'"{cli}" --version', shell=True, capture_output=True, text=True
+            ).stdout.strip() if cli else "unavailable",
+            "os": platform.platform(),
+            "copilot_auth": {"mode": "byok", "provider": "anthropic",
+                             "model": s.llm_models.anthropic_model},
+        }
+        # OS-qualified: the scorecard job downloads every OS's artifact for this
+        # lane with merge-multiple=true into one shared directory, so a
+        # same-named file across ubuntu/windows would silently overwrite.
+        out = pathlib.Path(f"artifacts/environment-backends-{platform.system()}.json")
+        out.parent.mkdir(exist_ok=True)
+        out.write_text(json.dumps(meta, indent=2) + "\n")
+        PY
+
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
       run: docker rm -f letta-server || true
@@ -290,7 +325,9 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: scorecard-${{ matrix.lane }}-${{ matrix.os }}
-        path: artifacts/scorecard-*.json
+        path: |
+          artifacts/scorecard-*.json
+          artifacts/environment-*.json
         if-no-files-found: ignore
 
   # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A).

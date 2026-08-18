@@ -19,6 +19,7 @@ from acp.agent.connection import AgentSideConnection
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
@@ -172,6 +173,24 @@ class Reply:
         return self._events_of("tool_result")
 
     @property
+    def tool_call_names(self) -> list[str]:
+        """Narrated tool_call names in order — the canonical vocabulary
+        consumers match on. Parsed through the room-payload model, so a
+        malformed event fails loudly here rather than passing vacuously."""
+        return [
+            ToolCallRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_calls
+        ]
+
+    @property
+    def tool_result_names(self) -> list[str]:
+        """Narrated tool_result names in order (see ``tool_call_names``)."""
+        return [
+            ToolResultRoomEvent.model_validate_json(e["content"]).name
+            for e in self.tool_results
+        ]
+
+    @property
     def plans(self) -> list[str]:
         # Task events, minus the adapter's trailing "ACP client session" bookkeeping.
         return [
@@ -204,6 +223,8 @@ class AcpSession:
         history: ACPClientSessionState | None = None,
         bootstrap: bool = False,
         room_context: list[dict[str, Any]] | None = None,
+        participants_msg: str | None = None,
+        contacts_msg: str | None = None,
     ) -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back.
 
@@ -211,7 +232,8 @@ class AcpSession:
         adapter (re)start, when the runtime hands over the room's converted
         platform history. ``room_context`` seeds what the platform returns if
         the adapter re-fetches the room transcript itself (the off-bootstrap
-        rehydration path).
+        rehydration path). ``participants_msg``/``contacts_msg`` model the
+        change-triggered roster/contacts updates the runtime attaches to a turn.
         """
         tools = TranscriptTools()
         if room_context is not None:
@@ -220,8 +242,8 @@ class AcpSession:
             _message(content, room),
             tools,
             history or ACPClientSessionState(),
-            None,
-            None,
+            participants_msg=participants_msg,
+            contacts_msg=contacts_msg,
             is_session_bootstrap=bootstrap,
             room_id=room,
         )
@@ -285,6 +307,18 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
     return _spawn
 
 
+LIVE_SENDER_NAME = "Peer"
+
+
+def live_line(content: str) -> str:
+    """The attributed live-message line ``AcpSession.send`` delivers.
+
+    The adapter's contract puts it last in every prompt, so tests assert
+    position against this projection instead of hand-building the line.
+    """
+    return f"[{LIVE_SENDER_NAME}]: {content}"
+
+
 def _message(content: str, room_id: str) -> PlatformMessage:
     return PlatformMessage(
         id=str(uuid4()),
@@ -292,7 +326,7 @@ def _message(content: str, room_id: str) -> PlatformMessage:
         content=content,
         sender_id="peer-1",
         sender_type="Agent",
-        sender_name="Peer",
+        sender_name=LIVE_SENDER_NAME,
         message_type="text",
         metadata={},
         created_at=datetime.now(),

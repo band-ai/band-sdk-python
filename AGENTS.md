@@ -335,6 +335,12 @@ Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn pos
 
 Every tool call is narrated as `tool_call`/`tool_result`, including Band messaging tools (`band_send_message`/`band_send_event`) — there is no "self-reporting" special case. Because emission is live and causally ordered (above), a Band messaging tool's own room post lands *between* its `tool_call` and `tool_result` narration, so the room naturally reads `tool_call -> message -> tool_result` without any special-casing.
 
+Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copilot registers the loopback server's tools as `band-<tool>`) has the prefix stripped at chunk construction when the name reveals one of the adapter's own registered tools (`canonicalize_mcp_tool_name` in `src/band/runtime/tools.py`, sharing one resolver with `is_room_posting_tool`). Foreign tool names pass through untouched.
+
+### Capabilities (Client Adapter)
+
+`ACPClientAdapter` supports `Capability.MEMORY` and `Capability.CONTACTS`. Only memory tools are gated on the declared capability (an enterprise feature the adapter must opt into); contact tools register unconditionally, matching the adapter's pre-existing default that every caller without `features=` (every ACP example) relies on — declaring `Capability.CONTACTS` only stops the base class's unsupported-capability warning for a caller that does declare it. The registered tool vocabulary (computed once at construction) drives tool-name canonicalization too. `render_system_prompt` carries the matching capability sections.
+
 ### Permission pairing (Client Adapter)
 
 Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
@@ -371,8 +377,13 @@ injectable `spawn_process` seam, so the runtime and downstream code are transpor
 profile). Auth is flexible — an env token (`COPILOT_GITHUB_TOKEN`>`GH_TOKEN`>`GITHUB_TOKEN`),
 a stored `copilot login`, `gh`, or BYOK; for stdio pass any of it via the config `env`
 (`github_token` is a convenience for `GITHUB_TOKEN`), unset to use the ambient login.
-Registered in the baseline matrix under the `backends` lane (gated on the CLI only, like
-codex — auth is out-of-band); excluded from framework-conformance as a bridge.
+Registered in the baseline matrix under the `backends` lane, gated on the CLI + the
+Anthropic key: the baseline builder spawns it Anthropic-BYOK (`COPILOT_PROVIDER_*` env,
+see `copilot_acp_env` in `tests/e2e/baseline/toolkit/builders.py`) so lane runs don't
+burn the monthly Copilot-hosted quota, and BYOK mode needs no GitHub auth. One bespoke
+smoke (`test_copilot_hosted_auth_replies`) keeps the Copilot-hosted auth path proven
+with a single turn; it reads `GITHUB_TOKEN` and skips when unset. Excluded from
+framework-conformance as a bridge.
 
 - stdio example: `examples/acp/clients/copilot.py`.
 - Copilot-in-a-container over TCP + Band tools via a `band-mcp` (SSE) server:
@@ -557,7 +568,7 @@ agent keys and platform URLs should stay aligned with `.env.test` /
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
-- `GITHUB_TOKEN`: A Copilot-entitled GitHub token for Copilot-hosted `copilot_sdk` examples and the `copilot_acp` adapter. Optional when a stored `copilot login` is present. The baseline `copilot_sdk` builder uses singular Anthropic BYOK and does not require GitHub auth. Read by `tests/e2e/baseline/settings.py`.
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token. The baseline `copilot_sdk` and `copilot_acp` builders use Anthropic BYOK and never read it; the only baseline reader is the single Copilot-hosted auth smoke (`test_copilot_hosted_auth_replies`, skips when unset). Also used by Copilot-hosted examples outside the baseline; optional when a stored `copilot login` is present.
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)

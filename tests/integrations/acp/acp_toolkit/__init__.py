@@ -30,6 +30,7 @@ from tests.integrations.acp.acp_toolkit.harness import (
     RoomActivity,
     TranscriptTools,
     acp_adapter,
+    live_line,
     make_acp_connection,
 )
 
@@ -42,5 +43,6 @@ __all__ = [
     "RoomActivity",
     "TranscriptTools",
     "acp_adapter",
+    "live_line",
     "make_acp_connection",
 ]

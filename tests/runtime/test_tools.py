@@ -23,6 +23,7 @@ from band.runtime.tools import (
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    canonicalize_mcp_tool_name,
     is_room_posting_tool,
 )
 
@@ -1331,6 +1332,41 @@ class TestIsRoomPostingTool:
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
         assert is_room_posting_tool("band_send_message_draft") is False
+
+    def test_non_band_server_prefix_does_not_resolve(self):
+        """An unrelated MCP server's own tool must never be treated as a Band
+        room-posting tool just because it ends in ``-band_send_message``."""
+        assert is_room_posting_tool("other-band_send_message") is False
+
+
+class TestCanonicalizeMcpToolName:
+    """Recovering the canonical band name from an MCP ``<server>-`` spelling."""
+
+    OWN = frozenset({"band_send_message", "echo"})
+
+    def test_strips_server_prefix_off_own_tool(self):
+        name = canonicalize_mcp_tool_name("band-band_send_message", self.OWN)
+        assert name == "band_send_message"
+
+    def test_custom_tool_prefix_stripped(self):
+        assert canonicalize_mcp_tool_name("band-echo", self.OWN) == "echo"
+
+    def test_non_band_server_prefix_passes_through(self):
+        """Only the Band MCP server's own ``band-`` prefix resolves -- an
+        unrelated server's tool that happens to end in one of our names must
+        not be misattributed to us (e.g. narrated/suppressed as our own)."""
+        name = canonicalize_mcp_tool_name("platform-band_send_message", self.OWN)
+        assert name == "platform-band_send_message"
+
+    def test_foreign_tool_passes_through(self):
+        """A prefixed name that reveals none of ours stays as reported."""
+        assert canonicalize_mcp_tool_name("band-grep", self.OWN) == "band-grep"
+
+    def test_unprefixed_name_passes_through(self):
+        assert (
+            canonicalize_mcp_tool_name("band_send_message", self.OWN)
+            == "band_send_message"
+        )
 
 
 class TestFetchRoomContext:
