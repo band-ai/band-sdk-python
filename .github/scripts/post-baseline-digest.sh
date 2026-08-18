@@ -4,11 +4,18 @@
 # Reads REPO / RUN_URL / PASSED / MATRIX_OK / SHA / ISSUE_NUMBER / REPORT_LABEL /
 # RECIPIENTS / SYNC_ISSUE_STATE and optional SCOPE_NOTICE / RUN_LINK_LABEL from the
 # environment.
+#
+# PASSED defaults to false rather than requiring it, for the same reason as
+# mark-commit-status.sh: it is the scorecard job's verdict output, empty if that
+# job's gate-verdict step aborted before writing one. An uncomputed verdict must
+# still report FAIL, not skip reporting (silence here means the issue never
+# reflects the run at all). MATRIX_OK stays required: it is a GitHub Actions
+# expression on `needs.e2e`, always populated as long as that job exists.
 set -euo pipefail
 
 : "${REPO:?REPO is required}"
 : "${RUN_URL:?RUN_URL is required}"
-: "${PASSED:?PASSED is required}"
+PASSED="${PASSED:-false}"
 : "${MATRIX_OK:?MATRIX_OK is required}"
 : "${SHA:?SHA is required}"
 : "${ISSUE_NUMBER:?ISSUE_NUMBER is required}"

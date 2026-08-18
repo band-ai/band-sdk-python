@@ -65,8 +65,9 @@ def test_lane_matrix_rejects_a_selection_with_no_runnable_cell() -> None:
 
     Both halves are offered by the dispatch dropdowns, so the pair is reachable by
     hand. Emitting ``include: []`` instead would leave the downstream
-    ``EXPECTED_LANES`` blank, trip ``merge-scorecard.sh``'s required-variable guard,
-    and report a red digest — blaming the suite for an impossible request.
+    ``EXPECTED_LANES`` blank, which ``scorecard.py``'s ``--expected-lanes``
+    validation then rejects as an unknown lane id, and report a red digest —
+    blaming the suite for an impossible request.
     """
     result = _emit_lane_matrix("letta", "windows")
 

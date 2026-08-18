@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.e2e.baseline.agents import (
+    LANE_MARKER,
     PER_ADAPTER_MARKER,
     Adapter,
     ExcludedAdapter,
@@ -285,6 +286,58 @@ def test_gate_passes_pass_and_na_cells() -> None:
     ]
     result = gate(rows, frozenset({str(_LANE_A.id), str(_LANE_B.id)}))
     assert result.ok is True
+
+
+class FakeMatrixItem:
+    """A ``pytest.Item`` stand-in exposing what ``lane_selection.expected_lane`` reads:
+    its ``adapter_id`` callspec param and an optional ``@lane`` override marker."""
+
+    def __init__(
+        self, nodeid: str, adapter: str, override_lane: str | None = None
+    ) -> None:
+        self.nodeid = nodeid
+        self.callspec = SimpleNamespace(params={"adapter_id": adapter})
+        self._override = override_lane
+
+    def get_closest_marker(self, name: str) -> object | None:
+        if name == LANE_MARKER and self._override is not None:
+            return SimpleNamespace(args=(self._override,))
+        return None
+
+
+def test_gate_honors_a_lane_pin_over_the_adapters_home_lane() -> None:
+    """A cell pinned by ``@lane`` cross-lane must gate on the pin, not the home lane.
+
+    Reproduces the scenario ``ADDING_AN_ADAPTER.md`` prescribes: a ``@per_adapter``
+    cell whose adapter's home lane is ``_LANE_A`` but is pinned to ``_LANE_B`` (e.g. to
+    share an extra with a cross-lane peer). Using the home lane alone here would
+    report this cell "missing" the moment its home lane's job runs — a legitimate
+    lane-scoped skip, not a silent failure.
+    """
+    item = FakeMatrixItem(f"m.py::t[{_ADAPTER_A}]", _ADAPTER_A, str(_LANE_B.id))
+    collector = ScorecardCollector(path="unused")
+    collector.pytest_runtest_logreport(
+        _report(
+            f"m.py::t[{_ADAPTER_A}]",
+            "setup",
+            outcome="skipped",
+            reason=f"assigned to lane '{_LANE_B.id}' (@lane)",
+        )
+    )
+    row = next(r for r in collector.scorecard([item]) if r.adapter == _ADAPTER_A)
+    assert row.expected_lane == str(_LANE_B.id)
+
+    # The adapter's home lane (_LANE_A) ran this invocation; the cell is pinned
+    # elsewhere, so it must NOT be reported missing here.
+    home_only = gate([row], frozenset({str(_LANE_A.id)}))
+    assert home_only.ok is True
+    assert home_only.missing == ()
+
+    # The pinned lane (_LANE_B) ran and reported nothing for this cell — that is a
+    # real gap.
+    pinned_ran = gate([row], frozenset({str(_LANE_B.id)}))
+    assert pinned_ran.ok is False
+    assert pinned_ran.missing == (row,)
 
 
 def test_gate_summary_reports_totals_and_names_the_culprit() -> None:

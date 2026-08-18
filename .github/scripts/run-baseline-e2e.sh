@@ -54,11 +54,23 @@ fi
 # base, and the FileNotFoundError would cost the lane its whole fragment -- surfacing
 # at merge time as "missing" cells instead of the retry's real results. Whichever
 # attempts exist are used; only both-absent contributes nothing.
+#
+# merge_code is folded into $code below rather than trusting pytest's own exit
+# status alone: without it, a lane whose first attempt passed (code=0) but whose
+# overlay/cp here failed would still `exit 0` -- reporting green while $FINAL was
+# never written, an empty scorecard fragment for the lane.
+merge_code=0
 if [ -f "$ATTEMPT1" ] && [ -f "$ATTEMPT2" ]; then
   uv run python -m tests.e2e.baseline.scorecard overlay "$ATTEMPT1" "$ATTEMPT2" --out "$FINAL"
+  merge_code=$?
 elif [ -f "$ATTEMPT2" ]; then
   cp "$ATTEMPT2" "$FINAL"
+  merge_code=$?
 elif [ -f "$ATTEMPT1" ]; then
   cp "$ATTEMPT1" "$FINAL"
+  merge_code=$?
+fi
+if [ "$merge_code" -ne 0 ]; then
+  code=$merge_code
 fi
 exit "$code"

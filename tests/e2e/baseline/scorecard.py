@@ -12,7 +12,8 @@ code comment. This module makes the full grid observable:
 * :func:`merge` unions the per-lane scorecards CI emits (each lane runs only its own
   cells; the rest are ``skip``) into one grid.
 * :func:`gate` turns a merged grid into a pass/fail verdict for CI: any ``fail`` cell,
-  or any ``skip`` cell whose home lane was expected to run this invocation, reddens it.
+  or any ``skip`` cell whose expected lane (its ``@lane`` pin, or else its adapter's
+  home lane) was expected to run this invocation, reddens it.
 
 The pieces are pure functions so they unit-test without a live platform; the conftest is
 a thin hook delegate, and ``python -m tests.e2e.baseline.scorecard merge`` is the
@@ -26,13 +27,14 @@ import json
 import logging
 import sys
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 import pytest
 
 from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
+from tests.e2e.baseline.lane_selection import expected_lane as _resolve_expected_lane
 from tests.e2e.baseline.toolkit.ci_lanes import adapter_home_lanes, known_lane_ids
 
 logger = logging.getLogger(__name__)
@@ -51,17 +53,40 @@ _RANK: dict[Status, int] = {"skip": 0, "na": 1, "pass": 2, "fail": 3}
 
 @dataclass(frozen=True)
 class ScorecardRow:
-    """One adapter×test cell: its outcome, and the reason when it is ``N/A``/``skip``."""
+    """One adapter×test cell: its outcome, and the reason when it is ``N/A``/``skip``.
+
+    ``expected_lane`` is the override-aware lane this cell was scheduled against
+    (``lane_selection.expected_lane`` — a test's ``@lane`` pin if it has one, else its
+    adapter's home lane); populated for a ``skip`` row collected from a live session, so
+    :func:`gate` can tell a legitimately out-of-scope cell from a silently missing one
+    without re-deriving it from ``adapter`` alone (which is blind to a ``@lane`` pin).
+    ``None`` for a row loaded from data that predates this field, or for an ``na``/``pass``/
+    ``fail`` row, where the gate never consults it.
+    """
 
     test: str  # nodeid without the ``[adapter]`` param — the test function
     adapter: str
     status: Status
     reason: str | None = None
+    expected_lane: str | None = None
 
 
 def _test_id(nodeid: str) -> str:
     """The test-function nodeid — the cell's ``[adapter]`` param stripped off."""
     return nodeid.split("[", 1)[0]
+
+
+def _cell_key(nodeid: str) -> tuple[str, str] | None:
+    """The ``(test, adapter)`` row key for ``nodeid``, or ``None`` if it names no
+    matrix cell (unparametrized, or parametrized by something other than an
+    adapter id — e.g. ``test_send_event[thought]``)."""
+    test, sep, rest = nodeid.partition("[")
+    if not sep:
+        return None
+    adapter = rest.rstrip("]")
+    if adapter not in _ADAPTER_IDS:
+        return None
+    return test, adapter
 
 
 def na_rows(items: Iterable[pytest.Item]) -> dict[tuple[str, str], ScorecardRow]:
@@ -110,12 +135,10 @@ def outcome_row(
     """
     if report.when not in ("setup", "call"):
         return None
-    test, sep, rest = report.nodeid.partition("[")
-    if not sep:
-        return None  # unparametrized — not a matrix cell
-    adapter = rest.rstrip("]")
-    if adapter not in _ADAPTER_IDS:
-        return None  # a non-adapter parametrization (e.g. an event type)
+    key = _cell_key(report.nodeid)
+    if key is None:
+        return None  # unparametrized, or a non-adapter parametrization
+    test, adapter = key
     if report.skipped:
         status: Status = "skip"
         reason = _skip_reason(report)
@@ -127,7 +150,7 @@ def outcome_row(
         reason = None
     else:
         return None  # a passing setup carries no verdict — wait for the call phase
-    return (test, adapter), ScorecardRow(test, adapter, status, reason)
+    return key, ScorecardRow(test, adapter, status, reason)
 
 
 class ScorecardCollector:
@@ -155,8 +178,21 @@ class ScorecardCollector:
 
         The two sets are disjoint (an excluded adapter has no node, so no outcome), but
         ``N/A`` is applied last so a marker reason is authoritative if they ever overlap.
+        A ``skip`` row is annotated with its override-aware ``expected_lane`` (see
+        ``ScorecardRow``) here, while a live item is still available to resolve it —
+        by the time :func:`gate` runs on a merged, JSON-loaded grid, only the
+        serialized rows remain.
         """
+        items = list(items)
         rows = dict(self._outcomes)
+        lane_of = adapter_home_lanes()
+        for item in items:
+            key = _cell_key(item.nodeid)
+            row = rows.get(key) if key is not None else None
+            if row is not None and row.status == "skip":
+                rows[key] = replace(
+                    row, expected_lane=_resolve_expected_lane(item, lane_of)
+                )
         rows.update(na_rows(items))
         return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
 
@@ -205,12 +241,13 @@ def overlay(
 class GateResult:
     """CI's pass/fail verdict on a merged scorecard.
 
-    ``failing`` is every ``fail`` cell. ``missing`` is a ``skip`` cell whose home lane
-    (from the registry's ``ci_lanes()`` — the same adapter→lane partition the "CI lanes"
-    docs describe) was expected to run this invocation but reported nothing for it, e.g.
-    a lane job that crashed before writing its scorecard fragment. A ``skip`` cell whose
-    home lane wasn't expected this run (an out-of-scope lane on a scoped dispatch) is
-    neither — it is simply not evaluated.
+    ``failing`` is every ``fail`` cell. ``missing`` is a ``skip`` cell whose expected
+    lane (the row's own ``expected_lane`` — override-aware — or, failing that, the
+    registry's ``ci_lanes()`` home lane) was expected to run this invocation but
+    reported nothing for it, e.g. a lane job that crashed before writing its
+    scorecard fragment. A ``skip`` cell whose expected lane wasn't expected this run
+    (an out-of-scope lane on a scoped dispatch) is neither — it is simply not
+    evaluated.
     """
 
     ok: bool
@@ -225,13 +262,20 @@ def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult
     registry for a nightly/full-matrix run, or just the chosen lane for a scoped
     dispatch) — never inferred from the rows themselves, so an intentionally
     out-of-scope lane's cells can never be mistaken for a silent failure.
+
+    A row's own ``expected_lane`` (override-aware — see ``ScorecardRow``) is used
+    when present; falling back to the adapter's home lane only for a row collected
+    before that field existed. Using the home lane alone here would misreport a
+    cell legitimately pinned elsewhere by ``@lane`` as a silent failure in its
+    adapter's home lane's run.
     """
     home_lane = adapter_home_lanes()
     failing = tuple(r for r in rows if r.status == "fail")
     missing = tuple(
         r
         for r in rows
-        if r.status == "skip" and home_lane.get(r.adapter) in expected_lanes
+        if r.status == "skip"
+        and (r.expected_lane or home_lane.get(r.adapter)) in expected_lanes
     )
     return GateResult(ok=not failing and not missing, failing=failing, missing=missing)
 

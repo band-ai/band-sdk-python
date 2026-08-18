@@ -9,9 +9,17 @@
 # reddens this correctly with no extra branching needed. Reads MERGE_OK /
 # MATRIX_OK / E2E_RESULT from the environment; writes `ok=true|false` to
 # $GITHUB_OUTPUT.
+#
+# MERGE_OK defaults to false rather than requiring it: it comes from the previous
+# step's output, which is empty if that step itself aborted before writing one
+# (e.g. merge-scorecard.sh dying on a malformed EXPECTED_LANES). A verdict this
+# script can't compute is red, not silently absent. MATRIX_OK/E2E_RESULT are GitHub
+# Actions expressions on `needs.e2e`, always populated as long as that job exists in
+# the workflow, so they stay required — an empty value there is a workflow-authoring
+# bug, not a legitimate empty state.
 set -uo pipefail
 
-: "${MERGE_OK:?MERGE_OK is required}"
+MERGE_OK="${MERGE_OK:-false}"
 : "${MATRIX_OK:?MATRIX_OK is required}"
 : "${E2E_RESULT:?E2E_RESULT is required}"
 

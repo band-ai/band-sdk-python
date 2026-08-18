@@ -85,12 +85,16 @@ on:
           - ubuntu
           - windows
 
-# Concurrency is scoped per (lane, OS) on the e2e job below — NOT workflow-wide.
-# A fresh dispatch cancels only the same lane+OS still in flight, so re-running
-# one lane (e.g. to iterate on a fix) leaves the others alone. Cross-lane races
-# on the shared platform are safe: each run provisions uniquely-named agents and
-# the orphan sweep only reaps agents older than BAND_E2E_ORPHAN_MAX_AGE_MINUTES,
-# so a concurrent run's fresh agents are never swept out from under it.
+# Concurrency is scoped per (event kind, lane, OS) on the e2e job below — NOT
+# workflow-wide. A fresh dispatch cancels only the same lane+OS still in flight
+# from the same trigger kind, so re-running one lane (e.g. to iterate on a fix)
+# leaves the others alone. The event kind is part of the group so a scoped manual
+# dispatch can never cancel — and falsely redden — the nightly's leg for the same
+# lane+OS, or vice versa; each trigger kind only ever supersedes its own prior run.
+# Cross-lane races on the shared platform are safe: each run provisions
+# uniquely-named agents and the orphan sweep only reaps agents older than
+# BAND_E2E_ORPHAN_MAX_AGE_MINUTES, so a concurrent run's fresh agents are never
+# swept out from under it.
 
 # Default for every job: read-only. The two reporting jobs (mark-baseline,
 # report-scoped-run) narrowly widen this at job level — `statuses: write` to post
@@ -149,11 +153,14 @@ jobs:
     # This is the *only* place the cap is defined; the digest text and the docs
     # deliberately describe it without restating the number.
     timeout-minutes: 240
-    # Per-(lane, OS) concurrency: a new dispatch cancels only the matching
-    # lane+OS still running, never the whole matrix — so one lane can be
-    # re-run in isolation. (See the note above the jobs block.)
+    # Per-(event kind, lane, OS) concurrency: a new dispatch cancels only the
+    # matching lane+OS still running from the same trigger kind, never the whole
+    # matrix and never the other trigger's run — so one lane can be re-run in
+    # isolation without a scoped manual dispatch stealing (and falsely reddening)
+    # a nightly leg for the same lane+OS, or vice versa. (See the note above the
+    # jobs block.)
     concurrency:
-      group: e2e-baseline-${{ matrix.lane }}-${{ matrix.os }}
+      group: e2e-baseline-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.os }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
@@ -422,16 +429,28 @@ jobs:
     # cancelled run is not evidence of anything — under `always()` a nightly whose
     # legs were cancelled mid-flight (the per-(lane,OS) concurrency group, or a
     # human cancelling the run) posts `baseline-green: failure` and reopens the
-    # issue with nothing actually broken. Declining to post is the safe direction:
-    # release-gate.yml reads a missing status as `pending` and blocks anyway. A
-    # `timeout-minutes` leg kill does NOT cancel the run, so it still reddens here.
+    # issue with nothing actually broken. Declining to post instead leaves this
+    # commit with no status at all, so check-release-baseline.sh's backward scan
+    # simply skips it and gates on whichever earlier commit was actually tested
+    # (bounded by MAX_BASELINE_AGE_DAYS) — the honest read of "this run proved
+    # nothing" rather than asserting a false red. A `timeout-minutes` leg kill does
+    # NOT cancel the run, so it still reddens here.
     #
     # Both dispatch inputs are normalized with `|| 'all'`, matching every other
     # consumer (the `lanes`/`e2e` jobs): compared bare, an input that resolved
     # empty would read as "scoped", so a full-matrix run would silently never
     # certify the commit while `lanes` had in fact fanned out the whole matrix.
+    #
+    # The ref check matters only for the dispatch branch: `schedule` always fires
+    # on the default branch, but `workflow_dispatch` can be run from any branch a
+    # user picks in the Actions UI. Without it, a full-matrix dispatch from a
+    # feature branch certifies `github.sha` on that branch — and since this repo
+    # allows merge and rebase merges, that SHA can land in main's history verbatim,
+    # letting a feature-branch baseline vouch for main once check-release-
+    # baseline.sh's scan reaches it.
     if: >-
       !cancelled() &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
       (github.event_name == 'schedule' ||
        ((github.event.inputs.lane || 'all') == 'all' &&
         (github.event.inputs.os || 'all') == 'all'))

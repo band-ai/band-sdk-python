@@ -102,9 +102,11 @@ def test_reporting_jobs_do_not_certify_a_cancelled_run(job_name: str) -> None:
     Under ``always()`` a nightly whose legs were cancelled mid-flight (the
     per-(lane,OS) concurrency group, or a human cancelling) reports the baseline as
     *red* and reopens the tracking issue with nothing actually broken. Declining to
-    report is the safe direction: ``release-gate.yml`` reads a missing status as
-    ``pending`` and blocks anyway. A ``timeout-minutes`` leg kill does not cancel the
-    run, so it still reddens.
+    report instead leaves the commit with no status at all, so
+    ``check-release-baseline.sh``'s backward scan skips it and gates on whichever
+    earlier commit was actually tested (bounded by ``MAX_BASELINE_AGE_DAYS``) —
+    not a ``pending`` block, a fall-back to the last real evidence. A
+    ``timeout-minutes`` leg kill does not cancel the run, so it still reddens.
     """
     condition = _workflow_jobs()[job_name]["if"]
 
@@ -128,6 +130,34 @@ def test_release_gate_checks_out_before_running_repo_scripts() -> None:
     )
 
     assert checkout < invokes_script
+
+
+def test_mark_baseline_only_certifies_the_default_branch() -> None:
+    """A full-matrix ``workflow_dispatch`` from a feature branch must not certify it.
+
+    ``schedule`` always fires on the default branch, but a user can dispatch from any
+    branch in the Actions UI — without this check a feature-branch run would post
+    ``baseline-green`` on its own ``github.sha``, which (this repo allows merge and
+    rebase merges) can later land in main's history verbatim and vouch for main.
+    """
+    condition = _workflow_jobs()["mark-baseline"]["if"]
+
+    assert (
+        "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+        in condition
+    )
+
+
+def test_e2e_concurrency_group_is_scoped_by_trigger_kind() -> None:
+    """A scoped manual dispatch must never cancel — and falsely redden — a nightly
+    leg for the same lane+OS (or vice versa); each trigger kind only supersedes its
+    own prior run.
+    """
+    group = _workflow_jobs()["e2e"]["concurrency"]["group"]
+
+    assert "github.event_name" in group
+    assert "matrix.lane" in group
+    assert "matrix.os" in group
 
 
 @pytest.mark.parametrize("job_name", _REPORTING_JOBS)

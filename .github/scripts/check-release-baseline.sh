@@ -36,7 +36,18 @@ mapfile -t shas < <(
 entry=""
 tested_sha=""
 for sha in "${shas[@]}"; do
-  entry=$(gh api "repos/$REPO/commits/$sha/statuses" --jq "$jq_latest" || true)
+  # A real `gh api` failure (network hiccup, transient 5xx, rate limit) must abort
+  # here, not be swallowed and mistaken for "no status on this commit" — that would
+  # let the scan silently walk past a possibly-red (or itself-untested) commit onto
+  # an older green one. Capturing the exit code separately from the output keeps
+  # the legitimate "no status of this context" case (already an empty `entry` via
+  # `jq_latest`'s `select(. != null)`) distinct from an unreadable one.
+  rc=0
+  entry=$(gh api "repos/$REPO/commits/$sha/statuses" --jq "$jq_latest") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "::error::gh api failed reading commit statuses for $sha (exit $rc) — aborting rather than scanning past a commit whose status could not be read."
+    exit 1
+  fi
   if [ -n "$entry" ]; then
     tested_sha="$sha"
     break

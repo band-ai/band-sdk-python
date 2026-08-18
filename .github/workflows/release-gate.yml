@@ -20,6 +20,13 @@ name: Release baseline gate
 # merge queue's temporary merge commit — without it the queue would wait forever once
 # this job's name is added as a required status check.
 #
+# Known limitation: this check only re-evaluates on the PR events above, so a
+# baseline that turns green overnight does not by itself clear an already-red gate
+# on the release-please PR — nothing re-triggers `pull_request` if no further
+# commits land on main in the meantime. Re-run this job by hand (Actions tab) once
+# the nightly is green, or push any commit that triggers release-please to
+# resynchronize its PR.
+#
 # Registered as a required status check on main-branch-protection under the context
 # "release-baseline-gate" (this job's name) — a live ruleset setting, not a file in
 # this repo.
