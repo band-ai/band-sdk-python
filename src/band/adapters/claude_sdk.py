@@ -1038,13 +1038,24 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         Returns True when the finished call counts as the turn's productive
         work (see is_terminal_success) — i.e. the agent already answered.
         """
+        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
+        await self._narrate_tool_result(block, result_tool_name, room_id, tools)
+        return self._tool_result_is_terminal(block, result_tool_name)
+
+    async def _narrate_tool_result(
+        self,
+        block: ToolResultBlock,
+        result_tool_name: str | None,
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Log a tool result and post it as a tool_result event when enabled."""
         logger.debug(
             "Room %s: Tool result: %s... error=%s",
             room_id,
             block.tool_use_id[:20],
             block.is_error,
         )
-        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
         # NAME and IS_ERROR are required by parse_tool_result (parsing.py):
         # without a name it drops the event outright, and every sibling
         # adapter's tool_result payload sets both.
@@ -1061,6 +1072,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             ),
             message_type="tool_result",
         )
+
+    def _tool_result_is_terminal(
+        self, block: ToolResultBlock, result_tool_name: str | None
+    ) -> bool:
+        """Whether this finished call counts as the turn's productive work."""
         # Belt and braces with the sibling adapters: a Band tool wrapper that
         # caught an exception returns an "Error " string without is_error, so
         # cross-check the content too (see band_tool_errored).
