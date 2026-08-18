@@ -11,6 +11,7 @@ re-tested here; this file is about standalone_spec's own wiring.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,6 +28,12 @@ from band_mcp.shared import StandaloneResolver
 def _spec_names(config: Config) -> set[str]:
     spec = standalone_spec(config, StandaloneResolver())
     return {registration.name for registration in spec.tools}
+
+
+def _tool_schema(config: Config, name: str) -> dict[str, Any]:
+    spec = standalone_spec(config, StandaloneResolver())
+    registration = next(r for r in spec.tools if r.name == name)
+    return registration.input_model.model_json_schema()
 
 
 class TestScopeFiltering:
@@ -113,24 +120,18 @@ class TestToolsGroups:
 
 class TestSchemaShape:
     def test_unpinned_agent_room_bound_tool_advertises_chat_id(self) -> None:
-        spec = standalone_spec(Config(scope=["agent"], tools=[]), StandaloneResolver())
-        registration = next(r for r in spec.tools if r.name == "band_send_message")
-        schema = registration.input_model.model_json_schema()
+        schema = _tool_schema(Config(scope=["agent"], tools=[]), "band_send_message")
 
         assert "chat_id" in schema["properties"]
         assert "chat_id" in schema["required"]
 
     def test_room_less_agent_tool_advertises_no_chat_id(self) -> None:
-        spec = standalone_spec(Config(scope=["agent"], tools=[]), StandaloneResolver())
-        registration = next(r for r in spec.tools if r.name == "band_create_chatroom")
-        schema = registration.input_model.model_json_schema()
+        schema = _tool_schema(Config(scope=["agent"], tools=[]), "band_create_chatroom")
 
         assert "chat_id" not in schema.get("properties", {})
 
     def test_send_event_widened_to_five_message_types(self) -> None:
-        spec = standalone_spec(Config(scope=["agent"], tools=[]), StandaloneResolver())
-        registration = next(r for r in spec.tools if r.name == "band_send_event")
-        schema = registration.input_model.model_json_schema()
+        schema = _tool_schema(Config(scope=["agent"], tools=[]), "band_send_event")
 
         assert set(schema["properties"]["message_type"]["enum"]) == {
             "tool_call",
@@ -141,31 +142,24 @@ class TestSchemaShape:
         }
 
     def test_pinned_agent_schema_hides_chat_id(self) -> None:
-        spec = standalone_spec(
-            Config(scope=["agent"], tools=[], room_id="r_pinned"), StandaloneResolver()
+        schema = _tool_schema(
+            Config(scope=["agent"], tools=[], room_id="r_pinned"), "band_send_message"
         )
-        registration = next(r for r in spec.tools if r.name == "band_send_message")
-        schema = registration.input_model.model_json_schema()
 
         assert "chat_id" not in schema.get("properties", {})
 
     def test_pinned_human_room_bound_schema_hides_chat_id(self) -> None:
-        spec = standalone_spec(
-            Config(scope=["human"], tools=[], room_id="r_pinned"), StandaloneResolver()
+        schema = _tool_schema(
+            Config(scope=["human"], tools=[], room_id="r_pinned"),
+            "band_send_my_chat_message",
         )
-        registration = next(
-            r for r in spec.tools if r.name == "band_send_my_chat_message"
-        )
-        schema = registration.input_model.model_json_schema()
 
         assert "chat_id" not in schema.get("properties", {})
 
     def test_unpinned_human_room_bound_schema_includes_chat_id(self) -> None:
-        spec = standalone_spec(Config(scope=["human"], tools=[]), StandaloneResolver())
-        registration = next(
-            r for r in spec.tools if r.name == "band_send_my_chat_message"
+        schema = _tool_schema(
+            Config(scope=["human"], tools=[]), "band_send_my_chat_message"
         )
-        schema = registration.input_model.model_json_schema()
 
         assert "chat_id" in schema["properties"]
 
@@ -174,13 +168,8 @@ class TestSchemaShape:
     def test_room_less_human_tools_schema_unchanged_by_pin(
         self, pin: str | None, tool_name: str
     ) -> None:
-        spec = standalone_spec(
-            Config(scope=["human"], tools=[], room_id=pin), StandaloneResolver()
-        )
-        registration = next(r for r in spec.tools if r.name == tool_name)
-        assert "chat_id" not in registration.input_model.model_json_schema().get(
-            "properties", {}
-        )
+        schema = _tool_schema(Config(scope=["human"], tools=[], room_id=pin), tool_name)
+        assert "chat_id" not in schema.get("properties", {})
 
 
 async def test_pinned_agent_dispatch_ignores_client_sent_chat_id() -> None:

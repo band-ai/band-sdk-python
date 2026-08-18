@@ -297,20 +297,29 @@ class _NoopHumanResolver:
         return await method(**arguments)
 
 
+def _human_send_message_engine(fake: FakeHumanTools, *, pinned: bool) -> Any:
+    definition = TOOL_DEFINITIONS["band_send_my_chat_message"]
+    input_model = (
+        pin_existing_chat_id(definition.input_model)
+        if pinned
+        else definition.input_model
+    )
+    registration = build_tool_registration(
+        definition,
+        input_model,
+        resolver=_NoopHumanResolver(fake),
+        strip_chat_id=False,
+        pinned_room_id="chat-1" if pinned else None,
+    )
+    return build_engine(EngineSpec(name="test-human", tools=(registration,)))
+
+
 async def test_human_room_bound_unpinned_keeps_chat_id_as_real_argument() -> None:
     fake = FakeHumanTools(
         chats=[{"id": "chat-1"}],
         chat_participants={"chat-1": [{"id": "p1", "name": "Alice"}]},
     )
-    definition = TOOL_DEFINITIONS["band_send_my_chat_message"]
-    registration = build_tool_registration(
-        definition,
-        definition.input_model,
-        resolver=_NoopHumanResolver(fake),
-        strip_chat_id=False,
-    )
-    spec = EngineSpec(name="test-human", tools=(registration,))
-    mcp = build_engine(spec)
+    mcp = _human_send_message_engine(fake, pinned=False)
 
     async with create_connected_server_and_client_session(mcp) as session:
         tool = await _list_tool(session, "band_send_my_chat_message")
@@ -331,16 +340,7 @@ async def test_human_room_bound_pinned_injects_and_hides_chat_id() -> None:
         chats=[{"id": "chat-1"}],
         chat_participants={"chat-1": [{"id": "p1", "name": "Alice"}]},
     )
-    definition = TOOL_DEFINITIONS["band_send_my_chat_message"]
-    registration = build_tool_registration(
-        definition,
-        pin_existing_chat_id(definition.input_model),
-        resolver=_NoopHumanResolver(fake),
-        strip_chat_id=False,
-        pinned_room_id="chat-1",
-    )
-    spec = EngineSpec(name="test-human-pinned", tools=(registration,))
-    mcp = build_engine(spec)
+    mcp = _human_send_message_engine(fake, pinned=True)
 
     async with create_connected_server_and_client_session(mcp) as session:
         tool = await _list_tool(session, "band_send_my_chat_message")

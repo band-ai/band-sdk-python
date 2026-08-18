@@ -26,6 +26,14 @@ from band_mcp.config import (
 )
 
 
+def _warning_of_kind(cfg: Config, kind: str) -> ConfigWarning:
+    """The one warning of `kind` on `cfg` -- fails loudly if there isn't
+    exactly one, since every caller here expects a single match."""
+    matches = [w for w in cfg.warnings if w.kind == kind]
+    assert len(matches) == 1, f"expected exactly one {kind!r} warning, got {matches!r}"
+    return matches[0]
+
+
 # ---------------------------------------------------------------------------
 # Dataclass shape
 # ---------------------------------------------------------------------------
@@ -198,16 +206,14 @@ def test_scope_band_env():
 def test_scope_unknown_value_warned_and_dropped():
     cfg = resolve_config(cli={"scope": "agent,agnet"}, env={})
     assert cfg.scope == ["agent"]
-    warns = [w for w in cfg.warnings if w.kind == "unknown-scope-value"]
-    assert len(warns) == 1
-    assert warns[0].value == "agnet"
-    assert warns[0].did_you_mean == "agent"
+    warn = _warning_of_kind(cfg, "unknown-scope-value")
+    assert warn.value == "agnet"
+    assert warn.did_you_mean == "agent"
 
 
 def test_scope_unknown_huamn_suggests_human():
     cfg = resolve_config(cli={"scope": "huamn"}, env={})
-    warns = [w for w in cfg.warnings if w.kind == "unknown-scope-value"]
-    assert warns[0].did_you_mean == "human"
+    assert _warning_of_kind(cfg, "unknown-scope-value").did_you_mean == "human"
 
 
 # ---------------------------------------------------------------------------
@@ -249,26 +255,22 @@ def test_tools_precedence():
 def test_tools_unknown_value_with_suggestion():
     cfg = resolve_config(cli={"tools": "contact"}, env={})
     assert cfg.tools == []
-    warns = [w for w in cfg.warnings if w.kind == "unknown-tools-value"]
-    assert len(warns) == 1
-    assert warns[0].value == "contact"
-    assert warns[0].did_you_mean == "contacts"
+    warn = _warning_of_kind(cfg, "unknown-tools-value")
+    assert warn.value == "contact"
+    assert warn.did_you_mean == "contacts"
 
 
 def test_tools_unknown_value_no_suggestion():
     cfg = resolve_config(cli={"tools": "zzz"}, env={})
-    warns = [w for w in cfg.warnings if w.kind == "unknown-tools-value"]
-    assert len(warns) == 1
-    assert warns[0].value == "zzz"
-    assert warns[0].did_you_mean is None
+    warn = _warning_of_kind(cfg, "unknown-tools-value")
+    assert warn.value == "zzz"
+    assert warn.did_you_mean is None
 
 
 def test_tools_known_and_unknown_mixed():
     cfg = resolve_config(cli={"tools": "contacts,zzz,memory"}, env={})
     assert cfg.tools == ["contacts", "memory"]
-    assert any(
-        w.kind == "unknown-tools-value" and w.value == "zzz" for w in cfg.warnings
-    )
+    assert _warning_of_kind(cfg, "unknown-tools-value").value == "zzz"
 
 
 # ---------------------------------------------------------------------------
@@ -351,13 +353,13 @@ def test_config_full_resolution_example():
 
 def test_unknown_tools_warning_message_includes_suggestion():
     cfg = resolve_config(cli={"tools": "contact"}, env={})
-    warn = next(w for w in cfg.warnings if w.kind == "unknown-tools-value")
+    warn = _warning_of_kind(cfg, "unknown-tools-value")
     assert "did you mean 'contacts'" in warn.message
     assert "'contact'" in warn.message
 
 
 def test_unknown_tools_warning_message_lists_valid_when_no_suggestion():
     cfg = resolve_config(cli={"tools": "zzz"}, env={})
-    warn = next(w for w in cfg.warnings if w.kind == "unknown-tools-value")
+    warn = _warning_of_kind(cfg, "unknown-tools-value")
     assert "contacts" in warn.message
     assert "memory" in warn.message

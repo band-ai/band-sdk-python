@@ -79,16 +79,9 @@ def test_help_flag_lists_flags() -> None:
 
 
 def test_missing_credential_exits_2_with_actionable_stderr() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "band_mcp.server"],
-        input="",
-        capture_output=True,
-        text=True,
-        timeout=10,
-        env=_clean_env(),
-    )
-    assert result.returncode == 2
-    assert "agent scope requested but no agent credential available" in result.stderr
+    returncode, _, stderr = _run_cli(timeout=10.0)
+    assert returncode == 2
+    assert "agent scope requested but no agent credential available" in stderr
 
 
 async def _initialize_and_list_tools(*args: str) -> tuple[dict, dict, str]:
@@ -140,6 +133,13 @@ async def _initialize_and_list_tools(*args: str) -> tuple[dict, dict, str]:
     return init_result, tools_result, "".join(lines)
 
 
+def _assert_stdout_is_pure_json_rpc(raw_stdout: str) -> None:
+    """Every line must be a valid JSON-RPC frame -- no stray log output
+    interleaved (band_mcp.shared logs to stderr)."""
+    for line in raw_stdout.splitlines():
+        assert json.loads(line).get("jsonrpc") == "2.0"
+
+
 @pytest.mark.timeout(30)
 async def test_stdio_agent_scope_advertises_health_check_with_correct_title() -> None:
     """Regression: health_check is registered by run() itself, outside
@@ -154,12 +154,7 @@ async def test_stdio_agent_scope_advertises_health_check_with_correct_title() ->
     assert (
         tools_by_name["health_check"]["inputSchema"]["title"] == "health_checkArguments"
     )
-
-    # stdio stdout purity: every line must be a valid JSON-RPC frame -- no
-    # stray log output interleaved (band_mcp.shared logs to stderr).
-    for line in raw_stdout.splitlines():
-        parsed = json.loads(line)
-        assert parsed.get("jsonrpc") == "2.0"
+    _assert_stdout_is_pure_json_rpc(raw_stdout)
 
 
 @pytest.mark.timeout(30)

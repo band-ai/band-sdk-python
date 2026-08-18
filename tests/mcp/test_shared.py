@@ -118,7 +118,10 @@ async def test_invoke_human_raises_and_warns_when_unavailable(caplog):
 # ---------------------------------------------------------------------------
 
 
-async def test_get_agent_tools_caches_per_room(monkeypatch):
+@pytest.fixture
+def fake_agent_tools(monkeypatch) -> list[str | None]:
+    """Patches shared_mod.AgentTools with a bare fake; returns the room_ids
+    passed to each construction, in order (empty if a test never checks it)."""
     constructed: list[str | None] = []
 
     class FakeAgentTools:
@@ -128,6 +131,10 @@ async def test_get_agent_tools_caches_per_room(monkeypatch):
             constructed.append(room_id)
 
     monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+    return constructed
+
+
+async def test_get_agent_tools_caches_per_room(fake_agent_tools):
     resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     first = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
@@ -136,16 +143,10 @@ async def test_get_agent_tools_caches_per_room(monkeypatch):
     )
 
     assert first is second
-    assert constructed == ["room_A"]
+    assert fake_agent_tools == ["room_A"]
 
 
-async def test_get_agent_tools_returns_distinct_instance_per_room(monkeypatch):
-    class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            self.room_id = room_id
-            self.agent_id = agent_id
-
-    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+async def test_get_agent_tools_returns_distinct_instance_per_room(fake_agent_tools):
     resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     a = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
@@ -156,13 +157,7 @@ async def test_get_agent_tools_returns_distinct_instance_per_room(monkeypatch):
     assert b.room_id == "room_B"
 
 
-async def test_get_agent_tools_passes_resolved_agent_id(monkeypatch):
-    class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            self.room_id = room_id
-            self.agent_id = agent_id
-
-    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+async def test_get_agent_tools_passes_resolved_agent_id(fake_agent_tools):
     resolver = StandaloneResolver(agent_rest=_fake_agent_rest(agent_id="self-agent-id"))
 
     tools = await resolver._get_or_create_agent_tools("room_A", "band_get_participants")
@@ -171,20 +166,13 @@ async def test_get_agent_tools_passes_resolved_agent_id(monkeypatch):
 
 
 async def test_resolve_agent_id_concurrent_cold_start_issues_one_rest_call(
-    monkeypatch,
+    fake_agent_tools,
 ):
     """Two rooms hashing to different lock stripes both cold-starting at once
     must not each issue their own `get_agent_me` call -- `_resolve_agent_id`'s
     own docstring promises "resolved once, cached for the resolver's
     lifetime", which only a dedicated lock (independent of the per-chat_id
     stripe locks the callers hold) can guarantee under real concurrency."""
-
-    class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            self.room_id = room_id
-            self.agent_id = agent_id
-
-    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
     rest = _fake_agent_rest()
 
     async def slow_get_agent_me():
@@ -217,13 +205,7 @@ def test_get_agent_tools_locks_use_fixed_stripes():
     assert len(resolver._agent_tools_locks) == AGENT_TOOLS_LOCK_STRIPES
 
 
-async def test_get_agent_tools_cache_evicts_oldest_room(monkeypatch):
-    class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            self.room_id = room_id
-            self.agent_id = agent_id
-
-    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+async def test_get_agent_tools_cache_evicts_oldest_room(fake_agent_tools):
     resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     for i in range(AGENT_TOOLS_CACHE_MAX_SIZE):
@@ -244,33 +226,18 @@ async def test_get_agent_tools_cache_evicts_oldest_room(monkeypatch):
 
 
 async def test_get_agent_tools_accepts_none_cache_key_with_sdk_room_sentinel(
-    monkeypatch,
+    fake_agent_tools,
 ):
-    seen_room_ids: list[str] = []
-
-    class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            self.room_id = room_id
-            self.agent_id = agent_id
-            seen_room_ids.append(room_id)
-
-    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
     resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     result = await resolver._get_or_create_agent_tools(None, "band_get_participants")
 
     assert result.room_id == ""
-    assert seen_room_ids == [""]
+    assert fake_agent_tools == [""]
     assert resolver._agent_tools_cache == {None: result}
 
 
-async def test_discard_agent_tools_only_drops_current_instance(monkeypatch):
-    class FakeAgentTools:
-        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
-            self.room_id = room_id
-            self.agent_id = agent_id
-
-    monkeypatch.setattr(shared_mod, "AgentTools", FakeAgentTools)
+async def test_discard_agent_tools_only_drops_current_instance(fake_agent_tools):
     resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
 
     original = await resolver._get_or_create_agent_tools(
