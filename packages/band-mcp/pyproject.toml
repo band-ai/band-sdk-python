@@ -23,7 +23,7 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     # Aligned to the root repo's exact pin (INT-1096) -- see CLAUDE.md's
     # "Workarounds for band-client-rest Bugs" for why this stays exact.
-    "band-client-rest==0.0.26",
+    "band-client-rest==0.0.27",
     # Real published floor: the version currently on PyPI. Bumped to the
     # exact band-sdk version that first ships src/band/integrations/mcp/engine.py
     # once that version is known (two-phase release, see CLAUDE.md's MCP

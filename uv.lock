@@ -481,7 +481,7 @@ wheels = [
 
 [[package]]
 name = "band-client-rest"
-version = "0.0.26"
+version = "0.0.27"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -489,9 +489,9 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/9b/994ea6e1f4637f87df86b5f51f94f55ba34e17ed544b9d382506e2fa3710/band_client_rest-0.0.26.tar.gz", hash = "sha256:d5738ad58a94c36a6a6ae0d3d99d449f6f38b0b6c31025b5f08ec143ec0ddcc8", size = 131099, upload-time = "2026-08-12T10:59:30.109Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/c3/e1df117a766e31e271912b0268b199238a061266f570423d791ade941687/band_client_rest-0.0.27.tar.gz", hash = "sha256:fbf6cb7f2660a2508a77b863e09fc07a68b388f4cfdfd49aadbfc8d2d215eeb5", size = 131051, upload-time = "2026-08-14T21:54:21.189Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/64/e4d65d0a948f12f169fb26b92b5cb2412bdeaaf20642f5b3965f684ef8f4/band_client_rest-0.0.26-py3-none-any.whl", hash = "sha256:79732c20d6441358ab73025368db1e94f25927ca5cad95e202369baa31b669ef", size = 293981, upload-time = "2026-08-12T10:59:29.067Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/6c/6530cbb9af6d995b782bc5eb962cd4bc9cbf61f1be7e8049e760a4c528e4/band_client_rest-0.0.27-py3-none-any.whl", hash = "sha256:7b5742a13e0899eb47c23a8e4beb439db6ec62055d6567ec0111d4e54daf0e56", size = 293980, upload-time = "2026-08-14T21:54:19.78Z" },
 ]
 
 [[package]]
@@ -501,7 +501,8 @@ source = { editable = "packages/band-mcp" }
 dependencies = [
     { name = "band-client-rest" },
     { name = "band-sdk" },
-    { name = "mcp", extra = ["cli"] },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "pydantic-settings", version = "2.14.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "uvicorn" },
@@ -533,7 +534,7 @@ langgraph = [
 
 [package.metadata]
 requires-dist = [
-    { name = "band-client-rest", specifier = "==0.0.26" },
+    { name = "band-client-rest", specifier = "==0.0.27" },
     { name = "band-sdk", editable = "." },
     { name = "langchain", marker = "extra == 'examples'", specifier = ">=0.3.0" },
     { name = "langchain", marker = "extra == 'langchain'", specifier = ">=0.3.0" },
@@ -592,7 +593,8 @@ a2a-gateway-demo = [
 ]
 acp = [
     { name = "agent-client-protocol" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -633,7 +635,8 @@ crewai = [
     { name = "pillow" },
 ]
 desktop = [
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 dev = [
     { name = "a2a-sdk" },
@@ -659,7 +662,7 @@ dev = [
     { name = "langchain-text-splitters" },
     { name = "langgraph" },
     { name = "letta-client" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" } },
     { name = "openai" },
     { name = "opentelemetry-instrumentation-logging" },
     { name = "opentelemetry-resourcedetector-gcp" },
@@ -745,7 +748,8 @@ langgraph = [
 ]
 letta = [
     { name = "letta-client" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 logging = [
     { name = "python-json-logger" },
@@ -754,7 +758,8 @@ logging = [
 ]
 opencode = [
     { name = "httpx" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 parlant = [
     { name = "openai" },
@@ -793,7 +798,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0" },
-    { name = "band-client-rest", specifier = "==0.0.26" },
+    { name = "band-client-rest", specifier = "==0.0.27" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-parlant'", specifier = "==0.1.4" },
@@ -841,11 +846,11 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "letta-client", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "letta-client", marker = "extra == 'letta'", specifier = ">=0.1.0" },
-    { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0,<2" },
-    { name = "mcp", marker = "extra == 'desktop'", specifier = ">=1.25.0,<2" },
-    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0,<2" },
-    { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.25.0,<2" },
-    { name = "mcp", marker = "extra == 'opencode'", specifier = ">=1.25.0,<2" },
+    { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.28.1,<2" },
+    { name = "mcp", marker = "extra == 'desktop'", specifier = ">=1.28.1,<2" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.28.1,<2" },
+    { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.28.1,<2" },
+    { name = "mcp", marker = "extra == 'opencode'", specifier = ">=1.28.1,<2" },
     { name = "nest-asyncio", marker = "extra == 'crewai'", specifier = ">=1.6.0" },
     { name = "nest-asyncio", marker = "extra == 'dev-crewai'", specifier = ">=1.6.0" },
     { name = "openai", marker = "extra == 'crewai'", specifier = ">=2.0.0" },
@@ -1395,7 +1400,8 @@ version = "0.2.125"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "sniffio" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3b/34/45a8efc9f58768d323bdb7948e3d004e9655c107ac1ab2ca11a42106ee65/claude_agent_sdk-0.2.125.tar.gz", hash = "sha256:c59231b74f9bf5fb500977b01ae459f6c123eaca98aa7b47e91716fa78d48d4f", size = 304118, upload-time = "2026-07-21T21:47:44.584Z" }
@@ -1687,7 +1693,7 @@ dependencies = [
     { name = "json5" },
     { name = "jsonref" },
     { name = "lancedb" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" } },
     { name = "openai" },
     { name = "openpyxl" },
     { name = "opentelemetry-api", version = "1.42.1", source = { registry = "https://pypi.org/simple" } },
@@ -2013,7 +2019,7 @@ dependencies = [
     { name = "httpx" },
     { name = "jsonref" },
     { name = "jsonschema-path" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" } },
     { name = "openapi-pydantic" },
     { name = "opentelemetry-api", version = "1.44.0", source = { registry = "https://pypi.org/simple" } },
     { name = "packaging" },
@@ -2281,7 +2287,8 @@ dependencies = [
     { name = "google-cloud-storage" },
     { name = "google-genai" },
     { name = "graphviz" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "opentelemetry-api", version = "1.42.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "opentelemetry-api", version = "1.44.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "opentelemetry-exporter-gcp-trace" },
@@ -3913,7 +3920,8 @@ version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain-core" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/05/49/f3b8497b64024ab50d10011f27e94d149668fef754da74c1c2ce6ebe4a30/langchain_mcp_adapters-0.3.2.tar.gz", hash = "sha256:61cd1a09597adb619a9bafb0642938ffc2a9463d699a753f7af0420ea46c381a", size = 47129, upload-time = "2026-08-06T06:15:04.094Z" }
@@ -4398,22 +4406,29 @@ wheels = [
 name = "mcp"
 version = "1.28.1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform != 'win32'",
+]
 dependencies = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "jsonschema" },
-    { name = "pydantic" },
+    { name = "anyio", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "httpx", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "httpx-sse", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "jsonschema", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "pydantic", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
-    { name = "pydantic-settings", version = "2.14.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
-    { name = "sse-starlette" },
-    { name = "starlette" },
-    { name = "typing-extensions" },
-    { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "python-multipart", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-8-band-sdk-crewai') or (sys_platform == 'win32' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "sse-starlette", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "starlette", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "typing-extensions", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "typing-inspection", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and extra == 'extra-8-band-sdk-crewai') or (sys_platform != 'emscripten' and extra != 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6e/77/9450b8f251a13affb6281997d0523c4615f8a8b35d0b21ff30db3a5aac9d/mcp-1.28.1.tar.gz", hash = "sha256:d51e36a5f5644faea4f85ea649bfffa6bc6c26770d42798ad6a3de3d2ba69683", size = 638501, upload-time = "2026-06-26T12:57:29.093Z" }
 wheels = [
@@ -4422,8 +4437,47 @@ wheels = [
 
 [package.optional-dependencies]
 cli = [
-    { name = "python-dotenv" },
-    { name = "typer" },
+    { name = "python-dotenv", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "typer", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+]
+
+[[package]]
+name = "mcp"
+version = "1.29.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "anyio", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "httpx", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "httpx-sse", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "jsonschema", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "pydantic", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "pydantic-settings", version = "2.14.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "python-multipart", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-8-band-sdk-dev') or (sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "sse-starlette", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "starlette", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "typing-extensions", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "typing-inspection", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and extra == 'extra-8-band-sdk-dev') or (sys_platform != 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/d3/f9acc21dfc886e4f78e2add1a47db46ce16884346afde53f8a064c02c891/mcp-1.29.0.tar.gz", hash = "sha256:52d01f334de1868cc3bb2d6604931126a67631f99a6c5d3b82ba47290315ec36", size = 643148, upload-time = "2026-07-28T13:41:41.939Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/c8/248b201f6d753d69fd5d6506011abbb35a946d9142b2ae311a948fd0be3d/mcp-1.29.0-py3-none-any.whl", hash = "sha256:f5a075bb611f23d6f4d080c6a1699fa62772eebc562ba9e66b306ddde1c755f7", size = 223436, upload-time = "2026-07-28T13:41:40.337Z" },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "python-dotenv", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "typer", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 
 [[package]]
@@ -5708,7 +5762,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "lagom" },
     { name = "limits" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" } },
     { name = "more-itertools" },
     { name = "nano-vectordb" },
     { name = "nanoid" },
@@ -7731,7 +7785,8 @@ dependencies = [
     { name = "docstring-parser" },
     { name = "httpx" },
     { name = "jsonschema" },
-    { name = "mcp" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "opentelemetry-api", version = "1.42.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "opentelemetry-api", version = "1.44.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "opentelemetry-instrumentation-threading", version = "0.63b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },

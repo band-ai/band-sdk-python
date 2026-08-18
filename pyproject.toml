@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "band-client-rest==0.0.26",
+    "band-client-rest==0.0.27",
     "phoenix-channels-python-client>=0.2.2",
     "python-dotenv>=1.2.2",
     "pydantic-settings>=2.0.0",
@@ -39,7 +39,12 @@ logging = [
     "rich>=14.0.0",
 ]
 desktop = [
-    "mcp>=1.25.0,<2",
+    # Floor pinned to crewai's own transitive pin (mcp~=1.28.1, as of crewai
+    # 1.15.16 -- checked 2026-08-18), not the latest 1.x: `pip install
+    # band-sdk[crewai,desktop]` together needs both extras' mcp constraints
+    # to intersect. Cap is load-bearing (2.0.0 shipped; 2.x drops the
+    # lowlevel Server decorator registration this extra's consumers build on).
+    "mcp>=1.28.1,<2",
 ]
 codex = [
     "websockets>=13.0",
@@ -48,11 +53,14 @@ opencode = [
     "httpx>=0.24.0",
     # Capped like every other mcp consumer here: 2.x drops the lowlevel Server
     # decorator registration that LocalMCPServer builds its tool surface with.
-    "mcp>=1.25.0,<2",
+    # Floor pinned to crewai's own transitive pin (mcp~=1.28.1, as of crewai
+    # 1.15.16 -- checked 2026-08-18), not the latest 1.x -- see `desktop` above.
+    "mcp>=1.28.1,<2",
 ]
 letta = [
     "letta-client>=0.1.0",
-    "mcp>=1.25.0,<2",
+    # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
+    "mcp>=1.28.1,<2",
 ]
 pydantic-ai = [
     "pydantic-ai-slim[anthropic]>=2.18.0",
@@ -117,7 +125,8 @@ acp = [
     # test_server_routing.py dispatches every method through the SDK router,
     # so a bump that removes a method or changes a handler signature fails CI.
     "agent-client-protocol>=0.11.0",
-    "mcp>=1.25.0,<2",
+    # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
+    "mcp>=1.28.1,<2",
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
 ]
@@ -205,7 +214,8 @@ dev = [
     "click>=8.0.0",
     # Include ACP deps for testing
     "agent-client-protocol>=0.11.0",
-    "mcp>=1.25.0,<2",
+    # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
+    "mcp>=1.28.1,<2",
     # Include Slack deps for testing
     "slack-sdk>=3.27.0",
     # Include Gemini SDK for testing
