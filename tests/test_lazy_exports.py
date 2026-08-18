@@ -18,7 +18,7 @@ import pytest
 
 from tests.paths import SRC_ROOT
 
-_LAZY_PACKAGES = ("adapters", "converters", "testing")
+_LAZY_PACKAGES = ("adapters", "converters", "platform", "testing")
 
 
 def _package_source(package: str) -> ast.Module:
@@ -97,3 +97,18 @@ def test_unknown_attribute_raises_attribute_error() -> None:
 
     with pytest.raises(AttributeError, match="NoSuchAdapter"):
         band.adapters.NoSuchAdapter
+
+
+def test_platform_exports_the_delegation_exchange_surface() -> None:
+    """The INT-993 public names resolve through band.platform's lazy surface."""
+    from band.platform import (
+        ConsentMissing,
+        CredentialResolver,
+        DelegationError,
+        NoDelegation,
+    )
+    from band.platform import delegation_exchange
+
+    assert CredentialResolver is delegation_exchange.CredentialResolver
+    assert issubclass(ConsentMissing, DelegationError)
+    assert issubclass(NoDelegation, DelegationError)
