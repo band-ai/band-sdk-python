@@ -1,0 +1,1606 @@
+{
+  "band_add_contact": {
+    "description": "Send a contact request to add someone as a contact.\n\nReturns 'pending' when request is created.\nReturns 'approved' when inverse request existed and was auto-accepted.",
+    "inputSchema": {
+      "properties": {
+        "handle": {
+          "description": "Handle of user/agent to add (e.g., '@john' or '@john/agent-name')",
+          "title": "Handle",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional message with the request",
+          "title": "Message"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "title": "band_add_contactArguments",
+      "type": "object"
+    }
+  },
+  "band_add_my_chat_participant": {
+    "description": "Add a participant to a chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "The chat room ID (required).",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "participant_id": {
+          "description": "ID of user or agent to add (required).",
+          "title": "Participant Id",
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "'owner', 'admin', or 'member' (optional, defaults to 'member').",
+          "title": "Role"
+        }
+      },
+      "required": [
+        "chat_id",
+        "participant_id"
+      ],
+      "title": "band_add_my_chat_participantArguments",
+      "type": "object"
+    }
+  },
+  "band_add_participant": {
+    "description": "Add a participant (agent or user) to the chat room.\n\nIMPORTANT: Use band_lookup_peers() first to find available agents.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "ID of the chat room (accepted as 'chat_id' or 'room_id').",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "Identifier of participant to add \u2014 can be a handle, name, or ID (from band_lookup_peers). Prefer the exact ID returned by band_lookup_peers; handles are mainly for mentions.",
+          "title": "Identifier",
+          "type": "string"
+        },
+        "role": {
+          "default": "member",
+          "description": "Role for the participant in this room",
+          "enum": [
+            "owner",
+            "admin",
+            "member"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "chat_id"
+      ],
+      "title": "band_add_participantArguments",
+      "type": "object"
+    }
+  },
+  "band_approve_contact_request": {
+    "description": "Approve a received contact request.",
+    "inputSchema": {
+      "properties": {
+        "request_id": {
+          "description": "The contact request ID to approve (required).",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "band_approve_contact_requestArguments",
+      "type": "object"
+    }
+  },
+  "band_archive_memory": {
+    "description": "Archive a memory (hide but preserve).\n\nUse when memory is valid but not currently needed.\nArchived memories can be restored later by humans.\nOnly the source agent can archive.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (UUID)",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_archive_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_archive_user_memory": {
+    "description": "Archive a user memory.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (required).",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_archive_user_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_cancel_contact_request": {
+    "description": "Cancel a sent contact request.",
+    "inputSchema": {
+      "properties": {
+        "request_id": {
+          "description": "The contact request ID to cancel (required).",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "band_cancel_contact_requestArguments",
+      "type": "object"
+    }
+  },
+  "band_create_chatroom": {
+    "description": "Create a new chat room for a specific task or conversation.",
+    "inputSchema": {
+      "properties": {
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Associated task ID (optional)",
+          "title": "Task Id"
+        }
+      },
+      "title": "band_create_chatroomArguments",
+      "type": "object"
+    }
+  },
+  "band_create_contact_request": {
+    "description": "Send a contact request to another user.",
+    "inputSchema": {
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional message to include with the request (max 500 chars).",
+          "title": "Message"
+        },
+        "recipient_handle": {
+          "description": "Handle of the user to add (with or without @ prefix, required).",
+          "title": "Recipient Handle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recipient_handle"
+      ],
+      "title": "band_create_contact_requestArguments",
+      "type": "object"
+    }
+  },
+  "band_create_my_chat_room": {
+    "description": "Create a new chat room with the user as owner.",
+    "inputSchema": {
+      "properties": {
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional task ID to associate with the chat.",
+          "title": "Task Id"
+        }
+      },
+      "title": "band_create_my_chat_roomArguments",
+      "type": "object"
+    }
+  },
+  "band_delete_user_memory": {
+    "description": "Delete a user memory permanently.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (required).",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_delete_user_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_get_memory": {
+    "description": "Retrieve a specific memory by ID.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (UUID)",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_get_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_get_my_chat_room": {
+    "description": "Get a specific chat room by ID.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "The chat room ID (required).",
+          "title": "Chat Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "title": "band_get_my_chat_roomArguments",
+      "type": "object"
+    }
+  },
+  "band_get_my_profile": {
+    "description": "Get the current user's profile details.\n\nReturns your profile information including name, email, role, etc.",
+    "inputSchema": {
+      "properties": {},
+      "title": "band_get_my_profileArguments",
+      "type": "object"
+    }
+  },
+  "band_get_participants": {
+    "description": "Get a list of all participants in the current chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "ID of the chat room (accepted as 'chat_id' or 'room_id').",
+          "title": "Chat Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "title": "band_get_participantsArguments",
+      "type": "object"
+    }
+  },
+  "band_get_user_memory": {
+    "description": "Get a single user memory by ID.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (required).",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_get_user_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_list_contact_requests": {
+    "description": "List both received and sent contact requests.\n\nReceived requests are always filtered to pending status.\nSent requests can be filtered by status.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "default": 1,
+          "description": "Page number",
+          "title": "Page",
+          "type": "integer"
+        },
+        "page_size": {
+          "default": 50,
+          "description": "Items per page per direction (max 100)",
+          "title": "Page Size",
+          "type": "integer"
+        },
+        "sent_status": {
+          "default": "pending",
+          "description": "Filter sent requests by status",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "cancelled",
+            "all"
+          ],
+          "title": "Sent Status",
+          "type": "string"
+        }
+      },
+      "title": "band_list_contact_requestsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_contacts": {
+    "description": "List agent's contacts with pagination.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "default": 1,
+          "description": "Page number",
+          "title": "Page",
+          "type": "integer"
+        },
+        "page_size": {
+          "default": 50,
+          "description": "Items per page",
+          "title": "Page Size",
+          "type": "integer"
+        }
+      },
+      "title": "band_list_contactsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_memories": {
+    "description": "List memories accessible to the agent.\n\nReturns memories about the specified subject (cross-agent sharing)\nand organization-wide shared memories.",
+    "inputSchema": {
+      "$defs": {
+        "MemoryListScope": {
+          "description": "Scope filter for ``band_list_memories``.",
+          "enum": [
+            "subject",
+            "organization",
+            "all"
+          ],
+          "title": "MemoryListScope",
+          "type": "string"
+        },
+        "MemorySegment": {
+          "description": "Logical subject category for a stored memory.",
+          "enum": [
+            "user",
+            "agent",
+            "tool",
+            "guideline"
+          ],
+          "title": "MemorySegment",
+          "type": "string"
+        },
+        "MemoryStatus": {
+          "description": "Lifecycle state; list filter and set by supersede/archive tools.",
+          "enum": [
+            "active",
+            "superseded",
+            "archived",
+            "all"
+          ],
+          "title": "MemoryStatus",
+          "type": "string"
+        },
+        "MemorySystem": {
+          "description": "Memory tier; constrains valid ``type`` values via MEMORY_SYSTEM_TYPE_MAP.",
+          "enum": [
+            "sensory",
+            "working",
+            "long_term"
+          ],
+          "title": "MemorySystem",
+          "type": "string"
+        },
+        "SensoryMemoryType": {
+          "description": "Types allowed when ``system`` is sensory.",
+          "enum": [
+            "iconic",
+            "echoic",
+            "haptic"
+          ],
+          "title": "SensoryMemoryType",
+          "type": "string"
+        },
+        "WorkingLongTermMemoryType": {
+          "description": "Types allowed when ``system`` is working or long_term.",
+          "enum": [
+            "episodic",
+            "semantic",
+            "procedural"
+          ],
+          "title": "WorkingLongTermMemoryType",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "content_query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Full-text search query",
+          "title": "Content Query"
+        },
+        "page_size": {
+          "default": 50,
+          "description": "Number of results per page",
+          "title": "Page Size",
+          "type": "integer"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryListScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by scope"
+        },
+        "segment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemorySegment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by segment"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by status"
+        },
+        "subject_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by subject UUID (required for subject-scoped queries)",
+          "title": "Subject Id"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemorySystem"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by memory system"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SensoryMemoryType"
+            },
+            {
+              "$ref": "#/$defs/WorkingLongTermMemoryType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by memory type",
+          "title": "Type"
+        }
+      },
+      "title": "band_list_memoriesArguments",
+      "type": "object"
+    }
+  },
+  "band_list_my_agents": {
+    "description": "List agents owned by the user.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Items per page (optional).",
+          "title": "Page Size"
+        }
+      },
+      "title": "band_list_my_agentsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_my_chat_messages": {
+    "description": "List messages in a chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "The chat room ID (required).",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "message_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by type: 'text', 'tool_call', etc. (optional).",
+          "title": "Message Type"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Items per page (optional).",
+          "title": "Page Size"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ISO 8601 timestamp to filter messages after (optional).",
+          "title": "Since"
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "title": "band_list_my_chat_messagesArguments",
+      "type": "object"
+    }
+  },
+  "band_list_my_chat_participants": {
+    "description": "List participants in a chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "The chat room ID (required).",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "participant_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by type: 'User' or 'Agent' (optional).",
+          "title": "Participant Type"
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "title": "band_list_my_chat_participantsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_my_chats": {
+    "description": "List chat rooms where the user is a participant.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Items per page (optional).",
+          "title": "Page Size"
+        }
+      },
+      "title": "band_list_my_chatsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_my_contacts": {
+    "description": "List the user's contacts.\n\nReturns active contacts with their details including handle, email, and type.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number for pagination (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of items per page (optional).",
+          "title": "Page Size"
+        }
+      },
+      "title": "band_list_my_contactsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_my_peers": {
+    "description": "List entities you can interact with in chat rooms.\n\nPeers include other users, your agents, and global agents.",
+    "inputSchema": {
+      "properties": {
+        "not_in_chat": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Exclude entities already in this chat room (optional).",
+          "title": "Not In Chat"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Items per page (optional).",
+          "title": "Page Size"
+        },
+        "peer_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by type: 'User' or 'Agent' (optional).",
+          "title": "Peer Type"
+        }
+      },
+      "title": "band_list_my_peersArguments",
+      "type": "object"
+    }
+  },
+  "band_list_received_contact_requests": {
+    "description": "List contact requests received by the user.\n\nReturns pending contact requests that need approval or rejection.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number for pagination (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of items per page (optional).",
+          "title": "Page Size"
+        }
+      },
+      "title": "band_list_received_contact_requestsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_sent_contact_requests": {
+    "description": "List contact requests sent by the user.",
+    "inputSchema": {
+      "properties": {
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Page number for pagination (optional).",
+          "title": "Page"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of items per page (optional).",
+          "title": "Page Size"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected",
+                "cancelled",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by status: 'pending', 'approved', 'rejected', 'cancelled', or 'all' (optional).",
+          "title": "Status"
+        }
+      },
+      "title": "band_list_sent_contact_requestsArguments",
+      "type": "object"
+    }
+  },
+  "band_list_user_memories": {
+    "description": "List memories available to the authenticated user.",
+    "inputSchema": {
+      "properties": {
+        "chat_room_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by chat room ID.",
+          "title": "Chat Room Id"
+        },
+        "content_query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Full-text search query.",
+          "title": "Content Query"
+        },
+        "memory_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by memory type.",
+          "title": "Memory Type"
+        },
+        "page_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of results per page.",
+          "title": "Page Size"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by scope.",
+          "title": "Scope"
+        },
+        "segment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by segment.",
+          "title": "Segment"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by status.",
+          "title": "Status"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter by memory system.",
+          "title": "System"
+        }
+      },
+      "title": "band_list_user_memoriesArguments",
+      "type": "object"
+    }
+  },
+  "band_lookup_peers": {
+    "description": "List available peers (agents and users) that can be added to this room.\n\nAutomatically excludes peers already in the room.\nReturns dict with 'data' list of peers and 'metadata' (page, page_size, total_count, total_pages).\nUse this to find specialized agents (e.g., Weather Agent) when you cannot answer\na question directly.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "ID of the chat room (accepted as 'chat_id' or 'room_id').",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "page": {
+          "default": 1,
+          "description": "Page number",
+          "title": "Page",
+          "type": "integer"
+        },
+        "page_size": {
+          "default": 50,
+          "description": "Items per page (max 100)",
+          "title": "Page Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "title": "band_lookup_peersArguments",
+      "type": "object"
+    }
+  },
+  "band_register_my_agent": {
+    "description": "Register a new remote agent.\n\nReturns the agent details including API key. Save the API key - it's only shown once!",
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "description": "Agent description (required).",
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "description": "Agent name (required).",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "band_register_my_agentArguments",
+      "type": "object"
+    }
+  },
+  "band_reject_contact_request": {
+    "description": "Reject a received contact request.",
+    "inputSchema": {
+      "properties": {
+        "request_id": {
+          "description": "The contact request ID to reject (required).",
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "band_reject_contact_requestArguments",
+      "type": "object"
+    }
+  },
+  "band_remove_contact": {
+    "description": "Remove an existing contact by handle or ID.",
+    "inputSchema": {
+      "properties": {
+        "contact_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Or contact record ID (UUID)",
+          "title": "Contact Id"
+        },
+        "handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Contact's handle",
+          "title": "Handle"
+        }
+      },
+      "title": "band_remove_contactArguments",
+      "type": "object"
+    }
+  },
+  "band_remove_my_chat_participant": {
+    "description": "Remove a participant from a chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "The chat room ID (required).",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "participant_id": {
+          "description": "ID of participant to remove (required).",
+          "title": "Participant Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat_id",
+        "participant_id"
+      ],
+      "title": "band_remove_my_chat_participantArguments",
+      "type": "object"
+    }
+  },
+  "band_remove_my_contact": {
+    "description": "Remove an existing contact.\n\nRemoves a contact by either contact_id or handle. At least one must be provided.\nIf both are provided, both are sent to the API (contact_id takes precedence).",
+    "inputSchema": {
+      "properties": {
+        "contact_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The contact record ID (optional, provide this or handle).",
+          "title": "Contact Id"
+        },
+        "handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The contact's handle (optional, provide this or contact_id).",
+          "title": "Handle"
+        }
+      },
+      "title": "band_remove_my_contactArguments",
+      "type": "object"
+    }
+  },
+  "band_remove_participant": {
+    "description": "Remove a participant from the chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "ID of the chat room (accepted as 'chat_id' or 'room_id').",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "Identifier of the participant to remove \u2014 can be a handle, name, or ID",
+          "title": "Identifier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "chat_id"
+      ],
+      "title": "band_remove_participantArguments",
+      "type": "object"
+    }
+  },
+  "band_resolve_handle": {
+    "description": "Look up an entity by handle.\n\nResolves a handle to its entity details. Use this to verify a handle\nexists before sending a contact request.",
+    "inputSchema": {
+      "properties": {
+        "handle": {
+          "description": "The handle to resolve (required).",
+          "title": "Handle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "title": "band_resolve_handleArguments",
+      "type": "object"
+    }
+  },
+  "band_respond_contact_request": {
+    "description": "Respond to a contact request.\n\nActions:\n- 'approve'/'reject': For requests you RECEIVED (handle = requester's handle)\n- 'cancel': For requests you SENT (handle = recipient's handle)",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "description": "Action to take",
+          "enum": [
+            "approve",
+            "reject",
+            "cancel"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Other party's handle",
+          "title": "Handle"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Or request ID (UUID)",
+          "title": "Request Id"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "band_respond_contact_requestArguments",
+      "type": "object"
+    }
+  },
+  "band_restore_user_memory": {
+    "description": "Restore an archived user memory.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (required).",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_restore_user_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_send_event": {
+    "description": "Send an event to the chat room. No mentions required.\n\nmessage_type options:\n- 'thought': Share your reasoning or plan BEFORE taking actions.\n  Explain what you're about to do and why.\n- 'error': Report an error or problem that occurred.\n- 'task': Report task progress or completion status.\n\nAlways send a thought before complex actions to keep users informed.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "ID of the chat room (accepted as 'chat_id' or 'room_id').",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "content": {
+          "description": "Human-readable event content",
+          "title": "Content",
+          "type": "string"
+        },
+        "message_type": {
+          "description": "Type of event: tool_call, tool_result, thought, error, or task.",
+          "enum": [
+            "tool_call",
+            "tool_result",
+            "thought",
+            "error",
+            "task"
+          ],
+          "title": "Message Type",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional structured data for the event",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "content",
+        "message_type",
+        "chat_id"
+      ],
+      "title": "band_send_eventArguments",
+      "type": "object"
+    }
+  },
+  "band_send_message": {
+    "description": "Send a message to the chat room.\n\nUse this to respond to users or other agents. Messages require at least one @mention\nin the mentions array. You MUST use this tool to communicate - plain text responses\nwon't reach users.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "ID of the chat room (accepted as 'chat_id' or 'room_id').",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "content": {
+          "description": "The message content to send",
+          "title": "Content",
+          "type": "string"
+        },
+        "mentions": {
+          "description": "List of participant handles to @mention. At least one required. For users: @<username> (e.g., '@john'). For agents: @<username>/<agent-name> (e.g., '@john/weather-agent').",
+          "items": {
+            "type": "string"
+          },
+          "title": "Mentions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "content",
+        "mentions",
+        "chat_id"
+      ],
+      "title": "band_send_messageArguments",
+      "type": "object"
+    }
+  },
+  "band_send_my_chat_message": {
+    "description": "Send a message in a chat room.",
+    "inputSchema": {
+      "properties": {
+        "chat_id": {
+          "description": "The chat room ID (required).",
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "content": {
+          "description": "Message text (required).",
+          "title": "Content",
+          "type": "string"
+        },
+        "recipients": {
+          "description": "Non-empty comma-separated participant names to @mention (required). Must contain at least one name; empty string is not accepted.",
+          "title": "Recipients",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chat_id",
+        "content",
+        "recipients"
+      ],
+      "title": "band_send_my_chat_messageArguments",
+      "type": "object"
+    }
+  },
+  "band_store_memory": {
+    "description": "Store a new memory entry.\n\nThe memory will be associated with the authenticated agent as the source.\nFor subject-scoped memories, provide a subject_id.\nFor organization-scoped memories, omit subject_id.",
+    "inputSchema": {
+      "$defs": {
+        "MemorySegment": {
+          "description": "Logical subject category for a stored memory.",
+          "enum": [
+            "user",
+            "agent",
+            "tool",
+            "guideline"
+          ],
+          "title": "MemorySegment",
+          "type": "string"
+        },
+        "MemoryStoreScope": {
+          "description": "Visibility scope for ``band_store_memory``.",
+          "enum": [
+            "subject",
+            "organization"
+          ],
+          "title": "MemoryStoreScope",
+          "type": "string"
+        },
+        "MemorySystem": {
+          "description": "Memory tier; constrains valid ``type`` values via MEMORY_SYSTEM_TYPE_MAP.",
+          "enum": [
+            "sensory",
+            "working",
+            "long_term"
+          ],
+          "title": "MemorySystem",
+          "type": "string"
+        },
+        "SensoryMemoryType": {
+          "description": "Types allowed when ``system`` is sensory.",
+          "enum": [
+            "iconic",
+            "echoic",
+            "haptic"
+          ],
+          "title": "SensoryMemoryType",
+          "type": "string"
+        },
+        "WorkingLongTermMemoryType": {
+          "description": "Types allowed when ``system`` is working or long_term.",
+          "enum": [
+            "episodic",
+            "semantic",
+            "procedural"
+          ],
+          "title": "WorkingLongTermMemoryType",
+          "type": "string"
+        }
+      },
+      "properties": {
+        "content": {
+          "description": "The memory content",
+          "title": "Content",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Additional metadata (tags, references)",
+          "title": "Metadata"
+        },
+        "scope": {
+          "$ref": "#/$defs/MemoryStoreScope",
+          "description": "Visibility scope"
+        },
+        "segment": {
+          "$ref": "#/$defs/MemorySegment",
+          "description": "Logical segment"
+        },
+        "subject_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "UUID of the subject this memory is about (required for subject scope)",
+          "title": "Subject Id"
+        },
+        "system": {
+          "$ref": "#/$defs/MemorySystem",
+          "description": "Memory system tier"
+        },
+        "thought": {
+          "description": "Agent's reasoning for storing this memory",
+          "title": "Thought",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SensoryMemoryType"
+            },
+            {
+              "$ref": "#/$defs/WorkingLongTermMemoryType"
+            }
+          ],
+          "description": "Memory type - must match the chosen system: sensory=iconic/echoic/haptic, working|long_term=episodic/semantic/procedural",
+          "title": "Type"
+        }
+      },
+      "required": [
+        "content",
+        "system",
+        "type",
+        "segment",
+        "thought",
+        "scope"
+      ],
+      "title": "band_store_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_supersede_memory": {
+    "description": "Mark a memory as superseded (soft delete).\n\nUse when information is outdated or incorrect.\nThe memory remains for audit trail but won't appear in normal queries.\nOnly the source agent can supersede.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (UUID)",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_supersede_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_supersede_user_memory": {
+    "description": "Mark a user memory as superseded.",
+    "inputSchema": {
+      "properties": {
+        "memory_id": {
+          "description": "Memory ID (required).",
+          "title": "Memory Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "title": "band_supersede_user_memoryArguments",
+      "type": "object"
+    }
+  },
+  "band_update_my_profile": {
+    "description": "Update the current user's profile.",
+    "inputSchema": {
+      "properties": {
+        "first_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New first name (optional).",
+          "title": "First Name"
+        },
+        "last_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "New last name (optional).",
+          "title": "Last Name"
+        }
+      },
+      "title": "band_update_my_profileArguments",
+      "type": "object"
+    }
+  }
+}
