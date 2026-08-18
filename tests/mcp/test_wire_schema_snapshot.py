@@ -1,8 +1,9 @@
 """Wire-schema snapshot test for the published ``band-mcp`` contract.
 
-Locks in band-mcp's advertised tool schemas so any accidental wire-contract
-change (field rename, dropped alias, schema shape) fails loudly here instead
-of silently shipping. Real MCP protocol round trip via the SDK's in-memory
+Locks in the parts of band-mcp's advertised tool schemas a real client's
+calls depend on, so an accidental wire-contract change (field rename,
+dropped alias, narrowed enum/type/length) fails loudly here instead of
+silently shipping. Real MCP protocol round trip via the SDK's in-memory
 transport -- no patching, no hand-rolled stubs.
 
 To regenerate after an *intentional* contract change, review the diff and
@@ -16,6 +17,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -29,11 +31,59 @@ from tests.mcp.conftest import advertised_schemas
 
 logger = logging.getLogger(__name__)
 
+# The JSON Schema keys that decide whether a real call is accepted or
+# rejected. Everything else (title, description, ...) is prose: free to
+# reword without breaking a client, so it's excluded from the snapshot.
+_LOAD_BEARING_KEYS = frozenset(
+    {"type", "enum", "items", "maxLength", "minLength", "additionalProperties"}
+)
+
+
+def _resolve_type_shape(value: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a property schema to its load-bearing shape, following refs.
+
+    A property is either inline, a ``$ref`` into the schema's own
+    ``$defs`` (Pydantic's rendering of a nested enum/model type), or an
+    ``anyOf`` of either (an ``X | None`` field) -- resolve all three to the
+    same shape so a ref'd enum's allowed values are covered exactly like an
+    inline one.
+    """
+    if "$ref" in value:
+        def_name = value["$ref"].rsplit("/", 1)[-1]
+        return _resolve_type_shape(defs[def_name], defs)
+    if "anyOf" in value:
+        return {"anyOf": [_resolve_type_shape(v, defs) for v in value["anyOf"]]}
+    shape = {key: value[key] for key in _LOAD_BEARING_KEYS if key in value}
+    if "items" in shape:
+        shape["items"] = _resolve_type_shape(shape["items"], defs)
+    return shape
+
+
+def _load_bearing_shapes(
+    schemas: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Project each tool's full advertised schema down to its wire contract:
+    which parameters exist, which are required, and what values each accepts."""
+    shapes: dict[str, dict[str, Any]] = {}
+    for name, entry in schemas.items():
+        input_schema = entry["inputSchema"]
+        defs = input_schema.get("$defs", {})
+        properties = {
+            field_name: _resolve_type_shape(field_schema, defs)
+            for field_name, field_schema in input_schema.get("properties", {}).items()
+        }
+        shapes[name] = {
+            "required": sorted(input_schema.get("required", [])),
+            "properties": properties,
+        }
+    return shapes
+
+
 SNAPSHOT_DIR = Path(__file__).parent.parent / "fixtures" / "wire_schemas"
 
 # "full": every agent+human tool, contacts+memory opted in, unpinned --
 # the broadest published surface. "pinned": the CLI's --room-id mode, which
-# hides chat_id from the advertised schema entirely (divergence-matrix row 3).
+# hides chat_id from the advertised schema entirely.
 _PROFILES: dict[str, Config] = {
     "full": Config(scope=["agent", "human"], tools=["contacts", "memory"]),
     "pinned": Config(scope=["agent"], tools=[], room_id="r_pinned_snapshot"),
@@ -48,7 +98,7 @@ def _build_mcp(config: Config) -> FastMCP:
 async def _current_schemas(profile: str) -> dict[str, dict[str, object]]:
     mcp = _build_mcp(_PROFILES[profile])
     async with create_connected_server_and_client_session(mcp) as session:
-        return await advertised_schemas(session)
+        return _load_bearing_shapes(await advertised_schemas(session))
 
 
 def _snapshot_path(profile: str) -> Path:

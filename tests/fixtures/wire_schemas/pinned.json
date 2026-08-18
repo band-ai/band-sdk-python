@@ -1,168 +1,109 @@
 {
   "band_add_participant": {
-    "description": "Add a participant (agent or user) to the chat room.\n\nIMPORTANT: Use band_lookup_peers() first to find available agents.",
-    "inputSchema": {
-      "properties": {
-        "identifier": {
-          "description": "Identifier of participant to add \u2014 can be a handle, name, or ID (from band_lookup_peers). Prefer the exact ID returned by band_lookup_peers; handles are mainly for mentions.",
-          "title": "Identifier",
-          "type": "string"
-        },
-        "role": {
-          "default": "member",
-          "description": "Role for the participant in this room",
-          "enum": [
-            "owner",
-            "admin",
-            "member"
-          ],
-          "title": "Role",
-          "type": "string"
-        }
+    "properties": {
+      "identifier": {
+        "type": "string"
       },
-      "required": [
-        "identifier"
-      ],
-      "title": "band_add_participantArguments",
-      "type": "object"
-    }
+      "role": {
+        "enum": [
+          "owner",
+          "admin",
+          "member"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "identifier"
+    ]
   },
   "band_create_chatroom": {
-    "description": "Create a new chat room for a specific task or conversation.",
-    "inputSchema": {
-      "properties": {
-        "task_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Associated task ID (optional)",
-          "title": "Task Id"
-        }
-      },
-      "title": "band_create_chatroomArguments",
-      "type": "object"
-    }
-  },
-  "band_get_participants": {
-    "description": "Get a list of all participants in the current chat room.",
-    "inputSchema": {
-      "properties": {},
-      "title": "band_get_participantsArguments",
-      "type": "object"
-    }
-  },
-  "band_lookup_peers": {
-    "description": "List available peers (agents and users) that can be added to this room.\n\nAutomatically excludes peers already in the room.\nReturns dict with 'data' list of peers and 'metadata' (page, page_size, total_count, total_pages).\nUse this to find specialized agents (e.g., Weather Agent) when you cannot answer\na question directly.",
-    "inputSchema": {
-      "properties": {
-        "page": {
-          "default": 1,
-          "description": "Page number",
-          "title": "Page",
-          "type": "integer"
-        },
-        "page_size": {
-          "default": 50,
-          "description": "Items per page (max 100)",
-          "title": "Page Size",
-          "type": "integer"
-        }
-      },
-      "title": "band_lookup_peersArguments",
-      "type": "object"
-    }
-  },
-  "band_remove_participant": {
-    "description": "Remove a participant from the chat room.",
-    "inputSchema": {
-      "properties": {
-        "identifier": {
-          "description": "Identifier of the participant to remove \u2014 can be a handle, name, or ID",
-          "title": "Identifier",
-          "type": "string"
-        }
-      },
-      "required": [
-        "identifier"
-      ],
-      "title": "band_remove_participantArguments",
-      "type": "object"
-    }
-  },
-  "band_send_event": {
-    "description": "Send an event to the chat room. No mentions required.\n\nmessage_type options:\n- 'thought': Share your reasoning or plan BEFORE taking actions.\n  Explain what you're about to do and why.\n- 'error': Report an error or problem that occurred.\n- 'task': Report task progress or completion status.\n\nAlways send a thought before complex actions to keep users informed.",
-    "inputSchema": {
-      "properties": {
-        "content": {
-          "description": "Human-readable event content",
-          "title": "Content",
-          "type": "string"
-        },
-        "message_type": {
-          "description": "Type of event: tool_call, tool_result, thought, error, or task.",
-          "enum": [
-            "tool_call",
-            "tool_result",
-            "thought",
-            "error",
-            "task"
-          ],
-          "title": "Message Type",
-          "type": "string"
-        },
-        "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional structured data for the event",
-          "title": "Metadata"
-        }
-      },
-      "required": [
-        "content",
-        "message_type"
-      ],
-      "title": "band_send_eventArguments",
-      "type": "object"
-    }
-  },
-  "band_send_message": {
-    "description": "Send a message to the chat room.\n\nUse this to respond to users or other agents. Messages require at least one @mention\nin the mentions array. You MUST use this tool to communicate - plain text responses\nwon't reach users.",
-    "inputSchema": {
-      "properties": {
-        "content": {
-          "description": "The message content to send",
-          "title": "Content",
-          "type": "string"
-        },
-        "mentions": {
-          "description": "List of participant handles to @mention. At least one required. For users: @<username> (e.g., '@john'). For agents: @<username>/<agent-name> (e.g., '@john/weather-agent').",
-          "items": {
+    "properties": {
+      "task_id": {
+        "anyOf": [
+          {
             "type": "string"
           },
-          "title": "Mentions",
-          "type": "array"
-        }
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": []
+  },
+  "band_get_participants": {
+    "properties": {},
+    "required": []
+  },
+  "band_lookup_peers": {
+    "properties": {
+      "page": {
+        "type": "integer"
       },
-      "required": [
-        "content",
-        "mentions"
-      ],
-      "title": "band_send_messageArguments",
-      "type": "object"
-    }
+      "page_size": {
+        "type": "integer"
+      }
+    },
+    "required": []
+  },
+  "band_remove_participant": {
+    "properties": {
+      "identifier": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "identifier"
+    ]
+  },
+  "band_send_event": {
+    "properties": {
+      "content": {
+        "type": "string"
+      },
+      "message_type": {
+        "enum": [
+          "tool_call",
+          "tool_result",
+          "thought",
+          "error",
+          "task"
+        ],
+        "type": "string"
+      },
+      "metadata": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "content",
+      "message_type"
+    ]
+  },
+  "band_send_message": {
+    "properties": {
+      "content": {
+        "type": "string"
+      },
+      "mentions": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "content",
+      "mentions"
+    ]
   }
 }
