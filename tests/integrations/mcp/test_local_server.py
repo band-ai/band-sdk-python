@@ -197,7 +197,29 @@ class TestLocalMcpServer:
                 warmup_response = await warmup_client.get(
                     f"http://{LOCAL_MCP_HOST}:{server.port}/healthz"
                 )
-            print(f"CHECKPOINT: warmup returned {warmup_response.status_code}", flush=True)
+            print(
+                f"CHECKPOINT: warmup returned {warmup_response.status_code}", flush=True
+            )
+
+            print("CHECKPOINT: entering raw streaming GET /sse", flush=True)
+            async with httpx.AsyncClient() as raw_client:
+                try:
+                    async with asyncio.timeout(10):
+                        async with raw_client.stream("GET", server.url) as raw_response:
+                            print(
+                                f"CHECKPOINT: raw stream headers status={raw_response.status_code}",
+                                flush=True,
+                            )
+                            async for raw_line in raw_response.aiter_lines():
+                                print(
+                                    f"CHECKPOINT: raw stream line={raw_line!r}",
+                                    flush=True,
+                                )
+                                break
+                except TimeoutError:
+                    print(
+                        "CHECKPOINT: raw streaming GET timed out after 10s", flush=True
+                    )
 
             print("CHECKPOINT: entering sse_client", flush=True)
             async with sse_client(server.url) as (read_stream, write_stream):
