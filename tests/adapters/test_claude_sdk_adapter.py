@@ -92,6 +92,40 @@ def _narrated_message_types(mock_tools: MagicMock) -> list[str]:
     ]
 
 
+def _tool_result_payload(mock_tools: MagicMock) -> dict[str, Any]:
+    """The parsed content of the sole tool_result event posted through send_event."""
+    [result_call] = [
+        call
+        for call in mock_tools.send_event.call_args_list
+        if call.kwargs.get("message_type") == "tool_result"
+    ]
+    return json.loads(result_call.kwargs["content"])
+
+
+def register_pending_approval(
+    adapter: ClaudeSDKAdapter,
+    room_id: str = "room-1",
+    token: str = "a-1",
+    *,
+    tool_name: str = "Bash",
+    tool_input: dict[str, Any] | None = None,
+    summary: str | None = None,
+    created_at: datetime | None = None,
+    requester: dict[str, str] | None = None,
+) -> asyncio.Future[str]:
+    """Register one pending approval on adapter, returning its future."""
+    future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    adapter._pending_approvals.setdefault(room_id, {})[token] = _PendingApproval(
+        tool_name=tool_name,
+        tool_input=tool_input if tool_input is not None else {},
+        summary=summary or tool_name,
+        created_at=created_at or datetime.now(timezone.utc),
+        future=future,
+        requester=requester or {"id": "test-user", "name": "Test"},
+    )
+    return future
+
+
 def _result_message(
     *,
     session_id: str = "sess-xyz",
@@ -1205,12 +1239,7 @@ class TestTurnFailureSurfacing:
 
         await adapter._process_response(mock_client, "room-123", mock_tools)
 
-        [result_call] = [
-            call
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "tool_result"
-        ]
-        payload = json.loads(result_call.kwargs["content"])
+        payload = _tool_result_payload(mock_tools)
         assert payload[ToolEventKey.NAME] == "band_send_message"
         assert payload[ToolEventKey.IS_ERROR] is True
 
@@ -1808,17 +1837,9 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """Should list pending approvals with token, summary, and age."""
-        loop = asyncio.get_running_loop()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={"command": "ls"},
-                summary="Bash: `ls`",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        register_pending_approval(
+            adapter_with_approval, tool_input={"command": "ls"}, summary="Bash: `ls`"
+        )
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1835,18 +1856,7 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """Should resolve the pending future with 'accept'."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1862,18 +1872,7 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """Should resolve the pending future with 'decline'."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1893,18 +1892,7 @@ class TestApprovalCommandHandling:
         "decline" — otherwise _resolve_manual_approval's decision_raw ==
         "decline" check would wrongly treat the tool call as having been
         explained to the room and suppress the missing-reply guard."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
@@ -1922,18 +1910,7 @@ class TestApprovalCommandHandling:
     ):
         """An approve's confirmation notice is best-effort: a failed send must
         not turn an approved tool call into a decline."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
@@ -1950,18 +1927,7 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """When only 1 pending, /approve without token should resolve it."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1976,25 +1942,8 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """When multiple pending, /approve without token should ask for token."""
-        loop = asyncio.get_running_loop()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-            "a-2": _PendingApproval(
-                tool_name="Edit",
-                tool_input={},
-                summary="Edit",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        register_pending_approval(adapter_with_approval, token="a-1", tool_name="Bash")
+        register_pending_approval(adapter_with_approval, token="a-2", tool_name="Edit")
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -2008,17 +1957,7 @@ class TestApprovalCommandHandling:
     @pytest.mark.asyncio
     async def test_unknown_token(self, adapter_with_approval, mock_tools, sender):
         """Should report unknown token with available tokens."""
-        loop = asyncio.get_running_loop()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -2048,18 +1987,7 @@ class TestApprovalAuthorization:
             approval_mode="manual",
             approval_authorized_senders={"admin-1"},
         )
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -2076,18 +2004,7 @@ class TestApprovalAuthorization:
             approval_mode="manual",
             approval_authorized_senders={"admin-1"},
         )
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -2122,18 +2039,7 @@ class TestApprovalAuthorization:
         """When approval_authorized_senders is None, any sender can approve."""
         adapter = ClaudeSDKAdapter(approval_mode="manual")
         sender = {"id": "anyone", "name": "Anyone"}
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -2319,20 +2225,9 @@ class TestOnMessageCommandInterception:
     async def test_approve_command_intercepted(self, mock_tools):
         """Messages with /approve should not be sent to Claude."""
         adapter = ClaudeSDKAdapter(approval_mode="manual")
-        loop = asyncio.get_running_loop()
 
         # Pre-populate a pending approval
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
 
         msg = PlatformMessage(
             id="msg-1",
@@ -2600,18 +2495,7 @@ class TestApprovalCleanup:
         adapter = ClaudeSDKAdapter(approval_mode="manual")
         adapter._session_manager = AsyncMock()
 
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
 
         await adapter.on_cleanup("room-1")
 
@@ -2625,29 +2509,10 @@ class TestApprovalCleanup:
         adapter = ClaudeSDKAdapter(approval_mode="manual")
         adapter._session_manager = AsyncMock()
 
-        loop = asyncio.get_running_loop()
-        f1: asyncio.Future[str] = loop.create_future()
-        f2: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=f1,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
-        adapter._pending_approvals["room-2"] = {
-            "a-2": _PendingApproval(
-                tool_name="Edit",
-                tool_input={},
-                summary="Edit",
-                created_at=datetime.now(timezone.utc),
-                future=f2,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        f1 = register_pending_approval(adapter, room_id="room-1", tool_name="Bash")
+        f2 = register_pending_approval(
+            adapter, room_id="room-2", token="a-2", tool_name="Edit"
+        )
 
         await adapter.cleanup_all()
 
@@ -2673,19 +2538,12 @@ class TestPendingApprovalEviction:
         adapter._room_tools["room-1"] = mock_tools
         adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
 
-        loop = asyncio.get_running_loop()
         # Pre-populate one pending approval
-        old_future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Old",
-                tool_input={},
-                summary="Old",
-                created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
-                future=old_future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        old_future = register_pending_approval(
+            adapter,
+            tool_name="Old",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
 
         # Now trigger a new approval (should evict old one)
         callback = adapter._make_can_use_tool("room-1")
