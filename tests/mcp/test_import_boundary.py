@@ -50,20 +50,25 @@ def _imports_mcp_package(source: str) -> bool:
     return False
 
 
+def _mcp_import_offenders() -> list[Path]:
+    """Files under the scan roots, outside the allowlist, that import ``mcp``."""
+    return sorted(
+        path.relative_to(REPO_ROOT)
+        for scan_root in _SCAN_ROOTS
+        for path in scan_root.rglob("*.py")
+        if path not in _ALLOWED_MCP_IMPORT_FILES
+        and _imports_mcp_package(path.read_text(encoding="utf-8"))
+    )
+
+
 def test_mcp_package_imports_are_confined_to_the_allowlist() -> None:
-    offenders: list[Path] = []
-    for scan_root in _SCAN_ROOTS:
-        for path in scan_root.rglob("*.py"):
-            if path in _ALLOWED_MCP_IMPORT_FILES:
-                continue
-            if _imports_mcp_package(path.read_text(encoding="utf-8")):
-                offenders.append(path.relative_to(REPO_ROOT))
+    offenders = _mcp_import_offenders()
 
     assert not offenders, (
-        f"Found mcp-package imports outside the allowlist: "
-        f"{sorted(str(p) for p in offenders)}. Either this file belongs on the "
-        "allowlist (update _ALLOWED_MCP_IMPORT_FILES with why), or the import "
-        "needs to move into an allowlisted transport/translation module."
+        f"Found mcp-package imports outside the allowlist: {[str(p) for p in offenders]}. "
+        "Either this file belongs on the allowlist (update _ALLOWED_MCP_IMPORT_FILES "
+        "with why), or the import needs to move into an allowlisted transport/"
+        "translation module."
     )
 
 
