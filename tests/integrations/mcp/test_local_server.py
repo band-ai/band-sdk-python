@@ -156,6 +156,13 @@ class TestLocalMcpServer:
         )
         assert server._host == "0.0.0.0"
 
+    # 30s default is too tight on CI (confirmed hanging into a forced
+    # RemoteProtocolError on windows-latest): _build_app mounts SSE and
+    # streamable-HTTP under one shared lifespan that always enters
+    # mcp.session_manager.run() (see _build_app's docstring), so an SSE-only
+    # test pays the same slow session-manager startup the HTTP sibling test
+    # below already documents needing 90s for.
+    @pytest.mark.timeout(90)
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
         # A registration's execute() always returns a wire-serialized string:
