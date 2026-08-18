@@ -100,6 +100,26 @@ async def _run_one_turn(
     )
 
 
+def task_statuses(tools: FakeAgentTools, adapter: CrewAIFlowAdapter) -> list[Any]:
+    """The finalization-namespace status of every task event, in order."""
+    ns = adapter.metadata_namespace
+    return [
+        e["metadata"].get(ns, {}).get("status")
+        for e in tools.events_sent
+        if e.get("message_type") == "task"
+    ]
+
+
+def task_error_codes(tools: FakeAgentTools, adapter: CrewAIFlowAdapter) -> list[Any]:
+    """The finalization-namespace error code of every task event, in order."""
+    ns = adapter.metadata_namespace
+    return [
+        e["metadata"].get(ns, {}).get("error", {}).get("code")
+        for e in tools.events_sent
+        if e.get("message_type") == "task"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # direct_response
 # ---------------------------------------------------------------------------
@@ -128,11 +148,7 @@ class TestDirectResponse:
         assert tools.messages_sent[0]["content"] == "hello"
         assert tools.messages_sent[0]["mentions"] == ["@example/peer"]
         # At least: reservation event + finalized event.
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e.get("message_type") == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "side_effect_reserved" in statuses
         assert "finalized" in statuses
 
@@ -156,11 +172,7 @@ class TestWaiting:
         await _run_one_turn(adapter, tools, _msg())
 
         assert tools.messages_sent == []
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e.get("message_type") == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "waiting" in statuses
 
 
@@ -186,12 +198,8 @@ class TestFailedAndMalformed:
         await _run_one_turn(adapter, tools, _msg())
 
         error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
         assert len(error_events) == 1
-        assert any(
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status") == "failed"
-            for e in task_events
-        )
+        assert "failed" in task_statuses(tools, adapter)
         assert tools.messages_sent == []
 
     @pytest.mark.asyncio
@@ -204,11 +212,7 @@ class TestFailedAndMalformed:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "failed" in statuses
         assert tools.messages_sent == []
 
@@ -263,11 +267,7 @@ class TestFailedAndMalformed:
         )
 
         assert tools.messages_sent == []
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "failed" in statuses
 
     @pytest.mark.asyncio
@@ -284,11 +284,7 @@ class TestFailedAndMalformed:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "failed" in statuses
         assert tools.messages_sent == []
 
@@ -312,21 +308,8 @@ class TestFlowFactoryException:
         # Must not propagate.
         await _run_one_turn(adapter, tools, _msg())
 
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
-        codes = [
-            e["metadata"]
-            .get(adapter.metadata_namespace, {})
-            .get("error", {})
-            .get("code")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
-        assert "failed" in statuses
-        assert "flow_factory_error" in codes
+        assert "failed" in task_statuses(tools, adapter)
+        assert "flow_factory_error" in task_error_codes(tools, adapter)
         assert tools.messages_sent == []
 
 
@@ -805,11 +788,7 @@ class TestRuntimeTools:
         await _run_one_turn(adapter, tools, _msg())
 
         assert tools.messages_sent == []
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert statuses == ["side_effect_reserved", "indeterminate"]
 
     @pytest.mark.asyncio
@@ -967,9 +946,5 @@ class TestFlowStateScratch:
             room_id="room-1",
         )
         # Both turns should record waiting; nothing leaks via Flow state.
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert statuses.count("waiting") >= 2
