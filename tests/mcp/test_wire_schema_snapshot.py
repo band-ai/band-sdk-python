@@ -22,8 +22,10 @@ import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
+from band.integrations.mcp.engine import build_engine
 from band_mcp.config import Config
-from band_mcp.tools.registrar import register_tools
+from band_mcp.server import standalone_spec
+from band_mcp.shared import build_standalone_resolver
 from tests.mcp.conftest import advertised_schemas
 
 logger = logging.getLogger(__name__)
@@ -40,9 +42,8 @@ _PROFILES: dict[str, Config] = {
 
 
 def _build_mcp(config: Config) -> FastMCP:
-    mcp = FastMCP(name="wire-schema-snapshot")
-    register_tools(mcp, config)
-    return mcp
+    resolver = build_standalone_resolver(config)
+    return build_engine(standalone_spec(config, resolver))
 
 
 async def _current_schemas(profile: str) -> dict[str, dict[str, object]]:

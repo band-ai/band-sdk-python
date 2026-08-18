@@ -47,6 +47,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.tools import (
+    SendEventInput,
     ToolDefinition,
     append_available_mention_handles,
     validate_tool_arguments,
@@ -270,32 +271,23 @@ def pin_existing_chat_id(
     return model
 
 
+# Widened for the standalone CLI door only (divergence-matrix row 6): a
+# standalone MCP agent has no adapter narrating tool_call/tool_result events
+# on its behalf, so it needs a self-narration channel the embedded SDK
+# doesn't -- adapters author those events programmatically there. The
+# embedded door keeps the narrower SendEventInput (three literals).
+#
+# Not a subclass of SendEventInput: widening a field's type in a subclass is
+# unsound for a mutable (assignable) Pydantic field -- a caller holding a
+# SendEventInput reference could otherwise observe a message_type value
+# outside its own narrower literal. Same fields, independent model.
+#
+# __doc__ is reused verbatim from SendEventInput below (not restated here):
+# it is the published band-mcp wire description, unaffected by the wider
+# enum -- the old registrar's widened model made the identical choice
+# (`model.__doc__ = original.__doc__`), and the wire-schema snapshot test
+# pins this exactly.
 class SendEventWideInput(BaseModel):
-    """Send an event to the chat room. No mentions required.
-
-    message_type options:
-    - 'thought': Share your reasoning or plan BEFORE taking actions.
-      Explain what you're about to do and why.
-    - 'tool_call': Narrate a tool call you are about to make.
-    - 'tool_result': Narrate the result of a tool call.
-    - 'error': Report an error or problem that occurred.
-    - 'task': Report task progress or completion status.
-
-    Always send a thought before complex actions to keep users informed.
-
-    Widened for the standalone CLI door only (divergence-matrix row 6): a
-    standalone MCP agent has no adapter narrating tool_call/tool_result
-    events on its behalf, so it needs a self-narration channel the embedded
-    SDK doesn't -- adapters author those events programmatically there. The
-    embedded door keeps the narrower ``SendEventInput`` (three literals).
-
-    Not a subclass of ``SendEventInput``: widening a field's type in a
-    subclass is unsound for a mutable (assignable) Pydantic field -- a
-    caller holding a ``SendEventInput`` reference could otherwise observe a
-    ``message_type`` value outside its own narrower literal. Same fields,
-    independent model.
-    """
-
     content: str = Field(..., description="Human-readable event content")
     message_type: WideEventMessageType = Field(
         ...,
@@ -304,6 +296,9 @@ class SendEventWideInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )
+
+
+SendEventWideInput.__doc__ = SendEventInput.__doc__
 
 
 def _build_handler_signature(input_model: type[BaseModel]) -> inspect.Signature:
@@ -418,7 +413,7 @@ def build_tool_registration(
 
     return MCPToolRegistration(
         name=definition.name,
-        description=input_model.__doc__ or "",
+        description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
     )
@@ -451,7 +446,7 @@ def build_custom_tool_registration(
 
     return MCPToolRegistration(
         name=tool_name,
-        description=input_model.__doc__ or "",
+        description=(input_model.__doc__ or "").strip(),
         input_model=model,
         execute=execute,
     )

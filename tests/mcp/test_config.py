@@ -137,7 +137,7 @@ def test_legacy_key_only_from_band_api_key():
 
 def test_user_key_masks_legacy_human_capable():
     cfg = resolve_config(
-        cli={}, env={"BAND_USER_KEY": "user_1", "BAND_API_KEY": "thnv_u_xxx"}
+        cli={}, env={"BAND_USER_KEY": "user_1", "BAND_API_KEY": "band_u_xxx"}
     )
     # user_key populated; for human, user_key wins
     assert resolve_credential_for_scope(cfg, "human") == "user_1"
@@ -148,29 +148,29 @@ def test_user_key_masks_legacy_human_capable():
 
 def test_agent_key_masks_legacy_all_capable():
     cfg = resolve_config(
-        cli={}, env={"BAND_AGENT_KEY": "agent_1", "BAND_API_KEY": "thnv_abc"}
+        cli={}, env={"BAND_AGENT_KEY": "agent_1", "BAND_API_KEY": "band_abc"}
     )
     # agent_key wins for agent scope
     assert resolve_credential_for_scope(cfg, "agent") == "agent_1"
     # Legacy is all-capable → it's masked for agent; still emits warning.
     assert any(w.kind == "legacy-key-ignored" for w in cfg.warnings)
     # Legacy still usable as fallback for human (user_key not set).
-    assert resolve_credential_for_scope(cfg, "human") == "thnv_abc"
+    assert resolve_credential_for_scope(cfg, "human") == "band_abc"
 
 
 def test_no_legacy_warning_when_no_overlap():
-    # legacy_key is agent-only (thnv_a_) and only user_key is set → no overlap,
+    # legacy_key is agent-only (band_a_) and only user_key is set → no overlap,
     # no warning.
     cfg = resolve_config(
-        cli={}, env={"BAND_USER_KEY": "user_1", "BAND_API_KEY": "thnv_a_xxx"}
+        cli={}, env={"BAND_USER_KEY": "user_1", "BAND_API_KEY": "band_a_xxx"}
     )
     assert all(w.kind != "legacy-key-ignored" for w in cfg.warnings)
 
 
 def test_legacy_fallback_when_scope_key_empty():
-    cfg = resolve_config(cli={}, env={"BAND_API_KEY": "thnv_abc"})
-    assert resolve_credential_for_scope(cfg, "human") == "thnv_abc"
-    assert resolve_credential_for_scope(cfg, "agent") == "thnv_abc"
+    cfg = resolve_config(cli={}, env={"BAND_API_KEY": "band_abc"})
+    assert resolve_credential_for_scope(cfg, "human") == "band_abc"
+    assert resolve_credential_for_scope(cfg, "agent") == "band_abc"
 
 
 @pytest.mark.parametrize(
@@ -195,6 +195,17 @@ def test_band_prefixed_legacy_key_capabilities(
         assert resolve_credential_for_scope(cfg, "agent") == legacy_key
     else:
         assert resolve_credential_for_scope(cfg, "agent") is None
+
+
+@pytest.mark.parametrize("legacy_key", ["thnv_u_abc", "thnv_a_abc", "thnv_abc"])
+def test_thnv_prefix_no_longer_recognized(legacy_key: str) -> None:
+    """INT-1096: legacy thenvoi-era `thnv_*` prefixes are dropped per user
+    decision -- a surviving thnv_* key now serves neither scope, matching
+    any other unrecognized key rather than getting the band_* treatment."""
+    cfg = resolve_config(cli={}, env={"BAND_API_KEY": legacy_key})
+
+    assert resolve_credential_for_scope(cfg, "human") is None
+    assert resolve_credential_for_scope(cfg, "agent") is None
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +350,7 @@ def test_tools_known_and_unknown_mixed():
 
 
 def test_validate_passes_with_agent_key_agent_scope():
-    cfg = resolve_config(cli={"agent_key": "thnv_a_1"}, env={})
+    cfg = resolve_config(cli={"agent_key": "band_a_1"}, env={})
     # Default scope is ["agent"]; agent_key set -> ok
     validate(cfg)
 
@@ -351,44 +362,44 @@ def test_validate_fails_agent_scope_missing_agent_key():
 
 
 def test_validate_fails_human_scope_missing_user_key():
-    cfg = resolve_config(cli={"scope": "human", "agent_key": "thnv_a_1"}, env={})
+    cfg = resolve_config(cli={"scope": "human", "agent_key": "band_a_1"}, env={})
     with pytest.raises(ConfigError):
         validate(cfg)
 
 
 def test_validate_passes_human_scope_with_user_key():
-    cfg = resolve_config(cli={"scope": "human", "user_key": "thnv_u_1"}, env={})
+    cfg = resolve_config(cli={"scope": "human", "user_key": "band_u_1"}, env={})
     validate(cfg)
 
 
 def test_validate_passes_via_legacy_key_agent_capable():
-    # thnv_a_ legacy satisfies agent scope
-    cfg = resolve_config(cli={}, env={"BAND_API_KEY": "thnv_a_xyz"})
+    # band_a_ legacy satisfies agent scope
+    cfg = resolve_config(cli={}, env={"BAND_API_KEY": "band_a_xyz"})
     validate(cfg)
 
 
 def test_validate_passes_via_legacy_key_all_capable_both_scopes():
-    cfg = resolve_config(cli={"scope": "agent,human"}, env={"BAND_API_KEY": "thnv_xyz"})
+    cfg = resolve_config(cli={"scope": "agent,human"}, env={"BAND_API_KEY": "band_xyz"})
     validate(cfg)
 
 
 def test_validate_fails_human_scope_with_agent_only_legacy():
     cfg = resolve_config(
-        cli={"scope": "agent,human"}, env={"BAND_API_KEY": "thnv_a_xyz"}
+        cli={"scope": "agent,human"}, env={"BAND_API_KEY": "band_a_xyz"}
     )
     with pytest.raises(ConfigError):
         validate(cfg)
 
 
 def test_validate_fails_agent_scope_with_human_only_legacy():
-    cfg = resolve_config(cli={}, env={"BAND_API_KEY": "thnv_u_xyz"})
+    cfg = resolve_config(cli={}, env={"BAND_API_KEY": "band_u_xyz"})
     with pytest.raises(ConfigError):
         validate(cfg)
 
 
 def test_validate_fails_on_empty_scope():
     # Only unknown scope values → resolved scope is empty → validate fails.
-    cfg = resolve_config(cli={"scope": "zzzzz"}, env={"BAND_API_KEY": "thnv_xyz"})
+    cfg = resolve_config(cli={"scope": "zzzzz"}, env={"BAND_API_KEY": "band_xyz"})
     # Defensive: empty scope should raise, since no scope means "serve nothing".
     with pytest.raises(ConfigError):
         validate(cfg)
@@ -415,16 +426,16 @@ def test_config_has_expected_fields():
 def test_config_full_resolution_example():
     cfg = resolve_config(
         cli={
-            "user_key": "thnv_u_cli",
-            "agent_key": "thnv_a_cli",
+            "user_key": "band_u_cli",
+            "agent_key": "band_a_cli",
             "room_id": "r_cli",
             "scope": "agent,human",
             "tools": "contacts,memory",
         },
         env={},
     )
-    assert cfg.user_key == "thnv_u_cli"
-    assert cfg.agent_key == "thnv_a_cli"
+    assert cfg.user_key == "band_u_cli"
+    assert cfg.agent_key == "band_a_cli"
     assert cfg.room_id == "r_cli"
     assert cfg.scope == ["agent", "human"]
     assert cfg.tools == ["contacts", "memory"]
@@ -453,7 +464,7 @@ def test_unknown_tools_warning_message_lists_valid_when_no_suggestion():
 
 
 def test_legacy_ignored_warning_value_field():
-    cfg = resolve_config(cli={}, env={"BAND_USER_KEY": "u", "BAND_API_KEY": "thnv_u_x"})
+    cfg = resolve_config(cli={}, env={"BAND_USER_KEY": "u", "BAND_API_KEY": "band_u_x"})
     warn = next(w for w in cfg.warnings if w.kind == "legacy-key-ignored")
     assert warn.value == "legacy_key"
     assert warn.did_you_mean is None

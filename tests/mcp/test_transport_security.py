@@ -83,19 +83,38 @@ class TestTransportSecuritySettings:
 
 
 class TestMcpTransportSecurityIntegration:
-    """Tests that FastMCP instance is configured with transport security."""
+    """The engine, built via the CLI's own factories, carries transport security.
+
+    INT-1096 step 11: there's no module-level FastMCP singleton to import any
+    more -- ``server.py`` builds a fresh engine per ``run()``. Build one here
+    the same way ``run()`` does (``standalone_spec`` + ``build_engine`` with
+    ``_build_transport_security()``) instead.
+    """
+
+    def _build_mcp(self) -> object:
+        from band.integrations.mcp.engine import build_engine
+        from band_mcp.config import Config
+        from band_mcp.server import _build_transport_security, standalone_spec
+        from band_mcp.shared import build_standalone_resolver
+
+        config = Config(scope=["agent"], agent_key="band_a_test")
+        resolver = build_standalone_resolver(config)
+        return build_engine(
+            standalone_spec(config, resolver),
+            transport_security=_build_transport_security(),
+        )
 
     def test_mcp_has_transport_security_configured(self) -> None:
-        """The FastMCP instance should have transport_security settings."""
-        from band_mcp.shared import mcp
+        """The engine's FastMCP instance should have transport_security settings."""
+        mcp = self._build_mcp()
 
         assert mcp.settings.transport_security is not None
 
     def test_mcp_transport_security_reflects_settings(self) -> None:
         """Transport security should reflect the configured settings."""
         from band_mcp.config import settings
-        from band_mcp.shared import mcp
 
+        mcp = self._build_mcp()
         transport_security = mcp.settings.transport_security
 
         assert (

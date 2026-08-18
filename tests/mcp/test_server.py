@@ -23,8 +23,9 @@ from band_mcp.config import Config
 # ---------------------------------------------------------------------------
 
 
-def _ctx_for_app(app_ctx: object) -> object:
-    return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app_ctx))
+def _resolver_with_rest(human_rest: object | None, agent_rest: object | None) -> object:
+    """A resolver-shaped stand-in: _health_check only reads .human_rest/.agent_rest."""
+    return SimpleNamespace(human_rest=human_rest, agent_rest=agent_rest)
 
 
 async def test_health_check_checks_both_configured_surfaces():
@@ -34,9 +35,8 @@ async def test_health_check_checks_both_configured_surfaces():
     agent_rest = SimpleNamespace(
         agent_api_identity=SimpleNamespace(get_agent_me=AsyncMock(return_value={}))
     )
-    app_ctx = SimpleNamespace(human_rest=human_rest, agent_rest=agent_rest)
 
-    result = await server_mod.health_check(_ctx_for_app(app_ctx))
+    result = await server_mod._health_check(_resolver_with_rest(human_rest, agent_rest))
 
     assert result.startswith("OK | human,agent | ")
     human_rest.human_api_agents.list_my_agents.assert_awaited_once()
@@ -52,9 +52,8 @@ async def test_health_check_reports_agent_failure_even_when_human_succeeds():
             get_agent_me=AsyncMock(side_effect=RuntimeError("agent denied"))
         )
     )
-    app_ctx = SimpleNamespace(human_rest=human_rest, agent_rest=agent_rest)
 
-    result = await server_mod.health_check(_ctx_for_app(app_ctx))
+    result = await server_mod._health_check(_resolver_with_rest(human_rest, agent_rest))
 
     assert result == "Failed | agent | agent denied"
     human_rest.human_api_agents.list_my_agents.assert_awaited_once()
@@ -89,7 +88,7 @@ def test_is_pure_legacy_invocation_true_when_only_legacy_key(monkeypatch):
     monkeypatch.delenv("BAND_MCP_TOOLS", raising=False)
     monkeypatch.delenv("BAND_MCP_ROOM_ID", raising=False)
 
-    config = Config(legacy_key="thnv_u_abc", scope=[])
+    config = Config(legacy_key="band_u_abc", scope=[])
     args = _make_args()
     assert server_mod._is_pure_legacy_invocation(args, config) is True
 
@@ -104,7 +103,7 @@ def test_is_pure_legacy_invocation_false_when_cli_scope_set(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
 
-    config = Config(legacy_key="thnv_u_abc", scope=[])
+    config = Config(legacy_key="band_u_abc", scope=[])
     args = _make_args(scope=["agent"])
     assert server_mod._is_pure_legacy_invocation(args, config) is False
 
@@ -118,9 +117,9 @@ def test_is_pure_legacy_invocation_false_when_new_env_set(monkeypatch):
         "BAND_MCP_ROOM_ID",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("BAND_USER_KEY", "thnv_u_explicit")
+    monkeypatch.setenv("BAND_USER_KEY", "band_u_explicit")
 
-    config = Config(legacy_key="thnv_abc", scope=[])
+    config = Config(legacy_key="band_abc", scope=[])
     args = _make_args()
     assert server_mod._is_pure_legacy_invocation(args, config) is False
 
@@ -163,9 +162,9 @@ def test_malformed_legacy_key_does_not_bypass_validation(monkeypatch):
 @pytest.mark.parametrize(
     "legacy_key,expected_scope",
     [
-        ("thnv_u_timestamp_random", ["human"]),
-        ("thnv_a_timestamp_random", ["agent"]),
-        ("thnv_timestamp_random", ["agent", "human"]),
+        ("band_u_timestamp_random", ["human"]),
+        ("band_a_timestamp_random", ["agent"]),
+        ("band_timestamp_random", ["agent", "human"]),
     ],
 )
 def test_escape_hatch_writes_scope_from_legacy_key(
@@ -174,9 +173,9 @@ def test_escape_hatch_writes_scope_from_legacy_key(
     """When the escape hatch fires, config.scope is rewritten to match what
     the legacy key can actually serve.
 
-    Applies whether or not validate() raised — an all-capable `thnv_*` key
+    Applies whether or not validate() raised — an all-capable `band_*` key
     passes validate with default scope ["agent"] but still needs write-back so
-    the surface loaded matches what AppContext.scope advertises downstream.
+    the surface loaded matches what standalone_spec() advertises downstream.
     """
     for name in (
         "BAND_USER_KEY",
@@ -227,7 +226,7 @@ def test_escape_hatch_writes_scope_from_legacy_key(
 
 
 def test_escape_hatch_user_legacy_key_maps_to_human_only(monkeypatch):
-    """Specific C2 scenario from the review: `BAND_API_KEY=thnv_u_*` must
+    """Specific C2 scenario from the review: `BAND_API_KEY=band_u_*` must
     log / register as `['human']`, not `['agent']`.
     """
     for name in (
@@ -238,10 +237,10 @@ def test_escape_hatch_user_legacy_key_maps_to_human_only(monkeypatch):
         "BAND_MCP_ROOM_ID",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("BAND_API_KEY", "thnv_u_xyz")
+    monkeypatch.setenv("BAND_API_KEY", "band_u_xyz")
 
     from band_mcp.config import _legacy_key_capabilities
 
-    legacy_human, legacy_agent = _legacy_key_capabilities("thnv_u_xyz")
+    legacy_human, legacy_agent = _legacy_key_capabilities("band_u_xyz")
     assert legacy_human is True
     assert legacy_agent is False

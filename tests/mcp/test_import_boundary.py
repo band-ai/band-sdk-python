@@ -19,14 +19,12 @@ from pathlib import Path
 
 from tests.paths import REPO_ROOT
 
-# The only places an `mcp`-package import may appear. One entry is
-# temporary, removed by a specific later INT-1096 step -- not part of the
-# permanent allowlist:
-#   - packages/band-mcp/src/band_mcp/tools/registrar.py: deleted by step 11
-#     (fully absorbed into engine.py).
+# The only places an `mcp`-package import may appear.
 #
 # src/band/runtime/mcp_server.py is NOT on this list: it's now a pure
 # re-export shim (see that module) with no mcp-package import of its own.
+# packages/band-mcp/src/band_mcp/tools/registrar.py is NOT on this list
+# either: deleted in step 11, fully absorbed into engine.py.
 _ALLOWED_MCP_IMPORT_FILES: frozenset[Path] = frozenset(
     REPO_ROOT / path
     for path in (
@@ -35,7 +33,6 @@ _ALLOWED_MCP_IMPORT_FILES: frozenset[Path] = frozenset(
         "src/band/integrations/desktop_app/server.py",
         "packages/band-mcp/src/band_mcp/shared.py",
         "packages/band-mcp/src/band_mcp/server.py",
-        "packages/band-mcp/src/band_mcp/tools/registrar.py",  # temporary -- removed by step 11
     )
 )
 

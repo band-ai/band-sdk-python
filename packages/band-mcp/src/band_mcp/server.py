@@ -2,7 +2,8 @@
 
 Dual-credential configuration: `--user-key`, `--agent-key`,
 `--room-id`, `--scope`, `--tools` CLI flags (plus matching env vars). Tool
-registration runs through the SDK-driven registrar (`tools/registrar.py`).
+registration builds an ``EngineSpec`` (``standalone_spec``, below) and hands
+it to the shared engine (``band.integrations.mcp.engine.build_engine``).
 
 Legacy `BAND_API_KEY` is still supported as a fallback. When it's the only
 credential supplied, `config.scope` is rewritten from the key's capabilities
@@ -16,6 +17,22 @@ import os
 from dataclasses import replace
 from typing import Literal
 
+from mcp.server.transport_security import TransportSecuritySettings
+
+from band.integrations.mcp.engine import (
+    EngineSpec,
+    SendEventWideInput,
+    build_engine,
+    build_tool_registration,
+    extend_with_chat_id,
+    pin_existing_chat_id,
+)
+from band.runtime.tools import (
+    EVENT_TOOL_NAMES,
+    classify_room_binding,
+    iter_tool_definitions,
+)
+
 from band_mcp import __version__
 from band_mcp.config import (
     Config,
@@ -25,38 +42,109 @@ from band_mcp.config import (
     settings,
     validate,
 )
-from band_mcp.shared import (
-    AppContextType,
-    get_app_context,
-    logger,
-    mcp,
-    set_pending_config,
-)
-from band_mcp.tools.registrar import register_tools
+from band_mcp.shared import StandaloneResolver, build_standalone_resolver, logger
 
 
-@mcp.tool()
-async def health_check(ctx: AppContextType) -> str:
-    """Test MCP server and API connectivity."""
-    app_ctx = get_app_context(ctx)
+def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
+    """Build the CLI door's :class:`EngineSpec` from a resolved :class:`Config`.
+
+    ``resolver`` is a caller-supplied dependency, not built here: ``run()``
+    keeps its own reference to wire ``health_check`` to the same
+    ``human_rest``/``agent_rest`` this spec's registrations dispatch through.
+
+    Per-tool classification (divergence-matrix row 2): unlike the embedded
+    door's uniform wrap, the CLI advertises a room field only on the tools
+    that actually need one (``classify_room_binding`` -- the published
+    band-mcp 1.3.2 contract). ``band_send_event`` additionally widens to
+    ``SendEventWideInput`` (row 6): a standalone agent has no adapter
+    narrating tool_call/tool_result for it.
+    """
+    include_contacts = "contacts" in config.tools
+    include_memory = "memory" in config.tools
+    pinned_room_id = config.room_id
+
+    registrations = []
+    seen_names: dict[str, str] = {}
+    for surface in config.scope:
+        for definition in iter_tool_definitions(
+            surface=surface,
+            include_contacts=include_contacts,
+            include_memory=include_memory,
+        ):
+            previous_surface = seen_names.get(definition.name)
+            if previous_surface is not None:
+                raise ConfigError(
+                    "Duplicate tool name across enabled surfaces: "
+                    f"{definition.name} ({previous_surface}, {definition.surface})"
+                )
+            seen_names[definition.name] = definition.surface
+
+            is_agent_room_bound, is_human_room_bound = classify_room_binding(definition)
+            room_bound = is_agent_room_bound or is_human_room_bound
+
+            model = definition.input_model
+            if definition.name in EVENT_TOOL_NAMES:
+                model = SendEventWideInput
+            if is_agent_room_bound:
+                model = extend_with_chat_id(model, pinned_room_id)
+            elif is_human_room_bound and pinned_room_id is not None:
+                model = pin_existing_chat_id(model, pinned_room_id)
+
+            registrations.append(
+                build_tool_registration(
+                    definition,
+                    model,
+                    resolver=resolver,
+                    strip_chat_id=is_agent_room_bound,
+                    pinned_room_id=pinned_room_id if room_bound else None,
+                )
+            )
+
+    return EngineSpec(name="band-mcp-server", tools=tuple(registrations))
+
+
+async def _health_check(resolver: StandaloneResolver) -> str:
+    """Test MCP server and API connectivity.
+
+    A module-level function taking ``resolver`` explicitly (rather than a
+    bare ``@mcp.tool()`` closure) so it stays unit-testable in isolation --
+    ``run()`` registers a zero-arg wrapper that closes over the real resolver.
+    """
     checked: list[str] = []
-    if app_ctx.human_rest is not None:
+    if resolver.human_rest is not None:
         surface = "human"
         try:
-            await app_ctx.human_rest.human_api_agents.list_my_agents()
+            await resolver.human_rest.human_api_agents.list_my_agents()
             checked.append(surface)
         except Exception as exc:
             return f"Failed | {surface} | {exc}"
-    if app_ctx.agent_rest is not None:
+    if resolver.agent_rest is not None:
         surface = "agent"
         try:
-            await app_ctx.agent_rest.agent_api_identity.get_agent_me()
+            await resolver.agent_rest.agent_api_identity.get_agent_me()
             checked.append(surface)
         except Exception as exc:
             return f"Failed | {surface} | {exc}"
     if checked:
         return f"OK | {','.join(checked)} | {settings.band_base_url}"
     return "Failed | no credential configured"
+
+
+def _build_transport_security() -> TransportSecuritySettings:
+    if (
+        settings.transport == "sse"
+        and settings.enable_dns_rebinding_protection
+        and not settings.allowed_hosts
+    ):
+        logger.warning(
+            "DNS rebinding protection enabled with empty ALLOWED_HOSTS. "
+            "All SSE requests will be blocked. Configure ALLOWED_HOSTS to allow connections."
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=settings.enable_dns_rebinding_protection,
+        allowed_hosts=settings.allowed_hosts,
+        allowed_origins=settings.allowed_origins,
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -200,14 +288,14 @@ def run() -> None:
     Order of operations:
     1. Parse CLI flags.
     2. Resolve the Config (dual-credential + scope/tools/room_id).
-    3. Validate; raise ConfigError to exit before FastMCP starts, unless this
-       is a pure-legacy (BAND_API_KEY-only) invocation.
+    3. Validate; raise ConfigError to exit before the engine builds, unless
+       this is a pure-legacy (BAND_API_KEY-only) invocation.
     4. Emit every ConfigWarning entry at WARN level.
     5. For pure-legacy invocations, rewrite `config.scope` from the legacy
        key's capabilities so the advertised surface matches.
-    6. Hand the Config to the lifespan (so AppContext picks it up).
-    7. Register SDK-driven tools.
-    8. Start FastMCP.
+    6. Build the EngineSpec (standalone_spec) and the engine (build_engine).
+    7. Register the health_check tool.
+    8. Start the engine over the requested transport.
     """
     args = parse_args()
 
@@ -239,7 +327,7 @@ def run() -> None:
     # Escape-hatch scope write-back: when this is a pure-legacy invocation,
     # replace the default scope (["agent"]) with whatever the legacy key
     # actually serves. This keeps the advertised tool surface consistent with
-    # the credential's capabilities — a `thnv_u_*` legacy key lands as
+    # the credential's capabilities — a `band_u_*` legacy key lands as
     # ["human"], not ["agent"].
     if _is_pure_legacy_invocation(args, config):
         legacy_human, legacy_agent = _legacy_key_capabilities(config.legacy_key)
@@ -250,19 +338,30 @@ def run() -> None:
             legacy_scope.append("human")
         config = replace(config, scope=legacy_scope)
 
-    set_pending_config(config)
-
-    # SDK-driven registrar: registers every
-    # ``iter_tool_definitions(surface=s, ...)`` entry for each scope in
-    # ``config.scope``. Single source of truth for tool definitions, shared
-    # with the SDK.
+    resolver = build_standalone_resolver(config)
     try:
-        register_tools(mcp, config)
+        spec = standalone_spec(config, resolver)
     except ConfigError as exc:
-        # Missing SDK is fatal. Fall out cleanly with exit code 2 so
-        # operators see the actionable message instead of a traceback.
         logger.error("Configuration error: %s", exc)
         raise SystemExit(2) from exc
+
+    mcp = build_engine(spec, transport_security=_build_transport_security())
+
+    # Named health_check directly (not e.g. _health_check_tool): FastMCP
+    # derives the advertised schema's "title" from the function's own
+    # __name__, independent of the tool() name= override below -- a wrapper
+    # named differently would leak into the wire-visible schema title.
+    @mcp.tool(name="health_check")
+    async def health_check() -> str:
+        """Test MCP server and API connectivity."""
+        return await _health_check(resolver)
+
+    logger.info("Starting band-mcp-server v%s", __version__)
+    logger.info("Base URL: %s", settings.band_base_url)
+    logger.info("Resolved scope: %s", config.scope or "<none>")
+    logger.info("Resolved tools: %s", config.tools or "<none>")
+    if config.room_id:
+        logger.info("Pinned room id: %s", config.room_id)
 
     # Determine transport mode (CLI args override env vars)
     transport: Literal["stdio", "sse"] = args.transport or settings.transport
@@ -271,13 +370,6 @@ def run() -> None:
         mcp.settings.host = args.host
     if args.port is not None:
         mcp.settings.port = args.port
-
-    logger.info("Starting band-mcp-server v%s", __version__)
-    logger.info("Base URL: %s", settings.band_base_url)
-    logger.info("Resolved scope: %s", config.scope or "<none>")
-    logger.info("Resolved tools: %s", config.tools or "<none>")
-    if config.room_id:
-        logger.info("Pinned room id: %s", config.room_id)
 
     if transport == "stdio":
         logger.info("Transport: STDIO (for IDE integration)")

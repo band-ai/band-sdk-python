@@ -134,18 +134,21 @@ settings = Settings()
 def _legacy_key_capabilities(legacy_key: str | None) -> tuple[bool, bool]:
     """Return (can_serve_human, can_serve_agent) for a legacy key.
 
-    - `thnv_u_...` / `band_u_...` — user key, human only.
-    - `thnv_a_...` / `band_a_...` — agent key, agent only.
-    - `thnv_...` / `band_...`     — legacy all-capable, both scopes.
+    - `band_u_...` — user key, human only.
+    - `band_a_...` — agent key, agent only.
+    - `band_...`   — legacy all-capable, both scopes.
     - Anything else (including None / empty) — serves neither scope.
+
+    The thenvoi-era `thnv_*` prefixes are not recognized (INT-1096: dropped
+    per user decision -- no surviving key needs the old rebrand fallback).
     """
     if not legacy_key:
         return (False, False)
-    if legacy_key.startswith(("thnv_u_", "band_u_")):
+    if legacy_key.startswith("band_u_"):
         return (True, False)
-    if legacy_key.startswith(("thnv_a_", "band_a_")):
+    if legacy_key.startswith("band_a_"):
         return (False, True)
-    if legacy_key.startswith(("thnv_", "band_")):
+    if legacy_key.startswith("band_"):
         return (True, True)
     return (False, False)
 
