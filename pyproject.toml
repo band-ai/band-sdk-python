@@ -335,6 +335,13 @@ markers = [
     "vscode_chat: drives a real signed-in VS Code window via the code chat CLI (GUI + interactive Copilot sign-in; skipped unless VSCODE_CHAT_TESTS_ENABLED=true — can never run in CI)",
 ]
 
+[tool.uv.workspace]
+# packages/band-mcp: the published `band-mcp` CLI, sharing this repo's engine
+# (INT-1096). A plain `uv sync`/`uv run` only installs the root project, not
+# workspace members that aren't root dependencies — every dev-loop command
+# here and in CLAUDE.md uses `--all-packages`.
+members = ["packages/*"]
+
 [tool.uv]
 # google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is
 # yanked and whose only newer release is a pre-release. Steering that resolution is
@@ -435,6 +442,7 @@ project_includes = [
     # in `.claude/worktrees/` checkouts, which the excludes heuristic below no
     # longer filters out.
     ".claude/skills/**/*.py",
+    "packages/band-mcp/src/**/*.py",
 ]
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing
