@@ -56,7 +56,7 @@ def test_mcp_package_imports_are_confined_to_the_allowlist() -> None:
         for path in scan_root.rglob("*.py"):
             if path in _ALLOWED_MCP_IMPORT_FILES:
                 continue
-            if _imports_mcp_package(path.read_text()):
+            if _imports_mcp_package(path.read_text(encoding="utf-8")):
                 offenders.append(path.relative_to(REPO_ROOT))
 
     assert not offenders, (
