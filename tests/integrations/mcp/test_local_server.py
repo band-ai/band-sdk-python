@@ -6,7 +6,6 @@ import socket
 from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -15,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
+from sse_starlette.sse import AppStatus
 
 from band.integrations.mcp.engine import EngineSpec, MCPToolRegistration
 from band.integrations.mcp.local_server import (
@@ -157,13 +157,31 @@ class TestLocalMcpServer:
         )
         assert server._host == "0.0.0.0"
 
-    # 30s default is too tight on CI (confirmed hanging into a forced
-    # RemoteProtocolError on windows-latest): _build_app mounts SSE and
-    # streamable-HTTP under one shared lifespan that always enters
-    # mcp.session_manager.run() (see _build_app's docstring), so an SSE-only
-    # test pays the same slow session-manager startup the HTTP sibling test
-    # below already documents needing 90s for.
-    @pytest.mark.timeout(90)
+    def test_disables_sse_starlette_automatic_graceful_drain(self) -> None:
+        """Regression, traced live on Windows CI: sse_starlette's
+        AppStatus.should_exit is a bare process-global class attribute with
+        no notion of "which server" -- ANY OTHER uvicorn.Server's signal
+        handler firing handle_exit() anywhere in the process (not just
+        ours) used to latch it, closing every subsequent SSE response --
+        including a fresh, healthy LocalMCPServer's that never touched that
+        other server -- right after its headers. Importing local_server
+        must disable the automatic drain so handle_exit() (the real
+        2-argument signal-handler call, not our own) becomes a no-op for
+        this flag; original_handler is swapped out for the duration since
+        it expects a bound Server instance, not this direct call.
+        """
+        assert AppStatus.enable_automatic_graceful_drain is False
+
+        original_should_exit = AppStatus.should_exit
+        original_handler = AppStatus.original_handler
+        AppStatus.original_handler = None
+        try:
+            AppStatus.handle_exit(0, None)
+            assert AppStatus.should_exit is False
+        finally:
+            AppStatus.should_exit = original_should_exit
+            AppStatus.original_handler = original_handler
+
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
         # A registration's execute() always returns a wire-serialized string:
@@ -186,63 +204,23 @@ class TestLocalMcpServer:
             port_max=0,
         )
 
-        print("CHECKPOINT: server.start() returned", flush=True)
         await server.start()
         try:
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
-            print(f"CHECKPOINT: url={server.url}", flush=True)
 
-            print("CHECKPOINT: entering warmup healthz GET", flush=True)
-            async with httpx.AsyncClient() as warmup_client:
-                warmup_response = await warmup_client.get(
-                    f"http://{LOCAL_MCP_HOST}:{server.port}/healthz"
-                )
-            print(
-                f"CHECKPOINT: warmup returned {warmup_response.status_code}", flush=True
-            )
-
-            print("CHECKPOINT: entering raw streaming GET /sse", flush=True)
-            async with httpx.AsyncClient() as raw_client:
-                try:
-                    async with asyncio.timeout(10):
-                        async with raw_client.stream("GET", server.url) as raw_response:
-                            print(
-                                f"CHECKPOINT: raw stream headers status={raw_response.status_code}",
-                                flush=True,
-                            )
-                            async for raw_line in raw_response.aiter_lines():
-                                print(
-                                    f"CHECKPOINT: raw stream line={raw_line!r}",
-                                    flush=True,
-                                )
-                                break
-                except TimeoutError:
-                    print(
-                        "CHECKPOINT: raw streaming GET timed out after 10s", flush=True
-                    )
-
-            print("CHECKPOINT: entering sse_client", flush=True)
             async with sse_client(server.url) as (read_stream, write_stream):
-                print("CHECKPOINT: sse_client connected", flush=True)
                 async with ClientSession(read_stream, write_stream) as session:
-                    print("CHECKPOINT: entering session.initialize", flush=True)
                     await session.initialize()
-                    print("CHECKPOINT: session initialized", flush=True)
 
                     tools_result = await session.list_tools()
-                    print("CHECKPOINT: list_tools returned", flush=True)
                     assert [tool.name for tool in tools_result.tools] == ["echo"]
 
                     result = await session.call_tool("echo", {"message": "hello"})
-                    print("CHECKPOINT: call_tool returned", flush=True)
                     assert not result.isError
                     assert json.loads(_text_of(result)) == {"echo": "hello"}
         finally:
-            print("CHECKPOINT: entering server.stop", flush=True)
             await server.stop()
-            print("CHECKPOINT: server.stop returned", flush=True)
 
-    @pytest.mark.skip(reason="diagnostic: isolating the windows SSE hang, temporary")
     @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
     @pytest.mark.asyncio
     async def test_stop_returns_promptly_with_a_still_open_sse_connection(
@@ -301,7 +279,6 @@ class TestLocalMcpServer:
     # streamable-HTTP loopback initialization spends most of that on uvicorn
     # startup. Bump to 90s to absorb runner I/O variance (test passes in ~1s
     # locally; this only widens the safety margin on CI).
-    @pytest.mark.skip(reason="diagnostic: isolating the windows SSE hang, temporary")
     @pytest.mark.timeout(90)
     @pytest.mark.asyncio
     async def test_serves_streamable_http_tools_on_localhost(self) -> None:
@@ -481,7 +458,6 @@ class TestLocalMcpServer:
         finally:
             await server.stop()
 
-    @pytest.mark.skip(reason="diagnostic: isolating the windows SSE hang, temporary")
     @pytest.mark.asyncio
     async def test_start_stop_start_cycle_rebuilds_engine(self) -> None:
         """Session managers are single-use (mcp.server.streamable_http_manager);

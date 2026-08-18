@@ -1,9 +1,10 @@
 """The embedded MCP front door.
 
 Ephemeral-port scanning starts from a random offset (dodges a just-freed-
-port wedge), and ``EmbeddedUvicornServer`` disables signal capture (dodges
-an ``sse_starlette`` global-shutdown-latch bug). Mounts ``engine.py``'s
-FastMCP app rather than hand-rolling a lowlevel ``Server``.
+port wedge), and two independent workarounds neutralize an ``sse_starlette``
+global-shutdown-latch bug (see ``EmbeddedUvicornServer`` and the
+``AppStatus.disable_automatic_graceful_drain()`` call below). Mounts
+``engine.py``'s FastMCP app rather than hand-rolling a lowlevel ``Server``.
 
 Every lifecycle transition (``start()``/``stop()``) routes through one lock,
 with cleanup in ``finally`` -- so a serve-task crash always closes the
@@ -21,6 +22,7 @@ from contextlib import asynccontextmanager, contextmanager
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -59,6 +61,21 @@ SERVER_STOP_TIMEOUT_S = 5
 
 RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
+# sse_starlette's EventSourceResponse watches a process-global AppStatus for
+# a shutdown signal, closing every open SSE stream right after its headers
+# once latched -- from either of two sources: (1) our own signal handler (see
+# EmbeddedUvicornServer below), or (2) *any other* uvicorn.Server anywhere in
+# this process whose handle_exit() ever fires, since AppStatus.should_exit is
+# a bare class attribute with no notion of "which server." (2) is real: a
+# real Windows CI hang traced to exactly this -- a real SSE connection closing
+# right after its headers with no code of ours involved. LocalMCPServer.stop()
+# already forces its own socket closed and cancels its serve task directly, so
+# it never needed sse_starlette's automatic drain-on-shutdown to begin with;
+# disabling it removes the dependency on that global entirely. Process-wide
+# and one-time by nature (AppStatus has no per-instance scope), so this is a
+# module-level call, not something threaded through LocalMCPServer's API.
+AppStatus.disable_automatic_graceful_drain()
+
 
 class EmbeddedUvicornServer(uvicorn.Server):
     """A uvicorn server that leaves process signal handling to its host.
@@ -69,9 +86,12 @@ class EmbeddedUvicornServer(uvicorn.Server):
     other libraries introspect: sse_starlette discovers "the" uvicorn server
     through the installed signal handler and latches a process-global shutdown
     flag when it stops mid-stream -- after which every later SSE response in
-    the process (any subsequent server's) closes right after its headers.
-    Shutdown here is driven programmatically via ``should_exit`` (see
-    ``LocalMCPServer.stop``), so signal capture is dropped entirely.
+    the process (any subsequent server's) closes right after its headers (the
+    other half of this same bug class -- see the module-level
+    ``AppStatus.disable_automatic_graceful_drain()`` call above -- is a
+    *different* server's signal handler doing the same thing). Shutdown here
+    is driven programmatically via ``should_exit`` (see ``LocalMCPServer.stop``),
+    so signal capture is dropped entirely.
     """
 
     @contextmanager
