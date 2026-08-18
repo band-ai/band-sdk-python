@@ -39,6 +39,16 @@ def event_types(events: list[dict[str, object]]) -> list[object]:
     return [event["message_type"] for event in events]
 
 
+def events_of_type(tools: FakeAgentTools, message_type: str) -> list[dict[str, object]]:
+    """Events the handler sent, filtered to one message_type."""
+    return [e for e in tools.events_sent if e.get("message_type") == message_type]
+
+
+def metadata_values(events: list[dict[str, object]], key: str) -> list[object]:
+    """The ordered value of one metadata field across a set of events."""
+    return [event["metadata"][key] for event in events]
+
+
 class TestACPClientAdapterInit:
     """Tests for ACPClientAdapter initialization."""
 
@@ -632,7 +642,7 @@ class TestACPClientAdapterOnMessage:
         )
 
         # Should have sent task event
-        task_events = [e for e in tools.events_sent if e.get("message_type") == "task"]
+        task_events = events_of_type(tools, "task")
         assert len(task_events) == 1
         assert task_events[0]["metadata"]["acp_client_session_id"] == "acp-session-123"
 
@@ -730,9 +740,7 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        error_events = [
-            e for e in tools.events_sent if e.get("message_type") == "error"
-        ]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         assert "Agent crashed" in error_events[0]["content"]
 
@@ -965,9 +973,10 @@ class TestACPClientAdapterPermissionHandler:
         assert captured_result == {"outcome": {"outcome": "cancelled"}}
         perm_events = permission_events(tools)
         assert event_types(perm_events) == ["tool_call", "tool_result"]
-        assert all(
-            event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
-        )
+        assert metadata_values(perm_events, "tool_call_id") == [
+            "tc-danger",
+            "tc-danger",
+        ]
         call = parse_tool_call(str(perm_events[0]["content"]))
         assert call is not None
         assert call.args == {"path": "/tmp/important"}
@@ -1013,9 +1022,10 @@ class TestACPClientAdapterPermissionHandler:
 
         perm_events = permission_events(tools)
         assert event_types(perm_events) == ["tool_call", "tool_result"]
-        assert all(
-            event["metadata"]["tool_name"] == "band_send_event" for event in perm_events
-        )
+        assert metadata_values(perm_events, "tool_name") == [
+            "band_send_event",
+            "band_send_event",
+        ]
         call = parse_tool_call(str(perm_events[0]["content"]))
         assert call is not None and call.name == "band_send_event"
 
@@ -1052,7 +1062,7 @@ class TestACPClientAdapterPermissionHandler:
 
         perm_events = permission_events(tools)
         assert event_types(perm_events) == ["tool_call", "tool_result"]
-        assert all(event["metadata"]["tool_name"] == "bash" for event in perm_events)
+        assert metadata_values(perm_events, "tool_name") == ["bash", "bash"]
 
 
 class TestACPClientAdapterCleanup:
@@ -1293,9 +1303,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert adapter._runtime._ctx is None
 
         # Error event should be sent
-        error_events = [
-            e for e in tools.events_sent if e.get("message_type") == "error"
-        ]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
 
 

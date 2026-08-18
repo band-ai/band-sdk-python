@@ -71,6 +71,35 @@ def build_multi_peer_server() -> GatewayServer:
     )
 
 
+def hello_message_body(message_id: str = "message-1") -> dict[str, object]:
+    """The REST message:stream request body used by these tests."""
+    return {
+        "message": {
+            "messageId": message_id,
+            "role": "ROLE_USER",
+            "parts": [{"text": "Hello"}],
+        }
+    }
+
+
+def send_message_rpc(
+    request_id: str, message_id: str = "message-1"
+) -> dict[str, object]:
+    """The JSON-RPC SendMessage request body used by these tests."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "role": "ROLE_USER",
+                "messageId": message_id,
+                "parts": [{"text": "Hello"}],
+            }
+        },
+    }
+
+
 @pytest_asyncio.fixture
 async def gateway_client() -> AsyncIterator[httpx.AsyncClient]:
     transport = ASGITransport(app=build_server()._build_app())
@@ -159,18 +188,7 @@ async def test_jsonrpc_send_runs_through_official_handler_and_executor(
     response = await gateway_client.post(
         "/agents/weather-agent",
         headers={"A2A-Version": "1.0"},
-        json={
-            "jsonrpc": "2.0",
-            "id": "request-1",
-            "method": "SendMessage",
-            "params": {
-                "message": {
-                    "role": "ROLE_USER",
-                    "messageId": "message-1",
-                    "parts": [{"text": "Hello"}],
-                }
-            },
-        },
+        json=send_message_rpc("request-1"),
     )
 
     assert response.status_code == 200
@@ -185,13 +203,7 @@ async def test_rest_stream_runs_through_upstream_handler(
     response = await gateway_client.post(
         "/agents/weather-agent/message:stream",
         headers={"A2A-Version": "1.0"},
-        json={
-            "message": {
-                "messageId": "message-1",
-                "role": "ROLE_USER",
-                "parts": [{"text": "Hello"}],
-            }
-        },
+        json=hello_message_body(),
     )
 
     assert response.status_code == 200
@@ -215,13 +227,7 @@ async def test_rest_binding_is_reachable_for_every_peer_and_alias(
         response = await multi_peer_client.post(
             f"/agents/{alias}/message:stream",
             headers={"A2A-Version": "1.0"},
-            json={
-                "message": {
-                    "messageId": "message-1",
-                    "role": "ROLE_USER",
-                    "parts": [{"text": "Hello"}],
-                }
-            },
+            json=hello_message_body(),
         )
         reached_handler[alias] = response.status_code
 
@@ -242,13 +248,7 @@ async def test_task_rest_routes_are_not_exposed(
     await gateway_client.post(
         "/agents/weather-agent/message:stream",
         headers={"A2A-Version": "1.0"},
-        json={
-            "message": {
-                "messageId": "message-1",
-                "role": "ROLE_USER",
-                "parts": [{"text": "Hello"}],
-            }
-        },
+        json=hello_message_body(),
     )
 
     listing = await gateway_client.get(
@@ -294,18 +294,7 @@ async def test_task_started_on_slug_is_visible_via_uuid_alias(
     send = await gateway_client.post(
         "/agents/weather-agent",
         headers={"A2A-Version": "1.0"},
-        json={
-            "jsonrpc": "2.0",
-            "id": "request-1",
-            "method": "SendMessage",
-            "params": {
-                "message": {
-                    "role": "ROLE_USER",
-                    "messageId": "message-1",
-                    "parts": [{"text": "Hello"}],
-                }
-            },
-        },
+        json=send_message_rpc("request-1"),
     )
     task_id = send.json()["result"]["task"]["id"]
 
@@ -414,13 +403,7 @@ async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
                     "POST",
                     f"http://127.0.0.1:{port}/agents/weather-agent/message:stream",
                     headers={"A2A-Version": "1.0"},
-                    json={
-                        "message": {
-                            "messageId": "message-1",
-                            "role": "ROLE_USER",
-                            "parts": [{"text": "Hello"}],
-                        }
-                    },
+                    json=hello_message_body(),
                 ) as response,
             ):
                 async for _ in response.aiter_bytes():

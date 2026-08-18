@@ -32,6 +32,7 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import BandACPClient
+from band.integrations.acp.types import CollectedChunk
 from band.integrations.mcp.engine import MCPToolRegistration
 from band.integrations.mcp.local_server import (
     LocalMCPServer,
@@ -41,6 +42,15 @@ from band.runtime.tools import AgentTools
 from tests.toolkit.timeouts import backstop_timeout
 
 logger = logging.getLogger(__name__)
+
+
+def called_tool(tool_calls: list[CollectedChunk], tool_name: str) -> bool:
+    """Whether any tool_call chunk invoked tool_name."""
+    return any(
+        chunk.metadata.get("raw_input", {}).get("tool") == tool_name
+        for chunk in tool_calls
+    )
+
 
 # These are real E2E tests: each spawns `codex-acp` as a
 # live subprocess (Node + network), so they are opt-in like the rest of the e2e
@@ -192,10 +202,8 @@ async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
 
         # Verify chunk types are valid
         valid_types = {"text", "thought", "tool_call", "tool_result", "plan"}
-        for chunk in chunks:
-            assert chunk.chunk_type in valid_types, (
-                f"Unexpected chunk type: {chunk.chunk_type}"
-            )
+        seen_types = {chunk.chunk_type for chunk in chunks}
+        assert seen_types <= valid_types, f"Unexpected chunk types: {seen_types}"
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -384,11 +392,7 @@ async def test_codex_acp_band_mcp_tool_call(
             tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
             if not tool_calls:
                 pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
-            if not any(
-                chunk.metadata.get("raw_input", {}).get("tool")
-                == "band_get_participants"
-                for chunk in tool_calls
-            ):
+            if not called_tool(tool_calls, "band_get_participants"):
                 pytest.skip(
                     "codex-acp invoked MCP in this run, but not the expected Band tool"
                 )
