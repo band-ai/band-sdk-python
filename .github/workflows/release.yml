@@ -118,6 +118,67 @@ jobs:
       major: ${{ needs.release.outputs.major }}
       move-floating: true
 
+  # After a band-sdk release, keep band-mcp's declared band-sdk floor honest:
+  # it must track the version that was just published, since band-mcp is
+  # developed in lockstep in this monorepo and its current code can depend
+  # on any already-released SDK feature. Opens a PR rather than pushing to
+  # main directly -- main's ruleset requires one -- same as bump-add-band
+  # below.
+  bump-mcp-sdk-floor:
+    needs: [release]
+    if: ${{ !cancelled() && needs.release.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    # Everything here runs on the App token; don't inherit the workflow's
+    # write-scoped GITHUB_TOKEN permissions this job never uses.
+    permissions: {}
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Bump the declared band-sdk floor in packages/band-mcp/pyproject.toml
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
+        run: |
+          set -euo pipefail
+          file="packages/band-mcp/pyproject.toml"
+          sed -i -E "s/band-sdk>=[0-9]+\.[0-9]+\.[0-9]+/band-sdk>=${VERSION}/" "$file"
+          # A regex miss must not read as "already bumped": if the pin format
+          # ever changes, fail loudly instead of silently never bumping again.
+          if ! grep -qF "band-sdk>=${VERSION}" "$file"; then
+            echo "::error::no band-sdk>=X.Y.Z pin found in ${file} -- its pin format changed and this bump job needs updating"
+            exit 1
+          fi
+          if git diff --quiet -- "$file"; then
+            echo "band-mcp's band-sdk floor already matches ${VERSION}; nothing to do."
+            exit 0
+          fi
+          branch="chore/bump-band-mcp-sdk-floor-${VERSION}"
+          git config user.name "band-release-bot"
+          git config user.email "release-bot@band.ai"
+          git switch -c "$branch"
+          git commit -am "chore: bump band-mcp's band-sdk floor to ${VERSION}"
+          # Plain --force: the branch is bot-owned with deterministic per-run
+          # content, and a re-run must simply overwrite the previous attempt.
+          git push -u origin "$branch" --force
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --base main \
+              --title "chore: bump band-mcp's band-sdk floor to ${VERSION}" \
+              --body "Automated floor bump following the band-sdk-v${VERSION} release. Merging is a human step (CI + review gate the merge)."
+          else
+            echo "PR for ${branch} already open; the push updated it."
+          fi
+
   # After a successful kit publish, open an automated PR against band-ai/add-band
   # bumping the catalog bootstrap's pinned release tag. Uses the existing GitHub
   # App (GITHUB_TOKEN can't open cross-repo PRs, and Actions-token-authored PRs
@@ -193,7 +254,7 @@ jobs:
           fi
 
   summary:
-    needs: [release, publish-kit, bump-add-band]
+    needs: [release, publish-kit, bump-add-band, bump-mcp-sdk-floor]
     if: ${{ always() && needs.release.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -209,6 +270,7 @@ jobs:
             echo "|---|---|"
             echo "| GHCR + Docker Hub kit image/artifact | ${{ needs.publish-kit.result }} |"
             echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |"
+            echo "| band-mcp SDK-floor bump PR | ${{ needs.bump-mcp-sdk-floor.result }} |"
             echo ""
             echo "PyPI publish runs in the release-triggered \`band-publish\` workflow."
           } >> "$GITHUB_STEP_SUMMARY"

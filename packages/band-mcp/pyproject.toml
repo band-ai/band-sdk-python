@@ -30,10 +30,10 @@ dependencies = [
     # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
     # for band-client-rest Bugs" for why this stays exact.
     "band-client-rest==0.0.27",
-    # Real published floor: the version currently on PyPI. Bumped to the
-    # exact band-sdk version that first ships src/band/integrations/mcp/engine.py
-    # once that version is known (two-phase release, see CLAUDE.md's MCP
-    # engine docs / the release-please component ownership policy).
+    # Auto-bumped after every band-sdk release by release.yml's
+    # bump-mcp-sdk-floor job, so this always tracks the most recently
+    # published band-sdk version -- band-mcp is developed in lockstep in
+    # this monorepo and can depend on any already-released SDK feature.
     "band-sdk>=1.6.0",
     "uvicorn>=0.30.0",  # Required for SSE transport mode
 ]
