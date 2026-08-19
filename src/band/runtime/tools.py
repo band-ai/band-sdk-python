@@ -856,6 +856,12 @@ AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
 # (per-turn prompt text in opencode/letta/acp/claude_sdk) can't drift apart.
 CHAT_ID_FIELD_NAME = "chat_id"
 
+# The chat_id field's max length wherever an MCP front door adds or pins it
+# (engine.py's extend_with_chat_id/pin_existing_chat_id) -- kept next to the
+# field's canonical name above rather than split across files, since both
+# describe the same field.
+CHAT_ID_MAX_LENGTH = 255
+
 
 def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
     """Return ``(is_agent_room_bound, is_human_room_bound)`` for a definition.

@@ -48,6 +48,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
+    CHAT_ID_MAX_LENGTH,
     SEND_MESSAGE_TOOL_NAME,
     SendEventInput,
     Surface,
@@ -59,8 +60,6 @@ from band.runtime.tools import (
 )
 
 logger = logging.getLogger(__name__)
-
-CHAT_ID_MAX_LENGTH = 255
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 
