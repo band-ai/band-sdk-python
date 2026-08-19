@@ -162,18 +162,26 @@ jobs:
             echo "band-mcp's band-sdk floor already matches ${VERSION}; nothing to do."
             exit 0
           fi
-          branch="chore/bump-band-mcp-sdk-floor-${VERSION}"
+          branch="fix/bump-band-mcp-sdk-floor-${VERSION}"
           git config user.name "band-release-bot"
           git config user.email "release-bot@band.ai"
           git switch -c "$branch"
-          git commit -am "chore: bump band-mcp's band-sdk floor to ${VERSION}"
+          # fix:, not chore: -- release-please only bumps a component's own
+          # version off a bump-worthy commit type. This corrects a real
+          # installability defect (an unsatisfiable/pre-engine floor), so it
+          # must land as a fix to actually trigger band-mcp's next release-
+          # please PR; a chore: here would merge silently and leave
+          # packages/band-mcp/pyproject.toml's own version un-bumped, which
+          # the publish workflow's tag-must-match-version check would then
+          # reject on the next band-mcp-v* tag.
+          git commit -am "fix: bump band-mcp's band-sdk floor to ${VERSION}"
           # Plain --force: the branch is bot-owned with deterministic per-run
           # content, and a re-run must simply overwrite the previous attempt.
           git push -u origin "$branch" --force
           if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
             gh pr create \
               --base main \
-              --title "chore: bump band-mcp's band-sdk floor to ${VERSION}" \
+              --title "fix: bump band-mcp's band-sdk floor to ${VERSION}" \
               --body "Automated floor bump following the band-sdk-v${VERSION} release. Merging is a human step (CI + review gate the merge)."
           else
             echo "PR for ${branch} already open; the push updated it."
