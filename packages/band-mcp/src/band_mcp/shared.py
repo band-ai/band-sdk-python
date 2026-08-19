@@ -44,11 +44,6 @@ LogSettings(log_stream=LogStream.STDERR).for_application().configure()
 logger = logging.getLogger(__name__)
 
 AGENT_TOOLS_CACHE_MAX_SIZE = 128
-# Matches the cache size: a coarser stripe count lets two unrelated chat_ids
-# share a lock, so one room's in-flight REST call (the send_message
-# participant refresh below) can block an unrelated room's call for no
-# reason. One stripe per possible cache entry removes that false contention.
-AGENT_TOOLS_LOCK_STRIPES = AGENT_TOOLS_CACHE_MAX_SIZE
 
 
 class StandaloneResolver:
@@ -80,8 +75,12 @@ class StandaloneResolver:
         self._agent_id_resolved = False
         self._agent_id_lock = asyncio.Lock()
         self._agent_tools_cache: OrderedDict[str | None, Any] = OrderedDict()
+        # One stripe per possible cache entry -- a coarser stripe count lets
+        # two unrelated chat_ids share a lock, so one room's in-flight REST
+        # call (the send_message participant refresh below) could block an
+        # unrelated room's call for no reason.
         self._agent_tools_locks: list[asyncio.Lock] = [
-            asyncio.Lock() for _ in range(AGENT_TOOLS_LOCK_STRIPES)
+            asyncio.Lock() for _ in range(AGENT_TOOLS_CACHE_MAX_SIZE)
         ]
 
     @property
@@ -148,7 +147,11 @@ class StandaloneResolver:
             # have already resolved it while this one waited for the lock.
             if self._agent_id_resolved:
                 return self._agent_id
-            assert self._agent_rest is not None
+            if self._agent_rest is None:
+                raise RuntimeError(
+                    "_resolve_agent_id: agent tools not available "
+                    "(no agent credential configured)"
+                )
             identity = await self._agent_rest.agent_api_identity.get_agent_me()
             self._agent_id = identity.data.id
             self._agent_id_resolved = True

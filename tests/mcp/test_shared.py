@@ -20,7 +20,6 @@ from band_mcp import shared as shared_mod
 from band_mcp.config import Config
 from band_mcp.shared import (
     AGENT_TOOLS_CACHE_MAX_SIZE,
-    AGENT_TOOLS_LOCK_STRIPES,
     StandaloneResolver,
     build_standalone_resolver,
 )
@@ -202,7 +201,7 @@ def test_get_agent_tools_locks_use_fixed_stripes():
     assert a1 is a2
     assert a1 in resolver._agent_tools_locks
     assert roomless in resolver._agent_tools_locks
-    assert len(resolver._agent_tools_locks) == AGENT_TOOLS_LOCK_STRIPES
+    assert len(resolver._agent_tools_locks) == AGENT_TOOLS_CACHE_MAX_SIZE
 
 
 async def test_get_agent_tools_cache_evicts_oldest_room(fake_agent_tools):

@@ -759,6 +759,13 @@ class ListMyPeersInput(BaseModel):
 # match here, and ``integrations.mcp.backends`` names the server from it.
 BAND_MCP_SERVER_NAME = "band"
 
+# The one tool whose identity is checked by name well outside its own
+# ToolDefinition entry: room-posting detection, room-binding classification,
+# mention-hint error enrichment, and several adapters' own send-message
+# special cases (crewai, claude_sdk, agno, letta) all need this exact value.
+# Single source of truth so none of those re-type the literal independently.
+SEND_MESSAGE_TOOL_NAME = "band_send_message"
+
 # Tool names whose successful call posts a visible message into the room.
 # Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
 # fallback text relay once the turn has already replied in the room, so the
@@ -768,7 +775,7 @@ BAND_MCP_SERVER_NAME = "band"
 # is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
 # still match.
 ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {"band_send_message", "create_agent_chat_message"}
+    {SEND_MESSAGE_TOOL_NAME, "create_agent_chat_message"}
 )
 
 
@@ -832,7 +839,7 @@ def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> st
 # instance selection.
 AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_send_message",
+        SEND_MESSAGE_TOOL_NAME,
         "band_send_event",
         "band_add_participant",
         "band_remove_participant",
@@ -873,10 +880,6 @@ def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
         case _:
             return (False, False)
 
-
-# The one tool name referenced by name outside its own ToolDefinition entry
-# (engine.py's mention-handle error enrichment, band-mcp's SEND_MESSAGE_METHOD_NAME).
-SEND_MESSAGE_TOOL_NAME = "band_send_message"
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 # Single source of truth for each tool's name: typed once, as the

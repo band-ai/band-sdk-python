@@ -36,6 +36,7 @@ from band.runtime.tools import (
     BASE_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,
     CHAT_TOOL_NAMES,
+    SEND_MESSAGE_TOOL_NAME,
     ToolDefinition,
     append_mention_handles_hint,
     iter_tool_definitions,
@@ -213,7 +214,7 @@ def _build_builtin_sdk_tool(
             )
         except (ValueError, BandToolError) as error:
             if (
-                definition.name == "band_send_message"
+                definition.name == SEND_MESSAGE_TOOL_NAME
                 and get_participant_handles is not None
             ):
                 available = get_participant_handles(room_id)
