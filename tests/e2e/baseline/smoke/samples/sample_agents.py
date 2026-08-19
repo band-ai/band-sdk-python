@@ -319,8 +319,8 @@ def retrieve_memory_instruction(marker: str) -> str:
     return (
         f"Call {MemoryTool.LIST.value} with content_query={marker} to find the "
         f"memory. Then call {MemoryTool.GET.value} with memory_id set to the id "
-        "of a memory the list returned. Do not call any other tool. Then send "
-        "one chat reply stating the exact token you found in the memory."
+        "of a memory the list returned. Then use band_send_message to state the "
+        "exact token you found. Do not call any other tools."
     )
 
 

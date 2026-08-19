@@ -73,7 +73,7 @@ def test_baseline_certification_checks_out_before_running_repo_scripts() -> None
     """The independent status job must have the repository scripts it invokes."""
     job = _workflow_jobs()["mark-baseline"]
 
-    assert job["permissions"]["contents"] == "read"
+    assert job["permissions"]["contents"] == "write"
     assert _step_index(job, "Checkout code") < _step_index(
         job, "Mark the commit baseline-green or baseline-red"
     )
@@ -86,7 +86,7 @@ def test_scoped_manual_runs_report_without_certifying_the_baseline() -> None:
     assert "workflow_dispatch" in job["if"]
     assert "github.triggering_actor" in job["env"]["RECIPIENTS"]
     assert "does not affect the release gate" in job["env"]["SCOPE_NOTICE"]
-    assert job["permissions"]["contents"] == "read"
+    assert job["permissions"]["contents"] == "write"
 
 
 # The jobs that report a run's outcome to the outside world: a commit status, and a

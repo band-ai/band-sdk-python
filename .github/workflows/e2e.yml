@@ -98,13 +98,16 @@ on:
 
 # Default for every job: read-only. The two reporting jobs (mark-baseline,
 # report-scoped-run) narrowly widen this at job level — `statuses: write` to post
-# `baseline-green` — using the ambient `secrets.GITHUB_TOKEN`. Posting a commit
-# comment (this repo doesn't use GitHub Issues; a commit comment still delivers a
-# mention notification/email to everyone named in RECIPIENTS) needs no extra grant:
-# GitHub's own permissions reference lists `POST .../commits/{sha}/comments` under
-# "Contents: read", the same level checkout already needs. E2E_GITHUB_TOKEN is
-# unrelated to any of this: it is the Copilot-entitled PAT the `backends` lane
-# needs as a model provider credential.
+# `baseline-green`, `contents: write` to post a commit comment (this repo doesn't
+# use GitHub Issues; a commit comment still delivers a mention notification/email
+# to everyone named in RECIPIENTS) — using the ambient `secrets.GITHUB_TOKEN`.
+# `contents: write`, not `read`, despite what GitHub's own permissions reference
+# claims: `POST .../commits/{sha}/comments` 403s ("Resource not accessible by
+# integration") under `contents: read` — a known, still-live docs bug
+# (github/docs#12723, closed in 2021 but the page still says `read`) — and only
+# `write` actually succeeds; verified against that issue's own reproduction, not
+# just the (wrong) docs. E2E_GITHUB_TOKEN is unrelated to any of this: it is the
+# Copilot-entitled PAT the `backends` lane needs as a model provider credential.
 permissions:
   contents: read
 
@@ -460,7 +463,7 @@ jobs:
         (github.event.inputs.os || 'all') == 'all'))
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       statuses: write
     defaults:
       run:
@@ -527,7 +530,7 @@ jobs:
        (github.event.inputs.os || 'all') != 'all')
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     defaults:
       run:
         shell: bash
