@@ -98,11 +98,13 @@ on:
 
 # Default for every job: read-only. The two reporting jobs (mark-baseline,
 # report-scoped-run) narrowly widen this at job level — `statuses: write` to post
-# `baseline-green`, `contents: write` to comment on the tested commit (this repo
-# doesn't use GitHub Issues; a commit comment still delivers a mention
-# notification/email to everyone named in RECIPIENTS) — using the ambient
-# `secrets.GITHUB_TOKEN`. E2E_GITHUB_TOKEN is unrelated to that: it is the
-# Copilot-entitled PAT the `backends` lane needs as a model provider credential.
+# `baseline-green` — using the ambient `secrets.GITHUB_TOKEN`. Posting a commit
+# comment (this repo doesn't use GitHub Issues; a commit comment still delivers a
+# mention notification/email to everyone named in RECIPIENTS) needs no extra grant:
+# GitHub's own permissions reference lists `POST .../commits/{sha}/comments` under
+# "Contents: read", the same level checkout already needs. E2E_GITHUB_TOKEN is
+# unrelated to any of this: it is the Copilot-entitled PAT the `backends` lane
+# needs as a model provider credential.
 permissions:
   contents: read
 
@@ -458,7 +460,7 @@ jobs:
         (github.event.inputs.os || 'all') == 'all'))
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       statuses: write
     defaults:
       run:
@@ -525,7 +527,7 @@ jobs:
        (github.event.inputs.os || 'all') != 'all')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     defaults:
       run:
         shell: bash
