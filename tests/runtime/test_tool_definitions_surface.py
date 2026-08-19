@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from band.integrations.mcp.local_server import (
+from band.integrations.mcp.engine import (
     build_band_mcp_tool_registrations,
     build_resolved_band_mcp_tool_registrations,
 )

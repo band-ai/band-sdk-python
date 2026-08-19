@@ -33,11 +33,11 @@ from band.integrations.acp.client_runtime import (
 )
 from band.integrations.acp.client_types import BandACPClient
 from band.integrations.acp.types import CollectedChunk
-from band.integrations.mcp.engine import MCPToolRegistration
-from band.integrations.mcp.local_server import (
-    LocalMCPServer,
+from band.integrations.mcp.engine import (
+    MCPToolRegistration,
     build_band_mcp_tool_registrations,
 )
+from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
 from tests.toolkit.timeouts import backstop_timeout
 

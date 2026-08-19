@@ -1,10 +1,11 @@
-"""The embedded MCP front door.
+"""The embedded MCP front door: run one ``LocalMCPServer`` per adapter.
 
 Ephemeral-port scanning starts from a random offset (dodges a just-freed-
-port wedge), and two independent workarounds neutralize an ``sse_starlette``
-global-shutdown-latch bug (see ``EmbeddedUvicornServer`` and the
-``AppStatus.disable_automatic_graceful_drain()`` call below). Mounts
-``engine.py``'s FastMCP app rather than hand-rolling a lowlevel ``Server``.
+port wedge). Mounts ``engine.py``'s FastMCP app rather than hand-rolling a
+lowlevel ``Server``; building the tool-registration list itself is
+``engine.py``'s job too (``build_band_mcp_tool_registrations`` /
+``build_resolved_band_mcp_tool_registrations``) -- this module only runs
+the server once it has that list.
 
 Every lifecycle transition (``start()``/``stop()``) routes through one lock,
 with cleanup in ``finally`` -- so a serve-task crash always closes the
@@ -17,7 +18,7 @@ import asyncio
 import logging
 import random
 import socket
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 
 import uvicorn
@@ -28,19 +29,12 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
-from band.core.protocols import AgentToolsProtocol
 from band.integrations.mcp.engine import (
-    EmbeddedResolver,
     EngineSpec,
     MCPToolRegistration,
-    build_custom_tool_registration,
     build_engine,
-    build_tool_registration,
-    extend_with_chat_id,
     validate_unique_tool_names,
 )
-from band.runtime.custom_tools import CustomToolDef
-from band.runtime.tools import Surface, ToolDefinition, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -59,21 +53,20 @@ SERVER_START_TIMEOUT_S = 5.0
 # hanging the adapter's cleanup indefinitely.
 SERVER_STOP_TIMEOUT_S = 5
 
-RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
-
-# sse_starlette's EventSourceResponse watches a process-global AppStatus for
-# a shutdown signal, closing every open SSE stream right after its headers
-# once latched -- from either of two sources: (1) our own signal handler (see
-# EmbeddedUvicornServer below), or (2) *any other* uvicorn.Server anywhere in
-# this process whose handle_exit() ever fires, since AppStatus.should_exit is
-# a bare class attribute with no notion of "which server." (2) is real: a
-# real Windows CI hang traced to exactly this -- a real SSE connection closing
-# right after its headers with no code of ours involved. LocalMCPServer.stop()
-# already forces its own socket closed and cancels its serve task directly, so
-# it never needed sse_starlette's automatic drain-on-shutdown to begin with;
-# disabling it removes the dependency on that global entirely. Process-wide
-# and one-time by nature (AppStatus has no per-instance scope), so this is a
-# module-level call, not something threaded through LocalMCPServer's API.
+# sse_starlette's EventSourceResponse watches a process-global AppStatus for a
+# shutdown signal, closing every open SSE stream right after its headers once
+# latched -- from either of two sources: our own signal handler (neutralized
+# by EmbeddedUvicornServer.capture_signals below), or *any other*
+# uvicorn.Server anywhere in this process whose handle_exit() ever fires,
+# since AppStatus.should_exit is a bare class attribute with no notion of
+# "which server." The second case is real: a Windows CI hang traced to
+# exactly this, a live SSE connection closing right after its headers with no
+# code of ours involved. LocalMCPServer.stop() already forces its own socket
+# closed and cancels its serve task directly, so it never needed
+# sse_starlette's automatic drain-on-shutdown; disabling it here removes the
+# dependency on that global entirely. Process-wide and one-time by nature
+# (AppStatus has no per-instance scope), hence a module-level call rather than
+# something threaded through LocalMCPServer's API.
 #
 # Cost of that global scope: any *other* sse_starlette consumer in the same
 # process -- e.g. the A2A gateway's own message:stream responses
@@ -88,18 +81,14 @@ AppStatus.disable_automatic_graceful_drain()
 class EmbeddedUvicornServer(uvicorn.Server):
     """A uvicorn server that leaves process signal handling to its host.
 
-    uvicorn's ``serve()`` captures SIGINT/SIGTERM for itself. Embedded in a
-    host process that may run several servers over its lifetime, that hijacks
-    the host's signal handling, and registers the server as process state that
-    other libraries introspect: sse_starlette discovers "the" uvicorn server
-    through the installed signal handler and latches a process-global shutdown
-    flag when it stops mid-stream -- after which every later SSE response in
-    the process (any subsequent server's) closes right after its headers (the
-    other half of this same bug class -- see the module-level
-    ``AppStatus.disable_automatic_graceful_drain()`` call above -- is a
-    *different* server's signal handler doing the same thing). Shutdown here
-    is driven programmatically via ``should_exit`` (see ``LocalMCPServer.stop``),
-    so signal capture is dropped entirely.
+    uvicorn's ``serve()`` captures SIGINT/SIGTERM for itself -- fine for a
+    standalone process, but this server is embedded in a host that may run
+    several servers over its lifetime and already owns its own signal
+    handling. It's also the other half of the sse_starlette bug documented at
+    the ``AppStatus.disable_automatic_graceful_drain()`` call above: capturing
+    signals here would let sse_starlette latch its process-global shutdown
+    flag through *this* server's handler too. Shutdown is driven
+    programmatically instead, via ``should_exit`` (see ``LocalMCPServer.stop``).
     """
 
     @contextmanager
@@ -107,98 +96,18 @@ class EmbeddedUvicornServer(uvicorn.Server):
         yield
 
 
-def _filter_to_agent_surface(
-    definitions: Sequence[ToolDefinition],
-) -> list[ToolDefinition]:
-    """Drop non-agent definitions and log a warning for each discarded entry.
-
-    ``build_*_tool_registrations`` wire their execution path through
-    ``AgentTools``; a ``surface="human"`` definition in the list would
-    ``AttributeError`` at call time because ``AgentTools`` has no
-    ``HumanTools`` methods. Rather than propagate the error, quietly filter
-    and warn so a regression in a caller is observable but not fatal.
-    """
-    filtered: list[ToolDefinition] = []
-    for definition in definitions:
-        if definition.surface != Surface.AGENT:
-            logger.warning(
-                "Dropping non-agent tool definition %r (surface=%r) from MCP "
-                "registrations; LocalMCPServer is agent-only.",
-                definition.name,
-                definition.surface,
-            )
-            continue
-        filtered.append(definition)
-    return filtered
+def _new_reusable_socket() -> socket.socket:
+    """A TCP socket with ``SO_REUSEADDR`` set, not yet bound."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    return sock
 
 
-def _resolve_agent_definitions(
-    *,
-    include_memory: bool,
-    tool_definitions: Sequence[ToolDefinition] | None,
-) -> list[ToolDefinition]:
-    if tool_definitions is not None:
-        return _filter_to_agent_surface(list(tool_definitions))
-    return list(
-        iter_tool_definitions(surface=Surface.AGENT, include_memory=include_memory)
-    )
-
-
-def build_band_mcp_tool_registrations(
-    agent_tools: AgentToolsProtocol,
-    *,
-    include_memory: bool = False,
-    additional_tools: list[CustomToolDef] | None = None,
-    tool_definitions: Sequence[ToolDefinition] | None = None,
-) -> list[MCPToolRegistration]:
-    """Build MCP tool registrations bound to a single, already-live ``AgentTools``.
-
-    For a caller with exactly one room per server instance (e.g. an ACP
-    session) -- no room resolution needed, so every ``chat_id`` resolves to
-    the same ``agent_tools`` regardless of its value.
-    """
-    return build_resolved_band_mcp_tool_registrations(
-        get_tools=lambda _chat_id: agent_tools,
-        include_memory=include_memory,
-        additional_tools=additional_tools,
-        tool_definitions=tool_definitions,
-    )
-
-
-def build_resolved_band_mcp_tool_registrations(
-    *,
-    get_tools: RoomToolResolver,
-    include_memory: bool = False,
-    additional_tools: list[CustomToolDef] | None = None,
-    tool_definitions: Sequence[ToolDefinition] | None = None,
-) -> list[MCPToolRegistration]:
-    """Build MCP registrations that resolve room-scoped tools at call time.
-
-    Uniform room-wrap: every agent tool gets a ``chat_id`` field here,
-    regardless of the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES``
-    classification -- ``chat_id`` is this door's routing key for
-    ``AgentTools`` instance selection (e.g. opencode's ``_get_room_tools``),
-    so even a CLI-room-less tool like ``band_create_chatroom`` needs one here.
-    """
-    definitions = _resolve_agent_definitions(
-        include_memory=include_memory, tool_definitions=tool_definitions
-    )
-    resolver = EmbeddedResolver(get_tools=get_tools)
-    registrations = [
-        build_tool_registration(
-            definition,
-            extend_with_chat_id(definition.input_model, None),
-            resolver=resolver,
-            strip_chat_id=True,
-        )
-        for definition in definitions
-    ]
-    registrations.extend(
-        build_custom_tool_registration(tool_def, room_bound=True)
-        for tool_def in additional_tools or []
-    )
-    validate_unique_tool_names(registrations)
-    return registrations
+def _listen(sock: socket.socket) -> socket.socket:
+    """Put an already-bound socket into non-blocking listen mode."""
+    sock.listen(2048)
+    sock.setblocking(False)
+    return sock
 
 
 class LocalMCPServer:
@@ -398,13 +307,10 @@ class LocalMCPServer:
     def _reserve_socket(self) -> tuple[socket.socket, int]:
         # Port 0 -> ask the OS for any free port (race-free, ideal for tests)
         if self._port_min == 0:
-            reserved_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            reserved_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            reserved_socket = _new_reusable_socket()
             reserved_socket.bind((self._host, 0))
             port = reserved_socket.getsockname()[1]
-            reserved_socket.listen(2048)
-            reserved_socket.setblocking(False)
-            return reserved_socket, port
+            return _listen(reserved_socket), port
 
         # Scan the range from a random starting offset (wrapping around), not
         # first-fit from port_min: first-fit hands a new server the port a
@@ -416,16 +322,14 @@ class LocalMCPServer:
         start = random.randrange(span)
         for offset in range(span):
             port = self._port_min + (start + offset) % span
-            reserved_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            reserved_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            reserved_socket = _new_reusable_socket()
             try:
                 reserved_socket.bind((self._host, port))
-                reserved_socket.listen(2048)
-                reserved_socket.setblocking(False)
-                return reserved_socket, port
             except OSError as exc:
                 last_error = exc
                 reserved_socket.close()
+                continue
+            return _listen(reserved_socket), port
 
         raise RuntimeError(
             "Could not find a free localhost MCP port in range "

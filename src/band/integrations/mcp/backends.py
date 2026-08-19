@@ -7,12 +7,12 @@ from typing import Any, Literal
 
 from typing_extensions import TypeAliasType
 
+from band.integrations.mcp.engine import build_resolved_band_mcp_tool_registrations
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     LOCAL_MCP_PORT_MAX,
     LOCAL_MCP_PORT_MIN,
     LocalMCPServer,
-    build_resolved_band_mcp_tool_registrations,
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition

@@ -16,13 +16,16 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 from sse_starlette.sse import AppStatus
 
-from band.integrations.mcp.engine import EngineSpec, MCPToolRegistration
+from band.integrations.mcp.engine import (
+    EngineSpec,
+    MCPToolRegistration,
+    build_band_mcp_tool_registrations,
+    build_resolved_band_mcp_tool_registrations,
+)
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     SERVER_STOP_TIMEOUT_S,
     LocalMCPServer,
-    build_band_mcp_tool_registrations,
-    build_resolved_band_mcp_tool_registrations,
 )
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools

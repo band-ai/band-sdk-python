@@ -39,6 +39,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
 
 from band.core.exceptions import BandToolError
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import WideEventMessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -49,8 +50,10 @@ from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     SEND_MESSAGE_TOOL_NAME,
     SendEventInput,
+    Surface,
     ToolDefinition,
     append_available_mention_handles,
+    iter_tool_definitions,
     serialize_tool_result,
     validate_tool_arguments,
 )
@@ -491,6 +494,103 @@ def build_custom_tool_registration(
         input_model=model,
         execute=execute,
     )
+
+
+RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
+
+
+def _filter_to_agent_surface(
+    definitions: Sequence[ToolDefinition],
+) -> list[ToolDefinition]:
+    """Drop non-agent definitions and log a warning for each discarded entry.
+
+    ``build_*_tool_registrations`` wire their execution path through
+    ``AgentTools``; a ``surface="human"`` definition in the list would
+    ``AttributeError`` at call time because ``AgentTools`` has no
+    ``HumanTools`` methods. Rather than propagate the error, quietly filter
+    and warn so a regression in a caller is observable but not fatal.
+    """
+    filtered: list[ToolDefinition] = []
+    for definition in definitions:
+        if definition.surface != Surface.AGENT:
+            logger.warning(
+                "Dropping non-agent tool definition %r (surface=%r) from MCP "
+                "registrations; the embedded door is agent-only.",
+                definition.name,
+                definition.surface,
+            )
+            continue
+        filtered.append(definition)
+    return filtered
+
+
+def _resolve_agent_definitions(
+    *,
+    include_memory: bool,
+    tool_definitions: Sequence[ToolDefinition] | None,
+) -> list[ToolDefinition]:
+    if tool_definitions is not None:
+        return _filter_to_agent_surface(list(tool_definitions))
+    return list(
+        iter_tool_definitions(surface=Surface.AGENT, include_memory=include_memory)
+    )
+
+
+def build_band_mcp_tool_registrations(
+    agent_tools: AgentToolsProtocol,
+    *,
+    include_memory: bool = False,
+    additional_tools: list[CustomToolDef] | None = None,
+    tool_definitions: Sequence[ToolDefinition] | None = None,
+) -> list[MCPToolRegistration]:
+    """Build MCP tool registrations bound to a single, already-live ``AgentTools``.
+
+    For a caller with exactly one room per server instance (e.g. an ACP
+    session) -- no room resolution needed, so every ``chat_id`` resolves to
+    the same ``agent_tools`` regardless of its value.
+    """
+    return build_resolved_band_mcp_tool_registrations(
+        get_tools=lambda _chat_id: agent_tools,
+        include_memory=include_memory,
+        additional_tools=additional_tools,
+        tool_definitions=tool_definitions,
+    )
+
+
+def build_resolved_band_mcp_tool_registrations(
+    *,
+    get_tools: RoomToolResolver,
+    include_memory: bool = False,
+    additional_tools: list[CustomToolDef] | None = None,
+    tool_definitions: Sequence[ToolDefinition] | None = None,
+) -> list[MCPToolRegistration]:
+    """Build MCP registrations that resolve room-scoped tools at call time.
+
+    Uniform room-wrap: every agent tool gets a ``chat_id`` field here,
+    regardless of the CLI door's ``AGENT_ROOM_BOUND_TOOL_NAMES``
+    classification -- ``chat_id`` is this door's routing key for
+    ``AgentTools`` instance selection (e.g. opencode's ``_get_room_tools``),
+    so even a CLI-room-less tool like ``band_create_chatroom`` needs one here.
+    """
+    definitions = _resolve_agent_definitions(
+        include_memory=include_memory, tool_definitions=tool_definitions
+    )
+    resolver = EmbeddedResolver(get_tools=get_tools)
+    registrations = [
+        build_tool_registration(
+            definition,
+            extend_with_chat_id(definition.input_model, None),
+            resolver=resolver,
+            strip_chat_id=True,
+        )
+        for definition in definitions
+    ]
+    registrations.extend(
+        build_custom_tool_registration(tool_def, room_bound=True)
+        for tool_def in additional_tools or []
+    )
+    validate_unique_tool_names(registrations)
+    return registrations
 
 
 def _serialize(result: Any) -> str:

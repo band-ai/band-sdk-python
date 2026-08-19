@@ -21,11 +21,14 @@ from band.integrations.mcp.local_server import (
     SERVER_STOP_TIMEOUT_S,
     EmbeddedUvicornServer,
     LocalMCPServer,
+)
+from band.integrations.mcp.engine import (
+    MCPToolExecutor,
+    MCPToolRegistration,
     RoomToolResolver,
     build_band_mcp_tool_registrations,
     build_resolved_band_mcp_tool_registrations,
 )
-from band.integrations.mcp.engine import MCPToolExecutor, MCPToolRegistration
 
 __all__ = [
     "LOCAL_MCP_HEALTH_PATH",
