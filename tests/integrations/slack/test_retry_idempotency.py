@@ -28,31 +28,31 @@ from starlette.testclient import TestClient
 
 from band.integrations.slack.server import (
     DEFAULT_SEEN_EVENTS_CACHE_SIZE,
-    _SeenEvents,
+    SeenEvents,
     build_router,
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 
 
-# ── Unit tests on _SeenEvents ────────────────────────────────────────────────
+# ── Unit tests on SeenEvents ────────────────────────────────────────────────
 
 
 def test_seen_events_records_first_occurrence_as_new():
-    cache = _SeenEvents()
+    cache = SeenEvents()
     assert cache.is_dupe("Ev123") is False
     assert len(cache) == 1
 
 
 def test_seen_events_detects_repeat_as_dupe():
-    cache = _SeenEvents()
+    cache = SeenEvents()
     cache.is_dupe("Ev123")
     assert cache.is_dupe("Ev123") is True
     assert cache.is_dupe("Ev123") is True
 
 
 def test_seen_events_distinguishes_ids():
-    cache = _SeenEvents()
+    cache = SeenEvents()
     cache.is_dupe("A")
     cache.is_dupe("B")
     assert cache.is_dupe("A") is True
@@ -61,7 +61,7 @@ def test_seen_events_distinguishes_ids():
 
 
 def test_seen_events_evicts_lru_when_over_capacity():
-    cache = _SeenEvents(max_size=3)
+    cache = SeenEvents(max_size=3)
     cache.is_dupe("A")
     cache.is_dupe("B")
     cache.is_dupe("C")
@@ -76,7 +76,7 @@ def test_seen_events_evicts_lru_when_over_capacity():
 
 
 def test_seen_events_touching_resets_lru_position():
-    cache = _SeenEvents(max_size=3)
+    cache = SeenEvents(max_size=3)
     cache.is_dupe("A")
     cache.is_dupe("B")
     cache.is_dupe("C")

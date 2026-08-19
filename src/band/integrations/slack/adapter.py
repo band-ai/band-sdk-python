@@ -115,7 +115,7 @@ def _merge_context_note(existing: str | None, note: str) -> str:
     return f"{note}\n\n{existing}"
 
 
-class _SlackTeeingTools(AgentTools):
+class SlackTeeingTools(AgentTools):
     """``AgentTools`` subclass that adds a Slack-only ``slack_send_message`` tool.
 
     The brain sees two outbound options:
@@ -639,7 +639,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             app = self._apps_by_slug.get(binding.app_slug)
             if app is not None:
                 slack_client = self._get_client(app)
-                tools = _SlackTeeingTools(
+                tools = SlackTeeingTools(
                     wrap=tools,
                     slack=slack_client,
                     binding=binding,
@@ -779,7 +779,7 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         slack_client = self._get_client(app)
         real_tools = AgentTools(room_id=room_id, rest=self._rest, participants=[])
-        tools = _SlackTeeingTools(
+        tools = SlackTeeingTools(
             wrap=real_tools,
             slack=slack_client,
             binding=binding,

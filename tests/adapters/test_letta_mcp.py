@@ -18,7 +18,7 @@ from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
     LettaMCPConfig,
-    _RoomContext,
+    RoomContext,
 )
 from band.converters.letta import LettaSessionState
 from band.testing import FakeAgentTools
@@ -268,7 +268,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t1"]
         fake_backend = make_fake_mcp_backend()
         adapter._mcp.backend = fake_backend
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -332,7 +332,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
         adapter._mcp.backend = make_fake_mcp_backend()
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", stale_tools=True)
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", stale_tools=True)
 
         # The agent still carries only the old registration's (dead) tool.
         mock_client.agents.tools.list.return_value = make_mock_tool_page(
@@ -369,7 +369,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
-        room_ctx = _RoomContext(agent_id="agent-1", stale_tools=True)
+        room_ctx = RoomContext(agent_id="agent-1", stale_tools=True)
         adapter._rooms["room-1"] = room_ctx
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
@@ -388,7 +388,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._system_prompt = "Test"
         adapter._mcp.server_id = "mcp-new"
         adapter._mcp.tool_ids = ["t-new"]
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", stale_tools=True)
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", stale_tools=True)
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
         tools = FakeAgentTools()
@@ -421,7 +421,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "shared-mcp"
         adapter._mcp.tool_ids = ["t1"]
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
@@ -441,7 +441,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-fixed"
         adapter._mcp.tool_ids = ["t1"]
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
@@ -504,7 +504,7 @@ class TestSelfHostedMCPLifecycle:
         """The MCP resolver reads the room context's current tools."""
         adapter = LettaAdapter()
         tools = FakeAgentTools()
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", tools=tools)
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1", tools=tools)
         assert adapter._get_room_tools("room-1") is tools
         assert adapter._get_room_tools("other") is None
 
@@ -524,7 +524,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t1"]
         fake_backend = make_fake_mcp_backend()
         adapter._mcp.backend = fake_backend
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
@@ -582,7 +582,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.server_id = "mcp-dead"
         adapter._mcp.tool_ids = ["t-dead"]
         # A sibling room, live before the recovery, wired to the old ids.
-        adapter._rooms["other"] = _RoomContext(agent_id="agent-other")
+        adapter._rooms["other"] = RoomContext(agent_id="agent-other")
 
         stale = _stale_tool_error("Tool with id=t-dead not found in organization")
         mock_client.agents.tools.attach.side_effect = [stale, None]

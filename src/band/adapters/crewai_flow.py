@@ -99,7 +99,7 @@ class CrewAIFlowStateSource(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class _RoomCacheEntry:
+class RoomCacheEntry:
     __slots__ = ("events", "latest_inserted_at", "seen_event_ids")
 
     def __init__(self) -> None:
@@ -139,7 +139,7 @@ class RestCrewAIFlowStateSource:
         self._page_size = page_size
         self._cache_size = cache_size
         self._retry_attempts = max(0, retry_attempts)
-        self._cache: OrderedDict[tuple[str, str], _RoomCacheEntry] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str], RoomCacheEntry] = OrderedDict()
 
     async def load_task_events(
         self,
@@ -152,7 +152,7 @@ class RestCrewAIFlowStateSource:
         cache_key = (room_id, metadata_namespace)
         entry = self._cache.get(cache_key)
         if entry is None:
-            entry = _RoomCacheEntry()
+            entry = RoomCacheEntry()
             self._cache[cache_key] = entry
             self._evict_if_needed()
             return await self._full_fetch(
@@ -226,7 +226,7 @@ class RestCrewAIFlowStateSource:
         room_id: str,
         metadata_namespace: str,
         tools: AgentToolsProtocol,
-        entry: _RoomCacheEntry,
+        entry: RoomCacheEntry,
     ) -> list[dict[str, Any]]:
         page = 1
         collected: list[dict[str, Any]] = []
@@ -262,7 +262,7 @@ class RestCrewAIFlowStateSource:
         room_id: str,
         metadata_namespace: str,
         tools: AgentToolsProtocol,
-        entry: _RoomCacheEntry,
+        entry: RoomCacheEntry,
     ) -> list[dict[str, Any]]:
         new_events: list[dict[str, Any]] = []
         page = 1
@@ -513,7 +513,7 @@ def get_current_flow_runtime() -> "CrewAIFlowRuntimeTools | None":
     return _current_flow_runtime.get()
 
 
-class _RoomLockEntry:
+class RoomLockEntry:
     __slots__ = ("active", "cleanup_requested", "lock")
 
     def __init__(self) -> None:
@@ -1481,7 +1481,7 @@ _VALID_TEXT_ONLY = {"error_event", "fallback_send"}
 _VALID_TAGGED_PEER = {"require_delegation_before_final", "off"}
 
 
-class _AmbiguousReply:
+class AmbiguousReply:
     def __init__(
         self,
         *,
@@ -1659,7 +1659,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         self._tool_loop: asyncio.AbstractEventLoop | None = None
 
         # Per-room async locks and transient caches. Cleared on on_cleanup.
-        self._room_locks: dict[str, _RoomLockEntry] = {}
+        self._room_locks: dict[str, RoomLockEntry] = {}
         self._room_locks_guard = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -1697,11 +1697,11 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         room_id: str,
         *,
         cleanup_requested: bool = False,
-    ) -> _RoomLockEntry:
+    ) -> RoomLockEntry:
         async with self._room_locks_guard:
             entry = self._room_locks.get(room_id)
             if entry is None:
-                entry = _RoomLockEntry()
+                entry = RoomLockEntry()
                 self._room_locks[room_id] = entry
             entry.active += 1
             entry.cleanup_requested = entry.cleanup_requested or cleanup_requested
@@ -1710,7 +1710,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     async def _release_room_lock_entry(
         self,
         room_id: str,
-        entry: _RoomLockEntry,
+        entry: RoomLockEntry,
     ) -> None:
         async with self._room_locks_guard:
             if entry.active > 0:
@@ -1850,7 +1850,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             state=state,
             participants=participants,
         )
-        if isinstance(matched, _AmbiguousReply):
+        if isinstance(matched, AmbiguousReply):
             ambiguous_executor = SideEffectExecutor(
                 tools=tools,
                 room_id=room_id,
@@ -2274,7 +2274,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         msg: PlatformMessage,
         state: CrewAIFlowSessionState,
         participants: list[CrewAIFlowParticipantSnapshot],
-    ) -> tuple[str, str, "CrewAIFlowMetadata"] | _AmbiguousReply | None:
+    ) -> tuple[str, str, "CrewAIFlowMetadata"] | AmbiguousReply | None:
         """Try to match an inbound message to a pending delegation.
 
         Returns ``(run_id, delegation_id, run_metadata)`` on a unique match.
@@ -2312,7 +2312,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                         CrewAIFlowDelegationStatus.PENDING,
                         CrewAIFlowDelegationStatus.RESERVED,
                     ):
-                        return _AmbiguousReply(
+                        return AmbiguousReply(
                             run_id=run_id,
                             parent_message_id=run.parent_message_id,
                             reason="ambiguous_sender_identity",
@@ -2352,7 +2352,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             if len(token_hits) == 1:
                 return token_hits[0]
             run_id, _delegation_id, run = candidates[0]
-            return _AmbiguousReply(
+            return AmbiguousReply(
                 run_id=run_id,
                 parent_message_id=run.parent_message_id,
                 reason="correlation_token_mismatch",
@@ -2368,7 +2368,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             len(candidates),
         )
         run_id, _delegation_id, run = candidates[0]
-        return _AmbiguousReply(
+        return AmbiguousReply(
             run_id=run_id,
             parent_message_id=run.parent_message_id,
             reason="multiple_pending_delegations",

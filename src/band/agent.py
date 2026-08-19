@@ -48,12 +48,12 @@ def running_agents() -> list[Agent]:
     return list(_running_agents)
 
 
-class _TimeoutNotSet:
+class TimeoutNotSet:
     """Sentinel class to distinguish 'not set' from 'explicitly set to None'."""
 
-    _instance: "_TimeoutNotSet | None" = None
+    _instance: "TimeoutNotSet | None" = None
 
-    def __new__(cls) -> "_TimeoutNotSet":
+    def __new__(cls) -> "TimeoutNotSet":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -63,10 +63,10 @@ class _TimeoutNotSet:
 
 
 # Singleton sentinel instance
-_TIMEOUT_NOT_SET: _TimeoutNotSet = _TimeoutNotSet()
+_TIMEOUT_NOT_SET: TimeoutNotSet = TimeoutNotSet()
 
 # Type alias for shutdown timeout (float, None, or sentinel)
-_ShutdownTimeout = float | None | _TimeoutNotSet
+_ShutdownTimeout = float | None | TimeoutNotSet
 
 
 class Agent:

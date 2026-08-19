@@ -261,7 +261,15 @@ Environment Variables:
   PORT                  Port to bind for SSE mode (default: 8000)
 """
 
-app = typer.Typer(add_completion=False)
+# rich_markup_mode=None: without it, Typer's Rich-based help renderer emits
+# ANSI color codes -- inserted *inside* option names (e.g. "--user-key"
+# becomes several separately-colored spans) whenever Rich's terminal
+# detection decides the output stream is color-capable. That detection is
+# environment-dependent (observed: plain on macOS/local, colored on Ubuntu
+# CI for the identical piped-subprocess call), so a --help consumer doing a
+# plain substring/grep match -- a real MCP client, an operator's shell
+# script, or this package's own test_cli_contract.py -- can't rely on it.
+app = typer.Typer(add_completion=False, rich_markup_mode=None)
 
 
 def _version_callback(show_version: bool) -> None:

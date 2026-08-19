@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _SessionCommand:
+class SessionCommand:
     """Command to be processed by the session manager task."""
 
     action: str  # "create", "cleanup", "cleanup_all", "invalidate", "stop"
@@ -90,7 +90,7 @@ class ClaudeSessionManager:
         self.base_options = base_options
         self._can_use_tool_factory = can_use_tool_factory
         self._sessions: dict[str, ClaudeSDKClient] = {}
-        self._command_queue: asyncio.Queue[_SessionCommand] = asyncio.Queue()
+        self._command_queue: asyncio.Queue[SessionCommand] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._started = False
         logger.info("ClaudeSessionManager initialized")
@@ -112,7 +112,7 @@ class ClaudeSessionManager:
         # Send stop command
         stop_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(action="stop", result_future=stop_future)
+            SessionCommand(action="stop", result_future=stop_future)
         )
 
         # Wait for cleanup to complete
@@ -134,7 +134,7 @@ class ClaudeSessionManager:
         logger.debug("Session loop started")
 
         while True:
-            cmd: _SessionCommand | None = None
+            cmd: SessionCommand | None = None
             try:
                 cmd = await self._command_queue.get()
 
@@ -307,7 +307,7 @@ class ClaudeSessionManager:
             asyncio.get_running_loop().create_future()
         )
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="create",
                 room_id=room_id,
                 resume_session_id=resume_session_id,
@@ -333,7 +333,7 @@ class ClaudeSessionManager:
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="cleanup",
                 room_id=room_id,
                 result_future=result_future,
@@ -357,7 +357,7 @@ class ClaudeSessionManager:
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="invalidate",
                 room_id=room_id,
                 result_future=result_future,
@@ -377,7 +377,7 @@ class ClaudeSessionManager:
 
         result_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._command_queue.put(
-            _SessionCommand(
+            SessionCommand(
                 action="cleanup_all",
                 result_future=result_future,
             )

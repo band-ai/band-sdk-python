@@ -8,7 +8,7 @@ Architecture under test:
   - ``slack_send_message`` — posts to the bound Slack thread, Slack-only
 - A Slack event → adapter creates/finds a Band room → synthesizes a
   ``PlatformMessage`` → invokes ``inner.on_message`` with the new
-  ``_SlackTeeingTools`` and a Slack-context note via ``participants_msg``.
+  ``SlackTeeingTools`` and a Slack-context note via ``participants_msg``.
 - No event mirroring of inbound Slack messages or brain replies. The
   Band room stays empty unless the brain decides to delegate to a peer
   via ``band_send_message``.
@@ -44,7 +44,7 @@ from band.integrations.slack.adapter import (
     SLACK_CONTEXT_NOTE,
     SLACK_SEND_MESSAGE_TOOL_NAME,
     SlackAdapter,
-    _SlackTeeingTools,
+    SlackTeeingTools,
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
@@ -376,7 +376,7 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
     assert inv["participants_msg"] == SLACK_CONTEXT_NOTE
     assert inv["is_session_bootstrap"] is True
     # Tools are the teeing subclass.
-    assert isinstance(inv["tools"], _SlackTeeingTools)
+    assert isinstance(inv["tools"], SlackTeeingTools)
 
     # Brain's reply went to Slack only.
     web_mocks[app.slug].chat_postMessage.assert_awaited_once_with(
@@ -611,7 +611,7 @@ async def test_on_message_delegates_to_inner_for_unbound_room():
     assert isinstance(inner, _SlackReplyBrain)
     assert len(inner.invocations) == 1
     # Unbound: raw tools, no Slack context note.
-    assert not isinstance(inner.invocations[0]["tools"], _SlackTeeingTools)
+    assert not isinstance(inner.invocations[0]["tools"], SlackTeeingTools)
     assert inner.invocations[0]["participants_msg"] is None
 
 
@@ -656,7 +656,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
 
     assert len(inner.invocations) == 2
     inv = inner.invocations[1]
-    assert isinstance(inv["tools"], _SlackTeeingTools)
+    assert isinstance(inv["tools"], SlackTeeingTools)
     assert inv["participants_msg"] == SLACK_CONTEXT_NOTE
     # Brain's reply ('Here is the answer.') went to Slack.
     web_mocks[app.slug].chat_postMessage.assert_awaited_once_with(
@@ -801,12 +801,12 @@ async def test_brain_exception_does_not_break_subsequent_events():
     assert calls == ["first", "second"]
 
 
-# ── _SlackTeeingTools — new behavior ─────────────────────────────────────────
+# ── SlackTeeingTools — new behavior ─────────────────────────────────────────
 
 
 def _make_tee_tools(
     slack: AsyncMock | None = None,
-) -> tuple[_SlackTeeingTools, MagicMock, AsyncMock]:
+) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
     rest = MagicMock()
     rest.agent_api_events.create_agent_chat_event = AsyncMock()
     rest.agent_api_messages.create_agent_chat_message = AsyncMock(
@@ -818,7 +818,7 @@ def _make_tee_tools(
         # ``slack`` may have custom side_effects we mustn't overwrite.
         slack = AsyncMock()
         slack.chat_postMessage = AsyncMock(return_value={"ok": True})
-    tools = _SlackTeeingTools(
+    tools = SlackTeeingTools(
         wrap=base,
         slack=slack,
         binding=SlackRoomBinding(app_slug="dev", channel="C", thread_ts="1.0"),

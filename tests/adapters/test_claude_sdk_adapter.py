@@ -24,7 +24,7 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_AVAILABLE,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
-    _PendingApproval,
+    PendingApproval,
     _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
@@ -115,7 +115,7 @@ def register_pending_approval(
 ) -> asyncio.Future[str]:
     """Register one pending approval on adapter, returning its future."""
     future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-    adapter._pending_approvals.setdefault(room_id, {})[token] = _PendingApproval(
+    adapter._pending_approvals.setdefault(room_id, {})[token] = PendingApproval(
         tool_name=tool_name,
         tool_input=tool_input if tool_input is not None else {},
         summary=summary or tool_name,

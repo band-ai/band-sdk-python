@@ -156,7 +156,7 @@ async def _pre_tool_use_continue_hook(
 
 
 @dataclass
-class _PendingApproval:
+class PendingApproval:
     """A tool-use approval request waiting for a chat-room decision."""
 
     tool_name: str
@@ -396,8 +396,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         # Approval flow state
-        # {room_id: {token: _PendingApproval, ...}}
-        self._pending_approvals: dict[str, dict[str, _PendingApproval]] = {}
+        # {room_id: {token: PendingApproval, ...}}
+        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
         self._approval_seq: dict[str, int] = {}  # per-room counters
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
@@ -1317,7 +1317,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         loop = asyncio.get_running_loop()
         token = self._next_approval_token(room_id)
 
-        pending = _PendingApproval(
+        pending = PendingApproval(
             tool_name=tool_name,
             tool_input=tool_input,
             summary=summary,
@@ -1470,7 +1470,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # --- /approve [token] | /decline [token] ---
         token = args.strip() if args else ""
-        selected: _PendingApproval | None = None
+        selected: PendingApproval | None = None
 
         if token:
             selected = pending.get(token)
