@@ -8,11 +8,14 @@ patching of engine internals.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from mcp import ClientSession
+from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel, Field
 
@@ -30,6 +33,10 @@ from band.integrations.mcp.engine import (
 )
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing.fake_tools import FakeAgentTools
+from band_mcp import shared as shared_mod
+from band_mcp.config import Config
+from band_mcp.server import standalone_spec
+from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from tests.mcp.conftest import FakeHumanTools
 
 
@@ -55,6 +62,18 @@ def _agent_resolver(fake: FakeAgentTools) -> EmbeddedResolver:
     """A resolver that always returns the same room-scoped fake -- mirrors
     the embedded door's uniform routing for a single-room test."""
     return EmbeddedResolver(get_tools=lambda chat_id: fake)
+
+
+async def _direct_call(mcp: FastMCP, name: str, **kwargs: object) -> Any:
+    """Dispatch straight through ``_tool_manager.call_tool`` -- the engine's
+    own entry point, one layer below a ``ClientSession`` round trip. Matches
+    ``tests/mcp/test_fake_human_tools.py``'s ``_call`` helper."""
+    raw = await mcp._tool_manager.call_tool(name, kwargs)
+    assert isinstance(raw, str)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
 
 
 class TestBuildEngineHostForwarding:
@@ -398,3 +417,167 @@ async def test_custom_tool_accepts_bare_tuple_contract() -> None:
     async with create_connected_server_and_client_session(mcp) as session:
         result = await _call(session, "echo", message="hi")
         assert result == {"echo": "hi"}
+
+
+async def test_agent_multi_step_room_lifecycle(agent_session_factory) -> None:
+    """One FakeAgentTools, one engine, three real dispatched calls in
+    sequence: add_participant -> send_message (mentioning the participant
+    that call just added) -> get_participants. Each step's assertion
+    depends on the prior step's real mutated state, not a hardcoded id."""
+    fake = FakeAgentTools(room_id="room-1")
+    mcp = await agent_session_factory(
+        fake,
+        definitions=[
+            TOOL_DEFINITIONS[name]
+            for name in (
+                "band_add_participant",
+                "band_send_message",
+                "band_get_participants",
+            )
+        ],
+    )
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        added = await _call(
+            session, "band_add_participant", chat_id="room-1", identifier="@bob"
+        )
+        mention_handle = added["handle"]
+
+        sent = await _call(
+            session,
+            "band_send_message",
+            chat_id="room-1",
+            content="welcome",
+            mentions=[mention_handle],
+        )
+        assert sent["mentions"] == [mention_handle]
+
+        participants = await _call(session, "band_get_participants", chat_id="room-1")
+        assert any(p["id"] == added["id"] for p in participants)
+        assert any(p["handle"] == mention_handle for p in participants)
+
+
+class BootstrapInput(BaseModel):
+    """Add a preset participant as part of custom session bootstrap."""
+
+    identifier: str = Field(..., description="Participant identifier to add")
+
+
+async def test_custom_tool_alongside_builtin_tools_in_one_session() -> None:
+    """One EngineSpec registering a custom tool next to built-in agent
+    tools, all bound to the same FakeAgentTools. The custom tool's handler
+    calls straight through to the fake's real add_participant; a later
+    built-in band_get_participants call is asserted against state that only
+    makes sense if that mutation actually ran first."""
+    fake = FakeAgentTools(room_id="room-1")
+    resolver = _agent_resolver(fake)
+
+    async def bootstrap(input_data: BootstrapInput) -> dict[str, str]:
+        added = await fake.add_participant(input_data.identifier)
+        return {"added_id": added["id"]}
+
+    custom_registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=BootstrapInput, handler=bootstrap)
+    )
+    builtin_registrations = [
+        build_tool_registration(
+            definition,
+            extend_with_chat_id(definition.input_model, None),
+            resolver=resolver,
+            strip_chat_id=True,
+        )
+        for definition in (
+            TOOL_DEFINITIONS[name]
+            for name in ("band_get_participants", "band_send_message")
+        )
+    ]
+    spec = EngineSpec(
+        name="test-custom-plus-builtin",
+        tools=(custom_registration, *builtin_registrations),
+    )
+    mcp = build_engine(spec)
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        bootstrapped = await _call(session, "bootstrap", identifier="@bob")
+
+        participants = await _call(session, "band_get_participants", chat_id="room-1")
+        assert any(p["id"] == bootstrapped["added_id"] for p in participants)
+
+        sent = await _call(
+            session,
+            "band_send_message",
+            chat_id="room-1",
+            content="welcome",
+            mentions=["@bob"],
+        )
+        assert sent["mentions"] == ["@bob"]
+
+
+async def test_concurrent_dispatch_through_one_engine(monkeypatch) -> None:
+    """Real dispatch through StandaloneResolver's full stack -- identity
+    resolution, per-room caching, lock striping -- via the engine's own
+    ``_tool_manager.call_tool``, not the resolver's internal method
+    directly (mirrors test_shared.py's
+    test_resolve_agent_id_concurrent_cold_start_issues_one_rest_call).
+    ``shared_mod.AgentTools`` is patched to hand back a room-scoped
+    FakeAgentTools instead of one backed by real REST calls, so the REST
+    boundary stays fake while every dispatch/caching layer above it runs
+    for real."""
+    constructed: list[str] = []
+
+    class RoomAgentTools(FakeAgentTools):
+        def __init__(self, room_id: str, rest: object, agent_id: str | None = None):
+            super().__init__(room_id=room_id)
+            constructed.append(room_id)
+
+    monkeypatch.setattr(shared_mod, "AgentTools", RoomAgentTools)
+
+    identity = MagicMock()
+    identity.data.id = "self-agent-id"
+
+    async def slow_get_agent_me() -> MagicMock:
+        await asyncio.sleep(0)
+        return identity
+
+    rest = MagicMock()
+    rest.agent_api_identity.get_agent_me = AsyncMock(side_effect=slow_get_agent_me)
+    resolver = StandaloneResolver(agent_rest=rest)
+    mcp = build_engine(standalone_spec(Config(scope=["agent"], tools=[]), resolver))
+
+    async def add_bob(room_id: str) -> None:
+        await _direct_call(
+            mcp, "band_add_participant", chat_id=room_id, identifier="@bob"
+        )
+
+    async def get_participants(room_id: str) -> list[dict[str, Any]]:
+        return await _direct_call(mcp, "band_get_participants", chat_id=room_id)
+
+    # room_A gets two concurrent cold hits (a mutation and a read); room_B
+    # and room_C get one cold hit each -- a mix of repeated and distinct
+    # rooms all cold-starting at once.
+    await asyncio.gather(
+        add_bob("room_A"),
+        get_participants("room_A"),
+        get_participants("room_B"),
+        get_participants("room_C"),
+    )
+
+    # The agent's own identity is resolver-global (_resolve_agent_id's own
+    # docstring: "resolved once, cached for the resolver's lifetime") --
+    # resolved once regardless of how many distinct rooms cold-started
+    # concurrently, let alone how many calls landed on each.
+    assert rest.agent_api_identity.get_agent_me.await_count == 1
+    # Each room's AgentTools construction is deduped by its lock stripe --
+    # one instance per distinct room, not one per call that named it.
+    assert sorted(constructed) == ["room_A", "room_B", "room_C"]
+    assert len(resolver._agent_tools_cache) == 3
+
+    room_a_participants = await get_participants("room_A")
+    room_b_participants = await get_participants("room_B")
+    assert any(p["handle"] == "@bob" for p in room_a_participants)
+    assert room_b_participants == []  # no leakage from room_A's mutation
+
+    # Cold-starting past the LRU cap still evicts down to the configured max.
+    for i in range(AGENT_TOOLS_CACHE_MAX_SIZE):
+        await get_participants(f"room_overflow_{i}")
+    assert len(resolver._agent_tools_cache) == AGENT_TOOLS_CACHE_MAX_SIZE

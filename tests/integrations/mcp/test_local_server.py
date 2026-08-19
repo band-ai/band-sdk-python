@@ -7,6 +7,7 @@ from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_rest import ListAgentChatParticipantsResponse
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -16,6 +17,7 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 from sse_starlette.sse import AppStatus
 
+from band.core.exceptions import BandToolError
 from band.integrations.mcp.engine import (
     EngineSpec,
     MCPToolRegistration,
@@ -136,7 +138,7 @@ class TestBuildBandMcpToolRegistrations:
         rest = MagicMock()
         rest.agent_api_participants = MagicMock()
         rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
-            return_value=MagicMock(data=[])
+            return_value=ListAgentChatParticipantsResponse(data=[])
         )
 
         room_tools = AgentTools("room-123", rest, [])
@@ -167,7 +169,7 @@ class TestBuildBandMcpToolRegistrations:
         )
         registration = _registration_named(registrations, "band_send_message")
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(BandToolError) as exc_info:
             await registration.execute(
                 {"room_id": "room-123", "content": "hello", "mentions": []}
             )

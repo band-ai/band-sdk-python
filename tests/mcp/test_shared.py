@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,7 +24,9 @@ from band_mcp.shared import (
     StandaloneResolver,
     build_standalone_resolver,
 )
+from band.core.exceptions import BandToolError
 from band.runtime.tools import ToolDefinition, SendMessageInput, GetParticipantsInput
+from band.testing.fake_tools import FakeAgentTools
 from tests.mcp.conftest import FakeHumanTools
 
 
@@ -265,14 +268,52 @@ async def test_invoke_agent_raises_without_agent_credential():
 # ---------------------------------------------------------------------------
 
 
-async def test_invoke_send_message_refreshes_participants_first(monkeypatch):
-    fake_agent_tools = MagicMock()
-    fake_agent_tools.get_participants = AsyncMock(return_value=[])
-    fake_agent_tools.send_message = AsyncMock(return_value={"ok": True})
-    monkeypatch.setattr(
-        shared_mod, "AgentTools", MagicMock(return_value=fake_agent_tools)
-    )
-    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
+class OrderTrackingAgentTools(FakeAgentTools):
+    """Records call order so a test can prove the pre-flight participant
+    refresh genuinely runs before ``send_message``, not just that both
+    happened somewhere."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.call_order: list[str] = []
+
+    async def get_participants(self) -> list[dict[str, Any]]:
+        self.call_order.append("get_participants")
+        return await super().get_participants()
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        self.call_order.append("send_message")
+        return await super().send_message(content, mentions=mentions)
+
+
+class FailingParticipantsAgentTools(FakeAgentTools):
+    """Simulates a live refresh failure (e.g. a REST error) ahead of send."""
+
+    async def get_participants(self) -> list[dict[str, Any]]:
+        raise PermissionError("denied")
+
+
+class BareBandToolErrorAgentTools(FakeAgentTools):
+    """Send fails with a bare ``BandToolError`` carrying no hint yet, so the
+    test exercises engine.py's own ``enrich_send_message_error`` appending
+    one for real, rather than one the fake already built in."""
+
+    def __init__(self, *args: Any, agent_id: str | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.agent_id = agent_id
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        raise BandToolError("At least one mention is required")
+
+
+async def test_invoke_send_message_refreshes_participants_first():
+    fake_agent_tools = OrderTrackingAgentTools(room_id="room_A")
+    resolver = StandaloneResolver(agent_rest=None)
+    resolver._agent_tools_cache["room_A"] = fake_agent_tools
 
     result = await resolver.invoke(
         _definition("band_send_message", "send_message"),
@@ -280,21 +321,15 @@ async def test_invoke_send_message_refreshes_participants_first(monkeypatch):
         {"content": "hi", "mentions": ["@x"]},
     )
 
-    fake_agent_tools.get_participants.assert_awaited_once_with()
-    fake_agent_tools.send_message.assert_awaited_once_with(
-        content="hi", mentions=["@x"]
-    )
-    assert result == {"ok": True}
+    assert fake_agent_tools.call_order == ["get_participants", "send_message"]
+    fake_agent_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
+    assert result == fake_agent_tools.messages_sent[0]
 
 
-async def test_invoke_send_message_discards_cache_entry_on_refresh_failure(monkeypatch):
-    fake_agent_tools = MagicMock()
-    fake_agent_tools.get_participants = AsyncMock(side_effect=PermissionError("denied"))
-    fake_agent_tools.send_message = AsyncMock(return_value={"ok": True})
-    monkeypatch.setattr(
-        shared_mod, "AgentTools", MagicMock(return_value=fake_agent_tools)
-    )
-    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
+async def test_invoke_send_message_discards_cache_entry_on_refresh_failure():
+    fake_agent_tools = FailingParticipantsAgentTools(room_id="room_A")
+    resolver = StandaloneResolver(agent_rest=None)
+    resolver._agent_tools_cache["room_A"] = fake_agent_tools
 
     with pytest.raises(PermissionError, match="denied"):
         await resolver.invoke(
@@ -303,25 +338,23 @@ async def test_invoke_send_message_discards_cache_entry_on_refresh_failure(monke
             {"content": "hi", "mentions": ["@x"]},
         )
 
-    fake_agent_tools.send_message.assert_not_called()
+    fake_agent_tools.assert_no_messages_sent()
     assert "room_A" not in resolver._agent_tools_cache
 
 
 async def test_invoke_send_message_error_enriched_with_available_handles():
-    resolver = StandaloneResolver(agent_rest=MagicMock())
-    fake_agent_tools = MagicMock()
-    fake_agent_tools.get_participants = AsyncMock(return_value=[])
-    fake_agent_tools.participants = [
-        {"id": "user-1", "name": "Alice", "handle": "@alice"},
-        {"id": "self", "name": "Self", "handle": "@self"},
-    ]
-    fake_agent_tools.agent_id = "self"
-    fake_agent_tools.send_message = AsyncMock(
-        side_effect=ValueError("At least one mention is required")
+    fake_agent_tools = BareBandToolErrorAgentTools(
+        room_id="room_A",
+        participants=[
+            {"id": "user-1", "name": "Alice", "handle": "@alice"},
+            {"id": "self", "name": "Self", "handle": "@self"},
+        ],
+        agent_id="self",
     )
+    resolver = StandaloneResolver(agent_rest=None)
     resolver._agent_tools_cache["room_A"] = fake_agent_tools
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(BandToolError) as exc_info:
         await resolver.invoke(
             _definition("band_send_message", "send_message"),
             "room_A",

@@ -12,13 +12,13 @@ re-tested here; this file is about standalone_spec's own wiring.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from band.integrations.mcp.engine import build_engine
 from band.runtime.tools import TOOL_DEFINITIONS, ToolDefinition, iter_tool_definitions
+from band.testing.fake_tools import FakeAgentTools
 from band_mcp import server as server_mod
 from band_mcp.config import Config, ConfigError
 from band_mcp.server import standalone_spec
@@ -176,8 +176,7 @@ async def test_pinned_agent_dispatch_ignores_client_sent_chat_id() -> None:
     """End-to-end through build_engine + a real dispatch: the pin
     unconditionally overrides a client-sent chat_id (verified against
     registrar.py's original guarantee)."""
-    fake_agent_tools = MagicMock()
-    fake_agent_tools.send_message = AsyncMock(return_value={"ok": True})
+    fake_agent_tools = FakeAgentTools(room_id="r_pinned")
     resolver = StandaloneResolver()
     resolver._agent_tools_cache["r_pinned"] = fake_agent_tools
 
@@ -193,6 +192,4 @@ async def test_pinned_agent_dispatch_ignores_client_sent_chat_id() -> None:
         )
         assert not result.isError
 
-    fake_agent_tools.send_message.assert_awaited_once_with(
-        content="hi", mentions=["@bob"]
-    )
+    fake_agent_tools.assert_message_sent(content="hi", mentions=["@bob"], count=1)

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from tests.integration.mcp.conftest import (
     LiveHarness,
@@ -86,6 +87,48 @@ async def test_agent_send_message_accepts_room_id_alias(
         mentions=[owner_id],
     )
     assert result is not None
+
+
+@requires_api
+@pytest.mark.asyncio(loop_scope="session")  # see loop_scope note above
+async def test_agent_send_message_retry_after_lookup_peers(
+    harness: LiveHarness, agent_room: str
+) -> None:
+    """A mention naming a real peer who is not yet a room participant fails
+    against the live API; adding them first and retrying the identical call
+    then succeeds.
+
+    ``band_lookup_peers`` finds a real candidate (the room-owning human,
+    same as ``add_room_owner``'s own lookup) who genuinely is not yet a
+    member of this fresh room -- the failure below reflects the live
+    participant list, not a made-up id.
+    """
+    peers = _unwrap(
+        await harness.call(
+            "band_lookup_peers", chat_id=agent_room, page=1, page_size=100
+        )
+    )
+    candidate_id = next(p for p in peers if p["type"] == "User")["id"]
+
+    with pytest.raises(ToolError, match=f"Unknown participant '{candidate_id}'"):
+        await harness.call(
+            "band_send_message",
+            content="should fail: not yet a participant",
+            chat_id=agent_room,
+            mentions=[candidate_id],
+        )
+
+    await harness.call(
+        "band_add_participant", chat_id=agent_room, identifier=candidate_id
+    )
+
+    retried = await harness.call(
+        "band_send_message",
+        content="should succeed: now a participant",
+        chat_id=agent_room,
+        mentions=[candidate_id],
+    )
+    assert retried is not None, "retried send_message returned nothing"
 
 
 @requires_api
