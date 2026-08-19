@@ -58,16 +58,11 @@ VALID_MESSAGE_CREATED_PAYLOAD: dict = {
 async def dispatch(client: WebSocketClient, event: str, payload: dict) -> Any:
     """Feed one event through _handle_events via a single registered
     callback; return what that callback received (None if never called)."""
-    received = None
-
-    async def callback(p: Any) -> None:
-        nonlocal received
-        received = p
-
+    callback = AsyncMock()
     await client._handle_events(
         SimpleNamespace(event=event, payload=payload), {event: callback}
     )
-    return received
+    return callback.await_args.args[0] if callback.await_args else None
 
 
 def _upgrade_exception(

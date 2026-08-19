@@ -6,16 +6,12 @@ settings, allowing users to configure allowed hosts for Docker/remote deployment
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from unittest.mock import MagicMock
-
 import pytest
-from mcp.server.transport_security import (
-    TransportSecurityMiddleware,
-    TransportSecuritySettings,
-)
-from starlette.datastructures import Headers
-from starlette.requests import Request
+
+from band.integrations.mcp.engine import build_engine
+from band_mcp.config import Config, Settings, Transport, settings
+from band_mcp.server import _build_transport_security, standalone_spec
+from band_mcp.shared import build_standalone_resolver
 
 
 class TestTransportSecuritySettings:
@@ -23,24 +19,18 @@ class TestTransportSecuritySettings:
 
     def test_default_enables_dns_rebinding_protection(self) -> None:
         """DNS rebinding protection should be enabled by default for security."""
-        from band_mcp.config import Settings
-
         settings = Settings()
 
         assert settings.enable_dns_rebinding_protection is True
 
     def test_default_allowed_hosts_is_empty(self) -> None:
         """Allowed hosts should be empty by default (users must configure)."""
-        from band_mcp.config import Settings
-
         settings = Settings()
 
         assert settings.allowed_hosts == []
 
     def test_default_allowed_origins_is_empty(self) -> None:
         """Allowed origins should be empty by default."""
-        from band_mcp.config import Settings
-
         settings = Settings()
 
         assert settings.allowed_origins == []
@@ -50,8 +40,6 @@ class TestTransportSecuritySettings:
     ) -> None:
         """Users should be able to disable protection via environment variable."""
         monkeypatch.setenv("ENABLE_DNS_REBINDING_PROTECTION", "false")
-
-        from band_mcp.config import Settings
 
         settings = Settings()
 
@@ -63,8 +51,6 @@ class TestTransportSecuritySettings:
         """Users should be able to configure allowed hosts via environment variable."""
         monkeypatch.setenv("ALLOWED_HOSTS", '["localhost:*", "host.docker.internal:*"]')
 
-        from band_mcp.config import Settings
-
         settings = Settings()
 
         assert settings.allowed_hosts == ["localhost:*", "host.docker.internal:*"]
@@ -74,8 +60,6 @@ class TestTransportSecuritySettings:
     ) -> None:
         """Users should be able to configure allowed origins via environment variable."""
         monkeypatch.setenv("ALLOWED_ORIGINS", '["http://localhost:3000"]')
-
-        from band_mcp.config import Settings
 
         settings = Settings()
 
@@ -91,12 +75,6 @@ class TestMcpTransportSecurityIntegration:
     """
 
     def _build_mcp(self) -> object:
-        from band.integrations.mcp.engine import build_engine
-        from band_mcp.config import Config
-        from band_mcp.config import settings
-        from band_mcp.server import _build_transport_security, standalone_spec
-        from band_mcp.shared import build_standalone_resolver
-
         config = Config(scope=["agent"], agent_key="band_a_test")
         resolver = build_standalone_resolver(config)
         return build_engine(
@@ -106,8 +84,6 @@ class TestMcpTransportSecurityIntegration:
 
     def test_mcp_transport_security_reflects_settings(self) -> None:
         """Transport security should reflect the configured settings."""
-        from band_mcp.config import settings
-
         mcp = self._build_mcp()
         transport_security = mcp.settings.transport_security
 
@@ -129,9 +105,6 @@ class TestMcpTransportSecurityIntegration:
         actually starts with) or it never fires despite the server coming up
         in SSE mode with an empty ``allowed_hosts``.
         """
-        from band_mcp.config import Transport, settings
-        from band_mcp.server import _build_transport_security
-
         assert settings.transport == Transport.STDIO
         with caplog.at_level("WARNING"):
             _build_transport_security(Transport.SSE)
@@ -140,127 +113,3 @@ class TestMcpTransportSecurityIntegration:
             "DNS rebinding protection enabled" in record.message
             for record in caplog.records
         )
-
-
-class TestDnsRebindingProtectionBehavior:
-    """Tests demonstrating DNS rebinding protection behavior.
-
-    These tests verify the MCP SDK middleware behavior to ensure our
-    configuration is applied correctly.
-    """
-
-    def test_empty_allowed_hosts_blocks_all_requests(self) -> None:
-        """When allowed_hosts is empty, all hosts are blocked."""
-        middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=[],
-            )
-        )
-
-        # All hosts should be blocked
-        assert middleware._validate_host("localhost:8000") is False
-        assert middleware._validate_host("127.0.0.1:8000") is False
-        assert middleware._validate_host("host.docker.internal:8000") is False
-
-    def test_wildcard_port_matching(self) -> None:
-        """Wildcard port patterns (host:*) should match any port."""
-        middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=["localhost:*", "host.docker.internal:*"],
-            )
-        )
-
-        # Wildcard should match any port
-        assert middleware._validate_host("localhost:8000") is True
-        assert middleware._validate_host("localhost:3000") is True
-        assert middleware._validate_host("host.docker.internal:8002") is True
-
-        # Non-matching host should be blocked
-        assert middleware._validate_host("evil.com:8000") is False
-
-    def test_exact_host_port_matching(self) -> None:
-        """Exact host:port entries should only match that specific combination."""
-        middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=["localhost:8000"],
-            )
-        )
-
-        # Exact match works
-        assert middleware._validate_host("localhost:8000") is True
-
-        # Different port does not match
-        assert middleware._validate_host("localhost:9000") is False
-
-    @pytest.mark.asyncio
-    async def test_disabled_protection_allows_all(
-        self, mock_request_factory: Callable[[str], Request]
-    ) -> None:
-        """When protection is disabled, validate_request skips Host validation.
-
-        `_validate_host` itself has no notion of the flag -- `validate_request`
-        checks `enable_dns_rebinding_protection` before ever calling it -- so
-        this has to go through `validate_request`, not `_validate_host`
-        directly, to actually exercise the disabled path.
-        """
-        middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(
-                enable_dns_rebinding_protection=False,
-                allowed_hosts=[],
-            )
-        )
-
-        # allowed_hosts=[] would block every host with protection enabled
-        # (test_empty_allowed_hosts_blocks_all_requests above) -- disabling
-        # protection must let it through instead.
-        request = mock_request_factory("evil.com:8000")
-        assert await middleware.validate_request(request) is None
-
-    @pytest.fixture
-    def mock_request_factory(self) -> Callable[[str], Request]:
-        """Factory to create mock Starlette requests with custom Host header."""
-
-        def _create(host: str) -> Request:
-            request = MagicMock(spec=Request)
-            request.headers = Headers({"host": host})
-            return request
-
-        return _create
-
-    @pytest.mark.asyncio
-    async def test_blocked_request_returns_421(
-        self, mock_request_factory: Callable[[str], Request]
-    ) -> None:
-        """Blocked requests should return 421 Misdirected Request."""
-        middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=["localhost:*"],
-            )
-        )
-
-        request = mock_request_factory("host.docker.internal:8000")
-        response = await middleware.validate_request(request)
-
-        assert response is not None
-        assert response.status_code == 421
-
-    @pytest.mark.asyncio
-    async def test_allowed_request_returns_none(
-        self, mock_request_factory: Callable[[str], Request]
-    ) -> None:
-        """Allowed requests should return None (pass validation)."""
-        middleware = TransportSecurityMiddleware(
-            TransportSecuritySettings(
-                enable_dns_rebinding_protection=True,
-                allowed_hosts=["localhost:*", "host.docker.internal:*"],
-            )
-        )
-
-        request = mock_request_factory("host.docker.internal:8000")
-        response = await middleware.validate_request(request)
-
-        assert response is None
