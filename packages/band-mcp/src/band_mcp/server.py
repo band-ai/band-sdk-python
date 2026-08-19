@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 from mcp.server.fastmcp import FastMCP
@@ -190,6 +190,42 @@ def _register_health_check_tool(mcp: FastMCP, resolver: StandaloneResolver) -> N
         return await _health_check(resolver)
 
 
+def _exit_on_config_error(exc: ConfigError) -> NoReturn:
+    logger.error("Configuration error: %s", exc)
+    raise typer.Exit(2) from exc
+
+
+def _resolve_validated_config(cli: CliArgs) -> Config:
+    """Resolve Config from CLI+env, emit its warnings, and validate it.
+
+    Warnings are emitted before validate() so an operator sees "did you
+    mean" hints even when validation also fails -- did-you-mean first,
+    credentials-missing last.
+    """
+    config = resolve_config(cli=cli, env=os.environ)
+    for warning in config.warnings:
+        logger.warning(warning.message)
+    validate(config)
+    return config
+
+
+def _run_transport(
+    mcp: FastMCP, transport: Transport, host: str | None, port: int | None
+) -> None:
+    match transport:
+        case Transport.STDIO:
+            logger.info("Transport: STDIO (for IDE integration)")
+            logger.info("Server ready - listening for MCP protocol messages on STDIO")
+            mcp.run(transport="stdio")
+        case Transport.SSE:
+            sse_host = host or settings.host
+            sse_port = port or settings.port
+            logger.info("Transport: SSE (HTTP server mode)")
+            logger.info("Server ready - listening on http://%s:%s", sse_host, sse_port)
+            logger.info("SSE endpoint: /sse | Messages endpoint: /messages/")
+            mcp.run(transport="sse")
+
+
 # Derived from config.py's Scope/ToolGroup vocabulary and their defaults
 # rather than retyped here, so a future scope/tool addition can't leave
 # --help advertising a stale, incomplete value/default list.
@@ -288,16 +324,7 @@ def main(
         ),
     ] = None,
 ) -> None:
-    """Run the MCP server with configurable transport mode.
-
-    Order of operations:
-    1. Resolve the Config (dual-credential + scope/tools/room_id).
-    2. Validate; exit(2) before the engine builds on a ConfigError.
-    3. Emit every ConfigWarning entry at WARN level.
-    4. Build the EngineSpec (standalone_spec) and the engine (build_engine).
-    5. Register the health_check tool.
-    6. Start the engine over the requested transport.
-    """
+    """Run the MCP server with configurable transport mode."""
     cli: CliArgs = {
         "user_key": user_key,
         "agent_key": agent_key,
@@ -305,26 +332,16 @@ def main(
         "scope": scope,
         "tools": tools,
     }
-    config = resolve_config(cli=cli, env=os.environ)
-
-    # Emit warnings BEFORE validate() — validate might raise and we want the
-    # operator to see "did you mean" hints even if config is also missing
-    # credentials. Order: did-you-mean first, credentials-missing last.
-    for warning in config.warnings:
-        logger.warning(warning.message)
-
     try:
-        validate(config)
+        config = _resolve_validated_config(cli)
     except ConfigError as exc:
-        logger.error("Configuration error: %s", exc)
-        raise typer.Exit(2) from exc
+        _exit_on_config_error(exc)
 
     resolver = build_standalone_resolver(config)
     try:
         spec = standalone_spec(config, resolver)
     except ConfigError as exc:
-        logger.error("Configuration error: %s", exc)
-        raise typer.Exit(2) from exc
+        _exit_on_config_error(exc)
 
     # Determine transport mode (CLI overrides env) before building the
     # engine: the DNS-rebinding warning below must judge the transport
@@ -348,18 +365,7 @@ def main(
     if port is not None:
         mcp.settings.port = port
 
-    match resolved_transport:
-        case Transport.STDIO:
-            logger.info("Transport: STDIO (for IDE integration)")
-            logger.info("Server ready - listening for MCP protocol messages on STDIO")
-            mcp.run(transport="stdio")
-        case Transport.SSE:
-            sse_host = host or settings.host
-            sse_port = port or settings.port
-            logger.info("Transport: SSE (HTTP server mode)")
-            logger.info("Server ready - listening on http://%s:%s", sse_host, sse_port)
-            logger.info("SSE endpoint: /sse | Messages endpoint: /messages/")
-            mcp.run(transport="sse")
+    _run_transport(mcp, resolved_transport, host, port)
 
 
 def run() -> None:

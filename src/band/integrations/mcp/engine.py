@@ -311,10 +311,6 @@ WideEventMessageType = Literal[
     EventMessageType, MessageType.TOOL_CALL, MessageType.TOOL_RESULT
 ]
 
-# Widened for the standalone CLI door only: the embedded door keeps the
-# narrower SendEventInput (three literals); adapters author tool_call/
-# tool_result programmatically there instead.
-#
 # Not a subclass of SendEventInput: widening a field's type in a subclass is
 # unsound for a mutable (assignable) Pydantic field -- a caller holding a
 # SendEventInput reference could otherwise observe a message_type value
