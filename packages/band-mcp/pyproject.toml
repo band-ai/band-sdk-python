@@ -21,6 +21,11 @@ dependencies = [
     # `pip install band-mcp` is unaffected -- nothing else constrains it, so
     # it still resolves the latest available 1.x.
     "mcp[cli]>=1.28.1,<2",
+    # Already a real transitive dependency via mcp[cli] (its own cli extra
+    # requires typer>=0.16.0) -- declared explicitly since server.py now
+    # imports it directly, not just benefiting from mcp[cli]'s own choice.
+    # No added install footprint.
+    "typer>=0.16.0",
     "pydantic-settings>=2.1.0",
     # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
     # for band-client-rest Bugs" for why this stays exact.

@@ -84,6 +84,7 @@ from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
+    CHAT_ID_FIELD_NAME,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     band_tool_errored,
@@ -636,8 +637,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             else:
                 raise
 
-        # Add chat_id context (Claude needs this for tool calls)
-        room_context = f"[chat_id: {room_id}]"
+        # Add chat_id context (Claude needs this for tool calls) -- the label
+        # must read "chat_id" (the model-facing name everywhere else), not
+        # the Python-side room_id it's built from.
+        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
 
         # Initialize history for this room on first message
         if is_session_bootstrap:

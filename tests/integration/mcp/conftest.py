@@ -181,7 +181,7 @@ def live_config() -> Config:
 
 
 @pytest.fixture(scope="session")
-def live_config_2() -> Config:
+def second_agent_config() -> Config:
     """Resolve a second, genuinely distinct agent identity's Config.
 
     Backs multi-agent scenarios (one real agent adding/mentioning another),
@@ -214,9 +214,11 @@ def harness(live_config: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness
 
 
 @pytest.fixture
-def harness_2(live_config_2: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness:
+def second_agent_harness(
+    second_agent_config: Config, monkeypatch: pytest.MonkeyPatch
+) -> LiveHarness:
     """Second, genuinely distinct agent identity's driver (agent scope only)."""
-    return _build_harness(live_config_2, monkeypatch)
+    return _build_harness(second_agent_config, monkeypatch)
 
 
 @pytest.fixture
@@ -234,22 +236,18 @@ async def agent_room(harness: LiveHarness):
     yield room_id
 
 
-async def ensure_mentionable_participant(
-    harness: LiveHarness, room_id: str, *, identifier: str | None = None
-) -> str:
-    """Add a real participant to `room_id`; return their id to @mention.
+async def add_room_owner(harness: LiveHarness, room_id: str) -> str:
+    """Add the room-owning human as a participant; return their id to @mention.
 
-    A freshly created agent room has no other participant, and self-mention is
-    disallowed by design. Pass `identifier` for a known peer (e.g. a second
-    test agent); omit it to add the room-owning human, discovered via
-    ``band_lookup_peers`` (the ``type: "User"`` entry).
+    A freshly created agent room has no other participant, and self-mention
+    is disallowed by design -- the owner is always resolvable via
+    ``band_lookup_peers`` (the ``type: "User"`` entry). A *known* second
+    identity (e.g. a second test agent) doesn't need this lookup at all --
+    call ``band_add_participant`` with its id directly.
     """
-    if identifier is None:
-        peers = _unwrap(
-            await harness.call(
-                "band_lookup_peers", chat_id=room_id, page=1, page_size=100
-            )
-        )
-        identifier = next(p for p in peers if p["type"] == "User")["id"]
-    await harness.call("band_add_participant", chat_id=room_id, identifier=identifier)
-    return identifier
+    peers = _unwrap(
+        await harness.call("band_lookup_peers", chat_id=room_id, page=1, page_size=100)
+    )
+    owner_id = next(p for p in peers if p["type"] == "User")["id"]
+    await harness.call("band_add_participant", chat_id=room_id, identifier=owner_id)
+    return owner_id

@@ -6,16 +6,23 @@ registration builds an ``EngineSpec`` (``standalone_spec``, below) and hands
 it to the shared engine (``band.integrations.mcp.engine.build_engine``).
 There is no single-key fallback -- a credential is either scope-specific or
 absent.
+
+CLI parsing is Typer, not argparse: it's already a real dependency here
+(``mcp[cli]`` requires it), so this adds no new install footprint. Typer
+only replaces the parsing/choice-validation/help-text layer -- all real
+config validation and CLI>env precedence still runs through
+``resolve_config``/``validate`` in ``config.py``, a pure, framework-agnostic
+pair kept deliberately independent of whichever CLI library calls them.
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Annotated, Any
 
+import typer
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -172,20 +179,26 @@ def _build_transport_security(transport: Transport) -> TransportSecuritySettings
     )
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command line arguments."""
-    # Derived from config.py's Scope/ToolGroup vocabulary and their defaults
-    # rather than retyped here, so a future scope/tool addition can't leave
-    # --help advertising a stale, incomplete value/default list.
-    scope_values = ", ".join(VALID_SCOPES)
-    scope_default = ", ".join(DEFAULT_SCOPE) or "none"
-    tools_values = ", ".join(VALID_TOOLS)
-    tools_default = ", ".join(DEFAULT_TOOLS) or "none"
+def _register_health_check_tool(mcp: FastMCP, resolver: StandaloneResolver) -> None:
+    # Named health_check directly (not e.g. _health_check_tool): FastMCP
+    # derives the advertised schema's "title" from the function's own
+    # __name__, independent of the tool() name= override below -- a wrapper
+    # named differently would leak into the wire-visible schema title.
+    @mcp.tool(name="health_check")
+    async def health_check() -> str:
+        """Test MCP server and API connectivity."""
+        return await _health_check(resolver)
 
-    parser = argparse.ArgumentParser(
-        description="Band MCP Server - Connect AI agents to Band platform",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"""
+
+# Derived from config.py's Scope/ToolGroup vocabulary and their defaults
+# rather than retyped here, so a future scope/tool addition can't leave
+# --help advertising a stale, incomplete value/default list.
+_SCOPE_VALUES = ", ".join(VALID_SCOPES)
+_SCOPE_DEFAULT = ", ".join(DEFAULT_SCOPE) or "none"
+_TOOLS_VALUES = ", ".join(VALID_TOOLS)
+_TOOLS_DEFAULT = ", ".join(DEFAULT_TOOLS) or "none"
+
+_EPILOG = f"""
 Transport Modes:
   stdio   Default mode for IDE integration (Cursor, Claude Desktop, etc.)
           Communication via standard input/output streams.
@@ -203,117 +216,96 @@ Examples:
 Environment Variables:
   BAND_USER_KEY         User (human scope) API key
   BAND_AGENT_KEY        Agent scope API key
-  BAND_MCP_SCOPE        Comma-separated scopes (default: {scope_default})
-  BAND_MCP_TOOLS        Opt-in tool groups: {tools_values}
+  BAND_MCP_SCOPE        Comma-separated scopes (default: {_SCOPE_DEFAULT})
+  BAND_MCP_TOOLS        Opt-in tool groups: {_TOOLS_VALUES}
   BAND_MCP_ROOM_ID      Optional pinned room id
   BAND_BASE_URL         Base URL for Band API (default: https://app.band.ai)
   TRANSPORT             Transport mode: stdio or sse (default: stdio)
   HOST                  Host to bind for SSE mode (default: 127.0.0.1)
   PORT                  Port to bind for SSE mode (default: 8000)
-        """,
-    )
+"""
 
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"band-mcp {__version__}",
-    )
+app = typer.Typer(add_completion=False)
 
-    parser.add_argument("--user-key", dest="user_key", type=str, default=None)
-    parser.add_argument("--agent-key", dest="agent_key", type=str, default=None)
-    parser.add_argument("--room-id", dest="room_id", type=str, default=None)
-    parser.add_argument(
-        "--scope",
-        dest="scope",
-        action="append",
-        default=None,
-        help=(
-            f"Scope to serve. Repeatable or comma-separated. "
-            f"Values: {scope_values}. Default: {scope_default}."
+
+def _version_callback(show_version: bool) -> None:
+    if show_version:
+        typer.echo(f"band-mcp {__version__}")
+        raise typer.Exit()
+
+
+@app.command(
+    help="Band MCP Server - Connect AI agents to Band platform",
+    epilog=_EPILOG,
+)
+def main(
+    user_key: Annotated[str | None, typer.Option("--user-key")] = None,
+    agent_key: Annotated[str | None, typer.Option("--agent-key")] = None,
+    room_id: Annotated[str | None, typer.Option("--room-id")] = None,
+    scope: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--scope",
+            help=(
+                f"Scope to serve. Repeatable or comma-separated. "
+                f"Values: {_SCOPE_VALUES}. Default: {_SCOPE_DEFAULT}."
+            ),
         ),
-    )
-    parser.add_argument(
-        "--tools",
-        dest="tools",
-        action="append",
-        default=None,
-        help=(
-            f"Opt-in tool groups. Repeatable or comma-separated. "
-            f"Values: {tools_values}. Default: {tools_default}. "
-            "Note: operators who relied on implicit contacts tools must now "
-            "pass --tools contacts."
+    ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tools",
+            help=(
+                f"Opt-in tool groups. Repeatable or comma-separated. "
+                f"Values: {_TOOLS_VALUES}. Default: {_TOOLS_DEFAULT}. "
+                "Note: operators who relied on implicit contacts tools must now "
+                "pass --tools contacts."
+            ),
         ),
-    )
-
-    parser.add_argument(
-        "--transport",
-        "-t",
-        type=Transport,
-        choices=list(Transport),
-        default=None,
-        help="Transport mode: stdio (default) or sse",
-    )
-
-    parser.add_argument(
-        "--host",
-        type=str,
-        default=None,
-        help="Host to bind for SSE mode (default: 127.0.0.1)",
-    )
-
-    parser.add_argument(
-        "--port",
-        "-p",
-        type=int,
-        default=None,
-        help="Port to bind for SSE mode (default: 8000)",
-    )
-
-    return parser.parse_args(argv)
-
-
-def _cli_mapping(args: argparse.Namespace) -> CliArgs:
-    """Flatten argparse results into the shape `resolve_config` expects.
-
-    `scope` and `tools` use argparse `action="append"`, so they arrive as
-    `list[str] | None`. `_normalize_list_value` in `config.py` handles the
-    final trim/split/lowercase/dedupe — we pass the raw list straight through.
-    """
-    return {
-        "user_key": args.user_key,
-        "agent_key": args.agent_key,
-        "room_id": args.room_id,
-        "scope": args.scope,
-        "tools": args.tools,
-    }
-
-
-def _register_health_check_tool(mcp: FastMCP, resolver: StandaloneResolver) -> None:
-    # Named health_check directly (not e.g. _health_check_tool): FastMCP
-    # derives the advertised schema's "title" from the function's own
-    # __name__, independent of the tool() name= override below -- a wrapper
-    # named differently would leak into the wire-visible schema title.
-    @mcp.tool(name="health_check")
-    async def health_check() -> str:
-        """Test MCP server and API connectivity."""
-        return await _health_check(resolver)
-
-
-def run() -> None:
+    ] = None,
+    transport: Annotated[
+        Transport | None,
+        typer.Option(
+            "--transport", "-t", help="Transport mode: stdio (default) or sse"
+        ),
+    ] = None,
+    host: Annotated[
+        str | None,
+        typer.Option("--host", help="Host to bind for SSE mode (default: 127.0.0.1)"),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option("--port", "-p", help="Port to bind for SSE mode (default: 8000)"),
+    ] = None,
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "--version",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show version and exit",
+        ),
+    ] = None,
+) -> None:
     """Run the MCP server with configurable transport mode.
 
     Order of operations:
-    1. Parse CLI flags.
-    2. Resolve the Config (dual-credential + scope/tools/room_id).
-    3. Validate; raise ConfigError to exit before the engine builds.
-    4. Emit every ConfigWarning entry at WARN level.
-    5. Build the EngineSpec (standalone_spec) and the engine (build_engine).
-    6. Register the health_check tool.
-    7. Start the engine over the requested transport.
+    1. Resolve the Config (dual-credential + scope/tools/room_id).
+    2. Validate; exit(2) before the engine builds on a ConfigError.
+    3. Emit every ConfigWarning entry at WARN level.
+    4. Build the EngineSpec (standalone_spec) and the engine (build_engine).
+    5. Register the health_check tool.
+    6. Start the engine over the requested transport.
     """
-    args = parse_args()
-
-    config = resolve_config(cli=_cli_mapping(args), env=os.environ)
+    cli: CliArgs = {
+        "user_key": user_key,
+        "agent_key": agent_key,
+        "room_id": room_id,
+        "scope": scope,
+        "tools": tools,
+    }
+    config = resolve_config(cli=cli, env=os.environ)
 
     # Emit warnings BEFORE validate() — validate might raise and we want the
     # operator to see "did you mean" hints even if config is also missing
@@ -325,21 +317,23 @@ def run() -> None:
         validate(config)
     except ConfigError as exc:
         logger.error("Configuration error: %s", exc)
-        raise SystemExit(2) from exc
+        raise typer.Exit(2) from exc
 
     resolver = build_standalone_resolver(config)
     try:
         spec = standalone_spec(config, resolver)
     except ConfigError as exc:
         logger.error("Configuration error: %s", exc)
-        raise SystemExit(2) from exc
+        raise typer.Exit(2) from exc
 
-    # Determine transport mode (CLI args override env vars) before building
-    # the engine: the DNS-rebinding warning below must judge the transport
+    # Determine transport mode (CLI overrides env) before building the
+    # engine: the DNS-rebinding warning below must judge the transport
     # actually started with, not just the env-var default.
-    transport: Transport = args.transport or settings.transport
+    resolved_transport: Transport = transport or settings.transport
 
-    mcp = build_engine(spec, transport_security=_build_transport_security(transport))
+    mcp = build_engine(
+        spec, transport_security=_build_transport_security(resolved_transport)
+    )
     _register_health_check_tool(mcp, resolver)
 
     logger.info("Starting band-mcp-server v%s", __version__)
@@ -349,23 +343,27 @@ def run() -> None:
     if config.room_id:
         logger.info("Pinned room id: %s", config.room_id)
 
-    if args.host is not None:
-        mcp.settings.host = args.host
-    if args.port is not None:
-        mcp.settings.port = args.port
+    if host is not None:
+        mcp.settings.host = host
+    if port is not None:
+        mcp.settings.port = port
 
-    match transport:
+    match resolved_transport:
         case Transport.STDIO:
             logger.info("Transport: STDIO (for IDE integration)")
             logger.info("Server ready - listening for MCP protocol messages on STDIO")
             mcp.run(transport="stdio")
         case Transport.SSE:
-            host = args.host or settings.host
-            port = args.port or settings.port
+            sse_host = host or settings.host
+            sse_port = port or settings.port
             logger.info("Transport: SSE (HTTP server mode)")
-            logger.info("Server ready - listening on http://%s:%s", host, port)
+            logger.info("Server ready - listening on http://%s:%s", sse_host, sse_port)
             logger.info("SSE endpoint: /sse | Messages endpoint: /messages/")
             mcp.run(transport="sse")
+
+
+def run() -> None:
+    app()
 
 
 if __name__ == "__main__":

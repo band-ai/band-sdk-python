@@ -44,7 +44,7 @@ class TestReply:
         await run_message(adapter, tools, content="What's up?")
 
         prompt = client.sessions[0].prompts[0]
-        assert "[room_id: room-1]" in prompt
+        assert "[chat_id: room-1]" in prompt
         assert "[Alice]: What's up?" in prompt
 
     @pytest.mark.asyncio

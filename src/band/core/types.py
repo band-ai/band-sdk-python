@@ -40,19 +40,6 @@ class ToolEventKey(StrEnum):
 # event kinds. Derived from MessageType so the taxonomy stays single-sourced.
 EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
-# The MCP engine's CLI-door widening of EventMessageType: a standalone MCP
-# agent has no adapter narrating tool_call/tool_result events on its
-# behalf, so band_send_event needs a self-narration channel there that the
-# embedded SDK door doesn't (adapters author tool_call/tool_result
-# programmatically for embedded agents).
-WideEventMessageType = Literal[
-    MessageType.TOOL_CALL,
-    MessageType.TOOL_RESULT,
-    MessageType.THOUGHT,
-    MessageType.ERROR,
-    MessageType.TASK,
-]
-
 # Status filter vocabulary shared by every list-contact-requests-family tool
 # (master models and each adapter's own schema), so the choices have one
 # definition instead of a hand-copied tuple per call site.

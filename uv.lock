@@ -505,6 +505,7 @@ dependencies = [
     { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "pydantic-settings", version = "2.14.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "typer" },
     { name = "uvicorn" },
 ]
 
@@ -514,6 +515,7 @@ requires-dist = [
     { name = "band-sdk", editable = "." },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.1,<2" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
+    { name = "typer", specifier = ">=0.16.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 

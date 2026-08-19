@@ -37,8 +37,7 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
     enum_values,
 )
-from band.core.types import WideEventMessageType
-from band.integrations.mcp.engine import build_engine
+from band.integrations.mcp.engine import WideEventMessageType, build_engine
 from band.runtime.tools import (
     AGENT_ROOM_BOUND_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,

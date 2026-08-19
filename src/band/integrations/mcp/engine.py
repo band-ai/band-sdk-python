@@ -30,7 +30,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -40,7 +40,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import WideEventMessageType
+from band.core.types import EventMessageType, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -300,11 +300,20 @@ def pin_existing_chat_id(original: type[BaseModel]) -> type[BaseModel]:
     return model
 
 
-# Widened for the standalone CLI door only (divergence-matrix row 6): a
-# standalone MCP agent has no adapter narrating tool_call/tool_result events
-# on its behalf, so it needs a self-narration channel the embedded SDK
-# doesn't -- adapters author those events programmatically there. The
-# embedded door keeps the narrower SendEventInput (three literals).
+# The CLI door's own widening of EventMessageType (divergence-matrix row 6):
+# a standalone MCP agent has no adapter narrating tool_call/tool_result
+# events on its behalf, so it needs a self-narration channel the embedded
+# SDK doesn't. Derived from EventMessageType (not retyped) so the two stay
+# single-sourced -- a future addition to the narrow set is picked up here
+# automatically. Lives here, not in band.core.types, since this engine is
+# its only consumer.
+WideEventMessageType = Literal[
+    EventMessageType, MessageType.TOOL_CALL, MessageType.TOOL_RESULT
+]
+
+# Widened for the standalone CLI door only: the embedded door keeps the
+# narrower SendEventInput (three literals); adapters author tool_call/
+# tool_result programmatically there instead.
 #
 # Not a subclass of SendEventInput: widening a field's type in a subclass is
 # unsound for a mutable (assignable) Pydantic field -- a caller holding a
