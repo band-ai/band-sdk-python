@@ -79,30 +79,20 @@ def test_baseline_certification_checks_out_before_running_repo_scripts() -> None
     )
 
 
-def test_scoped_manual_runs_report_without_certifying_the_baseline() -> None:
-    """A partial run has a requester-only report path, separate from release state."""
-    job = _workflow_jobs()["report-scoped-run"]
-
-    assert "workflow_dispatch" in job["if"]
-    assert "github.triggering_actor" in job["env"]["RECIPIENTS"]
-    assert "does not affect the release gate" in job["env"]["SCOPE_NOTICE"]
-    assert job["permissions"]["contents"] == "read"
-
-
-# The jobs that report a run's outcome to the outside world: a commit status, and a
-# comment on a tracking issue. Their `if:` conditions decide *whether the baseline
-# gets certified at all*, so the two guards below pin the parts that fail silently.
-_REPORTING_JOBS = ("mark-baseline", "report-scoped-run")
+# The job that reports a run's outcome to the outside world: a commit status. Its
+# `if:` condition decides *whether the baseline gets certified at all*, so the two
+# guards below pin the parts that fail silently.
+_REPORTING_JOBS = ("mark-baseline",)
 
 
 @pytest.mark.parametrize("job_name", _REPORTING_JOBS)
 def test_reporting_jobs_do_not_certify_a_cancelled_run(job_name: str) -> None:
-    """A cancelled run is not evidence, so it must not post a status or comment.
+    """A cancelled run is not evidence, so it must not post a status.
 
     Under ``always()`` a nightly whose legs were cancelled mid-flight (the
-    per-(lane,OS) concurrency group, or a human cancelling) reports the baseline as
-    *red* and reopens the tracking issue with nothing actually broken. Declining to
-    report instead leaves the commit with no status at all, so
+    per-(lane,OS) concurrency group, or a human cancelling) would report the
+    baseline as *red* with nothing actually broken. Declining to report instead
+    leaves the commit with no status at all, so
     ``check-release-baseline.sh``'s backward scan skips it and gates on whichever
     earlier commit was actually tested (bounded by ``MAX_BASELINE_AGE_DAYS``) —
     not a ``pending`` block, a fall-back to the last real evidence. A
@@ -162,8 +152,8 @@ def test_e2e_concurrency_group_is_scoped_by_trigger_kind() -> None:
 
 @pytest.mark.parametrize("job_name", _REPORTING_JOBS)
 def test_reporting_jobs_normalize_the_dispatch_inputs(job_name: str) -> None:
-    """Both jobs must default a missing dispatch input to ``all``, like every other
-    consumer (the ``lanes``/``e2e`` jobs read ``inputs.lane || 'all'``).
+    """The reporting job must default a missing dispatch input to ``all``, like every
+    other consumer (the ``lanes``/``e2e`` jobs read ``inputs.lane || 'all'``).
 
     Compared bare, an input that resolved empty reads as "scoped" — so a full-matrix
     run would silently never certify the commit even though the matrix did fan out.
