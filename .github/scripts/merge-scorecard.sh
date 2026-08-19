@@ -10,10 +10,10 @@
 # `--expected-lanes ""` fails validation there and the run is still gated red.
 #
 # This is the first link in a fail-open-by-default chain: compute-gate-verdict.sh
-# (MERGE_OK) and mark-commit-status.sh (PASSED) apply the same "default to red
-# instead of aborting" rule to their own required verdict inputs, for the same
-# reason — each one is downstream of a step that may itself have died without
-# writing its output.
+# (MERGE_OK), mark-commit-status.sh and post-baseline-digest.sh (PASSED) apply the
+# same "default to red instead of aborting" rule to their own required verdict
+# inputs, for the same reason — each one is downstream of a step that may itself
+# have died without writing its output.
 set -uo pipefail
 
 EXPECTED_LANES="${EXPECTED_LANES:-}"

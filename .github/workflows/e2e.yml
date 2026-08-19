@@ -96,10 +96,13 @@ on:
 # BAND_E2E_ORPHAN_MAX_AGE_MINUTES, so a concurrent run's fresh agents are never
 # swept out from under it.
 
-# Default for every job: read-only. The `mark-baseline` reporting job narrowly
-# widens this at job level — `statuses: write` to post `baseline-green` — using
-# the ambient `secrets.GITHUB_TOKEN`. E2E_GITHUB_TOKEN is unrelated to that: it is
-# the Copilot-entitled PAT the `backends` lane needs as a model provider credential.
+# Default for every job: read-only. The two reporting jobs (mark-baseline,
+# report-scoped-run) narrowly widen this at job level — `statuses: write` to post
+# `baseline-green`, `contents: write` to comment on the tested commit (this repo
+# doesn't use GitHub Issues; a commit comment still delivers a mention
+# notification/email to everyone named in RECIPIENTS) — using the ambient
+# `secrets.GITHUB_TOKEN`. E2E_GITHUB_TOKEN is unrelated to that: it is the
+# Copilot-entitled PAT the `backends` lane needs as a model provider credential.
 permissions:
   contents: read
 
@@ -343,8 +346,10 @@ jobs:
       run:
         shell: bash
     outputs:
-      # Consumed by mark-baseline to decide the baseline-green commit status.
+      # Consumed by mark-baseline (and report-scoped-run) to decide the
+      # baseline-green commit status and the digest's header/warning.
       passed: ${{ steps.verdict.outputs.ok }}
+      matrix_ok: ${{ needs.e2e.result == 'success' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -416,21 +421,22 @@ jobs:
       run: exit 1
 
   # Only a full matrix may certify the commit: its state means the entire baseline
-  # is green/red. A scoped manual dispatch never reaches this job (see its `if:`),
-  # so a partial run can never affect release gating.
+  # is green/red. Scoped manual runs report through the separate job below, so
+  # their limited coverage can never affect release gating.
   mark-baseline:
     name: mark baseline-green
     needs: scorecard
-    # `!cancelled()` rather than `always()`: this job writes a durable, externally
-    # visible commit status, and a cancelled run is not evidence of anything —
-    # under `always()` a nightly whose legs were cancelled mid-flight (the
-    # per-(lane,OS) concurrency group, or a human cancelling the run) would post
-    # `baseline-green: failure` with nothing actually broken. Declining to post
-    # instead leaves this commit with no status at all, so check-release-
-    # baseline.sh's backward scan simply skips it and gates on whichever earlier
-    # commit was actually tested (bounded by MAX_BASELINE_AGE_DAYS) — the honest
-    # read of "this run proved nothing" rather than asserting a false red. A
-    # `timeout-minutes` leg kill does NOT cancel the run, so it still reddens here.
+    # `!cancelled()` rather than `always()`: this job writes durable, externally
+    # visible state (a commit status, plus a comment on the commit), and a
+    # cancelled run is not evidence of anything — under `always()` a nightly whose
+    # legs were cancelled mid-flight (the per-(lane,OS) concurrency group, or a
+    # human cancelling the run) would post `baseline-green: failure` with nothing
+    # actually broken. Declining to post instead leaves this commit with no status
+    # at all, so check-release-baseline.sh's backward scan simply skips it and
+    # gates on whichever earlier commit was actually tested (bounded by
+    # MAX_BASELINE_AGE_DAYS) — the honest read of "this run proved nothing" rather
+    # than asserting a false red. A `timeout-minutes` leg kill does NOT cancel the
+    # run, so it still reddens here.
     #
     # Both dispatch inputs are normalized with `|| 'all'`, matching every other
     # consumer (the `lanes`/`e2e` jobs): compared bare, an input that resolved
@@ -452,7 +458,7 @@ jobs:
         (github.event.inputs.os || 'all') == 'all'))
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       statuses: write
     defaults:
       run:
@@ -463,9 +469,88 @@ jobs:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       SHA: ${{ github.sha }}
       PASSED: ${{ needs.scorecard.outputs.passed }}
+      MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+    # continue-on-error: the commit status below is the more important of the two
+    # things this job does (it's what release-gate.yml reads) and depends only on
+    # $PASSED (a job output, already resolved) — never on this download succeeding.
+    # A transient artifact-service hiccup here must not silently skip it; the
+    # downstream digest step already falls back gracefully when the scorecard
+    # files never arrive (e.g. "No scorecard was produced this run").
+    - name: Download the merged scorecard
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: scorecard
+        path: artifacts
+        if-no-files-found: warn
+
     - name: Mark the commit baseline-green or baseline-red
       run: .github/scripts/mark-commit-status.sh
+
+    # .github/integrations-team.txt (one GitHub username per line) is kept as a
+    # plain data file, not inline here, so updating band-ai/integrations
+    # membership never means editing workflow YAML. Individual @username
+    # mentions, not the @band-ai/integrations team handle — verified live that a
+    # bot-authored (secrets.GITHUB_TOKEN) team mention does not reliably fan out
+    # a per-member notification, even with every member's own settings correctly
+    # configured.
+    - name: Read integrations mentions list
+      id: mentions
+      run: .github/scripts/read-integrations-mentions.sh
+
+    - name: Post the night's scorecard as a commit comment
+      env:
+        REPORT_LABEL: Nightly baseline
+        RECIPIENTS: ${{ steps.mentions.outputs.mentions }}
+      run: .github/scripts/post-baseline-digest.sh
+
+  # A scoped dispatch is useful evidence for its requester, but is never evidence of
+  # the complete release baseline. Report it in its own commit comment and mention
+  # only the initiating user; GitHub then delivers the normal mention
+  # notification/email based on that user's settings without broadcasting
+  # exploratory runs to the whole team.
+  report-scoped-run:
+    name: report scoped E2E
+    needs: scorecard
+    # `!cancelled()` + normalized inputs, for the same reasons as mark-baseline
+    # above (this job comments on the commit, so a cancelled run must not report).
+    # The two conditions stay exact complements of each other.
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' &&
+      ((github.event.inputs.lane || 'all') != 'all' ||
+       (github.event.inputs.os || 'all') != 'all')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
+      PASSED: ${{ needs.scorecard.outputs.passed }}
+      MATRIX_OK: ${{ needs.scorecard.outputs.matrix_ok }}
+      RECIPIENTS: "@${{ github.triggering_actor }}"
+      SCOPE_NOTICE: "Selected scope: lane=${{ github.event.inputs.lane }}, os=${{ github.event.inputs.os }}. This is not a full baseline and does not affect the release gate or nightly baseline state."
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+    - name: Download the merged scorecard
+      continue-on-error: true
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: scorecard
+        path: artifacts
+        if-no-files-found: warn
+
+    - name: Post the scoped scorecard as a commit comment
+      env:
+        REPORT_LABEL: Manual E2E (scoped)
+      run: .github/scripts/post-baseline-digest.sh
