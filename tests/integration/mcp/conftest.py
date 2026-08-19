@@ -8,7 +8,11 @@ register -> validate -> dispatch -> HTTP path a real ``band-mcp`` process
 takes, minus the transport.
 
 Credentials are loaded from ``.env.test``. Every test is skipped unless
-``BAND_AGENT_KEY`` is set.
+``BAND_AGENT_KEY`` is set; once the suite runs, ``BAND_USER_KEY`` and
+``BAND_API_KEY_2`` are required too (see ``BandTestSettings`` below) --
+a partial-credential environment would silently narrow which scopes and
+topologies get tested, which is exactly the class of bug this suite exists
+to catch.
 
 Run:
     uv run --all-packages pytest tests/integration/mcp/ -v -s --no-cov
@@ -25,6 +29,7 @@ from typing import Any
 
 import pytest
 from mcp.server.fastmcp import FastMCP
+from pydantic import AliasChoices, Field
 
 from band.integrations.mcp.engine import build_engine
 from band_mcp import shared
@@ -38,12 +43,26 @@ from tests.paths import ENV_TEST_FILE
 
 
 class BandTestSettings(BaseTestSettings):
-    """Settings for band-mcp integration tests, loaded from ``.env.test``."""
+    """Settings for band-mcp integration tests, loaded from ``.env.test``.
 
-    band_user_key: str = ""
+    ``band_user_key``/``band_agent_key_2`` fall back to the sibling
+    ``tests/conftest_integration.py`` suite's env var names
+    (``BAND_API_KEY_USER``/``BAND_API_KEY_2``): both are real Band API keys
+    for the same test account, just named differently by that suite's own
+    convention -- an alias reuses the existing credential instead of
+    requiring a second, duplicate ``.env.test`` entry.
+    """
+
+    band_user_key: str = Field(
+        "", validation_alias=AliasChoices("BAND_USER_KEY", "BAND_API_KEY_USER")
+    )
     band_agent_key: str = ""
+    band_agent_key_2: str = Field(
+        "", validation_alias=AliasChoices("BAND_AGENT_KEY_2", "BAND_API_KEY_2")
+    )
     band_base_url: str = "https://app.band.ai"
     test_agent_id: str = ""
+    test_agent_id_2: str = ""
 
     _env_file_path: Path = ENV_TEST_FILE
 
@@ -59,12 +78,20 @@ def get_agent_key() -> str | None:
     return test_settings.band_agent_key or None
 
 
+def get_agent_key_2() -> str | None:
+    return test_settings.band_agent_key_2 or None
+
+
 def get_base_url() -> str:
     return test_settings.band_base_url
 
 
 def get_test_agent_id() -> str | None:
     return test_settings.test_agent_id or None
+
+
+def get_test_agent_id_2() -> str | None:
+    return test_settings.test_agent_id_2 or None
 
 
 # Skip marker for the whole live suite.
@@ -132,52 +159,97 @@ class LiveHarness:
 
 @pytest.fixture(scope="session")
 def live_config() -> Config:
-    """Resolve a Config from whichever live credentials `.env.test` sets."""
+    """Resolve the primary agent's Config. Both credentials are required.
+
+    A key missing here is a real `.env.test` setup gap, not something to
+    silently work around by narrowing scope -- fail loudly instead.
+    """
     user_key = get_user_key()
     agent_key = get_agent_key()
-    if not user_key and not agent_key:
-        pytest.skip("Neither BAND_USER_KEY nor BAND_AGENT_KEY is set")
-
-    scope: list[Scope] = []
-    if agent_key:
-        scope.append(Scope.AGENT)
-    if user_key:
-        scope.append(Scope.HUMAN)
+    if not user_key or not agent_key:
+        raise RuntimeError(
+            "tests/integration/mcp/ requires both BAND_AGENT_KEY and "
+            "BAND_USER_KEY (or BAND_API_KEY_USER) set in .env.test."
+        )
 
     return Config(
         user_key=user_key,
         agent_key=agent_key,
-        scope=scope,
+        scope=[Scope.AGENT, Scope.HUMAN],
         tools=[ToolGroup.CONTACTS, ToolGroup.MEMORY],
     )
 
 
-@pytest.fixture
-def harness(live_config: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness:
+@pytest.fixture(scope="session")
+def live_config_2() -> Config:
+    """Resolve a second, genuinely distinct agent identity's Config.
+
+    Backs multi-agent scenarios (one real agent adding/mentioning another),
+    as opposed to ``live_config``'s single agent plus its human owner.
+    """
+    agent_key = get_agent_key_2()
+    if not agent_key:
+        raise RuntimeError(
+            "Multi-agent tests/integration/mcp/ scenarios require "
+            "BAND_AGENT_KEY_2 (or BAND_API_KEY_2) set in .env.test."
+        )
+    return Config(agent_key=agent_key, user_key=None, scope=[Scope.AGENT], tools=[])
+
+
+def _build_harness(config: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness:
     """Build a real engine (standalone_spec + build_engine) and return a driver."""
     monkeypatch.setattr(shared.settings, "band_base_url", get_base_url())
 
-    resolver: StandaloneResolver = build_standalone_resolver(live_config)
-    spec = standalone_spec(live_config, resolver)
+    resolver: StandaloneResolver = build_standalone_resolver(config)
+    spec = standalone_spec(config, resolver)
     mcp = build_engine(spec)
 
-    return LiveHarness(mcp, list(live_config.scope))
+    return LiveHarness(mcp, list(config.scope))
+
+
+@pytest.fixture
+def harness(live_config: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness:
+    """Primary agent's driver (agent + human scope)."""
+    return _build_harness(live_config, monkeypatch)
+
+
+@pytest.fixture
+def harness_2(live_config_2: Config, monkeypatch: pytest.MonkeyPatch) -> LiveHarness:
+    """Second, genuinely distinct agent identity's driver (agent scope only)."""
+    return _build_harness(live_config_2, monkeypatch)
 
 
 @pytest.fixture
 async def agent_room(harness: LiveHarness):
-    """Create a throwaway agent chat room, yield its id (agent scope only).
+    """Create a throwaway agent chat room, yield its id.
 
     No teardown: the Band REST API has no room-delete endpoint, so every live
     run of a test using this fixture permanently leaks the room it creates
     (same known platform limitation noted in ``tests/integration/test_agent_contacts.py``).
     These tests require real API access and are skipped in CI.
     """
-    if "agent" not in harness.scope:
-        pytest.skip("agent scope not served by this key")
-
     created = await harness.call("band_create_chatroom")
     room_id = _extract_id(created)
-    if not room_id:
-        pytest.skip(f"could not create agent chat room: {created!r}")
+    assert room_id, f"band_create_chatroom returned no id: {created!r}"
     yield room_id
+
+
+async def ensure_mentionable_participant(
+    harness: LiveHarness, room_id: str, *, identifier: str | None = None
+) -> str:
+    """Add a real participant to `room_id`; return their id to @mention.
+
+    A freshly created agent room has no other participant, and self-mention is
+    disallowed by design. Pass `identifier` for a known peer (e.g. a second
+    test agent); omit it to add the room-owning human, discovered via
+    ``band_lookup_peers`` (the ``type: "User"`` entry).
+    """
+    if identifier is None:
+        peers = _unwrap(
+            await harness.call(
+                "band_lookup_peers", chat_id=room_id, page=1, page_size=100
+            )
+        )
+        identifier = next(p for p in peers if p["type"] == "User")["id"]
+    await harness.call("band_add_participant", chat_id=room_id, identifier=identifier)
+    return identifier

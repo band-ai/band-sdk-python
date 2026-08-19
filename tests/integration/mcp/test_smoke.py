@@ -24,20 +24,16 @@ async def test_registrar_advertises_only_scoped_tools(harness: LiveHarness) -> N
     assert names, "registrar advertised no tools"
     assert all(n.startswith("band_") for n in names), sorted(names)
 
-    if "agent" in harness.scope:
-        assert "band_lookup_peers" in names
-    if "human" in harness.scope:
-        assert "band_list_my_chats" in names
-        assert "band_get_my_profile" in names
+    # `harness` always serves both scopes (see conftest.live_config).
+    assert "band_lookup_peers" in names
+    assert "band_list_my_chats" in names
+    assert "band_get_my_profile" in names
     logger.info("Registered %d tools for scope %s", len(names), harness.scope)
 
 
 @requires_api
 async def test_human_profile_and_chats_round_trip(harness: LiveHarness) -> None:
     """Human read-only tools return well-formed payloads."""
-    if "human" not in harness.scope:
-        pytest.skip("human scope not served by this key")
-
     profile = await harness.call("band_get_my_profile")
     # GetMyProfileResponse wraps UserDetails under "data" (engine._serialize
     # model_dump()s the whole response, not just its payload).

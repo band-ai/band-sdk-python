@@ -24,9 +24,6 @@ async def test_unknown_tool_name_is_rejected(harness: LiveHarness) -> None:
 @requires_api
 async def test_missing_required_argument_reports_field(harness: LiveHarness) -> None:
     """A room-bound agent tool without chat_id fails before any HTTP call."""
-    if "agent" not in harness.scope:
-        pytest.skip("agent scope not served by this key")
-
     # band_send_message requires both `content` and a room (`chat_id`).
     with pytest.raises(Exception) as exc_info:
         await harness.call_raw("band_send_message")
@@ -36,9 +33,6 @@ async def test_missing_required_argument_reports_field(harness: LiveHarness) -> 
 @requires_api
 async def test_human_send_message_requires_chat_id(harness: LiveHarness) -> None:
     """band_send_my_chat_message without chat_id/content is rejected."""
-    if "human" not in harness.scope:
-        pytest.skip("human scope not served by this key")
-
     with pytest.raises(Exception) as exc_info:
         await harness.call_raw("band_send_my_chat_message")
     assert "chat_id" in str(exc_info.value)
@@ -47,9 +41,6 @@ async def test_human_send_message_requires_chat_id(harness: LiveHarness) -> None
 @requires_api
 async def test_resolve_unknown_handle_is_handled(harness: LiveHarness) -> None:
     """Resolving a bogus handle returns an error payload or raises, not a crash."""
-    if "human" not in harness.scope:
-        pytest.skip("human scope not served by this key")
-
     try:
         result = await harness.call(
             "band_resolve_handle", handle="@definitely-not-a-real-handle-xyz"
