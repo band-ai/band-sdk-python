@@ -140,15 +140,22 @@ def hermetic_copilot_config(
     ``session/load`` deterministically miss. ``hosted=False`` (default)
     mirrors the registry builder's Anthropic BYOK env (``copilot_acp_env``);
     ``hosted=True`` omits it and authenticates with ``github_token`` — the
-    Copilot-hosted path production users run.
+    Copilot-hosted path production users run. The hosted env also pins
+    ``COPILOT_MODEL`` (``settings.backends.copilot_hosted_model``) so this
+    smoke's one billed turn uses a cheap, deterministic model instead of
+    Copilot's ``auto`` picker.
     """
     from band.adapters.copilot_acp import CopilotACPAdapterConfig
 
     home = copilot_home_dir(str(work_dir))
+    hosted_env = {
+        "COPILOT_HOME": home,
+        "COPILOT_MODEL": settings.backends.copilot_hosted_model,
+    }
     kwargs: dict[str, Any] = {
         "cwd": str(work_dir),
         "custom_section": "Keep responses short and concise.",
-        "env": ({"COPILOT_HOME": home} if hosted else copilot_acp_env(settings, home)),
+        "env": (hosted_env if hosted else copilot_acp_env(settings, home)),
     }
     if hosted:
         kwargs["github_token"] = settings.backends.github_token

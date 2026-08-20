@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Posts a compact baseline report to its tracking issue. Full runs sync the issue's
-# open/closed state; scoped manual runs only report their selected coverage.
-# Reads REPO / RUN_URL / PASSED / MATRIX_OK / SHA / ISSUE_NUMBER / REPORT_LABEL /
-# RECIPIENTS / SYNC_ISSUE_STATE and optional SCOPE_NOTICE / RUN_LINK_LABEL from the
-# environment.
+# Posts a compact baseline report as a comment on the tested commit -- not a
+# GitHub Issue (this repo doesn't use them). GitHub still delivers a mention
+# notification/email to everyone named in RECIPIENTS off a commit comment,
+# same as it would off an issue comment; a commit comment also needs no
+# find-or-create lookup and has no open/closed state to sync, since the
+# commit itself (not a persistent issue) is what each night's report hangs
+# off of.
+# Reads REPO / RUN_URL / PASSED / MATRIX_OK / SHA / REPORT_LABEL / RECIPIENTS
+# and optional SCOPE_NOTICE / RUN_LINK_LABEL from the environment.
 #
 # PASSED defaults to false rather than requiring it — see merge-scorecard.sh's
 # EXPECTED_LANES comment for the shared "default to red instead of aborting" policy
-# this is one link in (silence here would mean the issue never reflects the run at
+# this is one link in (silence here would mean the commit never gets a report at
 # all). MATRIX_OK stays required: it is a GitHub Actions expression on `needs.e2e`,
 # always populated as long as that job exists.
 set -euo pipefail
@@ -17,10 +21,8 @@ set -euo pipefail
 PASSED="${PASSED:-false}"
 : "${MATRIX_OK:?MATRIX_OK is required}"
 : "${SHA:?SHA is required}"
-: "${ISSUE_NUMBER:?ISSUE_NUMBER is required}"
 : "${REPORT_LABEL:?REPORT_LABEL is required}"
 : "${RECIPIENTS:?RECIPIENTS is required}"
-: "${SYNC_ISSUE_STATE:?SYNC_ISSUE_STATE is required}"
 
 # Where the rendered digest body comes from. Overridable so a caller can point at its
 # own scratch copy (scripts/preview-baseline-digest.sh does) instead of having to
@@ -59,12 +61,4 @@ body_file="$(mktemp)"
   echo "cc $RECIPIENTS"
 } > "$body_file"
 
-gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body-file "$body_file"
-
-if [ "$SYNC_ISSUE_STATE" = "true" ]; then
-  if [ "$PASSED" = "true" ]; then
-    gh issue close "$ISSUE_NUMBER" --repo "$REPO" 2>/dev/null || true
-  else
-    gh issue reopen "$ISSUE_NUMBER" --repo "$REPO" 2>/dev/null || true
-  fi
-fi
+gh api "repos/$REPO/commits/$SHA/comments" -F body="@$body_file"

@@ -704,12 +704,12 @@ re-run the check by hand.
 
 Two reporting jobs (`mark-baseline`, `report-scoped-run`) are gated on `!cancelled()`
 rather than `always()`. They write externally visible state — a commit status, and a
-comment that reopens/closes the tracking issue — and a *cancelled* run is not evidence
-of anything: under `always()`, a nightly whose legs were cancelled mid-flight (the
-per-(lane,OS) concurrency group, or a human cancelling the run) would report the
-baseline as red with nothing actually broken. Declining to report is the safe
-direction, since the release gate treats an absent status as blocking anyway. A
-`timeout-minutes` leg kill does *not* cancel the run, so a genuine hang still reddens.
+comment on the tested commit — and a *cancelled* run is not evidence of anything:
+under `always()`, a nightly whose legs were cancelled mid-flight (the per-(lane,OS)
+concurrency group, or a human cancelling the run) would report the baseline as red
+with nothing actually broken. Declining to report is the safe direction, since the
+release gate treats an absent status as blocking anyway. A `timeout-minutes` leg kill
+does *not* cancel the run, so a genuine hang still reddens.
 
 **Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
 
@@ -780,48 +780,47 @@ producer and the consumer read the status context name from
 a typo in a re-typed literal would fail silently, blocking the release PR forever with
 nothing to point at.
 
-**Nightly digest:** the same job also comments a compact digest (pass or fail) on one
-persistent issue (matched by title, not a label — "Nightly baseline results"),
-reopening it on red and closing it on green so its state also reads "currently
-red/green" at a glance. The comment individually mentions each `band-ai/integrations`
-member, listed in `.github/integrations-team.txt` (one GitHub username per line) —
-verified live that a bot-authored `@org/team` mention does not reliably fan out a
-per-member notification, even with every member's own settings correctly configured,
-so individual mentions are what actually delivers. The roster lives in that plain data
-file rather than inline in the workflow so updating membership never means editing
-YAML. GitHub's own mention-notification delivery emails each one per their own account
-settings, so there's no mailer to stand up and no email address this repo ever has to
-see or store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the
-wide adapter×test grid — a real run spans every registered adapter (15+ columns as of
-this writing) across all lanes, which is fine full-width in the step summary but
-turns into an unreadable wall in a notification email. It's a small GFM counts table
+**Nightly digest:** the same job also posts a compact digest (pass or fail) as a
+**comment on the tested commit** — not a GitHub Issue (this repo doesn't use them);
+GitHub still delivers a mention notification/email off a commit comment exactly as
+it would off an issue comment, which is the only reason this exists. The comment
+individually mentions each `band-ai/integrations` member, listed in
+`.github/integrations-team.txt` (one GitHub username per line) — verified live that a
+bot-authored `@org/team` mention does not reliably fan out a per-member notification,
+even with every member's own settings correctly configured, so individual mentions
+are what actually delivers. The roster lives in that plain data file rather than
+inline in the workflow so updating membership never means editing YAML. GitHub's own
+mention-notification delivery emails each one per their own account settings, so
+there's no mailer to stand up and no email address this repo ever has to see or
+store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the wide
+adapter×test grid — a real run spans every registered adapter (15+ columns as of this
+writing) across all lanes, which is fine full-width in the step summary but turns
+into an unreadable wall in a notification email. It's a small GFM counts table
 (Passed/Failed/N-A/Skipped) plus only the problem cells (failing / missing, listed
 separately), plus a link back to the run for the full grid — GitHub's comment/email
 renderer sanitizes out `<style>`/inline CSS, so plain GFM (tables, bold, bullets) is
 the ceiling for styling here; `post-baseline-digest.sh` also adds a shields.io
 PASS/FAIL badge image alongside the bold emoji+text header (the bold text is the
 guaranteed-to-render fallback for mail clients that block remote images by default).
-Its PASS/FAIL header is built by the workflow from the job's
-combined verdict (`$PASSED`), not read off the cell-level digest — a matrix-leg crash
-the cell grid can't see (no OS dimension on `ScorecardRow`) can flip that verdict in
-a way the digest content alone wouldn't show, so the workflow says so explicitly
-when it happens rather than let the email quietly disagree with the `baseline-green`
-commit status.
+Its PASS/FAIL header is built by the workflow from the job's combined verdict
+(`$PASSED`), not read off the cell-level digest — a matrix-leg crash the cell grid
+can't see (no OS dimension on `ScorecardRow`) can flip that verdict in a way the
+digest content alone wouldn't show, so the workflow says so explicitly when it
+happens rather than let the email quietly disagree with the `baseline-green` commit
+status.
 
-**Scoped manual reports:** a manual dispatch that selects one lane and/or OS posts the
-same compact digest to a separate `Manual E2E results` issue and mentions only the
-person who initiated it. Its header names the selected scope and explicitly says it
-does not certify the full baseline; it never writes `baseline-green` or changes the
-canonical nightly issue's state. The requester also receives GitHub's normal workflow
-completion notification when enabled.
+**Scoped manual reports:** a manual dispatch that selects one lane and/or OS posts
+the same compact digest as a comment on that commit and mentions only the person who
+initiated it. Its header names the selected scope and explicitly says it does not
+certify the full baseline; it never writes `baseline-green`.
 
 **Local preview:** `scripts/preview-baseline-digest.sh [pass|fail] [nightly|manual]`
-posts a real comment in seconds without waiting on E2E. It fabricates a tiny scorecard
-and drives the same `.github/scripts/{find-or-create-tracking-issue,
-post-baseline-digest}.sh` path CI uses, so formatting cannot drift. `nightly` (the
-default) pings the roster and changes the canonical issue state; `manual` mentions
-only the current GitHub user and leaves both the release state and nightly issue alone.
-Use either sparingly.
+posts a real comment in seconds without waiting on E2E, against local HEAD (which
+must already be pushed — the commit-comments API 404s on a SHA the remote doesn't
+have). It fabricates a tiny scorecard and drives the same
+`.github/scripts/post-baseline-digest.sh` path CI uses, so formatting cannot drift.
+`nightly` (the default) pings the roster; `manual` mentions only the current GitHub
+user. Use either sparingly.
 
 ## Letta lane
 
