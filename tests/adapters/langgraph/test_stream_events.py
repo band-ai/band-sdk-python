@@ -9,7 +9,6 @@ from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
-    AdapterFeatures,
     Emit,
     TurnUsage,
 )
@@ -53,7 +52,7 @@ class TestUsageReporting:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            features=AdapterFeatures(emit=frozenset({Emit.USAGE})),
+            emit=Emit.USAGE,
         )
         await adapter.emit_usage(
             mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
@@ -73,7 +72,7 @@ class TestStreamEventHandling:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+            emit=Emit.TOOL_CALLS,
         )
 
         event = {
@@ -95,7 +94,7 @@ class TestStreamEventHandling:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+            emit=Emit.TOOL_CALLS,
         )
 
         event = {
@@ -119,7 +118,7 @@ class TestStreamEventHandling:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
-            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+            emit=Emit.TOOL_CALLS,
         )
 
         event = {
@@ -173,10 +172,11 @@ class TestStreamEventHandling:
     async def test_does_not_emit_when_execution_feature_off(
         self, mock_tools, mock_llm, mock_checkpointer
     ):
-        """Execution stream events are gated by Emit.EXECUTION."""
+        """Execution stream events are gated by Emit.TOOL_CALLS."""
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
+            emit=(),
         )
 
         event = {
@@ -189,16 +189,3 @@ class TestStreamEventHandling:
         await adapter._handle_stream_event(event, "room-123", mock_tools)
 
         mock_tools.send_event.assert_not_awaited()
-
-    def test_enable_execution_reporting_shim_enables_execution_emit(
-        self, mock_llm, mock_checkpointer
-    ):
-        """Legacy execution-reporting flag maps to Emit.EXECUTION."""
-        with pytest.warns(DeprecationWarning):
-            adapter = LangGraphAdapter(
-                llm=mock_llm,
-                checkpointer=mock_checkpointer,
-                enable_execution_reporting=True,
-            )
-
-        assert Emit.EXECUTION in adapter.features.emit

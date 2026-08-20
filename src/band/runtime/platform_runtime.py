@@ -7,6 +7,8 @@ import logging
 from typing import Awaitable, Callable
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
+from band.core.types import PlatformConnection
 from band.platform.link import BandLink
 from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.runtime.contact_handler import ContactEventHandler
@@ -47,8 +49,8 @@ class PlatformRuntime:
         self,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
-        rest_url: str = "https://app.band.ai",
+        ws_url: str = DEFAULT_WS_URL,
+        rest_url: str = DEFAULT_REST_URL,
         config: AgentConfig | None = None,
         session_config: SessionConfig | None = None,
         contact_config: ContactEventConfig | None = None,
@@ -80,6 +82,22 @@ class PlatformRuntime:
     @property
     def agent_id(self) -> str:
         return self._agent_id
+
+    @property
+    def connection(self) -> PlatformConnection:
+        """Platform coordinates for injection into the adapter (see Agent.start).
+
+        Builds from this instance's own fields rather than delegating to
+        ``self._link.to_platform_connection()``: unlike those fields, ``_link``
+        is only set once ``initialize()`` has run, so delegating would need a
+        None-guard for any caller reading this before startup completes.
+        """
+        return PlatformConnection(
+            agent_id=self._agent_id,
+            api_key=self._api_key,
+            rest_url=self._rest_url,
+            ws_url=self._ws_url,
+        )
 
     @property
     def agent_name(self) -> str:

@@ -20,6 +20,7 @@ from band.adapters.letta import (
     _RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.types import Emit
 from band.testing import FakeAgentTools
 from tests.adapters.lettakit import (
     default_enforcement,
@@ -51,10 +52,14 @@ class TestLettaAdapterInit:
             provider_key="sk-test",
             mode="shared",
             mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
-            enable_execution_reporting=True,
         )
         adapter = LettaAdapter(config=config)
         assert adapter.config is config
+
+    def test_no_leaked_adapter_config_env_vars(
+        self, assert_no_leaked_adapter_config_env: None
+    ) -> None:
+        """Requesting the fixture is the assertion — see its docstring."""
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -579,8 +584,8 @@ class TestLettaAdapterSharedMode:
 class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_non_silent_tool_calls(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -619,8 +624,8 @@ class TestExecutionReporting:
 
     @pytest.mark.asyncio
     async def test_silent_tools_not_reported(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -881,8 +886,8 @@ class TestTaskEvents:
 
     @pytest.mark.asyncio
     async def test_task_events_disabled(self) -> None:
-        config = LettaAdapterConfig(enable_task_events=False)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=())
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -1519,3 +1524,42 @@ class TestDeleteAgentsOnCleanup:
 
         await adapter.on_cleanup("room-1")  # should not raise
         assert "room-1" not in adapter._rooms
+
+
+class TestConfigEnvSourcing:
+    """provider_key env sourcing: LETTA_* names only, never bare vars."""
+
+    @pytest.fixture(autouse=True)
+    def clean_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in ("API_KEY", "PROVIDER_KEY", "LETTA_API_KEY", "LETTA_PROVIDER_KEY"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_bare_env_vars_never_populate_provider_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A foreign secret in API_KEY/PROVIDER_KEY must not reach Letta."""
+        monkeypatch.setenv("API_KEY", "foreign-secret")
+        monkeypatch.setenv("PROVIDER_KEY", "foreign-secret")
+
+        assert LettaAdapterConfig().provider_key is None
+
+    def test_letta_api_key_env_populates_provider_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_API_KEY", "cloud-key")
+
+        assert LettaAdapterConfig().provider_key == "cloud-key"
+
+    def test_prefixed_field_name_env_populates_provider_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_PROVIDER_KEY", "prefixed-key")
+
+        assert LettaAdapterConfig().provider_key == "prefixed-key"
+
+    def test_explicit_kwarg_wins_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_API_KEY", "env-key")
+
+        assert LettaAdapterConfig(provider_key="kwarg-key").provider_key == "kwarg-key"

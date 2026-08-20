@@ -11,7 +11,7 @@ import functools
 import inspect
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
@@ -118,8 +118,11 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     internals lives in exactly one place.
     """
     from band.adapters.pydantic_ai import PydanticAIAdapter
+    from band.core.types import Capability
 
-    adapter = PydanticAIAdapter(model="test", features=_all_capabilities())
+    adapter = PydanticAIAdapter(
+        model="test", capabilities=Capability.CONTACTS | Capability.MEMORY
+    )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
         name: tool.function_schema
@@ -257,13 +260,17 @@ def _strands_factory(**kw: Any) -> Any:
 def _parlant_factory(**kw: Any) -> Any:
     from band.adapters.parlant import ParlantAdapter
 
+    # A borrowed server with no parlant_agent: system_prompt/custom_section
+    # (exercised via custom_kwargs) only apply to an adapter-created agent,
+    # so the factory lets the adapter create one on the mocked server.
     if "server" not in kw:
-        kw["server"] = MagicMock()
-    if "parlant_agent" not in kw:
         mock_agent = MagicMock()
         mock_agent.id = "parlant-agent-123"
         mock_agent.name = "TestBot"
-        kw["parlant_agent"] = mock_agent
+        mock_agent.create_guideline = AsyncMock()
+        server = MagicMock()
+        server.create_agent = AsyncMock(return_value=mock_agent)
+        kw["server"] = server
     return ParlantAdapter(**kw)
 
 
@@ -282,6 +289,9 @@ def _letta_factory(**kw: Any) -> Any:
 def _opencode_factory(**kw: Any) -> Any:
     from band.adapters.opencode import OpencodeAdapter
 
+    # Fake the server boundary so on_started's reachability preflight
+    # (which only runs with the default client factory) stays offline.
+    kw.setdefault("client_factory", lambda _config: MagicMock())
     return OpencodeAdapter(**kw)
 
 
@@ -645,10 +655,10 @@ def _build_codex_config() -> AdapterConfig:
             "config": CodexAdapterConfig(),
         },
         custom_kwargs={
-            "config": CodexAdapterConfig(enable_execution_reporting=True),
+            "config": CodexAdapterConfig(structured_errors=False),
         },
         custom_expected={
-            "config": CodexAdapterConfig(enable_execution_reporting=True),
+            "config": CodexAdapterConfig(structured_errors=False),
         },
         has_custom_tools_attr=True,
         custom_tools_attr="_custom_tools",
@@ -668,14 +678,14 @@ def _build_letta_config() -> AdapterConfig:
         },
         custom_kwargs={
             "config": LettaAdapterConfig(
-                enable_execution_reporting=True,
+                auto_relay=False,
                 mode="shared",
                 mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         custom_expected={
             "config": LettaAdapterConfig(
-                enable_execution_reporting=True,
+                auto_relay=False,
                 mode="shared",
                 mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
@@ -698,7 +708,7 @@ def _build_opencode_config() -> AdapterConfig:
         },
         custom_kwargs={
             "config": OpencodeAdapterConfig(
-                enable_execution_reporting=True,
+                include_base_instructions=True,
                 approval_mode="auto_accept",
                 provider_id="opencode",
                 model_id="minimax-m2.5-free",
@@ -706,7 +716,7 @@ def _build_opencode_config() -> AdapterConfig:
         },
         custom_expected={
             "config": OpencodeAdapterConfig(
-                enable_execution_reporting=True,
+                include_base_instructions=True,
                 approval_mode="auto_accept",
                 provider_id="opencode",
                 model_id="minimax-m2.5-free",

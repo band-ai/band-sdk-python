@@ -16,7 +16,7 @@ import pytest
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.core.types import AdapterFeatures, Emit, PlatformMessage
+from band.core.types import Emit, PlatformMessage
 
 
 def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
@@ -33,9 +33,7 @@ def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
 async def test_tool_call_event_uses_bare_name() -> None:
     from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
-    adapter = ClaudeSDKAdapter(
-        features=AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-    )
+    adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
 
     message = PlatformMessage(
         id="m1",

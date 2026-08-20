@@ -46,55 +46,55 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shlex
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    acp_agent_command: str = "npx @zed-industries/codex-acp"
+    acp_agent_cwd: str = "."
+    acp_auth_method: str = ""
+    acp_inject_band_tools: bool = True
+    acp_client_profile: str = ""
 
 
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
-    command = shlex.split(
-        os.getenv("ACP_AGENT_COMMAND", "npx @zed-industries/codex-acp")
-    )
-    cwd = os.getenv("ACP_AGENT_CWD", ".")
-    auth_method = os.getenv("ACP_AUTH_METHOD")
-    inject_band_tools = os.getenv("ACP_INJECT_BAND_TOOLS", "true").lower() not in {
-        "0",
-        "false",
-        "no",
-    }
-    profile_name = os.getenv("ACP_CLIENT_PROFILE", "").strip().lower()
+    command = shlex.split(settings.acp_agent_command)
+    cwd = settings.acp_agent_cwd
+    auth_method = settings.acp_auth_method or None
+    inject_band_tools = settings.acp_inject_band_tools
+    profile_name = settings.acp_client_profile.strip().lower()
     profile = CursorACPClientProfile() if profile_name == "cursor" else None
 
     adapter = ACPClientAdapter(
         command=command,
         cwd=cwd,
-        rest_url=rest_url,
         inject_band_tools=inject_band_tools,
         auth_method=auth_method,
         profile=profile,
-    )
-
-    agent = Agent.from_config(
-        "acp_client_agent",
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting ACP bridge architecture example...")
@@ -105,7 +105,11 @@ async def main() -> None:
         type(profile).__name__ if profile else "None",
     )
 
-    await agent.run()
+    async with Agent.from_config(
+        "acp_client_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

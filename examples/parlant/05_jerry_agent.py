@@ -31,65 +31,36 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_jerry_prompt
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
-from band.integrations.parlant.tools import create_parlant_tools
 
-setup_logging()
+configure_logging(
+    logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
+)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
-    # Reserved rather than fixed, so Tom and Jerry can run side by side
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
+    # Adapter owns the Parlant server (fresh ports each run, so Tom and Jerry
+    # can run side by side). Band tools attach to the guideline by default.
+    adapter = ParlantAdapter(
+        name="Jerry",
+        description=generate_jerry_prompt("Jerry"),
         nlp_service=p.NLPServices.openai,
-    ) as server:
-        parlant_tools = create_parlant_tools()
+    )
+    adapter.add_guideline(
+        condition="User sends a message or asks something",
+        action="Respond using band_send_message with the user's name in mentions. Stay in character as Jerry the mouse.",
+    )
 
-        # Create Parlant agent with Jerry's personality
-        parlant_agent = await server.create_agent(
-            name="Jerry",
-            description=generate_jerry_prompt("Jerry"),
-        )
-
-        # Add guideline for using tools
-        await parlant_agent.create_guideline(
-            condition="User sends a message or asks something",
-            action="Respond using band_send_message with the user's name in mentions. Stay in character as Jerry the mouse.",
-            tools=parlant_tools,
-        )
-
-        # Create adapter with Parlant server and agent
-        adapter = ParlantAdapter(
-            server=server,
-            parlant_agent=parlant_agent,
-        )
-
-        # Create and start agent
-        agent = Agent.from_config(
-            "jerry_agent",
-            adapter=adapter,
-            ws_url=ws_url,
-            rest_url=rest_url,
-        )
-
-        logger.info("Jerry is cozy in his hole, watching for Tom...")
-        await agent.run()
+    logger.info("Jerry is cozy in his hole, watching for Tom...")
+    async with Agent.from_config(
+        "jerry_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

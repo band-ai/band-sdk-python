@@ -19,44 +19,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import AnthropicAdapter
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_anthropic_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with framework-specific settings
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
         prompt="You are a helpful assistant. Be concise and friendly.",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting Anthropic agent...")
+    async with Agent.from_config(
         "anthropic_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting Anthropic agent...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

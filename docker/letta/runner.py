@@ -49,6 +49,7 @@ except ImportError:
 
 from band.config.loader import load_agent_config
 from band.config.logs import LogSettings
+from band.core.types import Emit
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -76,8 +77,6 @@ class LettaRunnerSettings(BaseSettings):
 
     agent_config: str = ""  # AGENT_CONFIG (required; validated in main)
     agent_key: str = "agent"  # AGENT_KEY
-    band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"  # BAND_WS_URL
-    band_rest_url: str = "https://app.band.ai"  # BAND_REST_URL
     letta_base_url: str | None = None  # LETTA_BASE_URL
     letta_api_key: str | None = None  # LETTA_API_KEY
     letta_model: str | None = None  # LETTA_MODEL
@@ -153,12 +152,6 @@ async def main() -> None:
     settings = LettaRunnerSettings()
     if not settings.agent_config:
         raise ValueError("AGENT_CONFIG environment variable not set")
-    if not settings.band_ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not settings.band_rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
-    ws_url = settings.band_ws_url
-    rest_url = settings.band_rest_url
 
     logger.info(
         "Loading config from: %s (key: %s)", settings.agent_config, settings.agent_key
@@ -216,17 +209,14 @@ async def main() -> None:
             project=letta_project,
             custom_section="",
             include_base_instructions=True,
-            enable_task_events=True,
-            enable_execution_reporting=False,
-        )
+        ),
+        emit=Emit.TASK_EVENTS,
     )
 
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Letta agent: %s", agent_id)

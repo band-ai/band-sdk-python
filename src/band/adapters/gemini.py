@@ -10,6 +10,7 @@ from typing import Any, ClassVar, cast
 
 import httpx
 from pydantic import ValidationError
+from typing_extensions import Unpack
 
 try:
     from google import genai  # type: ignore[missing-module-attribute]
@@ -27,9 +28,9 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -57,16 +58,13 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         adapter = GeminiAdapter(
             model="gemini-2.5-flash",
             prompt="You are a helpful assistant.",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY},
-                emit={Emit.EXECUTION},
-            ),
+            capabilities=Capability.MEMORY,
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -85,14 +83,12 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         max_history_messages: int = 200,
         history_converter: GeminiHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         include_base_instructions: bool = True,
         # --- Deprecated (one release, then remove) ---
         api_key: str | None = None,
         gemini_api_key: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         # --- Selective: provider_key rename ---
         if gemini_api_key is not None:
@@ -128,30 +124,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 raise BandConfigError("Cannot pass both prompt and custom_section")
             prompt = custom_section
 
-        # --- Universal: boolean → AdapterFeatures migration ---
-        if enable_memory_tools or enable_execution_reporting:
-            if features is not None:
-                raise BandConfigError(
-                    "Cannot pass both features= and legacy boolean params "
-                    "(enable_memory_tools, enable_execution_reporting)"
-                )
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated, "
-                "use features=AdapterFeatures(...) instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or GeminiHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -519,7 +494,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             tool_input = dict(function_call.args or {})
             tool_call_id = function_call.id or f"gemini_tool_call_{index}"
 
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(
@@ -556,7 +531,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 is_error = True
                 logger.exception("Tool %s failed: %s", tool_name, e)
 
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(

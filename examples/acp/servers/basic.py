@@ -44,31 +44,42 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ACPServer, BandACPServerAdapter
 from band.integrations.acp import run_acp_server
 from band.config import load_agent_config
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_api_key: str = ""
+    band_agent_id: str = "acp-server"
 
 
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     # ACP server examples check env vars first because editors (Zed, Cursor)
     # typically inject credentials via environment when spawning the subprocess.
-    api_key = os.getenv("BAND_API_KEY")
+    api_key = settings.band_api_key
 
     if not api_key:
         try:
@@ -79,13 +90,10 @@ async def main() -> None:
                 "or configure 'acp_server_agent' in agent_config.yaml"
             )
     else:
-        agent_id = os.getenv("BAND_AGENT_ID", "acp-server")
+        agent_id = settings.band_agent_id
 
     # Create ACP server adapter with direct REST client
-    adapter = BandACPServerAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
-    )
+    adapter = BandACPServerAdapter()
 
     # Create ACP protocol handler
     server = ACPServer(adapter)
@@ -95,8 +103,6 @@ async def main() -> None:
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting ACP server (Band as ACP agent)...")

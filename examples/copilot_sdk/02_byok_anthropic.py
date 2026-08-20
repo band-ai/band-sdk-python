@@ -32,35 +32,33 @@ import os
 import sys
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add examples directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from copilot import ProviderConfig
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CopilotSDKAdapter, CopilotSDKAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str
 
 
 async def main() -> None:
     """Run a Copilot SDK agent with Anthropic BYOK inference."""
     load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-    if not anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required for BYOK")
+    settings = Settings()
 
     # With BYOK the `model` names the provider's model, not a Copilot one.
     adapter = CopilotSDKAdapter(
@@ -70,21 +68,19 @@ async def main() -> None:
                 type="anthropic",
                 # base_url is required by the runtime, even for known providers.
                 base_url="https://api.anthropic.com",
-                api_key=anthropic_api_key,
+                api_key=settings.anthropic_api_key,
             ),
             custom_section="You are a helpful assistant. Be concise and friendly.",
             use_logged_in_user=False,
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-byok-",
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     agent = Agent.from_config(
         "copilot_sdk_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Copilot SDK agent with Anthropic BYOK...")
@@ -92,7 +88,8 @@ async def main() -> None:
     logger.info("Press Ctrl+C to stop")
 
     try:
-        await agent.run()
+        async with agent:
+            await agent.run_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
 

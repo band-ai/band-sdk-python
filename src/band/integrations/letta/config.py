@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.exceptions import BandConfigError
 from band.runtime.mcp_server import LOCAL_MCP_HOST
@@ -56,8 +59,7 @@ class LettaMCPConfig:
     transport: MCPTransport = "sse"
 
 
-@dataclass
-class LettaAdapterConfig:
+class LettaAdapterConfig(BaseSettings):
     """Configuration for the Letta adapter.
 
     Works with both Letta Cloud and self-hosted Letta.  For Letta Cloud
@@ -71,21 +73,41 @@ class LettaAdapterConfig:
     ``embedding`` is required by Letta's Docker server on agent create
     (e.g. ``"openai/text-embedding-3-small"``); Letta Cloud picks a default
     when omitted.
+
+    Most fields can also be set via a ``LETTA_``-prefixed environment
+    variable (e.g. ``LETTA_BASE_URL``, ``LETTA_MODEL``, ``LETTA_EMBEDDING``);
+    ``provider_key`` additionally accepts ``LETTA_API_KEY``, matching Letta
+    Cloud's own naming. An explicit constructor kwarg always wins over the
+    environment.
     """
+
+    # extra="forbid" (not the usual settings "ignore"): this config is
+    # commonly built with many explicit kwargs, so a typo'd field name
+    # must fail construction instead of silently vanishing.
+    # populate_by_name: an aliased field stays constructible by its field name
+    # and keeps its prefix-derived environment variable.
+    model_config = SettingsConfigDict(
+        env_prefix="LETTA_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+        populate_by_name=True,
+    )
 
     agent_id: str | None = None
     model: str | None = None
-    provider_key: str | None = None  # Required for Letta Cloud; omit for self-hosted
-    api_key: str | None = None  # deprecated, use provider_key
+    # A validation_alias names an environment variable verbatim (env_prefix is
+    # not applied), so it must be the full LETTA_* name — an unprefixed alias
+    # would read a bare env var and could swallow an unrelated secret.
+    provider_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("LETTA_API_KEY")
+    )  # Required for Letta Cloud; omit for self-hosted
     base_url: str = "https://api.letta.com"
     custom_section: str = ""
     include_base_instructions: bool = True
-    enable_execution_reporting: bool = False
-    enable_task_events: bool = True
-    enable_memory_tools: bool = False
     persona: str | None = None
     turn_timeout_s: float = 300.0
-    memory_blocks: list[dict[str, str]] = field(default_factory=list)
+    memory_blocks: list[dict[str, str]] = Field(default_factory=list)
     summary_max_length: int = 150
 
     # Letta Cloud project scoping (ignored for self-hosted)
@@ -96,10 +118,10 @@ class LettaAdapterConfig:
     embedding: str | None = None
 
     # MCP tool path configuration (see LettaMCPConfig).
-    mcp: LettaMCPConfig = field(default_factory=LettaMCPConfig)
+    mcp: LettaMCPConfig = Field(default_factory=LettaMCPConfig)
     # Deprecated compatibility shims for the pre-nested MCP config API.
-    mcp_server_url: str | None = field(default=None, kw_only=True)
-    mcp_server_name: str | None = field(default=None, kw_only=True)
+    mcp_server_url: str | None = None
+    mcp_server_name: str | None = None
 
     # Relay the agent's plain assistant text into the room when it did not
     # call the MCP send tool. Keeps the agent responsive when the model skips
@@ -124,18 +146,25 @@ class LettaAdapterConfig:
     # shared uses one agent with per-room Conversations for isolation.
     mode: Literal["per_room", "shared"] = "per_room"
 
-    def __post_init__(self) -> None:
-        if self.api_key is not None:
+    def __init__(self, **data: Any) -> None:
+        # Deprecated kwarg-only alias for provider_key, handled before field
+        # validation so it is never a model field: a field is exposed to the
+        # environment, and a bare "api_key" is too generic a name to read
+        # from the environment safely.
+        api_key = data.pop("api_key", None)
+        if api_key is not None:
             warnings.warn(
                 "api_key is deprecated on LettaAdapterConfig, use provider_key instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            if self.provider_key is not None:
+            if data.get("provider_key") is not None:
                 raise BandConfigError("Cannot pass both provider_key and api_key")
-            self.provider_key = self.api_key
-            self.api_key = None
+            data["provider_key"] = api_key
+        super().__init__(**data)
 
+    @model_validator(mode="after")
+    def _apply_deprecated_field_shims(self) -> LettaAdapterConfig:
         if self.mcp_server_url is not None or self.mcp_server_name is not None:
             warnings.warn(
                 "mcp_server_url and mcp_server_name are deprecated on "
@@ -161,3 +190,4 @@ class LettaAdapterConfig:
             )
             self.mcp_server_url = None
             self.mcp_server_name = None
+        return self

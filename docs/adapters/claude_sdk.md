@@ -112,7 +112,8 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 |-----------|------|---------|-------------|
 | `custom_section` | `str \| None` | `None` | Custom instructions appended to the generated Band system prompt. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. They are converted to MCP tools internally. |
-| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `emit` | `Emit \| Iterable[Emit] \| None` | everything supported | Telemetry events the adapter sends back to Band. Opt-out: omitted, defaults to everything `SUPPORTED_EMIT` declares; pass `emit=()` for silence, or narrow with `\|`. |
+| `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `history_converter` | `ClaudeSDKHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
 ### Approval Handling
@@ -143,21 +144,22 @@ If exactly one approval is pending, the token can be omitted: `/approve` or `/de
 | `/approvals` | List pending approvals with token and age. |
 | `/status` | Show model, permission mode, approval mode, pending approvals, and session details. |
 
-## AdapterFeatures: Capabilities and Emit
+## Feature flags: Capabilities and Emit
 
-`AdapterFeatures` is passed to the adapter constructor as `features=AdapterFeatures(...)`. It has two jobs:
+`emit=`/`capabilities=` are passed directly to the adapter constructor, never wrapped in an `AdapterFeatures(...)` object:
 
-- `capabilities` exposes optional Band tool categories to the model.
-- `emit` controls telemetry events the adapter sends back to Band.
+- `capabilities` exposes optional Band tool categories to the model. **Opt-in** — omitted, it defaults to empty.
+- `emit` controls telemetry events the adapter sends back to Band. **Opt-out** — omitted, it defaults to everything this adapter supports (every row marked "Yes" below).
 
-For this adapter, all capabilities and emit options are off by default.
+Requesting a value this adapter doesn't support raises `BandConfigError` immediately at construction.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude Code. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
-| `Emit.EXECUTION` | Yes | Sends `tool_call` and `tool_result` events for tool use. |
+| `Emit.TOOL_CALLS` | Yes | Sends `tool_call` and `tool_result` events for tool use. |
 | `Emit.THOUGHTS` | Yes | Sends `thought` events for completed Claude extended-thinking blocks. These are not streaming deltas. |
+| `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 | `Emit.TASK_EVENTS` | No | Not supported as a configurable emit option by this adapter. |
 
 Example:
@@ -165,15 +167,13 @@ Example:
 ```python
 import os
 
-from band import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.adapters import ClaudeSDKAdapter
 
 adapter = ClaudeSDKAdapter(
     cwd=os.getcwd(),
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-        emit={Emit.EXECUTION, Emit.THOUGHTS},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
+    emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
 )
 ```
 

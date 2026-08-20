@@ -9,7 +9,6 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import warnings
 from collections.abc import Callable
 from typing import Any, ClassVar, get_origin, get_type_hints
 
@@ -36,14 +35,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 
 from band_rest.core.api_error import ApiError
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -215,7 +214,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -225,12 +224,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         model: str,
         system_prompt: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: PydanticAIHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         instrument: bool | InstrumentationSettings | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Pydantic AI adapter.
@@ -242,8 +239,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 ``openai-chat:`` for Chat Completions.
             system_prompt: Optional custom system prompt (overrides default)
             custom_section: Optional custom section added to default system prompt
-            enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
-            enable_memory_tools: Deprecated. Use features=AdapterFeatures(capabilities={Capability.MEMORY}).
             history_converter: Optional custom history converter
             additional_tools: Optional list of PydanticAI-compatible tool functions
                 and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
@@ -252,7 +247,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 and is registered via agent.tool() alongside platform tools. A
                 context-free callable (no leading ``RunContext``) goes to
                 agent.tool_plain() instead — pydantic-ai rejects it on the other path.
-            features: Shared adapter feature settings (capabilities, emit, tool filters).
             instrument: OpenTelemetry instrumentation for the pydantic-ai agent.
                 ``None`` (default) inherits whatever ``Agent.instrument_all()`` the
                 host set, ``False`` opts this agent out of it, ``True`` enables
@@ -260,36 +254,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 them (for example a specific ``tracer_provider``). Band never creates
                 a provider or exporter — the host owns the telemetry pipeline; see
                 ``examples/opentelemetry/``.
+            **features: emit, capabilities, include_tools, exclude_tools,
+                include_categories -- see FeatureKwargs.
         """
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or PydanticAIHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -780,7 +750,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) as events:
                 async for event in events:
                     if isinstance(event, FunctionToolCallEvent):
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
@@ -807,7 +777,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             custom_terminal=result_name in self._custom_terminal_names,
                         ):
                             tool_executed = True
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
                                     content=json.dumps(

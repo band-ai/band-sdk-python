@@ -8,6 +8,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from band.core.exceptions import BandConnectionError
+
 from .rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -45,12 +47,19 @@ class CodexWebSocketClient(BaseJsonRpcClient):
             ) from exc
 
         # Codex app-server WS does not support permessage-deflate.
-        self._ws = await connect(
-            self.ws_url,
-            compression=None,
-            max_size=16 * 1024 * 1024,  # Codex can emit large JSON-RPC payloads.
-            open_timeout=self._connect_timeout_s,
-        )
+        try:
+            self._ws = await connect(
+                self.ws_url,
+                compression=None,
+                max_size=16 * 1024 * 1024,  # Codex can emit large JSON-RPC payloads.
+                open_timeout=self._connect_timeout_s,
+            )
+        except OSError as exc:
+            raise BandConnectionError(
+                f"Codex app-server not reachable at {self.ws_url}: {exc}. "
+                f"Start it with `codex app-server --listen {self.ws_url}` "
+                "or use the stdio transport (CodexAdapterConfig.transport='stdio')."
+            ) from exc
         self._connected = True
         self._reader_task = asyncio.create_task(self._read_ws_loop())
 

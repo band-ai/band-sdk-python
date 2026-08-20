@@ -4,7 +4,7 @@ from one ``capture.memory(agent)`` read -- the *call* layer
 (``mem.stored.assert_stored`` / ``where``).
 
 Memories carry a unique marker so the reads are collision-free; agents run with
-``Emit.EXECUTION`` (via ``memory_features()``) so the calls surface as ``tool_call``
+``Emit.TOOL_CALLS`` (via ``memory_features()``) so the calls surface as ``tool_call``
 events, under the exact-execution prompt so the only action is the requested op.
 
 Anthropic-only: gpt-5.4-mini (LangGraph) intermittently skips band_store_memory

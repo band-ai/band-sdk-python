@@ -46,12 +46,12 @@ TOOL_AGENT_SYSTEM_PROMPT = (
 def memory_features() -> AdapterFeatures:
     """Features for the memory smokes: expose the memory tools, and record the
     tool call as a ``tool_call`` event so the call layer is observable."""
-    return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
+    return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.TOOL_CALLS})
 
 
 def contacts_features() -> AdapterFeatures:
     """Features for contacts smokes: expose contact tools and record their calls."""
-    return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.EXECUTION})
+    return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.TOOL_CALLS})
 
 
 def usage_features() -> AdapterFeatures:

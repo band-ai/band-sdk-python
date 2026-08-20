@@ -30,14 +30,15 @@ except ImportError as error:
     ) from error
 
 from band_rest.core.api_error import ApiError
+from typing_extensions import Unpack
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     MessageType,
     PlatformMessage,
     ToolEventKey,
@@ -346,7 +347,7 @@ class BandTurnHooks(HookProvider):
 class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     """Run a Strands model in a Band room."""
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -358,12 +359,12 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         custom_section: str | None = None,
         history_converter: StrandsHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Create an adapter around a Strands model or Bedrock model identifier."""
         super().__init__(
             history_converter=history_converter or StrandsHistoryConverter(),
-            features=features,
+            **features,
         )
         self.model = model
         self.system_prompt = system_prompt
@@ -510,7 +511,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
         hooks = BandTurnHooks(
             tools,
-            emit_execution=Emit.EXECUTION in self.features.emit,
+            emit_execution=Emit.TOOL_CALLS in self.features.emit,
             custom_terminal_names=self._custom_terminal_names,
         )
         await self._run_turn(

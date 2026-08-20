@@ -2,17 +2,33 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
 QuestionMode = Literal["manual", "auto_reject"]
 ApprovalReply = Literal["once", "always", "reject"]
 
 
-@dataclass
-class OpencodeAdapterConfig:
-    """Runtime configuration for OpenCode sessions."""
+class OpencodeAdapterConfig(BaseSettings):
+    """Runtime configuration for OpenCode sessions.
+
+    Every field can be set explicitly (highest priority) or via an
+    ``OPENCODE_``-prefixed environment variable (e.g. ``OPENCODE_BASE_URL``,
+    ``OPENCODE_PROVIDER_ID``). An explicit constructor kwarg always wins
+    over the environment.
+    """
+
+    # extra="forbid" (not the usual settings "ignore"): this config is
+    # commonly built with many explicit kwargs, so a typo'd field name
+    # must fail construction instead of silently vanishing.
+    model_config = SettingsConfigDict(
+        env_prefix="OPENCODE_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+    )
 
     base_url: str = "http://127.0.0.1:4096"
     directory: str | None = None
@@ -23,9 +39,6 @@ class OpencodeAdapterConfig:
     variant: str | None = None
     custom_section: str = ""
     include_base_instructions: bool = False
-    enable_task_events: bool = True
-    enable_execution_reporting: bool = False
-    enable_memory_tools: bool = False
     fallback_send_agent_text: bool = True
     turn_timeout_s: float = 300.0
     approval_mode: ApprovalMode = "manual"

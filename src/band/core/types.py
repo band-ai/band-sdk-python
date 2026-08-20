@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar
+
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
@@ -48,7 +50,36 @@ ContactRequestSentStatus = Literal[
 ]
 
 
-class Capability(str, Enum):
+class _FlagEnum(StrEnum):
+    """A StrEnum whose members combine with ``|`` into a ``frozenset``.
+
+    Unlike ``enum.Flag``, membership stays string-valued (no int bitmask),
+    so a single member and a combined set both serialize/compare the same
+    way everywhere else they are used (e.g. ``SUPPORTED_EMIT`` set algebra).
+    """
+
+    def __or__(self, other: "Self | frozenset[Self]") -> frozenset[Self]:
+        # Only guards a member on at least one side of `|`. Two already-combined
+        # frozensets of different _FlagEnum subclasses (e.g. `(Emit.A | Emit.B) |
+        # (Capability.C | Capability.D)`) are both plain `frozenset` by then, so
+        # `frozenset.__or__` runs instead and this guard never sees them.
+        if isinstance(other, frozenset):
+            combined = frozenset(other) | {self}
+        elif isinstance(other, _FlagEnum):
+            combined = frozenset({self, other})
+        else:
+            return NotImplemented
+        if mismatched := {type(member) for member in combined} - {type(self)}:
+            raise TypeError(
+                f"cannot combine {type(self).__name__} with "
+                f"{', '.join(sorted(t.__name__ for t in mismatched))}"
+            )
+        return combined
+
+    __ror__ = __or__
+
+
+class Capability(_FlagEnum):
     """Platform tool categories an adapter can expose to the LLM.
 
     These control tool-schema inclusion only -- they do NOT affect
@@ -61,10 +92,10 @@ class Capability(str, Enum):
     CONTACTS = "contacts"
 
 
-class Emit(str, Enum):
+class Emit(_FlagEnum):
     """Event types an adapter can emit to the platform."""
 
-    EXECUTION = "execution"
+    TOOL_CALLS = "tool_calls"
     THOUGHTS = "thoughts"
     TASK_EVENTS = "task_events"
     USAGE = "usage"
@@ -261,6 +292,40 @@ def is_usage_event(metadata: object) -> bool:
 
 
 @dataclass(frozen=True)
+class PlatformConnection:
+    """Band platform coordinates, injected into the adapter before ``on_started``.
+
+    The runtime sets ``adapter.platform`` to this once credentials are known, so
+    an adapter that needs its own platform access (e.g. a bridge building an
+    ``AsyncRestClient``) reads it from here instead of asking for ``api_key`` /
+    ``rest_url`` constructor parameters the caller already gave the Agent.
+    """
+
+    agent_id: str
+    api_key: str
+    rest_url: str
+    ws_url: str
+
+
+class FeatureKwargs(TypedDict, total=False):
+    """The feature keywords every ``SimpleAdapter`` constructor accepts.
+
+    Adapters forward these via ``**features: Unpack[FeatureKwargs]`` instead
+    of repeating the five parameters in every signature, and instead of
+    taking a wrapping ``AdapterFeatures`` object -- callers pass the knobs
+    directly, e.g. ``ClaudeSDKAdapter(model="...", emit=Emit.THOUGHTS)``.
+    ``AdapterFeatures`` itself is the internal frozen container ``self.features``
+    resolves to; it is not part of the public constructor surface.
+    """
+
+    emit: Emit | Iterable[Emit]
+    capabilities: Capability | Iterable[Capability]
+    include_tools: Iterable[str]
+    exclude_tools: Iterable[str]
+    include_categories: Iterable[str]
+
+
+@dataclass(frozen=True)
 class AdapterFeatures:
     """Shared adapter feature settings. Framework-agnostic knobs only.
 
@@ -268,7 +333,8 @@ class AdapterFeatures:
     framework has its own tool type.
 
     Accepts any iterable inputs for convenience; stores frozen types
-    internally.
+    internally. Internal container only -- ``SimpleAdapter.__init__``
+    builds this from ``FeatureKwargs``; adapters do not take it directly.
     """
 
     capabilities: frozenset[Capability]

@@ -69,13 +69,12 @@ import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import AdapterFeatures, Agent, Emit
+from band import Agent, Emit, configure_logging
 from band.adapters import AnthropicAdapter
 from band.config import load_agent_config
 from band.integrations.slack import SlackAdapter, SlackApp
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"slack_sdk": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
@@ -88,13 +87,7 @@ async def main() -> None:
             f"SLACK_TRANSPORT must be 'http' or 'socket', got {transport!r}"
         )
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
     bot_token = os.getenv("SLACK_BOT_TOKEN")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     if not bot_token:
         raise ValueError("SLACK_BOT_TOKEN environment variable is required")
 
@@ -117,19 +110,19 @@ async def main() -> None:
 
     # AnthropicAdapter reads ANTHROPIC_API_KEY from the environment.
     #
-    # features=AdapterFeatures(emit={Emit.EXECUTION}) enables tool-call
-    # emission: every tool the brain runs is recorded into the Band room
-    # as tool_call / tool_result events, so the room's audit timeline shows
-    # what the agent did and with what result. This is the Band-side
-    # record; the Slack-side plan/task progress blocks are a separate knob
-    # (SlackAdapter(show_tool_progress=...), on by default).
+    # emit=Emit.TOOL_CALLS enables tool-call emission: every tool the brain
+    # runs is recorded into the Band room as tool_call / tool_result events,
+    # so the room's audit timeline shows what the agent did and with what
+    # result. This is the Band-side record; the Slack-side plan/task
+    # progress blocks are a separate knob (SlackAdapter(show_tool_progress=...),
+    # on by default).
     brain = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
         prompt=(
             "You are a helpful Slack assistant. Keep replies concise and "
             "use Slack-flavored markdown when it improves readability."
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
 
     slack = SlackAdapter(
@@ -142,8 +135,6 @@ async def main() -> None:
                 app_token=app_token,
             ),
         ],
-        rest_url=rest_url,
-        api_key=api_key,
         transport=transport,  # type: ignore[arg-type]
     )
 
@@ -151,8 +142,6 @@ async def main() -> None:
         adapter=slack,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Slack bot (transport=%s)...", transport)

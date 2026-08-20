@@ -67,9 +67,10 @@ if TYPE_CHECKING:
         UserInputRequest,
         UserInputResponse,
     )
+    from typing_extensions import Unpack
 
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
-    from band.core.types import AdapterFeatures, PlatformMessage
+    from band.core.types import FeatureKwargs, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,13 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CopilotSDKAdapterConfig:
     """Runtime configuration for Copilot SDK adapter sessions.
+
+    Stays a plain dataclass rather than adopting ``pydantic_settings.BaseSettings``
+    like CodexAdapterConfig/LettaAdapterConfig/OpencodeAdapterConfig: ``provider``
+    holds an external SDK type (``ProviderConfig``) and ``ask_user`` a callable,
+    both a poor fit for settings validation — env-var precedent on individual
+    fields (``github_token``, ``base_directory``/``COPILOT_HOME``) doesn't
+    outweigh that.
 
     Attributes:
         model: Copilot model to use (None = Copilot CLI default).
@@ -192,14 +200,14 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     Example:
         adapter = CopilotSDKAdapter(
             CopilotSDKAdapterConfig(model="gpt-5"),
-            # Event reporting is off by default; opt in explicitly.
-            features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+            # Narrowing is opt-in; the default is everything supported.
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )
         agent = Agent.create(adapter=adapter, agent_id=..., api_key=...)
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -211,9 +219,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         *,
         history_converter: HistoryConverter[CopilotSDKSessionState] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         client: Any | None = None,
         client_factory: Callable[[], Any] | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """Initialize the Copilot SDK adapter.
 
@@ -222,7 +230,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 prompts, timeouts) — see :class:`CopilotSDKAdapterConfig`.
             history_converter: Override the default history converter.
             additional_tools: Developer custom tools as (InputModel, handler).
-            features: Shared adapter feature settings.
             client: Externally-owned ``CopilotClient`` shared with other
                 adapters (one client, many sessions). The adapter borrows it —
                 it never calls ``stop()`` on it; the caller owns its lifecycle.
@@ -245,7 +252,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         super().__init__(
             history_converter=history_converter or CopilotSDKHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = config or CopilotSDKAdapterConfig()
         ask_user = self.config.ask_user
@@ -452,8 +459,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         """
         if self.config.session_id_prefix is not None:
             return self.config.session_id_prefix
-        if agent_id := getattr(self, "_band_agent_id", None):
-            return f"band-{agent_id}-"
+        if self.platform is not None:
+            return f"band-{self.platform.agent_id}-"
         # Adapters driven without the Band runtime fall back to the name.
         agent_slug = re.sub(r"[^a-z0-9]+", "-", self.agent_name.lower()).strip("-")
         return f"band-{agent_slug or 'agent'}-"
@@ -694,7 +701,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = Emit.EXECUTION in self.features.emit
+        should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
 

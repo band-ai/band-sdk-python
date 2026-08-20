@@ -12,7 +12,7 @@ from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 
 from band.adapters.gemini import GeminiAdapter
-from band.core.types import PlatformMessage
+from band.core.types import Emit, PlatformMessage
 
 
 @pytest.fixture
@@ -111,7 +111,7 @@ class TestOnMessage:
     @pytest.mark.asyncio
     async def test_executes_tool_loop(self, sample_message, mock_tools):
         adapter = GeminiAdapter(
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
             provider_key="test-key",
         )
         await adapter.on_started("TestBot", "Test bot")
@@ -149,7 +149,7 @@ class TestOnMessage:
         self, sample_message, mock_tools
     ):
         adapter = GeminiAdapter(
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
             provider_key="test-key",
         )
         await adapter.on_started("TestBot", "Test bot")

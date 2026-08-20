@@ -30,7 +30,7 @@ from band_rest import (
     ListAgentChatParticipantsResponse,
 )
 
-from band.core.types import PlatformMessage
+from band.core.types import PlatformConnection, PlatformMessage
 
 
 def make_participant(p: dict[str, Any]) -> ChatParticipant:
@@ -111,6 +111,19 @@ def make_link_mock(
     (a single-page shorthand), not both.
     """
     link = MagicMock()
+
+    # Platform connection (startup() injects it into the adapter).
+    link.api_key = "test-api-key"
+    link.rest_url = "https://app.band.ai"
+    link.ws_url = "wss://app.band.ai/api/v1/socket/websocket"
+    link.to_platform_connection = MagicMock(
+        side_effect=lambda agent_id: PlatformConnection(
+            agent_id=agent_id,
+            api_key=link.api_key,
+            rest_url=link.rest_url,
+            ws_url=link.ws_url,
+        )
+    )
 
     # Identity (for startup()).
     identity_response = GetAgentMeResponse(

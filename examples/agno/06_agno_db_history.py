@@ -37,47 +37,40 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from agno.agent import Agent as AgnoAgent
 from agno.db.in_memory import InMemoryDb
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import LogSettings, Agent
+from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 
 
 logger = logging.getLogger(__name__)
 
 
-def get_required_env(name: str) -> str:
-    """Return a required environment variable or raise a clear error."""
-    value = os.environ.get(name)
-    if not value:
-        raise ValueError(f"{name} environment variable is required")
-    return value
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
-
-def load_environment() -> tuple[str, str]:
-    """Load env vars, validate credentials, and return (ws_url, rest_url)."""
-    load_dotenv()
-    LogSettings().for_application().configure()
-
-    get_required_env("ANTHROPIC_API_KEY")
-    ws_url = get_required_env("BAND_WS_URL")
-    rest_url = get_required_env("BAND_REST_URL")
-    return ws_url, rest_url
+    anthropic_api_key: str
+    anthropic_model: str = "claude-sonnet-4-6"
+    agno_session_id: str = "band-agno-db-history"
 
 
 async def main() -> None:
-    ws_url, rest_url = load_environment()
+    load_dotenv()
+    LogSettings().for_application().configure()
+    settings = Settings()
 
     db = InMemoryDb()
-    session_id = os.environ.get("AGNO_SESSION_ID", "band-agno-db-history")
+    session_id = settings.agno_session_id
 
     agno_agent = AgnoAgent(
-        model=Claude(id=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")),
+        model=Claude(id=settings.anthropic_model),
         db=db,
         session_id=session_id,
         add_history_to_context=True,
@@ -96,15 +89,12 @@ async def main() -> None:
         session_id_factory=lambda _room_id: session_id,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Agno DB-history agent (session_id=%s)...", session_id)
+    async with Agent.from_config(
         "agno_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting Agno DB-history agent (session_id=%s)...", session_id)
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

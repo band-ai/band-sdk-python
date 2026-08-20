@@ -27,6 +27,7 @@ from typing import Any, Callable, Literal, Protocol, Union, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from typing_extensions import Unpack
 
 from band.converters.crewai_flow import (
     CrewAIFlowAmbiguousIdentityError,
@@ -51,6 +52,7 @@ from band.core.types import (
     AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
 )
 from band.runtime.custom_tools import (
@@ -532,11 +534,11 @@ class CrewAIFlowCustomTools:
         tools: AgentToolsProtocol,
         features: AdapterFeatures,
     ) -> None:
-        from band.integrations.crewai import EmitExecutionReporter
+        from band.integrations.crewai import EmitToolCallsReporter
 
         self._custom_tools = custom_tools
         self._tools = tools
-        self._reporter = EmitExecutionReporter(features)
+        self._reporter = EmitToolCallsReporter(features)
 
     def __dir__(self) -> list[str]:
         return sorted({*super().__dir__(), *self._custom_tools})
@@ -1502,7 +1504,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     visible writes use reserve-send-confirm task events for idempotency.
     """
 
-    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
     SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY, Capability.CONTACTS})
 
     def __init__(
@@ -1522,7 +1524,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         accept_agent_initiated: bool = False,
         history_converter: CrewAIFlowStateConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         # ---- flow_factory -------------------------------------------------
         if not callable(flow_factory):
@@ -1639,7 +1641,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             max_run_age=max_run_age
         )
 
-        super().__init__(history_converter=converter, features=features)
+        super().__init__(history_converter=converter, **features)
 
         self._flow_factory = flow_factory
         self._state_source = state_source
@@ -1670,7 +1672,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
         if self._configured_metadata_namespace is None:
-            agent_id = getattr(self, "_band_agent_id", None) or agent_name
+            agent_id = self.platform.agent_id if self.platform else agent_name
             self.metadata_namespace = f"crewai_flow:{agent_id}"
         else:
             self.metadata_namespace = self._configured_metadata_namespace

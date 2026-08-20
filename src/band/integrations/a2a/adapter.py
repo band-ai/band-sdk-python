@@ -19,11 +19,12 @@ from a2a.types import (
     Task,
     TaskState,
 )
+from typing_extensions import Unpack
 
 from band.converters.a2a import A2AHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
@@ -76,7 +77,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         remote_url: str,
         auth: A2AAuth | None = None,
         streaming: bool = True,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize A2A adapter.
 
@@ -87,7 +88,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """
         super().__init__(
             history_converter=A2AHistoryConverter(),
-            features=features,
+            **features,
         )
         self.remote_url = remote_url
         self.auth = auth

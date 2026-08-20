@@ -20,10 +20,9 @@ class TestA2AGatewayContextIdFlow:
     def gateway_adapter_with_mocks(self) -> A2AGatewayAdapter:
         """Create gateway adapter with mocked REST client for testing."""
         adapter = A2AGatewayAdapter(
-            rest_url="http://localhost:4000",
-            api_key="test-key",
             gateway_url="http://localhost:10000",
             port=10000,
+            rest_client=MagicMock(),
         )
 
         # Mock peer

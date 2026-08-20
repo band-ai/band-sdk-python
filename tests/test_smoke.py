@@ -40,7 +40,7 @@ def test_capability_enum_values():
 
 def test_emit_enum_values():
     """Emit enum exports the expected members."""
-    assert Emit.EXECUTION == "execution"
+    assert Emit.TOOL_CALLS == "tool_calls"
     assert Emit.THOUGHTS == "thoughts"
     assert Emit.TASK_EVENTS == "task_events"
 

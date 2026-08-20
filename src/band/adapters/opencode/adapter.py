@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import warnings
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -14,17 +13,18 @@ from datetime import datetime, timezone
 from typing import ClassVar, Any
 
 import httpx
+from typing_extensions import Unpack
 
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
-from band.core.exceptions import BandConfigError
+from band.core.exceptions import BandConnectionError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -194,10 +194,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
       * ``manual`` -- questions are forwarded to the room; the user replies
         with answers or ``reject`` before ``question_wait_timeout_s``.
       * ``auto_reject`` -- questions are rejected immediately.
+
+    ``Emit.TASK_EVENTS`` is more than narration here: the room's OpenCode
+    ``session_id`` is persisted in task event metadata and read back by
+    OpencodeHistoryConverter to resume the server-side session. Narrowing
+    ``emit`` to exclude it doesn't just silence updates, it also stops
+    resumption -- every restart creates a fresh OpenCode session instead of
+    reattaching. Leave it in ``emit`` unless that's intended.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -211,49 +218,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         history_converter: OpencodeHistoryConverter | None = None,
         client_factory: Callable[[OpencodeAdapterConfig], OpencodeClientProtocol]
         | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         self._config = config or OpencodeAdapterConfig()
 
-        # Detect non-default legacy booleans (enable_task_events defaults to
-        # True, so only enable_memory_tools and enable_execution_reporting
-        # count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_memory_tools or self._config.enable_execution_reporting
-        )
-
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in OpencodeAdapterConfig "
-                "(enable_memory_tools / enable_execution_reporting) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
-        if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_memory_tools and enable_execution_reporting in "
-                    "OpencodeAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}, "
-                    "emit={Emit.EXECUTION}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or OpencodeHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = self._config
         # Set in ``on_started`` from the agent identity. OpenCode keys MCP
@@ -262,6 +233,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # concurrent agents sharing one serve.
         self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
+        # Startup reachability check only makes sense against a real server;
+        # an injected factory fakes that boundary (tests, custom transports).
+        self._preflight_enabled = client_factory is None
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
@@ -303,7 +277,30 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             f"{self._system_prompt}\n\n{_OPENCODE_SYSTEM_NOTE}".strip()
         )
 
+        await self._preflight_server()
         self._log_startup_config(agent_name)
+
+    async def _preflight_server(self) -> None:
+        """Fail fast at startup when no OpenCode server answers at base_url.
+
+        The working client stays lazy (built on the first turn), so the probe
+        uses a transient one. Without this, an unreachable server surfaces as
+        a per-turn error event in every room instead of one clear startup
+        failure naming the fix.
+        """
+        if not self._preflight_enabled:
+            return
+        probe = self._client_factory(self.config)
+        try:
+            await probe.health()
+        except httpx.HTTPError as exc:
+            raise BandConnectionError(
+                f"OpenCode server not reachable at {self.config.base_url}: {exc}. "
+                "Start one with `opencode serve --hostname 127.0.0.1 --port 4096` "
+                "or point OpencodeAdapterConfig.base_url at a running server."
+            ) from exc
+        finally:
+            await probe.close()
 
     def _agent_mcp_server_name(self, agent_identity: str) -> str:
         """Return a stable, serve-global MCP name for one Band identity."""
@@ -353,7 +350,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config.model_id or "default",
             self.config.approval_mode,
             self.config.question_mode,
-            Emit.EXECUTION in self.features.emit,
+            Emit.TOOL_CALLS in self.features.emit,
             Emit.TASK_EVENTS in self.features.emit,
             len(self._custom_tools),
         )
@@ -785,7 +782,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     ) -> None:
         """Note a room-posting reply and report the tool's call/result.
 
-        Room-posting detection runs regardless of ``Emit.EXECUTION`` (which only
+        Room-posting detection runs regardless of ``Emit.TOOL_CALLS`` (which only
         governs the tool_call/tool_result narration); the text-fallback
         suppression must hold even when execution reporting is off.
         """
@@ -804,7 +801,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         ):
             room_state.replied_via_room_tool = True
 
-        if Emit.EXECUTION not in self.features.emit:
+        if Emit.TOOL_CALLS not in self.features.emit:
             return
 
         match state.status:

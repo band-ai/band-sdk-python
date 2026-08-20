@@ -373,6 +373,9 @@ class FakeOpencodeClient:
                 return
             yield event
 
+    async def health(self) -> None:
+        """Fake server is always reachable."""
+
     async def close(self) -> None:
         self.closed = True
         await self._queue.put(None)

@@ -12,12 +12,13 @@ from uuid import uuid4
 
 from acp import spawn_agent_process
 from acp.schema import HttpMcpServer, SseMcpServer
+from typing_extensions import Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
@@ -137,11 +138,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         cwd: str | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        rest_url: str | None = None,
         inject_band_tools: bool = True,
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
-        features: AdapterFeatures | None = None,
         # Transport + advanced knobs are keyword-only: this preserves the original
         # positional order (command, env, cwd, …) for existing callers, and TCP /
         # custom-transport wiring reads clearly at the call site.
@@ -150,10 +149,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         port: int | None = None,
         custom_section: str = "",
         spawn_process: SpawnProcess | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
-            features=features,
+            **features,
         )
         self._host, self._port = self._resolve_transport(command, host, port)
         self._command = self._shape_command(command, self._host)
@@ -162,8 +162,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         self._tool_definitions, self._own_tool_names = self._registered_tools()
-        self._rest_url = rest_url or "https://app.band.ai"
-        self._validate_rest_url(self._rest_url)
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
@@ -435,11 +433,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if has_tcp and (host is None or port is None):
             raise ValueError("TCP transport requires both host and port")
         return (host, port) if has_tcp else (None, None)
-
-    @staticmethod
-    def _validate_rest_url(rest_url: str) -> None:
-        if not rest_url.startswith(("http://", "https://")):
-            raise ValueError("rest_url must be a valid HTTP(S) URL")
 
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
         from band.runtime.prompts import render_system_prompt

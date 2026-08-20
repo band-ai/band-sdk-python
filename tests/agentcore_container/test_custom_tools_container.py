@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from band.runtime.oneshot import OneShotEnvelopeError
 from tests.loaders import load_script_module
@@ -64,7 +65,7 @@ class TestWeatherTool:
         assert await container.get_weather(args) == "Lisbon: sunny, 22°C"
 
     def test_build_adapter_registers_weather_tool(self) -> None:
-        adapter = container._build_adapter("test-anthropic")
+        adapter = container._build_adapter(container.Settings())
         assert adapter._custom_tools == [
             (container.WeatherInput, container.get_weather)
         ]
@@ -75,20 +76,25 @@ class TestWeatherTool:
 # ---------------------------------------------------------------------------
 
 
-class TestRequireEnv:
-    def test_returns_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("__TEST_VAR__", "value")
-        assert container._require_env("__TEST_VAR__") == "value"
+class TestSettings:
+    def test_raises_when_credentials_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("BAND_AGENT_ID", raising=False)
+        monkeypatch.delenv("BAND_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(ValidationError):
+            container.Settings()
 
-    def test_raises_on_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("__TEST_VAR__", raising=False)
-        with pytest.raises(ValueError, match="__TEST_VAR__"):
-            container._require_env("__TEST_VAR__")
-
-    def test_raises_on_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("__TEST_VAR__", "   ")
-        with pytest.raises(ValueError, match="__TEST_VAR__"):
-            container._require_env("__TEST_VAR__")
+    def test_reads_credentials_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BAND_AGENT_ID", "agent-1")
+        monkeypatch.setenv("BAND_API_KEY", "key-1")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-1")
+        settings = container.Settings()
+        assert settings.band_agent_id == "agent-1"
+        assert settings.band_api_key == "key-1"
+        assert settings.anthropic_api_key == "anthropic-1"
+        assert settings.emit_execution is True
 
 
 # ---------------------------------------------------------------------------

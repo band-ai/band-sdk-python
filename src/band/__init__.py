@@ -55,7 +55,7 @@ from .core.exceptions import (
 )
 
 # Core types (v0.3.0)
-from .core.types import AdapterFeatures, Capability, Emit
+from .core.types import AdapterFeatures, Capability, Emit, FeatureKwargs
 from .logging_config import (
     CHATTY_LOGGERS,
     STANDARD_FORMAT,
@@ -111,6 +111,7 @@ __all__ = [
     "AdapterFeatures",
     "Capability",
     "Emit",
+    "FeatureKwargs",
     "BandError",
     "BandConfigError",
     "BandConnectionError",

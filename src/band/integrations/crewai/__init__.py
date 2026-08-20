@@ -6,7 +6,7 @@ from band.integrations.crewai.runtime import run_async
 from band.integrations.crewai.tools import (
     CrewAIToolContext,
     CrewAIToolReporter,
-    EmitExecutionReporter,
+    EmitToolCallsReporter,
     NoopReporter,
     ReplyTracker,
     build_band_crewai_tools,
@@ -16,7 +16,7 @@ from band.integrations.crewai.tools import (
 __all__ = [
     "CrewAIToolContext",
     "CrewAIToolReporter",
-    "EmitExecutionReporter",
+    "EmitToolCallsReporter",
     "NoopReporter",
     "ReplyTracker",
     "build_band_crewai_tools",

@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
+from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
+from band.core.types import PlatformConnection
 from band.runtime.types import PlatformMessage
 from band_rest.core.api_error import ApiError
 
@@ -80,8 +82,8 @@ class BandLink:
         self,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
-        rest_url: str = "https://app.band.ai",
+        ws_url: str = DEFAULT_WS_URL,
+        rest_url: str = DEFAULT_REST_URL,
     ):
         self.agent_id = agent_id
         self.api_key = api_key
@@ -123,6 +125,20 @@ class BandLink:
     def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
         """Most recent terminal WebSocket disconnect reason, if reported."""
         return self._last_disconnect_reason
+
+    def to_platform_connection(self, agent_id: str) -> PlatformConnection:
+        """Coordinates for injecting into an adapter (see ``Agent.start``).
+
+        ``agent_id`` is taken explicitly rather than read off ``self.agent_id``:
+        callers with their own notion of the runtime identity (e.g. a one-shot
+        host) may pass a different value than what this link connected as.
+        """
+        return PlatformConnection(
+            agent_id=agent_id,
+            api_key=self.api_key,
+            rest_url=self.rest_url,
+            ws_url=self.ws_url,
+        )
 
     # --- Async iterator protocol ---
 

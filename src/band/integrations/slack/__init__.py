@@ -21,8 +21,6 @@ Example:
                 bot_token="xoxb-...",
             ),
         ],
-        rest_url="https://app.band.ai",
-        api_key="...",
     )
 
     agent = Agent.create(adapter=slack, agent_id="slack-bridge", api_key="...")

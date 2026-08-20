@@ -5,19 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import ClassVar, Any
 
+from typing_extensions import Unpack
+
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -99,10 +99,17 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
+
+    ``Emit.TASK_EVENTS`` is more than narration here: the room's Letta
+    ``agent_id`` is persisted in task event metadata and read back by
+    LettaHistoryConverter to resume the server-side agent. Narrowing
+    ``emit`` to exclude it doesn't just silence updates, it also stops
+    resumption -- every restart creates a fresh Letta agent instead of
+    reattaching. Leave it in ``emit`` unless that's intended.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -112,50 +119,13 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self,
         config: LettaAdapterConfig | None = None,
         history_converter: LettaHistoryConverter | None = None,
-        *,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         self._config = config or LettaAdapterConfig()
 
-        # Detect non-default legacy booleans (enable_task_events defaults to
-        # True, so only enable_memory_tools and enable_execution_reporting
-        # count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_memory_tools or self._config.enable_execution_reporting
-        )
-
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in LettaAdapterConfig "
-                "(enable_memory_tools / enable_execution_reporting) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
-        if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_memory_tools and enable_execution_reporting in "
-                    "LettaAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}, "
-                    "emit={Emit.EXECUTION}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or LettaHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = self._config
 
@@ -573,7 +543,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         The send tools stay silent — their execution already produces visible
         platform output, so reporting them would be duplicate noise.
         """
-        if Emit.EXECUTION not in self.features.emit:
+        if Emit.TOOL_CALLS not in self.features.emit:
             return
         if tool_name in self._mcp.silent_reporting_tools:
             return

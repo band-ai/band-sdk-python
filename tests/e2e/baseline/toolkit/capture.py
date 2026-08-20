@@ -460,7 +460,7 @@ class ReplyCapture:
         The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
         filters narrow the store read. ``limit`` caps both layers (call events and
         stored records). Needs ``user_ops`` and ``settings`` (both bound by the
-        ``reply_capture`` fixture); the agent must run with ``Emit.EXECUTION`` for
+        ``reply_capture`` fixture); the agent must run with ``Emit.TOOL_CALLS`` for
         the call layer to be populated.
         """
         user_ops = self._require_user_ops()

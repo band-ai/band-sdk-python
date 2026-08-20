@@ -30,6 +30,7 @@ from httpx import ASGITransport
 from band.integrations.slack.adapter import SlackAdapter
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
+from band.testing.platform import platform_connection_stub
 
 from tests.integrations.slack.test_wrapping import (
     _SlackReplyBrain,
@@ -64,7 +65,6 @@ async def test_router_mounts_into_fastapi_with_path_prefix():
     adapter = SlackAdapter(
         inner=inner,
         apps=[app_config],
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(
             chat_postMessage=AsyncMock(return_value={"ok": True, "ts": "x"}),
@@ -72,7 +72,7 @@ async def test_router_mounts_into_fastapi_with_path_prefix():
             conversations_replies=AsyncMock(return_value={"messages": []}),
         ),
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
     await adapter.on_started("MyBot", "")
 
     fastapi_app = FastAPI()
@@ -109,11 +109,10 @@ async def test_unsigned_request_to_mounted_fastapi_is_rejected():
     adapter = SlackAdapter(
         inner=inner,
         apps=[app_config],
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: AsyncMock(),
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
     await adapter.on_started("MyBot", "")
 
     fastapi_app = FastAPI()

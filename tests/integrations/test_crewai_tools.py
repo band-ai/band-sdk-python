@@ -445,13 +445,13 @@ class TestToolSetComposition:
 # --- Reporter behavior ---
 
 
-class TestEmitExecutionReporter:
+class TestEmitToolCallsReporter:
     @pytest.mark.asyncio
-    async def test_does_not_emit_when_emit_execution_unset(self, builder_mod):
+    async def test_does_not_emit_when_tool_calls_unset(self, builder_mod):
         from band.core.types import AdapterFeatures
 
         features = AdapterFeatures()  # empty emit set
-        reporter = builder_mod.EmitExecutionReporter(features)
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -461,11 +461,11 @@ class TestEmitExecutionReporter:
         tools.send_event.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_emits_when_emit_execution_set(self, builder_mod):
+    async def test_emits_when_tool_calls_set(self, builder_mod):
         from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -487,8 +487,8 @@ class TestEmitExecutionReporter:
         """
         from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -514,8 +514,8 @@ class TestEmitExecutionReporter:
     async def test_error_result_sets_is_error(self, builder_mod):
         from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock()
 
@@ -531,8 +531,8 @@ class TestEmitExecutionReporter:
     async def test_send_event_failure_does_not_propagate(self, builder_mod):
         from band.core.types import AdapterFeatures, Emit
 
-        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
-        reporter = builder_mod.EmitExecutionReporter(features)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        reporter = builder_mod.EmitToolCallsReporter(features)
         tools = MagicMock()
         tools.send_event = AsyncMock(side_effect=Exception("403 Forbidden"))
 

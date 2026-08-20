@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from band.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage
 
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
@@ -863,7 +863,7 @@ class TestContactAndMemoryToolRegistration:
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter(
-            features=AdapterFeatures(capabilities={Capability.CONTACTS}),
+            capabilities=Capability.CONTACTS,
         )
         await adapter.on_started("TestBot", "Test bot")
 
@@ -900,7 +900,7 @@ class TestContactAndMemoryToolRegistration:
     ):
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(enable_memory_tools=True)
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         await adapter.on_started("TestBot", "Test bot")
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
@@ -931,9 +931,7 @@ class TestCacheDisabling:
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter(
-            features=AdapterFeatures(
-                capabilities={Capability.CONTACTS, Capability.MEMORY}
-            ),
+            capabilities=Capability.CONTACTS | Capability.MEMORY,
         )
         await adapter.on_started("TestBot", "Test bot")
 
@@ -975,7 +973,7 @@ class TestCacheDisabling:
 class TestContactToolExecution:
     def _make_adapter(self, CrewAIAdapter: type) -> Any:
         return CrewAIAdapter(
-            features=AdapterFeatures(capabilities={Capability.CONTACTS}),
+            capabilities=Capability.CONTACTS,
         )
 
     def test_list_contacts_tool_executes(
@@ -1096,7 +1094,7 @@ class TestMemoryToolExecution:
     ):
         import asyncio
 
-        adapter = CrewAIAdapter(enable_memory_tools=True)
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
@@ -1133,7 +1131,7 @@ class TestMemoryToolExecution:
     ):
         import asyncio
 
-        adapter = CrewAIAdapter(enable_memory_tools=True)
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
@@ -1169,7 +1167,7 @@ class TestMemoryToolExecution:
     ):
         import asyncio
 
-        adapter = CrewAIAdapter(enable_memory_tools=True)
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
@@ -1188,7 +1186,7 @@ class TestMemoryToolExecution:
     ):
         import asyncio
 
-        adapter = CrewAIAdapter(enable_memory_tools=True)
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
@@ -1210,7 +1208,7 @@ class TestMemoryToolExecution:
     ):
         import asyncio
 
-        adapter = CrewAIAdapter(enable_memory_tools=True)
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
@@ -1413,14 +1411,14 @@ class TestToolExecution:
 
 class TestExecutionReporting:
     @pytest.mark.asyncio
-    async def test_execution_reporting_flag_stored(self, CrewAIAdapter, crewai_mocks):
-        adapter_enabled = CrewAIAdapter(enable_execution_reporting=True)
-        adapter_disabled = CrewAIAdapter(enable_execution_reporting=False)
+    async def test_emit_kwarg_controls_tool_call_reporting(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        adapter_enabled = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        adapter_disabled = CrewAIAdapter(emit=())
 
-        from band.core.types import Emit
-
-        assert Emit.EXECUTION in adapter_enabled.features.emit
-        assert Emit.EXECUTION not in adapter_disabled.features.emit
+        assert Emit.TOOL_CALLS in adapter_enabled.features.emit
+        assert Emit.TOOL_CALLS not in adapter_disabled.features.emit
 
     def test_reports_tool_call_when_enabled(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
@@ -1429,7 +1427,7 @@ class TestExecutionReporting:
 
         crewai_mocks.Agent.reset_mock()
 
-        adapter = CrewAIAdapter(enable_execution_reporting=True)
+        adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
@@ -1445,11 +1443,11 @@ class TestExecutionReporting:
     async def test_report_tool_call_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in EmitExecutionReporter.report_call should not propagate."""
-        from band.integrations.crewai import EmitExecutionReporter
+        """send_event 403 in EmitToolCallsReporter.report_call should not propagate."""
+        from band.integrations.crewai import EmitToolCallsReporter
 
-        adapter = CrewAIAdapter(enable_execution_reporting=True)
-        reporter = EmitExecutionReporter(adapter.features)
+        adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        reporter = EmitToolCallsReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
@@ -1459,11 +1457,11 @@ class TestExecutionReporting:
     async def test_report_tool_result_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in EmitExecutionReporter.report_result should not propagate."""
-        from band.integrations.crewai import EmitExecutionReporter
+        """send_event 403 in EmitToolCallsReporter.report_result should not propagate."""
+        from band.integrations.crewai import EmitToolCallsReporter
 
-        adapter = CrewAIAdapter(enable_execution_reporting=True)
-        reporter = EmitExecutionReporter(adapter.features)
+        adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        reporter = EmitToolCallsReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
@@ -1812,7 +1810,7 @@ class TestCustomTools:
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter(
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
             additional_tools=[(EchoInput, echo_message)],
         )
         asyncio.run(adapter.on_started("TestBot", "Test bot"))

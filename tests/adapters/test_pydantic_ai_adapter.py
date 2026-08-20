@@ -53,7 +53,7 @@ from band.adapters.pydantic_ai import (
     _is_replayable_history_message,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import get_tool_description
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
@@ -635,7 +635,7 @@ class TestOnStarted:
         with patch("band.adapters.pydantic_ai.Agent"):
             adapter = PydanticAIAdapter(
                 model="openai:gpt-5.4",
-                features=AdapterFeatures(capabilities={Capability.MEMORY}),
+                capabilities=Capability.MEMORY,
             )
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1030,10 +1030,10 @@ class TestExecutionReporting:
     async def test_emits_tool_call_events_when_enabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Should emit tool_call events when enable_execution_reporting=True."""
+        """Should emit tool_call events when emit=Emit.TOOL_CALLS."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1066,10 +1066,10 @@ class TestExecutionReporting:
     async def test_emits_tool_result_events_when_enabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Should emit tool_result events when enable_execution_reporting=True."""
+        """Should emit tool_result events when emit=Emit.TOOL_CALLS."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1104,8 +1104,8 @@ class TestExecutionReporting:
     async def test_no_events_when_reporting_disabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Should NOT emit events when enable_execution_reporting=False (default)."""
-        adapter = PydanticAIAdapter(model="openai:gpt-5.4")  # Default is False
+        """emit=() disables tool_call/tool_result events (emit otherwise defaults on)."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4", emit=())
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -1140,7 +1140,7 @@ class TestExecutionReporting:
         """Should emit events for all tool calls in sequence."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1194,7 +1194,7 @@ class TestExecutionReporting:
         """Should continue running if send_event fails."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1419,12 +1419,11 @@ class TestEmptyFinalAnswer:
         event fired, so a hard mid-run failure doesn't silently drop usage."""
         from contextlib import contextmanager
 
-        from band.core.types import Emit
         from tests.adapters.usage_events import sent_usage_payloads
 
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            features=AdapterFeatures(emit={Emit.USAGE}),
+            emit=Emit.USAGE,
         )
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")

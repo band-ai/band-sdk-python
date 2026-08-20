@@ -27,33 +27,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import Capability
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
-
-
-def get_required_env(name: str) -> str:
-    """Return a required environment variable or raise a clear error."""
-    value = os.getenv(name)
-    if not value:
-        raise ValueError(f"{name} environment variable is required")
-    return value
 
 
 async def main() -> None:
     load_dotenv()
 
-    ws_url = get_required_env("BAND_WS_URL")
-    rest_url = get_required_env("BAND_REST_URL")
     adapter = CrewAIAdapter(
         model="gpt-5.4-mini",
         role="Contact-aware relationship manager",
@@ -74,7 +62,7 @@ async def main() -> None:
             "When a system message reports that a contact was added or removed, "
             "treat it as fresh room context."
         ),
-        features=AdapterFeatures(capabilities={Capability.MEMORY}),
+        capabilities=Capability.MEMORY,
     )
 
     contact_config = ContactEventConfig(
@@ -82,16 +70,13 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting CrewAI contact-and-memory example agent")
+    async with Agent.from_config(
         "crewai_contact_memory_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=contact_config,
-    )
-
-    logger.info("Starting CrewAI contact-and-memory example agent")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

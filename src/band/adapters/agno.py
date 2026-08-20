@@ -10,13 +10,15 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from typing_extensions import Unpack
+
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -126,7 +128,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -137,8 +139,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         agent: AgnoAgent,
         *,
         history_converter: AgnoHistoryConverter | None = None,
-        features: AdapterFeatures | None = None,
         session_id_factory: Callable[[str], str] = lambda room_id: room_id,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Bridge a user-built Agno agent to Band.
 
@@ -161,7 +163,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """
         super().__init__(
             history_converter=history_converter or AgnoHistoryConverter(),
-            features=features,
+            **features,
         )
 
         # The caller's agent is used directly. It becomes the runtime agent
@@ -429,7 +431,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     ) -> RunOutput | None:
         """Run the Agno agent with the room's tools bound for this call.
 
-        When ``Emit.EXECUTION`` is enabled the run is streamed so tool_call /
+        When ``Emit.TOOL_CALLS`` is enabled the run is streamed so tool_call /
         tool_result events are emitted *as each tool runs* (see
         :meth:`_run_streamed`), matching the other adapters' live reporting.
         Otherwise it runs non-streaming, exactly as before.
@@ -447,7 +449,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
         try:
             with _bind_room_tools(tools):
-                if Emit.EXECUTION in self.features.emit:
+                if Emit.TOOL_CALLS in self.features.emit:
                     response = await self._run_streamed(
                         agent,
                         messages,

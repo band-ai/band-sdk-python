@@ -6,11 +6,21 @@ Provides prompt generators for the Thinker (word picker) and Guesser
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
 
 
 def create_llm() -> BaseChatModel:
@@ -22,10 +32,9 @@ def create_llm() -> BaseChatModel:
     Raises:
         ValueError: If neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is set.
     """
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
+    settings = Settings()
 
-    if anthropic_key:
+    if settings.anthropic_api_key:
         try:
             from langchain_anthropic import ChatAnthropic
         except ImportError:
@@ -35,7 +44,7 @@ def create_llm() -> BaseChatModel:
             ) from None
 
         return ChatAnthropic(model="claude-sonnet-4-5-20250929")
-    elif openai_key:
+    elif settings.openai_api_key:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(model="gpt-5.5")
@@ -59,8 +68,9 @@ def create_llm_by_name(model: str) -> BaseChatModel:
     Raises:
         ValueError: If the required API key for the detected provider is not set.
     """
+    settings = Settings()
     if model.startswith("claude"):
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not settings.anthropic_api_key:
             raise ValueError(f"ANTHROPIC_API_KEY must be set to use model '{model}'")
         try:
             from langchain_anthropic import ChatAnthropic
@@ -71,7 +81,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
             ) from None
         return ChatAnthropic(model=model)
     else:
-        if not os.getenv("OPENAI_API_KEY"):
+        if not settings.openai_api_key:
             raise ValueError(f"OPENAI_API_KEY must be set to use model '{model}'")
         from langchain_openai import ChatOpenAI
 

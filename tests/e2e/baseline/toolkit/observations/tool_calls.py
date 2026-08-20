@@ -2,7 +2,7 @@
 
 Captures the agent-under-test's tool calls for a turn: which tools fired, with
 which arguments. When an adapter runs with execution reporting on
-(``Emit.EXECUTION``), each tool invocation is recorded as a ``tool_call`` event
+(``Emit.TOOL_CALLS``), each tool invocation is recorded as a ``tool_call`` event
 whose ``content`` is JSON ``{"name", "args", "tool_call_id"}``. Those events are
 persisted and read back via the Human messages API (``UserOps.list_messages``).
 
