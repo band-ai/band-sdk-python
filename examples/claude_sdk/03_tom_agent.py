@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[claude_sdk]>=1.2.0,<2.0.0"]
 # ///
 """
 Tom the cat agent using Claude SDK.
