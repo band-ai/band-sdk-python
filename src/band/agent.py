@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
+from band.runtime.capabilities import capabilities_the_platform_refuses
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import (
     AgentConfig,
@@ -237,6 +238,7 @@ class Agent:
             await self._runtime.initialize()
 
             # 2. Initialize adapter with agent metadata BEFORE message processing
+            self._honour_platform_capabilities()
             setattr(self._adapter, "_band_agent_id", self._runtime.agent_id)
             await self._adapter.on_started(
                 self._runtime.agent_name,
@@ -298,6 +300,39 @@ class Agent:
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )
         return graceful
+
+    def _honour_platform_capabilities(self) -> None:
+        """Drop capabilities this deployment says it does not serve.
+
+        The operator's `Capability.FILES` means "this agent may use files"; it
+        cannot mean "this deployment has them", and only the platform knows.
+        Runs before `on_started` because that is where adapters build their
+        tool lists — pruning afterwards would change nothing, and an agent
+        advertising a tool the platform 404s spends real model turns finding
+        out.
+        """
+        # getattr because Agent is also driven with hand-rolled runtime objects
+        # that predate this property; one missing attribute must not take an
+        # agent's startup down.
+        refused = capabilities_the_platform_refuses(
+            getattr(self._runtime, "platform_feature_flags", None)
+        )
+        features = getattr(self._adapter, "features", None)
+        if not refused or features is None:
+            return
+
+        unavailable = refused & features.capabilities
+        if not unavailable:
+            return
+
+        logger.warning(
+            "Platform does not serve %s; their tools stay hidden from agent %s",
+            ", ".join(sorted(capability.value for capability in unavailable)),
+            self._runtime.agent_id,
+        )
+        # setattr because `features` belongs to SimpleAdapter, not to the
+        # FrameworkAdapter protocol — same reason as `_band_agent_id` above.
+        setattr(self._adapter, "features", features.without_capabilities(unavailable))
 
     async def _cleanup_adapter(self) -> None:
         """Release adapter-wide resources, best-effort."""

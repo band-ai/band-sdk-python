@@ -31,7 +31,7 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 if TYPE_CHECKING:
     from crewai.tools import BaseTool
@@ -54,9 +54,11 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     append_available_mention_handles,
+    describe_tool_result_as_text,
     get_tool_description,
     is_terminal_success,
     platform_args_schema,
+    is_room_posting_tool,
     serialize_tool_result,
     validate_tool_arguments,
 )
@@ -81,6 +83,9 @@ _CREWAI_TOOL_CATEGORIES = {
     "band_get_memory": "memory",
     "band_supersede_memory": "memory",
     "band_archive_memory": "memory",
+    "band_list_room_files": "files",
+    "band_read_room_file": "files",
+    "band_send_room_file": "files",
 }
 
 
@@ -299,7 +304,11 @@ def _execute_tool(
                     tool_name, succeeded=True, custom_terminal=custom_terminal
                 ):
                     context.reply_tracker.tool_executed = True
-                if tool_name == _SEND_MESSAGE_TOOL:
+                # Any tool that posts to the room counts as replying, not
+                # just band_send_message: an agent that answers by sharing a
+                # file has answered, and reporting 'no reply' after a
+                # successful share puts a spurious error in the room.
+                if is_room_posting_tool(tool_name):
                     context.reply_tracker.replied = True
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
@@ -353,12 +362,33 @@ SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
 _no_cache: Any = staticmethod(lambda *_a, **_kw: False)
 
 
+class _ListRoomFilesInput(BaseModel):
+    """No arguments — lists files visible to this agent in the current room."""
+
+
+class _ReadRoomFileInput(BaseModel):
+    file_id: str = Field(
+        ..., description="The file id from band_list_room_files or a message"
+    )
+
+
+class _SendRoomFileInput(BaseModel):
+    filename: str = Field(..., description="Name for the file, e.g. plan.txt")
+    text_content: str = Field(..., description="The file's text content")
+    mention: str = Field(
+        ..., description="Handle of the participant to address, e.g. '@john'"
+    )
+    message: str = Field(
+        default="", description="Optional message text to accompany the file"
+    )
+
+
 def _make_platform_tools(
     *,
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
+) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool], list[BaseTool]]:
     """Build the 7 base + 5 contact + 5 memory platform tools.
 
     Returns a (base, contacts, memory) triple. ``build_band_crewai_tools``
@@ -830,6 +860,70 @@ def _make_platform_tools(
 
             return _exec("band_archive_memory", execute)
 
+    class ListRoomFilesTool(BaseTool):
+        name: str = "band_list_room_files"
+        description: str = get_tool_description("band_list_room_files")
+        args_schema: type[BaseModel] = _ListRoomFilesInput
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **_kwargs: Any) -> Any:
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(tools, "band_list_room_files", {})
+                result = await tools.list_room_files()
+                await reporter.report_result(tools, "band_list_room_files", result)
+                return serialize_success_result(result)
+
+            return _exec("band_list_room_files", execute)
+
+    class ReadRoomFileTool(BaseTool):
+        name: str = "band_read_room_file"
+        description: str = get_tool_description("band_read_room_file")
+        args_schema: type[BaseModel] = _ReadRoomFileInput
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            file_id = kwargs.get("file_id", "")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools, "band_read_room_file", {"file_id": file_id}
+                )
+                # CrewAI json-dumps whatever it is handed, so the MCP image
+                # block would arrive as base64 prose rather than vision.
+                result = describe_tool_result_as_text(
+                    await tools.read_room_file(file_id)
+                )
+                await reporter.report_result(tools, "band_read_room_file", result)
+                return serialize_success_result(result)
+
+            return _exec("band_read_room_file", execute)
+
+    class SendRoomFileTool(BaseTool):
+        name: str = "band_send_room_file"
+        description: str = get_tool_description("band_send_room_file")
+        args_schema: type[BaseModel] = _SendRoomFileInput
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            filename = kwargs.get("filename", "")
+            text_content = kwargs.get("text_content", "")
+            mention = kwargs.get("mention", "")
+            message = kwargs.get("message", "")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_send_room_file",
+                    {"filename": filename, "mention": mention},
+                )
+                result = await tools.send_room_file(
+                    filename, text_content, mention, message
+                )
+                await reporter.report_result(tools, "band_send_room_file", result)
+                return serialize_success_result(result)
+
+            return _exec("band_send_room_file", execute)
+
     base_tools: list[BaseTool] = [
         SendMessageTool(),
         SendEventTool(),
@@ -853,8 +947,13 @@ def _make_platform_tools(
         SupersedeMemoryTool(),
         ArchiveMemoryTool(),
     ]
+    file_tools: list[BaseTool] = [
+        ListRoomFilesTool(),
+        ReadRoomFileTool(),
+        SendRoomFileTool(),
+    ]
 
-    return base_tools, contact_tools, memory_tools
+    return base_tools, contact_tools, memory_tools, file_tools
 
 
 def _make_custom_tools(
@@ -953,13 +1052,14 @@ def build_band_crewai_tools(
       - 7 base tools always.
       - +5 contact tools when Capability.CONTACTS is in `capabilities`.
       - +5 memory tools when Capability.MEMORY is in `capabilities`.
+      - +3 file tools when Capability.FILES is in `capabilities`.
       - +N custom tools after platform tools.
 
     The returned tools close over `get_context`, `reporter`, and `fallback_loop`.
     Each adapter passes its own getter/reporter so the wrappers stay
     framework-agnostic.
     """
-    base, contacts, memories = _make_platform_tools(
+    base, contacts, memories, files = _make_platform_tools(
         get_context=get_context,
         reporter=reporter,
         fallback_loop=fallback_loop,
@@ -971,6 +1071,8 @@ def build_band_crewai_tools(
         selected.extend(contacts)
     if Capability.MEMORY in active_features.capabilities:
         selected.extend(memories)
+    if Capability.FILES in active_features.capabilities:
+        selected.extend(files)
 
     selected = filter_tool_schemas(
         selected,

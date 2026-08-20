@@ -55,7 +55,7 @@ from band.adapters.pydantic_ai import (
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import AdapterFeatures, Capability, PlatformMessage
 from band.runtime.custom_tools import get_custom_tool_name
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import FILE_TOOL_NAMES, get_tool_description
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
 
@@ -597,6 +597,52 @@ class TestInstrumentation:
         (sent_to_model,) = seen
         assert not [m for m in sent_to_model if isinstance(m, ModelResponse)]
         assert trace_capture.operations() == ["chat", "invoke_agent"]
+
+
+class TestFileToolSeam:
+    """pydantic-ai has no MCP content path, so both halves of the gate live at
+    this adapter's own registration seam: whether the file tools are offered at
+    all, and what the reader hands back once one runs. A read that forwards the
+    raw result puts a base64 image — up to about 4.2 million characters at the
+    inline limit — into the turn, which the model cannot see and still pays for.
+    """
+
+    IMAGE_RESULT = {
+        "content": [
+            {"type": "image", "data": "A" * 4_000, "mimeType": "image/png"},
+            {"type": "text", "text": "The image above is shot.png (image/png)."},
+        ]
+    }
+
+    def registered_tools(self, *, granted: bool) -> dict[str, Any]:
+        features = AdapterFeatures(capabilities={Capability.FILES}) if granted else None
+        adapter = PydanticAIAdapter(
+            model=TestModel(),  # type: ignore[arg-type]  # real Agent, no network
+            features=features,
+        )
+        adapter.agent_name = "TestBot"
+        agent = adapter._create_agent()
+        return {
+            name: tool
+            for toolset in agent.toolsets
+            for name, tool in getattr(toolset, "tools", {}).items()
+        }
+
+    @pytest.mark.parametrize("granted", [False, True])
+    def test_only_the_capability_puts_file_tools_on_the_agent(self, granted):
+        registered = FILE_TOOL_NAMES & set(self.registered_tools(granted=granted))
+        assert registered == (FILE_TOOL_NAMES if granted else set())
+
+    @pytest.mark.asyncio
+    async def test_an_image_read_reaches_the_model_as_words_not_base64(self):
+        tools = MagicMock()
+        tools.read_room_file = AsyncMock(return_value=self.IMAGE_RESULT)
+        read = self.registered_tools(granted=True)["band_read_room_file"].function
+
+        answer = await read(SimpleNamespace(deps=tools), "file-1")
+
+        assert "AAAA" not in answer
+        assert "shot.png" in answer
 
 
 class TestOnStarted:

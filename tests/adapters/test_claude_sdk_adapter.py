@@ -170,6 +170,60 @@ class TestInitialization:
         assert Capability.MEMORY in adapter.features.capabilities
 
 
+class TestFileToolGating:
+    """The FILES capability is what puts the three room-file tools in front of
+    the model, so the gate itself needs a test: without one, deleting the
+    capability check leaves every suite green while the tools ship to agents
+    that never asked for them.
+    """
+
+    def test_file_tools_are_absent_by_default(self):
+        from band.core.types import Capability
+        from band.runtime.tools import FILE_TOOL_NAMES, iter_tool_definitions
+
+        adapter = ClaudeSDKAdapter()
+
+        assert Capability.FILES not in adapter.features.capabilities
+        names = {d.name for d in iter_tool_definitions()}
+        assert not (FILE_TOOL_NAMES & names)
+
+    def test_the_capability_is_what_exposes_them(self):
+        from band.core.types import Capability
+        from band.runtime.tools import FILE_TOOL_NAMES, iter_tool_definitions
+
+        from band.core.types import AdapterFeatures
+
+        adapter = ClaudeSDKAdapter(
+            features=AdapterFeatures(capabilities={Capability.FILES})
+        )
+
+        assert Capability.FILES in adapter.features.capabilities
+        names = {
+            d.name
+            for d in iter_tool_definitions(
+                include_files=Capability.FILES in adapter.features.capabilities
+            )
+        }
+        assert FILE_TOOL_NAMES <= names
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("granted", [False, True])
+    async def test_the_backend_the_model_talks_to_honours_the_gate(self, granted):
+        """The two tests above re-derive the tool list themselves, so they pin
+        the registry rather than this adapter: deleting the capability check in
+        _create_mcp_backend leaves both green. What decides what the model can
+        call is the MCP backend's own allowed-tool list, so assert on that.
+        """
+        from band.core.types import AdapterFeatures, Capability
+        from band.runtime.tools import FILE_TOOL_NAMES, mcp_tool_names
+
+        features = AdapterFeatures(capabilities={Capability.FILES}) if granted else None
+        backend = await ClaudeSDKAdapter(features=features)._create_mcp_backend()
+
+        file_tools = set(mcp_tool_names(FILE_TOOL_NAMES))
+        assert (file_tools <= set(backend.allowed_tools)) is granted
+
+
 class TestOnStarted:
     """Tests for on_started() method."""
 
@@ -691,11 +745,14 @@ class TestBandTools:
             "duplicate entries in BAND_MEMORY_TOOLS"
         )
 
-    def test_band_all_tools_combines_base_and_memory(self):
-        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
+    def test_band_all_tools_combines_base_memory_and_files(self):
+        """BAND_ALL_TOOLS combines base, memory and file tools without duplicates."""
+        from band.adapters.claude_sdk import BAND_FILE_TOOLS
         from band.runtime.tools import mcp_tool_names
 
-        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert set(BAND_ALL_TOOLS) == (
+            set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS) | set(BAND_FILE_TOOLS)
+        )
         assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
         assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
             "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "
