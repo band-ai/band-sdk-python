@@ -31,9 +31,9 @@ from typing import Annotated, Any, Callable, Literal, Optional, get_args, get_or
 from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
-    TOOL_MODELS,
     append_available_mention_handles,
     get_tool_description,
+    resolve_tool_model,
     serialize_tool_result,
 )
 
@@ -200,18 +200,16 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         def decorator(func: Callable[..., Any]) -> Any:
             func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
 
-            model = TOOL_MODELS.get(func.__name__)
+            model = resolve_tool_model(func.__name__)
             if model is not None:
                 for param_name, param in inspect.signature(func).parameters.items():
                     if param_name == "context":
                         continue
                     field = model.model_fields.get(param_name)
-                    description = field.description if field else None
-                    if not description:
+                    if field is None or not field.description:
                         continue
-                    if field is not None and (
-                        choices := _literal_choices(field.annotation)
-                    ):
+                    description = field.description
+                    if choices := _literal_choices(field.annotation):
                         description = (
                             description.rstrip() + f" One of: {', '.join(choices)}."
                         )

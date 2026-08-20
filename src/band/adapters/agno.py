@@ -23,7 +23,7 @@ from band.core.types import (
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category
+from band.runtime.tools import SEND_MESSAGE_TOOL_NAME, get_band_tool_category
 
 try:
     from agno.models.message import Message
@@ -325,7 +325,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._persist_turn(room_id, response)
 
         if not any(
-            _tool_name(execution) == "band_send_message"
+            _tool_name(execution) == SEND_MESSAGE_TOOL_NAME
             for execution in _tool_executions(response)
         ):
             logger.debug(

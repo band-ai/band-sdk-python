@@ -14,6 +14,7 @@ Requires: codex-acp
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -31,21 +32,31 @@ from band.integrations.acp.client_runtime import (
     select_allow_option_id,
 )
 from band.integrations.acp.client_types import BandACPClient
-from band.runtime.mcp_server import (
-    LocalMCPServer,
+from band.integrations.acp.types import CollectedChunk
+from band.integrations.mcp.engine import (
     MCPToolRegistration,
     build_band_mcp_tool_registrations,
 )
+from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
 from tests.toolkit.timeouts import backstop_timeout
 
 logger = logging.getLogger(__name__)
 
+
+def called_tool(tool_calls: list[CollectedChunk], tool_name: str) -> bool:
+    """Whether any tool_call chunk invoked tool_name."""
+    return any(
+        chunk.metadata.get("raw_input", {}).get("tool") == tool_name
+        for chunk in tool_calls
+    )
+
+
 # These are real E2E tests: each spawns `codex-acp` as a
 # live subprocess (Node + network), so they are opt-in like the rest of the e2e
 # suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
 # are slow and their subprocess/fd pressure was starving nearby server tests
-# (e.g. tests/runtime/test_mcp_server.py) into spurious timeouts.
+# (e.g. tests/integrations/mcp/test_local_server.py) into spurious timeouts.
 _E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
     "1",
     "true",
@@ -191,10 +202,8 @@ async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
 
         # Verify chunk types are valid
         valid_types = {"text", "thought", "tool_call", "tool_result", "plan"}
-        for chunk in chunks:
-            assert chunk.chunk_type in valid_types, (
-                f"Unexpected chunk type: {chunk.chunk_type}"
-            )
+        seen_types = {chunk.chunk_type for chunk in chunks}
+        assert seen_types <= valid_types, f"Unexpected chunk types: {seen_types}"
     finally:
         await ctx.__aexit__(None, None, None)
 
@@ -207,8 +216,11 @@ async def test_codex_acp_http_mcp_server_tool_call(
     from acp import text_block
     from acp.schema import HttpMcpServer
 
-    async def execute(arguments: dict[str, str]) -> dict[str, str]:
-        return {"echo": arguments["message"]}
+    # execute() must return a wire-serialized string: the dynamic handler
+    # build_engine() creates always declares -> str, so FastMCP's
+    # structured-output validation rejects a raw dict here.
+    async def execute(arguments: dict[str, str]) -> str:
+        return json.dumps({"echo": arguments["message"]})
 
     local_server = LocalMCPServer(
         name="test-codex-http-mcp",
@@ -380,11 +392,7 @@ async def test_codex_acp_band_mcp_tool_call(
             tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
             if not tool_calls:
                 pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
-            if not any(
-                chunk.metadata.get("raw_input", {}).get("tool")
-                == "band_get_participants"
-                for chunk in tool_calls
-            ):
+            if not called_tool(tool_calls, "band_get_participants"):
                 pytest.skip(
                     "codex-acp invoked MCP in this run, but not the expected Band tool"
                 )

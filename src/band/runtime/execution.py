@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _ResyncRequest:
+class ResyncRequest:
     """Sentinel pushed into the execution queue to trigger an immediate /next resync.
 
     Used by request_resync() so a reconnect signal wakes the Phase 2 loop
@@ -69,7 +69,7 @@ class _ResyncRequest:
     type: str = "_resync"  # Matches the .type attribute pattern of PlatformEvent
 
 
-class _BacklogProcessResult(Enum):
+class BacklogProcessResult(Enum):
     ADVANCED = "advanced"
     RETRY_LATER = "retry_later"
 
@@ -601,7 +601,7 @@ class ExecutionContext:
         and runs a /next catch-up without waiting for the idle timeout. Called
         by AgentRuntime after WebSocket reconnect.
         """
-        self.queue.put_nowait(_ResyncRequest())  # type: ignore[arg-type]  # Sentinel is intentionally not a PlatformEvent.
+        self.queue.put_nowait(ResyncRequest())  # type: ignore[arg-type]  # Sentinel is intentionally not a PlatformEvent.
         logger.debug("ExecutionContext %s: Resync sentinel enqueued", self.room_id)
 
     def interrupt(self, *, kind: str = "interrupt") -> bool:
@@ -1072,7 +1072,7 @@ class ExecutionContext:
                     await self._wait_until_resync_complete()
                     continue
 
-                if isinstance(event, _ResyncRequest):
+                if isinstance(event, ResyncRequest):
                     if self._stopped:
                         # resume_room() clears _stopped before enqueuing its
                         # sentinel, so a sentinel seen while stopped is a stale
@@ -1168,7 +1168,7 @@ class ExecutionContext:
                         next_msg.id,
                     )
                     result = await self._process_backlog_message(next_msg)
-                    if result == _BacklogProcessResult.ADVANCED:
+                    if result == BacklogProcessResult.ADVANCED:
                         # Remove all WS copies of the sync-point message while
                         # preserving the relative order of other queued events.
                         self._drain_duplicate_from_queue(next_msg.id)
@@ -1183,7 +1183,7 @@ class ExecutionContext:
                     next_msg.id,
                 )
                 result = await self._process_backlog_message(next_msg)
-                if result == _BacklogProcessResult.RETRY_LATER:
+                if result == BacklogProcessResult.RETRY_LATER:
                     return False
 
                 if self._stopped:
@@ -1256,7 +1256,7 @@ class ExecutionContext:
             )
             try:
                 result = await self._process_backlog_message(msg)
-                if result == _BacklogProcessResult.RETRY_LATER:
+                if result == BacklogProcessResult.RETRY_LATER:
                     return False
             except Exception:
                 logger.exception(
@@ -1310,7 +1310,7 @@ class ExecutionContext:
                     next_msg.id,
                 )
                 result = await self._process_backlog_message(next_msg)
-                if result == _BacklogProcessResult.RETRY_LATER:
+                if result == BacklogProcessResult.RETRY_LATER:
                     return False
 
                 caught_up += 1
@@ -1360,7 +1360,7 @@ class ExecutionContext:
 
     async def _process_backlog_message(
         self, msg: PlatformMessage
-    ) -> _BacklogProcessResult:
+    ) -> BacklogProcessResult:
         """
         Process a backlog message from /next during sync.
 
@@ -1380,33 +1380,33 @@ class ExecutionContext:
             and msg.sender_id == self._agent_id
         ):
             logger.debug("Skipping self-message %s", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         # Skip permanently failed messages
         if self._retry_tracker.is_permanently_failed(msg_id):
             logger.debug("Skipping permanently failed message %s", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         # Skip if already processed (dedupe)
         if self.claims.is_completed(self.room_id, msg_id):
             logger.debug("Skipping duplicate backlog message: %s", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         if self.claims.is_ack_pending(self.room_id, msg_id):
             logger.debug("Retrying processed ack for backlog message: %s", msg_id)
             if await self._retry_processed_ack(msg_id):
-                return _BacklogProcessResult.ADVANCED
-            return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.RETRY_LATER
 
         with self.claims.claim(self.room_id, msg_id) as acquired:
             if not acquired:
                 logger.debug("Deferring in-flight backlog message: %s", msg_id)
-                return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.RETRY_LATER
             return await self._process_claimed_backlog_message(msg)
 
     async def _process_claimed_backlog_message(
         self, msg: PlatformMessage
-    ) -> _BacklogProcessResult:
+    ) -> BacklogProcessResult:
         """Process a backlog message while its in-flight claim is held."""
         msg_id = msg.id
         self._set_state(ExecutionState.PROCESSING)
@@ -1423,7 +1423,7 @@ class ExecutionContext:
                     self.room_id,
                 )
                 self.claims.remember_completed(self.room_id, msg_id)
-                return _BacklogProcessResult.ADVANCED
+                return BacklogProcessResult.ADVANCED
 
             # Track attempts - check if exceeded BEFORE processing
             attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
@@ -1431,7 +1431,7 @@ class ExecutionContext:
                 logger.warning(
                     "Message %s exceeded max retries (%s attempts)", msg_id, attempts
                 )
-                return _BacklogProcessResult.ADVANCED
+                return BacklogProcessResult.ADVANCED
 
             # Open the claim->cycle window: until _run_cycle creates the
             # cancellable task, an interrupt/stop has no task to cancel, so
@@ -1447,7 +1447,7 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-                return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.RETRY_LATER
 
             # Hydrate context on first message (loads participants always,
             # history only if enable_context_hydration is True)
@@ -1506,7 +1506,7 @@ class ExecutionContext:
             # handled inside _run_cycle and we advance without sending
             # anything.
             if not await self._run_cycle(event, msg_id):
-                return _BacklogProcessResult.ADVANCED
+                return BacklogProcessResult.ADVANCED
 
             # SUCCESS: Mark as processed on server
             durable_processed = await self.link.mark_processed(self.room_id, msg_id)
@@ -1520,10 +1520,10 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-                return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.RETRY_LATER
 
             logger.debug("Message %s processed successfully", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         except Exception as e:
             # FAILURE: Mark as failed on server
@@ -1536,7 +1536,7 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         finally:
             # Close the claim->cycle window on every exit so a pending signal

@@ -9,7 +9,8 @@ stdout for the caller to redirect into $GITHUB_OUTPUT.
 from __future__ import annotations
 
 import json
-import os
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tests.e2e.baseline.toolkit.adapters import assert_registry_covers_discovered
 from tests.e2e.baseline.toolkit.ci_lanes import (
@@ -17,6 +18,18 @@ from tests.e2e.baseline.toolkit.ci_lanes import (
     assert_workflow_lane_gates_known,
     ci_lanes,
 )
+
+
+class LaneMatrixSettings(BaseSettings):
+    """The workflow_dispatch inputs this script derives its matrix from."""
+
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    selected_lane: str = "all"
+    selected_os: str = "all"
+
 
 # Fail before any test runs if the registry or lane partition has drifted.
 assert_registry_covers_discovered()
@@ -26,10 +39,11 @@ assert_every_adapter_has_a_ci_home()
 assert_workflow_lane_gates_known()
 
 lanes = list(ci_lanes())
+dispatch_inputs = LaneMatrixSettings()
 
 # The registry stays authoritative: a chosen lane must be one it emits, so a
 # stale dropdown option fails loudly here instead of running nothing.
-selected = os.environ.get("SELECTED_LANE") or "all"
+selected = dispatch_inputs.selected_lane
 known = {lane.id for lane in lanes}
 if selected != "all" and selected not in known:
     raise SystemExit(
@@ -41,7 +55,7 @@ if selected != "all" and selected not in known:
 # on each selected OS. `runner` is the runs-on image; `os` is the short id
 # surfaced in the job name.
 runners = {"ubuntu": "ubuntu-latest", "windows": "windows-latest"}
-selected_os = os.environ.get("SELECTED_OS") or "all"
+selected_os = dispatch_inputs.selected_os
 if selected_os != "all" and selected_os not in runners:
     raise SystemExit(
         f"Requested os {selected_os!r} is not known "

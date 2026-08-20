@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
@@ -53,6 +55,16 @@ VALID_MESSAGE_CREATED_PAYLOAD: dict = {
 }
 
 
+async def dispatch(client: WebSocketClient, event: str, payload: dict) -> Any:
+    """Feed one event through _handle_events via a single registered
+    callback; return what that callback received (None if never called)."""
+    callback = AsyncMock()
+    await client._handle_events(
+        SimpleNamespace(event=event, payload=payload), {event: callback}
+    )
+    return callback.await_args.args[0] if callback.await_args else None
+
+
 def _upgrade_exception(
     status_code: int, body: bytes, headers: dict[str, str] | None = None
 ):
@@ -72,162 +84,85 @@ def _upgrade_exception(
 async def test_skips_invalid_message_created_payload(caplog):
     """Should log error and skip when message_created payload is missing required fields."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "message_created"
-        payload = {
-            "id": "msg-123",
-            # Missing: content, sender_id, sender_type, etc.
-        }
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"message_created": dummy_callback})
+        # Missing: content, sender_id, sender_type, etc.
+        received = await dispatch(client, "message_created", {"id": "msg-123"})
 
-    assert not callback_called, "Callback should not be called for invalid payload"
+    assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid message_created payload" in caplog.text
 
 
 async def test_skips_invalid_room_added_payload(caplog):
     """Should log error and skip when room_added payload is missing required fields."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "room_added"
-        payload = {
-            # Missing required fields: id, inserted_at, updated_at
-            "title": "Test Room",
-        }
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"room_added": dummy_callback})
+        # Missing required fields: id, inserted_at, updated_at
+        received = await dispatch(client, "room_added", {"title": "Test Room"})
 
-    assert not callback_called, "Callback should not be called for invalid payload"
+    assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid room_added payload" in caplog.text
 
 
 async def test_rejects_room_added_missing_timestamps(caplog):
     """Regression test for INT-186: room_added without inserted_at/updated_at must be rejected."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "room_added"
-        payload = {
-            "id": "room-123",
-            "title": "Test Room",
-            # Missing required: inserted_at, updated_at
-        }
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"room_added": dummy_callback})
+        # Missing required: inserted_at, updated_at
+        received = await dispatch(
+            client, "room_added", {"id": "room-123", "title": "Test Room"}
+        )
 
-    assert not callback_called, "Callback should not be called without timestamps"
+    assert received is None, "Callback should not be called without timestamps"
     assert "Invalid room_added payload" in caplog.text
 
 
 async def test_skips_invalid_room_removed_payload(caplog):
     """Should log error and skip when room_removed payload is missing required fields."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "room_removed"
-        payload = {
-            # Missing required field: id
-            "status": "closed",
-        }
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"room_removed": dummy_callback})
+        # Missing required field: id
+        received = await dispatch(client, "room_removed", {"status": "closed"})
 
-    assert not callback_called, "Callback should not be called for invalid payload"
+    assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid room_removed payload" in caplog.text
 
 
 async def test_skips_invalid_room_deleted_payload(caplog):
     """Should log error and skip when room_deleted payload is missing required fields."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "room_deleted"
-        payload = {}
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"room_deleted": dummy_callback})
+        received = await dispatch(client, "room_deleted", {})
 
-    assert not callback_called, "Callback should not be called for invalid payload"
+    assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid room_deleted payload" in caplog.text
 
 
 async def test_skips_invalid_participant_added_payload(caplog):
     """Should log error and skip when participant_added payload is missing required fields."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "participant_added"
-        payload = {
-            "id": "p-123",
-            # Missing required fields: name, type (only id is provided)
-        }
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(
-            MockMessage(), {"participant_added": dummy_callback}
-        )
+        # Missing required fields: name, type (only id is provided)
+        received = await dispatch(client, "participant_added", {"id": "p-123"})
 
-    assert not callback_called, "Callback should not be called for invalid payload"
+    assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid participant_added payload" in caplog.text
 
 
 async def test_skips_invalid_participant_removed_payload(caplog):
     """Should log error and skip when participant_removed payload is missing required fields."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    callback_called = False
-
-    class MockMessage:
-        event = "participant_removed"
-        payload = {
-            # Missing: id
-        }
-
-    async def dummy_callback(payload):
-        nonlocal callback_called
-        callback_called = True
 
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(
-            MockMessage(), {"participant_removed": dummy_callback}
-        )
+        # Missing: id
+        received = await dispatch(client, "participant_removed", {})
 
-    assert not callback_called, "Callback should not be called for invalid payload"
+    assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid participant_removed payload" in caplog.text
 
 
@@ -531,19 +466,9 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
 async def test_accepts_valid_message_created_payload():
     """Should accept valid message_created payload without raising."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "message_created"
-        payload = VALID_MESSAGE_CREATED_PAYLOAD
-
-    await client._handle_events(MockMessage(), {"message_created": test_callback})
-    assert isinstance(received_payload, MessageCreatedPayload)
-    assert received_payload.id == "msg-123"
+    received = await dispatch(client, "message_created", VALID_MESSAGE_CREATED_PAYLOAD)
+    assert isinstance(received, MessageCreatedPayload)
+    assert received.id == "msg-123"
 
 
 # A message_updated frame as observed from the real backend: same shape as
@@ -576,17 +501,7 @@ VALID_MESSAGE_UPDATED_PAYLOAD: dict = {
 async def test_accepts_message_updated_payload_with_delivery_status():
     """message_updated parses into MessageCreatedPayload and exposes delivery_status."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received = None
-
-    async def on_updated(payload):
-        nonlocal received
-        received = payload
-
-    class MockMessage:
-        event = "message_updated"
-        payload = VALID_MESSAGE_UPDATED_PAYLOAD
-
-    await client._handle_events(MockMessage(), {"message_updated": on_updated})
+    received = await dispatch(client, "message_updated", VALID_MESSAGE_UPDATED_PAYLOAD)
     assert isinstance(received, MessageCreatedPayload)
     assert received.metadata is not None
     assert received.metadata.delivery_status == {
@@ -661,136 +576,86 @@ async def test_ignores_message_updated_when_no_handler_registered(caplog):
 async def test_accepts_valid_room_added_payload():
     """Should accept valid room_added payload without raising."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "room_added"
-        payload = {
+    received = await dispatch(
+        client,
+        "room_added",
+        {
             "id": "room-123",
             "title": "Test Room",
             "task_id": None,
             "inserted_at": "2025-11-17T09:05:35.642172Z",
             "updated_at": "2025-11-17T09:05:35.642172Z",
-        }
-
-    await client._handle_events(MockMessage(), {"room_added": test_callback})
-    assert isinstance(received_payload, RoomAddedPayload)
-    assert received_payload.id == "room-123"
+        },
+    )
+    assert isinstance(received, RoomAddedPayload)
+    assert received.id == "room-123"
 
 
 async def test_accepts_valid_room_removed_payload():
     """Should accept valid room_removed payload without raising."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "room_removed"
-        payload = {
+    received = await dispatch(
+        client,
+        "room_removed",
+        {
             "id": "room-123",
             "status": "active",
             "type": "direct",
             "title": "Test Room",
             "removed_at": "2025-11-17T11:26:59.925707",
-        }
-
-    await client._handle_events(MockMessage(), {"room_removed": test_callback})
-    assert isinstance(received_payload, RoomRemovedPayload)
-    assert received_payload.id == "room-123"
+        },
+    )
+    assert isinstance(received, RoomRemovedPayload)
+    assert received.id == "room-123"
 
 
 async def test_accepts_minimal_room_removed_payload():
     """Should accept room_removed with only required `id` field (all others optional)."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "room_removed"
-        payload = {"id": "room-456"}
-
-    await client._handle_events(MockMessage(), {"room_removed": test_callback})
-    assert isinstance(received_payload, RoomRemovedPayload)
-    assert received_payload.id == "room-456"
-    assert received_payload.status is None
-    assert received_payload.type is None
-    assert received_payload.title is None
-    assert received_payload.removed_at is None
+    received = await dispatch(client, "room_removed", {"id": "room-456"})
+    assert isinstance(received, RoomRemovedPayload)
+    assert received.id == "room-456"
+    assert received.status is None
+    assert received.type is None
+    assert received.title is None
+    assert received.removed_at is None
 
 
 async def test_accepts_minimal_room_deleted_payload():
     """Should accept room_deleted with only required `id` field."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "room_deleted"
-        payload = {"id": "room-789"}
-
-    await client._handle_events(MockMessage(), {"room_deleted": test_callback})
-    assert isinstance(received_payload, RoomDeletedPayload)
-    assert received_payload.id == "room-789"
+    received = await dispatch(client, "room_deleted", {"id": "room-789"})
+    assert isinstance(received, RoomDeletedPayload)
+    assert received.id == "room-789"
 
 
 async def test_accepts_valid_participant_added_payload():
     """Should accept valid participant_added payload and pass typed model to callback."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "participant_added"
-        payload = {
+    received = await dispatch(
+        client,
+        "participant_added",
+        {
             "id": "p-123",
             "name": "Test Agent",
             "type": "Agent",
             "is_remote": True,
             "is_external": True,
-        }
-
-    await client._handle_events(MockMessage(), {"participant_added": test_callback})
-    assert isinstance(received_payload, ParticipantAddedPayload)
-    assert received_payload.id == "p-123"
-    assert received_payload.name == "Test Agent"
-    assert received_payload.is_remote is True
-    assert received_payload.is_external is True
+        },
+    )
+    assert isinstance(received, ParticipantAddedPayload)
+    assert received.id == "p-123"
+    assert received.name == "Test Agent"
+    assert received.is_remote is True
+    assert received.is_external is True
 
 
 async def test_accepts_valid_participant_removed_payload():
     """Should accept valid participant_removed payload and pass typed model to callback."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "participant_removed"
-        payload = {
-            "id": "p-123",
-        }
-
-    await client._handle_events(MockMessage(), {"participant_removed": test_callback})
-    assert isinstance(received_payload, ParticipantRemovedPayload)
-    assert received_payload.id == "p-123"
+    received = await dispatch(client, "participant_removed", {"id": "p-123"})
+    assert isinstance(received, ParticipantRemovedPayload)
+    assert received.id == "p-123"
 
 
 async def test_join_room_participants_channel_allows_omitted_room_deleted_handler():
@@ -927,20 +792,9 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
 async def test_allows_extra_fields_in_payload(event_name, base_payload, expected_type):
     """Should accept payloads with extra fields (forward compatibility)."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
     extra_fields = {"extra_field_1": "some value", "extra_field_2": 42}
-
-    class MockMessage:
-        event = event_name
-        payload = {**base_payload, **extra_fields}
-
-    await client._handle_events(MockMessage(), {event_name: test_callback})
-    assert isinstance(received_payload, expected_type)
+    received = await dispatch(client, event_name, {**base_payload, **extra_fields})
+    assert isinstance(received, expected_type)
 
 
 async def test_skips_unknown_event_without_handler(caplog):
@@ -978,18 +832,10 @@ async def test_event_created_without_handler_logs_at_debug_not_warning(caplog):
 async def test_passes_raw_dict_for_unknown_event_types():
     """Should pass raw payload dict for event types without Pydantic models."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received_payload = None
-
-    async def test_callback(payload):
-        nonlocal received_payload
-        received_payload = payload
-
-    class MockMessage:
-        event = "task_created"
-        payload = {"task_id": "t-123", "status": "pending"}
-
-    await client._handle_events(MockMessage(), {"task_created": test_callback})
-    assert received_payload == {"task_id": "t-123", "status": "pending"}
+    received = await dispatch(
+        client, "task_created", {"task_id": "t-123", "status": "pending"}
+    )
+    assert received == {"task_id": "t-123", "status": "pending"}
 
 
 # --- Validation error counter tests ---
@@ -1000,21 +846,15 @@ async def test_validation_error_count_increments_on_invalid_payload(caplog):
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
     assert client.validation_error_count == 0
 
-    class MockMessage:
-        event = "message_created"
-        payload = {"id": "msg-123"}  # Missing required fields
-
-    async def dummy_callback(payload):
-        pass
-
+    invalid_payload = {"id": "msg-123"}  # Missing required fields
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"message_created": dummy_callback})
+        await dispatch(client, "message_created", invalid_payload)
 
     assert client.validation_error_count == 1
 
     # Send another invalid payload to verify it keeps incrementing
     with caplog.at_level(logging.ERROR):
-        await client._handle_events(MockMessage(), {"message_created": dummy_callback})
+        await dispatch(client, "message_created", invalid_payload)
 
     assert client.validation_error_count == 2
 
@@ -1022,15 +862,7 @@ async def test_validation_error_count_increments_on_invalid_payload(caplog):
 async def test_validation_error_count_stays_zero_on_valid_payload():
     """Should not increment validation_error_count for valid payloads."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-
-    class MockMessage:
-        event = "message_created"
-        payload = VALID_MESSAGE_CREATED_PAYLOAD
-
-    async def dummy_callback(payload):
-        pass
-
-    await client._handle_events(MockMessage(), {"message_created": dummy_callback})
+    await dispatch(client, "message_created", VALID_MESSAGE_CREATED_PAYLOAD)
     assert client.validation_error_count == 0
 
 
@@ -1038,15 +870,8 @@ async def test_reset_validation_error_count_returns_previous_value():
     """Should reset validation_error_count back to zero and return old value."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
-    class MockMessage:
-        event = "message_created"
-        payload = {"id": "msg-123"}  # Missing required fields
-
-    async def dummy_callback(payload):
-        pass
-
     # Drive the counter up
-    await client._handle_events(MockMessage(), {"message_created": dummy_callback})
+    await dispatch(client, "message_created", {"id": "msg-123"})  # Missing fields
     assert client.validation_error_count == 1
 
     old_count = client.reset_validation_error_count()

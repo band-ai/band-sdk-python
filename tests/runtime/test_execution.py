@@ -13,7 +13,7 @@ from band.runtime.execution import (
     Execution,
     ExecutionContext,
     ExecutionState,
-    _BacklogProcessResult,
+    BacklogProcessResult,
     _error_label,
 )
 from band.runtime.types import ConversationContext, SessionConfig
@@ -1074,7 +1074,7 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == _BacklogProcessResult.RETRY_LATER
+        assert result == BacklogProcessResult.RETRY_LATER
         mock_handler.assert_awaited_once()
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-ack-fails"
@@ -1133,9 +1133,9 @@ class TestCrashRecoverySync:
         )
 
         assert (
-            await ctx._process_backlog_message(msg) == _BacklogProcessResult.RETRY_LATER
+            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
         )
-        assert await ctx._process_backlog_message(msg) == _BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1172,9 +1172,9 @@ class TestCrashRecoverySync:
         )
 
         assert (
-            await ctx._process_backlog_message(msg) == _BacklogProcessResult.RETRY_LATER
+            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
         )
-        assert await ctx._process_backlog_message(msg) == _BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2

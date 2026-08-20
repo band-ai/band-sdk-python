@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.execution import ExecutionContext, _BacklogProcessResult
+from band.runtime.execution import ExecutionContext, BacklogProcessResult
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 
@@ -303,7 +303,7 @@ class TestStopRoomResumeRoom:
         handler.started.clear()
         result = await ctx._process_backlog_message(_backlog_message("p1"))
 
-        assert result == _BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.ADVANCED
         assert handler.completed == ["p1"]  # handler actually ran this time
         assert not ctx._retry_tracker.is_permanently_failed("p1")
 
@@ -321,7 +321,7 @@ class TestBacklogInterrupt:
         ctx.interrupt()
         result = await proc
 
-        assert result == _BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.ADVANCED
         mock_link.mark_processed.assert_awaited_once_with("room-123", "bk1")
         assert "bk1" in ctx.claims.completed_ids(ctx.room_id)
 
@@ -336,7 +336,7 @@ class TestBacklogInterrupt:
         ctx.interrupt(kind="stop")
         result = await proc
 
-        assert result == _BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.ADVANCED
         mock_link.mark_processed.assert_not_awaited()
         assert "bk2" not in ctx.claims.completed_ids(ctx.room_id)
 
@@ -470,7 +470,7 @@ class TestControlSignalInClaimWindow:
         release.set()
         result = await proc
 
-        assert result == _BacklogProcessResult.ADVANCED
+        assert result == BacklogProcessResult.ADVANCED
         assert handler.invoked == []
         mock_link.mark_processed.assert_awaited_once_with("room-123", "bw1")
 

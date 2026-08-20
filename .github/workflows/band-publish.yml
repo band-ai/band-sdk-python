@@ -42,8 +42,12 @@ permissions:
 
 jobs:
   build:
-    # Guard the event path: never auto-publish a prerelease to PyPI.
-    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    # Guard the event path: never auto-publish a prerelease, and never run
+    # (not even to fail) on a release event for another component's tag —
+    # band-mcp-publish.yml owns band-mcp-v* releases. workflow_dispatch is
+    # unfiltered here since its explicit `tag` input already gets the same
+    # band-sdk-v* validation below.
+    if: github.event_name == 'workflow_dispatch' || (github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'band-sdk-v'))
     runs-on: ubuntu-latest
     env:
       TAG: ${{ inputs.tag || github.event.release.tag_name }}

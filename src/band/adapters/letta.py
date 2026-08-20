@@ -30,7 +30,7 @@ from band.integrations.letta.config import (
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
 
 __all__ = [
     "LettaAdapter",
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _RoomContext:
+class RoomContext:
     """Per-room state for a Letta agent."""
 
     agent_id: str
@@ -163,7 +163,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self._client: Any = None
 
         # Per-room state
-        self._rooms: dict[str, _RoomContext] = {}
+        self._rooms: dict[str, RoomContext] = {}
 
         # Shared mode: single agent ID used across all rooms
         self._shared_agent_id: str | None = None
@@ -315,7 +315,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         room_id: str,
         history: LettaSessionState,
         tools: AgentToolsProtocol,
-    ) -> _RoomContext | None:
+    ) -> RoomContext | None:
         """The room's context — normally pre-created by ``on_message``; falls
         back to creating the agent when a racing cleanup popped the room."""
         if (room_ctx := self._rooms.get(room_id)) is not None:
@@ -329,7 +329,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def _compose_turn_content(
         self,
         msg: PlatformMessage,
-        room_ctx: _RoomContext,
+        room_ctx: RoomContext,
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
@@ -364,8 +364,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         if self.config.mcp.mode == "self_host" and self.config.mode == "shared":
             parts.append(
-                f"[System]: Current room_id: {room_id} — pass it as the "
-                "`room_id` argument in every tool call."
+                f"[System]: Current {CHAT_ID_FIELD_NAME}: {room_id} — pass it as "
+                f"the `{CHAT_ID_FIELD_NAME}` argument in every tool call."
             )
 
         if participants_msg:
@@ -380,7 +380,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
-        room_ctx: _RoomContext,
+        room_ctx: RoomContext,
         content: str,
         room_id: str,
     ) -> None:
@@ -427,7 +427,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         agent_id: str,
         content: str,
         tools: AgentToolsProtocol,
-        room_ctx: _RoomContext,
+        room_ctx: RoomContext,
         room_id: str,
         reply_to_sender_id: str = "",
     ) -> list[str]:
@@ -691,7 +691,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     e,
                 )
 
-        room_ctx = _RoomContext(agent_id=self._shared_agent_id)
+        room_ctx = RoomContext(agent_id=self._shared_agent_id)
         if conversation_id is None:
             conversation = await self._client.conversations.create(
                 agent_id=self._shared_agent_id,
@@ -725,7 +725,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # Try to resume: prefer history agent_id, fall back to config agent_id
         resume_agent_id = self._resume_candidate(history)
         if resume_agent_id and await self._resume_agent(resume_agent_id, room_id):
-            self._rooms[room_id] = _RoomContext(
+            self._rooms[room_id] = RoomContext(
                 agent_id=resume_agent_id,
                 conversation_id=history.conversation_id or None,
             )
@@ -737,7 +737,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # already has some (no live agent to resume — the cold-boot case).
         agent_id = await self._create_agent(room_id)
 
-        room_ctx = _RoomContext(agent_id=agent_id)
+        room_ctx = RoomContext(agent_id=agent_id)
         if history.replay_messages:
             room_ctx.pending_seed = list(history.replay_messages)
             logger.info(

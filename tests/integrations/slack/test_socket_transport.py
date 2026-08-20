@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from band.integrations.slack.adapter import SlackAdapter
-from band.integrations.slack.dedup import _SeenEvents
+from band.integrations.slack.dedup import SeenEvents
 from band.integrations.slack.socket import (
     SlackSocketListener,
     start_socket_listeners,
@@ -389,7 +389,7 @@ async def test_events_api_envelope_routes_through_dispatch_event(monkeypatch):
 
             client.socket_mode_request_listeners.append(
                 _make_request_handler(
-                    app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+                    app=app, dispatcher=dispatcher, seen_events=SeenEvents()
                 )
             )
             await client.connect()
@@ -427,7 +427,7 @@ async def test_socket_listener_drops_bot_events(monkeypatch):
         for app in apps:
             fake.socket_mode_request_listeners.append(
                 _make_request_handler(
-                    app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+                    app=app, dispatcher=dispatcher, seen_events=SeenEvents()
                 )
             )
             await fake.connect()
@@ -473,7 +473,7 @@ async def test_socket_listener_drops_duplicate_event_id():
     client = SimpleNamespace(send_socket_mode_response=AsyncMock())
     app = SlackApp(slug="dev", bot_token="xoxb-x", app_token="xapp-x")
     handler = _make_request_handler(
-        app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+        app=app, dispatcher=dispatcher, seen_events=SeenEvents()
     )
 
     await handler(client, _events_api_request(envelope_id="e1", event_id="Ev123"))

@@ -1,0 +1,139 @@
+# Publishes band-mcp to PyPI. Mirrors band-publish.yml's trusted-publishing
+# layout (see that file's header for the full security-model rationale:
+# separate build/publish jobs, environment `release`, tag-anchored version
+# validation) with one addition: band-mcp declares a runtime floor on
+# band-sdk (packages/band-mcp/pyproject.toml's `band-sdk>=X.Y.Z`) that a
+# two-phase release bumps to the band-sdk version that first ships the code
+# band-mcp needs. Publishing can lag PyPI's index by a couple minutes, so the
+# build job waits for that exact version to actually resolve before
+# installing the freshly-built wheel against it.
+#
+# The PyPI trusted publisher must reference this filename
+# (band-mcp-publish.yml) with environment `release`. The release event only
+# fires workflows present at the released tag, so tags predating this file
+# are published via dispatch.
+
+name: band-mcp-publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish (e.g. band-mcp-v1.4.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Guard the event path: never auto-publish a prerelease, and never run
+    # (not even to fail) on a release event for another component's tag —
+    # band-publish.yml owns band-sdk-v* releases. workflow_dispatch is
+    # unfiltered here since its explicit `tag` input already gets the same
+    # band-mcp-v* validation below.
+    if: github.event_name == 'workflow_dispatch' || (github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'band-mcp-v'))
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # Full refs/tags/ path: a branch that happens to share the name can
+          # never shadow the tag.
+          ref: refs/tags/${{ inputs.tag || github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Validate the tag is a main-anchored band-mcp release
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^band-mcp-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {
+            echo "::error::'${TAG}' is not a band-mcp-vX.Y.Z release tag"; exit 1; }
+          tag_version="${BASH_REMATCH[1]}"
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "::error::${TAG} does not point at a commit on main"; exit 1; }
+          project_version=$(python3 -c "import tomllib; print(tomllib.load(open('packages/band-mcp/pyproject.toml','rb'))['project']['version'])")
+          if [ "$project_version" != "$tag_version" ]; then
+            echo "::error::packages/band-mcp/pyproject.toml version ${project_version} does not match ${TAG}"; exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Build band-mcp package (no workspace sources)
+        # --no-sources: the published wheel's metadata must declare its real
+        # PyPI floor (band-sdk>=X.Y.Z), not resolve through this repo's
+        # workspace override.
+        run: uv build --package band-mcp --no-sources -o dist
+
+      - name: Wait for the declared band-sdk floor to be indexed on PyPI
+        run: |
+          set -euo pipefail
+          FLOOR=$(python3 <<'PYEOF'
+          import re, tomllib
+          deps = tomllib.load(open('packages/band-mcp/pyproject.toml', 'rb'))['project']['dependencies']
+          band_sdk = next(d for d in deps if d.startswith('band-sdk'))
+          print(re.search(r'>=([0-9]+\.[0-9]+\.[0-9]+)', band_sdk).group(1))
+          PYEOF
+          )
+          echo "Waiting for band-sdk==${FLOOR} to be indexed on PyPI..."
+          for _ in $(seq 1 60); do
+            if uv pip install "band-sdk==${FLOOR}" --dry-run --python "$(which python3)" >/dev/null 2>&1; then
+              echo "band-sdk==${FLOOR} is available."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::band-sdk==${FLOOR} did not become resolvable on PyPI within 10 minutes"
+          exit 1
+
+      - name: Install band-mcp with band-sdk resolved from PyPI
+        # The install-check that motivates the wait above: prove the wheel
+        # just built actually resolves and imports against its real,
+        # PyPI-published floor — not this repo's workspace override.
+        run: |
+          uv venv /tmp/band-mcp-verify
+          uv pip install dist/*.whl --python /tmp/band-mcp-verify/bin/python
+
+      - name: Verify imports and CLI entry point
+        run: |
+          /tmp/band-mcp-verify/bin/python <<'PYEOF'
+          from band_mcp import __version__
+          from band_mcp.server import run, standalone_spec
+          from band_mcp.shared import StandaloneResolver, build_standalone_resolver
+          print(f'band-mcp {__version__} imports successful')
+          PYEOF
+          /tmp/band-mcp-verify/bin/band-mcp --version
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: band-mcp-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # Trusted publishing (OIDC) + reading this run's build artifact.
+      id-token: write
+      actions: read
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: band-mcp-dist
+          path: dist/
+
+      - name: Publish band-mcp to PyPI
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        with:
+          # Idempotent recovery: a re-run after a partial upload must not
+          # fail on the files that already made it to PyPI.
+          skip-existing: true

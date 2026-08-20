@@ -55,6 +55,7 @@ from band.integrations.opencode import (
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
     ToolDefinition,
     is_room_posting_tool,
     iter_tool_definitions,
@@ -72,7 +73,7 @@ _MCP_SERVER_ID_LENGTH = 8
 
 
 @dataclass
-class _RoomState:
+class RoomState:
     room_id: str
     session_id: str | None = None
     tools: AgentToolsProtocol | None = None
@@ -266,7 +267,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._mcp_backend: BandMCPBackend | None = None
-        self._rooms: dict[str, _RoomState] = {}
+        self._rooms: dict[str, RoomState] = {}
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._system_prompt: str = ""
@@ -323,7 +324,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
         """Per-turn system prompt: the static base plus this room's context.
 
-        The band MCP tools' schemas require a ``room_id`` argument (the shared
+        The band MCP tools' schemas require a ``chat_id`` argument (the shared
         backend dispatches tool calls by room), so the model must be told the
         current room id every turn or the platform tools are uncallable —
         the same per-turn room context the ACP client adapter injects.
@@ -332,12 +333,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         requester_id = msg.sender_id or "unknown"
         room_context = (
             "## Room Context\n"
-            f"Current room_id: {room_id}\n"
+            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             "\n"
             "Use each MCP tool's schema for its argument names. When a tool "
-            "needs the current room, use the Current room_id value above.\n"
+            f"needs the current room, use the Current {CHAT_ID_FIELD_NAME} "
+            "value above.\n"
         )
         return f"{self._system_prompt}\n\n{room_context}".strip()
 
@@ -501,7 +503,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
     async def on_cleanup(self, room_id: str) -> None:
-        room_state: _RoomState | None = None
+        room_state: RoomState | None = None
         should_shutdown = False
 
         async with self._state_lock:
@@ -564,11 +566,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
         return False
 
-    async def _get_or_create_room_state(self, room_id: str) -> _RoomState:
+    async def _get_or_create_room_state(self, room_id: str) -> RoomState:
         async with self._state_lock:
             state = self._rooms.get(room_id)
             if state is None:
-                state = _RoomState(room_id=room_id)
+                state = RoomState(room_id=room_id)
                 state.approvals = RoomApprovals(
                     self.config,
                     ApprovalPorts(
@@ -751,9 +753,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
                 self._finish_turn(room_state)
 
-    async def _room_state_for_session(
-        self, session_id: str | None
-    ) -> _RoomState | None:
+    async def _room_state_for_session(self, session_id: str | None) -> RoomState | None:
         if not session_id:
             return None
 
@@ -764,12 +764,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return self._rooms.get(room_id)
 
     def _apply_message_update(
-        self, room_state: _RoomState, info: OpencodeMessageInfo | None
+        self, room_state: RoomState, info: OpencodeMessageInfo | None
     ) -> None:
         room_state.record_message(info, emit_usage=Emit.USAGE in self.features.emit)
 
     async def _handle_part_update(
-        self, room_state: _RoomState, part: OpencodePart
+        self, room_state: RoomState, part: OpencodePart
     ) -> None:
         if not part.id:
             return
@@ -781,7 +781,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await self._report_tool_part(room_state, part)
 
     async def _report_tool_part(
-        self, room_state: _RoomState, part: OpencodePart
+        self, room_state: RoomState, part: OpencodePart
     ) -> None:
         """Note a room-posting reply and report the tool's call/result.
 
@@ -830,12 +830,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     await self._report_tool_result(room_state, state, call_id)
 
     def _apply_part_delta(
-        self, room_state: _RoomState, event: MessagePartDeltaEvent
+        self, room_state: RoomState, event: MessagePartDeltaEvent
     ) -> None:
         room_state.append_text_delta(event)
 
     async def _ensure_session(
-        self, room_state: _RoomState, history: OpencodeSessionState
+        self, room_state: RoomState, history: OpencodeSessionState
     ) -> tuple[str, bool]:
         if self._client is None:
             raise RuntimeError("OpenCode client is not initialized")
@@ -887,12 +887,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         return session_id, created
 
-    def _begin_turn(self, room_state: _RoomState, *, sender_id: str | None) -> None:
+    def _begin_turn(self, room_state: RoomState, *, sender_id: str | None) -> None:
         room_state.begin_turn(sender_id)
 
     async def _watch_turn_completion(
         self,
-        room_state: _RoomState,
+        room_state: RoomState,
         room_id: str,
         turn_future: asyncio.Future[None] | None,
         usage_by_message: dict[str, TurnUsage],
@@ -947,7 +947,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 expected_task=asyncio.current_task(),
             )
 
-    async def _abort_session(self, room_state: _RoomState, reason: str) -> None:
+    async def _abort_session(self, room_state: RoomState, reason: str) -> None:
         """Best-effort: tell OpenCode to stop working on this room's session."""
         if not (self._client and room_state.session_id):
             return
@@ -960,7 +960,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 room_state.session_id,
             )
 
-    async def _report_delivery_failure(self, room_state: _RoomState) -> None:
+    async def _report_delivery_failure(self, room_state: RoomState) -> None:
         """Tell the room the turn finished but its result could not be posted.
 
         An event needs no mentions, so it still lands when the reply itself was
@@ -981,7 +981,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             )
 
     async def _await_turn(
-        self, room_state: _RoomState, turn_future: asyncio.Future[None]
+        self, room_state: RoomState, turn_future: asyncio.Future[None]
     ) -> None:
         """Await turn completion, but don't charge human-approval time to the
         compute budget.
@@ -1016,20 +1016,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 # against the extended deadline.
                 await approvals.wait_until_idle()
 
-    def _release_turn_wait(self, room_state: _RoomState) -> None:
+    def _release_turn_wait(self, room_state: RoomState) -> None:
         self._resolve_future(room_state.turn_release_future)
 
-    def _finish_turn(self, room_state: _RoomState) -> None:
+    def _finish_turn(self, room_state: RoomState) -> None:
         self._resolve_future(room_state.turn_future)
         self._resolve_future(room_state.turn_release_future)
 
-    def _fail_turn(self, room_state: _RoomState, message: str) -> None:
+    def _fail_turn(self, room_state: RoomState, message: str) -> None:
         room_state.last_error_message = message
         self._finish_turn(room_state)
 
     def _clear_turn_state(
         self,
-        room_state: _RoomState,
+        room_state: RoomState,
         *,
         expected_future: asyncio.Future[None] | None = None,
         expected_task: asyncio.Task[None] | None = None,
@@ -1055,7 +1055,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             future.set_result(None)
 
     async def _emit_session_task_event(
-        self, room_state: _RoomState, *, status: str
+        self, room_state: RoomState, *, status: str
     ) -> None:
         if room_state.tools is None or not room_state.session_id:
             return
@@ -1084,7 +1084,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return
         room_state.persisted_session_id = room_state.session_id
 
-    async def _deliver_fallback_text(self, room_state: _RoomState) -> None:
+    async def _deliver_fallback_text(self, room_state: RoomState) -> None:
         if room_state.tools is None or not self.config.fallback_send_agent_text:
             return
 
@@ -1128,7 +1128,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _emit_turn_usage(
         self,
-        room_state: _RoomState,
+        room_state: RoomState,
         usage_by_message: dict[str, TurnUsage],
     ) -> None:
         """Sum the turn's per-assistant-message usage and emit it.
@@ -1148,7 +1148,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _report_tool_call(
         self,
-        room_state: _RoomState,
+        room_state: RoomState,
         tool_name: str,
         state: OpencodeToolState,
         call_id: str,
@@ -1171,7 +1171,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _report_tool_result(
         self,
-        room_state: _RoomState,
+        room_state: RoomState,
         state: OpencodeToolState,
         call_id: str,
     ) -> None:

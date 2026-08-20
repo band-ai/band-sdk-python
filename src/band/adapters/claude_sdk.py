@@ -84,6 +84,7 @@ from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
+    CHAT_ID_FIELD_NAME,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     band_tool_errored,
@@ -155,7 +156,7 @@ async def _pre_tool_use_continue_hook(
 
 
 @dataclass
-class _PendingApproval:
+class PendingApproval:
     """A tool-use approval request waiting for a chat-room decision."""
 
     tool_name: str
@@ -395,8 +396,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         # Approval flow state
-        # {room_id: {token: _PendingApproval, ...}}
-        self._pending_approvals: dict[str, dict[str, _PendingApproval]] = {}
+        # {room_id: {token: PendingApproval, ...}}
+        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
         self._approval_seq: dict[str, int] = {}  # per-room counters
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
@@ -538,7 +539,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         - Store tools for MCP server access
         - Get or create ClaudeSDKClient for this room
-        - Include room_id in the message so Claude can pass it to tools
+        - Include chat_id in the message so Claude can pass it to tools
         - Stream response and log events (tools execute via MCP)
         """
         logger.debug("Handling message %s in room %s", msg.id, room_id)
@@ -636,8 +637,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             else:
                 raise
 
-        # Add room_id context (Claude needs this for tool calls)
-        room_context = f"[room_id: {room_id}]"
+        # Add chat_id context (Claude needs this for tool calls) -- the label
+        # must read "chat_id" (the model-facing name everywhere else), not
+        # the Python-side room_id it's built from.
+        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
 
         # Initialize history for this room on first message
         if is_session_bootstrap:
@@ -710,8 +713,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 room_id,
                 e,
             )
-            await self._session_manager.invalidate_session(room_id)
-            self._session_ids.pop(room_id, None)
+            await self._invalidate_session(room_id)
 
             await self._report_error(tools, str(e))
             raise
@@ -722,6 +724,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             raise
 
         logger.debug("Message %s processed successfully", msg.id)
+
+    async def _invalidate_session(self, room_id: str) -> None:
+        """Evict the cached session and client so the next message for this
+        room creates a fresh one instead of reusing a corpse."""
+        if self._session_manager:
+            await self._session_manager.invalidate_session(room_id)
+        self._session_ids.pop(room_id, None)
 
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
@@ -763,9 +772,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "reply was delivered — invalidating session",
                 room_id,
             )
-            if self._session_manager:
-                await self._session_manager.invalidate_session(room_id)
-            self._session_ids.pop(room_id, None)
+            await self._invalidate_session(room_id)
             return
         # Nothing was delivered: use the normal dead-client path so the
         # runtime marks this turn failed and the cached client is not reused.
@@ -791,10 +798,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     logger.debug("Room %s: Text: %s...", room_id, block.text[:100])
                 case ThinkingBlock() if block.thinking:
                     await self._narrate_thinking(block, room_id, tools)
-                case ToolUseBlock():
-                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
-                case ToolResultBlock():
-                    replied_this_turn |= await self._on_tool_result(
+                case _:
+                    replied_this_turn |= await self._dispatch_tool_block(
                         block, pending_tool_names, room_id, tools
                     )
         return replied_this_turn
@@ -816,14 +821,31 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return False
         replied_this_turn = False
         for block in message.content:
-            match block:
-                case ToolUseBlock():
-                    await self._on_tool_use(block, pending_tool_names, room_id, tools)
-                case ToolResultBlock():
-                    replied_this_turn |= await self._on_tool_result(
-                        block, pending_tool_names, room_id, tools
-                    )
+            replied_this_turn |= await self._dispatch_tool_block(
+                block, pending_tool_names, room_id, tools
+            )
         return replied_this_turn
+
+    async def _dispatch_tool_block(
+        self,
+        block: Any,
+        pending_tool_names: dict[str, str],
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> bool:
+        """Handle one ToolUseBlock/ToolResultBlock entry, shared by assistant-
+        and user-envelope message handling; any other block type is a no-op.
+        Returns True when the block was terminal work (a tool result)."""
+        match block:
+            case ToolUseBlock():
+                await self._on_tool_use(block, pending_tool_names, room_id, tools)
+                return False
+            case ToolResultBlock():
+                return await self._on_tool_result(
+                    block, pending_tool_names, room_id, tools
+                )
+            case _:
+                return False
 
     async def _send_narration_event(
         self,
@@ -1019,13 +1041,24 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         Returns True when the finished call counts as the turn's productive
         work (see is_terminal_success) — i.e. the agent already answered.
         """
+        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
+        await self._narrate_tool_result(block, result_tool_name, room_id, tools)
+        return self._tool_result_is_terminal(block, result_tool_name)
+
+    async def _narrate_tool_result(
+        self,
+        block: ToolResultBlock,
+        result_tool_name: str | None,
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Log a tool result and post it as a tool_result event when enabled."""
         logger.debug(
             "Room %s: Tool result: %s... error=%s",
             room_id,
             block.tool_use_id[:20],
             block.is_error,
         )
-        result_tool_name = pending_tool_names.pop(block.tool_use_id, None)
         # NAME and IS_ERROR are required by parse_tool_result (parsing.py):
         # without a name it drops the event outright, and every sibling
         # adapter's tool_result payload sets both.
@@ -1042,6 +1075,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             ),
             message_type="tool_result",
         )
+
+    def _tool_result_is_terminal(
+        self, block: ToolResultBlock, result_tool_name: str | None
+    ) -> bool:
+        """Whether this finished call counts as the turn's productive work."""
         # Belt and braces with the sibling adapters: a Band tool wrapper that
         # caught an exception returns an "Error " string without is_error, so
         # cross-check the content too (see band_tool_errored).
@@ -1216,6 +1254,28 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             room_id, tool_name, tool_input, summary, tool_use_id, requester=requester
         )
 
+    async def _send_best_effort(
+        self,
+        tools: AgentToolsProtocol,
+        message: str,
+        mentions: list[str] | None,
+        *,
+        room_id: str,
+        failure_note: str,
+        log_level: int = logging.WARNING,
+    ) -> bool:
+        """Send ``message``, returning whether it was actually delivered.
+
+        Swallows the send failure -- callers use the returned bool to decide
+        whether a missing-reply guard still applies.
+        """
+        try:
+            await tools.send_message(message, mentions=mentions)
+            return True
+        except Exception as e:
+            logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
+            return False
+
     async def _notify_auto_decision(
         self,
         room_id: str,
@@ -1235,15 +1295,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if not tools:
             return False
         mention = [requester["id"]] if requester else None
-        try:
-            await tools.send_message(
-                f"Approval requested ({summary}). Policy decision: **{decision}**.",
-                mentions=mention,
-            )
-            return True
-        except Exception as e:
-            logger.warning("Failed to send approval policy notification: %s", e)
-            return False
+        return await self._send_best_effort(
+            tools,
+            f"Approval requested ({summary}). Policy decision: **{decision}**.",
+            mention,
+            room_id=room_id,
+            failure_note="Failed to send approval policy notification",
+        )
 
     async def _resolve_manual_approval(
         self,
@@ -1259,7 +1317,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         loop = asyncio.get_running_loop()
         token = self._next_approval_token(room_id)
 
-        pending = _PendingApproval(
+        pending = PendingApproval(
             tool_name=tool_name,
             tool_input=tool_input,
             summary=summary,
@@ -1329,16 +1387,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             decision: ApprovalDecision = self.approval_timeout_decision
             notified = False
             if tools:
-                try:
-                    await tools.send_message(
-                        f"Approval `{token}` timed out. Decision: **{decision}**.",
-                        mentions=mention,
-                    )
-                    notified = True
-                except Exception:
-                    logger.debug(
-                        "Room %s: Failed to send timeout notification", room_id
-                    )
+                notified = await self._send_best_effort(
+                    tools,
+                    f"Approval `{token}` timed out. Decision: **{decision}**.",
+                    mention,
+                    room_id=room_id,
+                    failure_note="Failed to send timeout notification",
+                    log_level=logging.DEBUG,
+                )
 
             if decision == "accept":
                 return PermissionResultAllow()
@@ -1414,7 +1470,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         # --- /approve [token] | /decline [token] ---
         token = args.strip() if args else ""
-        selected: _PendingApproval | None = None
+        selected: PendingApproval | None = None
 
         if token:
             selected = pending.get(token)
@@ -1439,12 +1495,26 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             return
 
         decision: ApprovalDecision = "accept" if command == "approve" else "decline"
-        if not selected.future.done():
-            selected.future.set_result(decision)
-        await tools.send_message(
+        notified = await self._send_best_effort(
+            tools,
             f"Approval `{token}` resolved as **{decision}**.",
-            mentions=mention,
+            mention,
+            room_id=room_id,
+            failure_note=f"Failed to send approval resolution notice for token {token}",
         )
+
+        if not selected.future.done():
+            # A failed notice for a decline must not claim delivery --
+            # _FORCED_DECLINE is the existing "declined with no notice"
+            # sentinel (matches eviction/teardown above), which
+            # _resolve_manual_approval's decision_raw == "decline" check
+            # correctly treats as not implying the missing-reply guard is
+            # covered. An accept has no such guard to protect, so it always
+            # resolves as a genuine accept regardless of notice delivery.
+            resolved = (
+                decision if (notified or decision == "accept") else _FORCED_DECLINE
+            )
+            selected.future.set_result(resolved)
 
     async def _handle_status_command(
         self,

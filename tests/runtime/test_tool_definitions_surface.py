@@ -22,9 +22,9 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from band.runtime.mcp_server import (
-    build_resolved_band_mcp_tool_registrations,
+from band.integrations.mcp.engine import (
     build_band_mcp_tool_registrations,
+    build_resolved_band_mcp_tool_registrations,
 )
 from band.runtime.tools import (
     AgentTools,
@@ -337,7 +337,9 @@ class TestLocalMCPServerAgentOnlySnapshot:
             TOOL_DEFINITIONS["band_get_my_profile"],
         ]
 
-        with caplog.at_level(logging.WARNING, logger="band.runtime.mcp_server"):
+        with caplog.at_level(
+            logging.WARNING, logger="band.integrations.mcp.local_server"
+        ):
             registrations = build_band_mcp_tool_registrations(
                 agent_tools, tool_definitions=mixed
             )
@@ -372,7 +374,9 @@ class TestLocalMCPServerAgentOnlySnapshot:
             TOOL_DEFINITIONS["band_send_my_chat_message"],
         ]
 
-        with caplog.at_level(logging.WARNING, logger="band.runtime.mcp_server"):
+        with caplog.at_level(
+            logging.WARNING, logger="band.integrations.mcp.local_server"
+        ):
             registrations = build_resolved_band_mcp_tool_registrations(
                 get_tools=_resolver, tool_definitions=mixed
             )
