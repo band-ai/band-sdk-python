@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
@@ -72,7 +72,7 @@ async def test_codex_thoughts_are_not_placeholders(
     config_kwargs["reasoning_summary"] = "auto"
     adapter = CodexAdapter(
         config=CodexAdapterConfig(**config_kwargs),
-        features=AdapterFeatures(emit={Emit.THOUGHTS}),
+        emit=Emit.THOUGHTS,
     )
 
     identity = await resource_manager.provision_agent("codex-thoughts")
