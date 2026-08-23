@@ -1,0 +1,1565 @@
+<meta charset="utf-8">
+<title>Band SDK: A Shared Rust Core</title>
+
+<!-- Open in light regardless of the viewer's theme: this is presented off a laptop
+     in a room. The switch below hands control back. Runs before body paint. -->
+<script>document.documentElement.dataset.theme = "light";</script>
+
+<style>
+  /* ---------- tokens: light is the base, both themes defined at token level ---------- */
+  :root {
+    --paper:      #F3F6F3;
+    --surface:    #FFFFFF;
+    --sunk:       #EAEFEB;
+    --ink:        #131A17;
+    --muted:      #5A6862;
+    --faint:      #8A968F;
+    --rule:       #D6DED8;
+    --rule-firm:  #A9B7AF;
+    --accent:     #0E6B57;
+    --accent-ink: #0A4E40;
+    --accent-wash:#E1EEE8;
+    --alert:      #A8372B;
+    --alert-wash: #F6E6E3;
+    --warm:       #8A6516;
+    --warm-wash:  #F3EBD9;
+    --shadow:     0 1px 2px rgba(19,26,23,.05), 0 8px 24px -12px rgba(19,26,23,.14);
+
+    --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Georgia, Cambria, serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --measure: 68ch;
+    --step--1: 0.815rem;
+    --step-0:  1.0625rem;
+    --step-1:  1.28rem;
+    --step-2:  1.62rem;
+    --step-3:  2.15rem;
+    --step-4:  3.05rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0E1412;
+      --surface:    #151D19;
+      --sunk:       #101815;
+      --ink:        #E4EBE7;
+      --muted:      #97A59E;
+      --faint:      #6F7D77;
+      --rule:       #253029;
+      --rule-firm:  #3B4A42;
+      --accent:     #55C4A5;
+      --accent-ink: #86D9BF;
+      --accent-wash:#14312A;
+      --alert:      #EC8375;
+      --alert-wash: #3A1F1B;
+      --warm:       #DCB25C;
+      --warm-wash:  #322710;
+      --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0E1412;
+    --surface:    #151D19;
+    --sunk:       #101815;
+    --ink:        #E4EBE7;
+    --muted:      #97A59E;
+    --faint:      #6F7D77;
+    --rule:       #253029;
+    --rule-firm:  #3B4A42;
+    --accent:     #55C4A5;
+    --accent-ink: #86D9BF;
+    --accent-wash:#14312A;
+    --alert:      #EC8375;
+    --alert-wash: #3A1F1B;
+    --warm:       #DCB25C;
+    --warm-wash:  #322710;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+  }
+
+  /* ---------- base ---------- */
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: var(--step-0);
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 78rem;
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1.15rem, 4vw, 3rem) 6rem;
+  }
+
+  .col { max-width: var(--measure); }
+
+  p { margin: 0; }
+
+  strong { font-weight: 600; color: var(--ink); }
+
+  code, .m { font-family: var(--mono); font-size: 0.88em; }
+
+  code {
+    background: var(--sunk);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.06em 0.34em;
+    white-space: nowrap;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding-bottom: 2.5rem;
+    border-bottom: 2px solid var(--rule-firm);
+  }
+
+  .masthead .kicker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+    align-items: center;
+  }
+
+  .masthead .kicker .spacer { flex: 1 1 auto; }
+
+  /* ---------- theme switch ---------- */
+  .themeswitch {
+    display: inline-flex;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .themeswitch button {
+    appearance: none;
+    border: 0;
+    margin: 0;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 500;
+    padding: 0.4rem 0.75rem;
+    transition: background 120ms ease, color 120ms ease;
+  }
+
+  .themeswitch button:hover { color: var(--ink); }
+
+  .themeswitch button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--surface);
+  }
+
+  .themeswitch button:focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: -2px;
+  }
+
+  :root[data-theme="dark"] .themeswitch button[aria-pressed="true"] { color: var(--paper); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.01ms !important; }
+  }
+
+  .thesis {
+    font-size: var(--step-4);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    text-wrap: balance;
+    max-width: 20ch;
+    margin: 0;
+  }
+
+  .thesis .lede { color: var(--accent); }
+
+  .standfirst {
+    max-width: 58ch;
+    color: var(--muted);
+    font-size: var(--step-1);
+    line-height: 1.5;
+  }
+
+  .byline {
+    max-width: 58ch;
+    color: var(--faint);
+    font-size: var(--step--1);
+    line-height: 1.55;
+  }
+
+  /* ---------- sections ---------- */
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+    padding-top: 3.25rem;
+  }
+
+  .section > h2 {
+    font-size: var(--step-2);
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .section .head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .stack { display: flex; flex-direction: column; gap: 1rem; }
+
+  /* ---------- figures ---------- */
+  .figpair { display: flex; flex-direction: column; gap: 2.25rem; }
+
+  .fig { margin: 0; display: flex; flex-direction: column; gap: 0.8rem; }
+
+  .fig .frame {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+  }
+
+  .fig svg {
+    display: block;
+    width: 100%;
+    min-width: 52rem;
+    height: auto;
+    color: var(--ink);
+  }
+
+  .fig figcaption {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .fig figcaption b { color: var(--ink); font-weight: 600; }
+  .fig figcaption .hi { color: var(--accent-ink); font-weight: 600; }
+
+  /* svg primitives, all themed through the same tokens as the page */
+  .dg-box   { fill: var(--surface);     stroke: var(--rule);      stroke-width: 1; }
+  .dg-host  { fill: var(--sunk);        stroke: var(--rule);      stroke-width: 1; }
+  .dg-dup   { fill: var(--alert-wash);  stroke: var(--alert);     stroke-width: 1; stroke-dasharray: 5 3; }
+  .dg-core  { fill: var(--accent-wash); stroke: var(--accent);    stroke-width: 1.5; }
+  .dg-note  { fill: none;               stroke: var(--rule-firm); stroke-width: 1; stroke-dasharray: 3 3; }
+  .dg-rule  { stroke: var(--rule);      stroke-width: 1; }
+  .dg-bound { stroke: var(--accent);    stroke-width: 2;   stroke-dasharray: 7 5; fill: none; }
+  .dg-dead  { stroke: var(--faint);     stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
+  .dg-flow  { stroke: var(--accent);    stroke-width: 1.6; fill: none; }
+  .dg-mask  { fill: var(--surface);     stroke: none; }
+  .dg-head  { fill: var(--accent); }
+  .dg-head-dead { fill: var(--faint); }
+
+  .dg-l   { font-family: var(--mono); font-size: 12px;   fill: var(--ink); }
+  .dg-s   { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+  .dg-h   { font-family: var(--mono); font-size: 12px;   fill: var(--ink);   font-weight: 600; letter-spacing: 0.08em; }
+  .dg-cap { font-family: var(--mono); font-size: 11px;   fill: var(--faint); letter-spacing: 0.1em; }
+
+  .dg-x { stroke: var(--faint); stroke-width: 1.6; }
+
+  /* colour overrides come last so they win at equal specificity */
+  .dg-ac { fill: var(--accent-ink); }
+  .dg-al { fill: var(--alert); }
+
+  .caption {
+    font-size: var(--step--1);
+    color: var(--faint);
+    font-family: var(--mono);
+    line-height: 1.5;
+    padding-top: 0.9rem;
+  }
+
+  /* ---------- paged deck -------------------------------------------------------
+     One section on screen at a time, driven by .paged on <html>, which the script
+     sets. Without JS the class never lands and the whole document renders as one
+     continuous page -- so the brief still reads if the script fails.            */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem 1.25rem;
+    padding: 0.6rem clamp(1.15rem, 4vw, 3rem);
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .topbar .spacer { flex: 1 1 auto; }
+
+  .topbar .progress {
+    display: none;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.1em;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .paged .topbar .progress { display: block; }
+  .topbar .progress b { color: var(--accent-ink); font-weight: 600; }
+
+  .paged .page > .pg { display: none; }
+  .paged .page > .pg.on { display: flex; }
+  .paged .page > .masthead.pg.on { display: flex; }
+
+  .pager { display: none; }
+
+  .paged .pager {
+    display: flex;
+    gap: 1rem;
+    align-items: stretch;
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+  }
+
+  .pager button {
+    appearance: none;
+    cursor: pointer;
+    min-width: 0;
+    max-width: 24rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.7rem 1.05rem 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    font-family: var(--serif);
+    color: var(--ink);
+    text-align: left;
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+
+  .pager button:hover { border-color: var(--accent); background: var(--sunk); }
+  .pager button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pager button[hidden] { display: none; }
+
+  .pager .dir {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .pager .to { font-size: 0.98rem; font-weight: 600; line-height: 1.3; }
+
+  .pager .next { margin-left: auto; text-align: right; align-items: flex-end; }
+
+  .page > .pg:focus { outline: none; }
+
+  /* Printing wants the whole argument, not the slide you happen to be on. */
+  @media print {
+    .topbar, .pager { display: none !important; }
+    .paged .page > .pg { display: flex !important; }
+    .fig svg { min-width: 0; }
+  }
+
+  /* ---------- closing notes: adjacent items, deliberately lighter ---------- */
+  .sidecar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--warm);
+    border-radius: 5px;
+    padding: 1rem 1.15rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+
+  .note h3 {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--warm);
+  }
+
+  .note ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .note li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.6rem;
+    align-items: baseline;
+    color: var(--muted);
+  }
+
+  .note li::before {
+    content: "\2014";
+    font-family: var(--mono);
+    color: var(--rule-firm);
+  }
+
+  .note li b { color: var(--ink); font-weight: 600; }
+
+  .minitable {
+    width: 100%;
+    min-width: 0;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+
+  .minitable td {
+    padding: 0.3rem 0.5rem 0.3rem 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: baseline;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .minitable tr:last-child td { border-bottom: none; }
+  .minitable td:last-child { text-align: right; padding-right: 0; white-space: nowrap; color: var(--ink); }
+  .minitable .bad { color: var(--alert); font-weight: 600; }
+
+  /* ---------- reason list ---------- */
+  .reasons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: 1rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .reasons li {
+    border-left: 2px solid var(--accent);
+    padding: 0.15rem 0 0.15rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .reasons b { font-weight: 600; }
+
+  .reasons span { color: var(--muted); font-size: 0.97rem; line-height: 1.5; }
+
+  /* ---------- drift table ---------- */
+  .scroller {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 40rem;
+    font-size: 0.95rem;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+    background: var(--sunk);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  td.sev { white-space: nowrap; }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.45rem;
+    border-radius: 3px;
+    font-weight: 600;
+    display: inline-block;
+  }
+
+  .tag.high { background: var(--alert-wash); color: var(--alert); }
+  .tag.med  { background: var(--warm-wash); color: var(--warm); }
+
+  /* ---------- phase ladder (a real sequence, so numbered) ---------- */
+  .phases {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+    counter-reset: phase -1;
+  }
+
+  .phases li {
+    background: var(--surface);
+    display: grid;
+    grid-template-columns: 3.25rem 1fr;
+    gap: 0 1rem;
+    padding: 0.95rem 1.15rem;
+    align-items: baseline;
+  }
+
+  .phases li::before {
+    counter-increment: phase;
+    content: "Ph " counter(phase);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+
+  .phases li.now { background: var(--accent-wash); }
+  .phases li.now::before { color: var(--accent-ink); }
+
+  .phases .what { font-weight: 600; }
+  .phases .why { color: var(--muted); font-size: 0.95rem; display: block; }
+
+  /* ---------- accepting / questions ---------- */
+  .plainlist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .plainlist li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.75rem;
+    align-items: baseline;
+  }
+
+  .plainlist li::before {
+    content: "\2014";
+    color: var(--rule-firm);
+    font-family: var(--mono);
+  }
+
+  .callout {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--warm);
+    background: var(--surface);
+    border-radius: 4px;
+    padding: 1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .callout .eyebrow { color: var(--warm); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    line-height: 1.7;
+  }
+
+  @media (max-width: 34rem) {
+    .phases li { grid-template-columns: 1fr; gap: 0.3rem; }
+  }
+</style>
+
+<nav class="topbar">
+  <span class="eyebrow">Band SDK &middot; Rust Core</span>
+  <span class="spacer"></span>
+  <span class="progress"><b id="pgnow">1</b> / <span id="pgtotal">1</span></span>
+  <div class="themeswitch" role="group" aria-label="Colour theme">
+    <button type="button" data-theme-choice="light" aria-pressed="true">Light</button>
+    <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+  </div>
+</nav>
+
+<div class="page">
+
+  <header class="masthead pg" data-nav="The thesis">
+    <div class="kicker">
+      <span class="eyebrow">Architecture decision &middot; a shared Rust core for every language SDK</span>
+      <span class="eyebrow">band-sdk-core v0.2.0 &middot; 20 Aug 2026</span>
+    </div>
+    <h1 class="thesis">Ship the <span class="lede">protocol</span>, not the plumbing.</h1>
+    <p class="standfirst">
+      One shared brain in Rust. Thin drivers, each in its own language &mdash; Python and TypeScript
+      today, the native Rust client next, and any SDK that follows. The crate graph already draws this
+      line; the bindings currently cross it in the wrong place.
+    </p>
+    <p class="byline">
+      Gavrie Philipson, based on input from and discussions with Amit Gazal, Nir Singher and
+      Alexander Zaikman.
+    </p>
+  </header>
+
+  <!-- ============ 0. terms ============ -->
+  <section class="section pg" data-nav="Terms">
+    <div class="head col">
+      <span class="eyebrow">Vocabulary &mdash; so the rest reads without a Rust background</span>
+      <h2>The words this argument turns on</h2>
+    </div>
+    <p class="col">
+      A Band agent talks to the platform two ways: a long-lived <strong>WebSocket</strong> carrying live events
+      &mdash; messages, participants joining, rooms appearing &mdash; and ordinary <strong>REST</strong> calls for
+      everything else. The REST half is easy. The live half is not: connections drop, the backend restarts, a newer
+      session supersedes an older one, and after every interruption the agent has to work out which rooms to
+      re-subscribe to and what it missed. <strong>That recovery logic is the hardest code in an SDK, and today it
+      exists three times over</strong> &mdash; by hand in Python, again in TypeScript, and a third time in Rust.
+      <code>band-sdk-core</code> is meant to end that duplication. The question is <em>how much</em> of each SDK
+      becomes Rust.
+    </p>
+
+    <ul class="reasons">
+      <li>
+        <b>the line</b>
+        <span>The split this deck is about: what is written once in Rust and shared, versus what each SDK keeps in
+        its own language. Share too little and the duplication stays; share too much and the SDKs stop feeling like
+        Python and TypeScript libraries. <em>Two</em> boundaries go by the name &mdash; this one, between Rust and
+        the SDKs, and a second one <em>inside</em> the Rust core, between code that performs I/O and code that only
+        decides. &ldquo;Fix the line&rdquo; later on is about the second.</span>
+      </li>
+      <li>
+        <b>host</b>
+        <span>The program the Rust code is embedded <em>into</em> &mdash; the Python process running an agent, or the
+        Node process. Not a server. &ldquo;The host owns the socket&rdquo; means Python or JavaScript opens and reads
+        the connection, and Rust only advises.</span>
+      </li>
+      <li>
+        <b>sans-io</b>
+        <span>French for &ldquo;without I/O&rdquo;: protocol code that touches nothing outside itself. It is
+        <em>told</em> what arrived and <em>returns a list of things it wants done</em> &mdash; connect, send a
+        heartbeat, close &mdash; for someone else to carry out. Any language can drive it; no network needed to
+        test it.</span>
+      </li>
+      <li>
+        <b>protocol vs transport</b>
+        <span>Protocol is what the messages <em>mean</em> and what to do about them. Transport is <em>getting them
+        across</em> &mdash; opening the socket, writing bytes. The recommendation shares the first and not the
+        second.</span>
+      </li>
+      <li>
+        <b>driver</b>
+        <span>The loop that feeds the shared logic what happened and carries out the effects it returns. One per
+        language, and each is thin &mdash; the whole effect vocabulary is four cases plus a timer.</span>
+      </li>
+      <li>
+        <b>FFI &middot; binding &middot; crate</b>
+        <span>FFI is one language calling compiled code written in another; the &ldquo;FFI boundary&rdquo; is the
+        line in concrete form. A binding is the glue implementing it. A crate is Rust's unit of packaging &mdash;
+        roughly a package in Python, a module in npm.</span>
+      </li>
+      <li>
+        <b>runtime &middot; asyncio &middot; Tokio</b>
+        <span>The scheduler that keeps thousands of operations in flight without a thread for each. asyncio is
+        Python's, Tokio is Rust's. Both languages already have one, and they are not interchangeable &mdash; which
+        is the whole cost of putting a second one in the host's process.</span>
+      </li>
+      <li>
+        <b>the GIL</b>
+        <span>CPython's rule that only one thread may execute Python at a time. A Rust thread that wants to touch
+        anything Python must take it first, and while it holds it the Python program is stopped. A free-threaded
+        build without it is officially supported as of 3.14 &mdash; but it's a separate, opt-in interpreter, and the
+        default build still has the GIL.</span>
+      </li>
+      <li>
+        <b>backpressure</b>
+        <span>What a system does when data arrives faster than it can be consumed: slow the sender, buffer, or drop.
+        Handing data between two runtimes forces that choice &mdash; in a place where &ldquo;drop&rdquo; means losing
+        a user's message.</span>
+      </li>
+      <li>
+        <b>wasm vs NAPI</b>
+        <span>Two ways to load compiled code into Node. NAPI is a real native binary &mdash; fast, unrestricted, one
+        build per platform. wasm runs inside the JS engine &mdash; one artifact everywhere, but sandboxed: no
+        sockets, no threads, no clock. Which one fits depends entirely on where the line sits.</span>
+      </li>
+      <li>
+        <b>wheel &middot; the matrix</b>
+        <span>A wheel is a prebuilt Python package. Today <code>band-sdk</code> ships one that installs anywhere;
+        a compiled one must be built per OS &times; CPU &times; Python version. That matrix is the packaging cost of
+        this decision.</span>
+      </li>
+      <li>
+        <b>drift</b>
+        <span>One rule implemented separately in several places and gradually coming to disagree. It is the problem
+        this project exists to solve, and there is already some of it in <code>main</code>.</span>
+      </li>
+    </ul>
+
+    <p class="caption col">
+      On the wire, in passing: <b>Phoenix Channels</b> is the protocol the platform's Elixir backend speaks over the
+      WebSocket, multiplexing many <b>topics</b> onto one connection; a <b>close code</b> is the number a WebSocket
+      carries when it ends (1008 means stop, 1012/1013 mean the backend is restarting); <b>backoff</b> is waiting
+      longer after each failed retry, with <b>jitter</b> so a fleet does not retry in lockstep.
+    </p>
+  </section>
+
+  <!-- ============ 1. the line ============ -->
+  <section class="section pg" data-nav="Where the line sits">
+    <div class="head col">
+      <span class="eyebrow">The decision</span>
+      <h2>Where the FFI boundary sits</h2>
+    </div>
+    <p class="col">
+      Share <code>core-protocol</code> &mdash; the session state machine, reconnect planner, disconnect taxonomy,
+      frame codec, rejoin policy. Everything sans-io. Every consumer drives it with
+      <strong>its own transport, its own runtime, its own sockets</strong>.
+    </p>
+
+    <div class="figpair">
+
+      <!-- ---------------- FIGURE 1: today ---------------- -->
+      <figure class="fig">
+        <div class="frame">
+          <svg viewBox="0 0 880 540" role="img" aria-label="Today each SDK runs its own hand-written protocol stack. The Rust core exposes a binding surface that is 83 percent REST for Python and 78 percent for Node, and no SDK consumes it. core-protocol never crosses the boundary.">
+            <defs>
+              <marker id="f1head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="dg-head-dead"/>
+              </marker>
+            </defs>
+
+            <text x="16" y="14" class="dg-h">PYTHON SDK</text>
+            <rect x="16" y="24" width="412" height="34" rx="3" class="dg-host"/>
+            <text x="30" y="45" class="dg-l">SDK surface &mdash; agents, adapters, tools</text>
+            <rect x="16" y="68" width="412" height="54" rx="3" class="dg-dup"/>
+            <text x="30" y="90" class="dg-l">protocol logic, hand-written</text>
+            <text x="30" y="106" class="dg-s">~1,700 lines &middot; link.py, streaming/client.py</text>
+            <rect x="16" y="132" width="412" height="54" rx="3" class="dg-host"/>
+            <text x="30" y="154" class="dg-l">transport + REST, its own</text>
+            <text x="30" y="170" class="dg-s">phoenix-channels-python-client &middot; band-client-rest</text>
+
+            <text x="452" y="14" class="dg-h">TYPESCRIPT SDK</text>
+            <rect x="452" y="24" width="412" height="34" rx="3" class="dg-host"/>
+            <text x="466" y="45" class="dg-l">SDK surface &mdash; agents, adapters, tools</text>
+            <rect x="452" y="68" width="412" height="54" rx="3" class="dg-dup"/>
+            <text x="466" y="90" class="dg-l">protocol logic, hand-written</text>
+            <text x="466" y="106" class="dg-s">~1,330 lines &middot; PhoenixChannelsTransport.ts</text>
+            <rect x="452" y="132" width="412" height="54" rx="3" class="dg-host"/>
+            <text x="466" y="154" class="dg-l">transport + REST, its own</text>
+            <text x="466" y="170" class="dg-s">phoenix.js &middot; fetch rest/</text>
+
+            <rect x="16" y="196" width="11" height="11" rx="2" class="dg-dup"/>
+            <text x="34" y="206" class="dg-s dg-al">the same protocol logic, written twice &mdash; ~900 lines of it, already drifted</text>
+
+            <line x1="222" y1="220" x2="222" y2="252" class="dg-dead" marker-end="url(#f1head)"/>
+            <line x1="658" y1="220" x2="658" y2="252" class="dg-dead" marker-end="url(#f1head)"/>
+            <circle cx="222" cy="236" r="9" class="dg-mask"/>
+            <line x1="217" y1="231" x2="227" y2="241" class="dg-x"/>
+            <line x1="217" y1="241" x2="227" y2="231" class="dg-x"/>
+            <circle cx="658" cy="236" r="9" class="dg-mask"/>
+            <line x1="653" y1="231" x2="663" y2="241" class="dg-x"/>
+            <line x1="653" y1="241" x2="663" y2="231" class="dg-x"/>
+            <text x="440" y="240" text-anchor="middle" class="dg-s">no SDK consumes the bindings</text>
+
+            <line x1="16" y1="272" x2="350" y2="272" class="dg-dead"/>
+            <text x="440" y="276" text-anchor="middle" class="dg-cap">FFI BOUNDARY &mdash; TODAY</text>
+            <line x1="530" y1="272" x2="864" y2="272" class="dg-dead"/>
+
+            <text x="16" y="296" class="dg-h">BAND-SDK-CORE (RUST)</text>
+            <rect x="16" y="306" width="848" height="50" rx="3" class="dg-box"/>
+            <text x="30" y="326" class="dg-l">binding surface: UserRest &middot; AgentRest &middot; Connection &middot; Tracing</text>
+            <text x="30" y="342" class="dg-s">Python 1,626 lines, 83% REST &middot; Node 1,445 lines, 78% REST</text>
+            <rect x="16" y="366" width="848" height="50" rx="3" class="dg-box"/>
+            <text x="30" y="386" class="dg-l">core-transport</text>
+            <text x="30" y="402" class="dg-s">REST 1,614 + ~1,400 DTO &middot; socket loop 1,811, of which ~520 is pure policy</text>
+            <rect x="16" y="426" width="848" height="32" rx="3" class="dg-box"/>
+            <text x="30" y="446" class="dg-l">core-runtime 186 &mdash; one data structure and one constant</text>
+            <rect x="16" y="468" width="848" height="54" rx="3" class="dg-core"/>
+            <text x="30" y="490" class="dg-l">core-protocol &mdash; 2,153 lines (+2,769 test)</text>
+            <text x="30" y="506" class="dg-s">session machine &middot; backoff &middot; disconnect taxonomy &middot; frame codec &middot; topics &middot; payloads</text>
+            <text x="850" y="490" text-anchor="end" class="dg-l dg-al">NEVER CROSSES</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>Today.</b> The boundary is drawn above the I/O: the bindings export REST clients, a socket
+          <span class="m">Connection</span>, and tracing. Two things follow. The layer worth sharing sits below
+          the line and never crosses &mdash; and the line carries no traffic at all, because each SDK runs its
+          own hand-written stack instead.
+        </figcaption>
+      </figure>
+
+      <!-- ---------------- FIGURE 2: recommended ---------------- -->
+      <figure class="fig">
+        <div class="frame">
+          <svg viewBox="0 0 880 480" role="img" aria-label="Recommended: the boundary drops below the I/O. Python, TypeScript and the native Rust client each own their own socket loop, REST client and logging. Only session inputs and effects cross the boundary, into a shared sans-io core-protocol crate.">
+            <defs>
+              <marker id="f2head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="dg-head"/>
+              </marker>
+            </defs>
+
+            <text x="16" y="14" class="dg-h">PYTHON SDK</text>
+            <rect x="16" y="24" width="269" height="34" rx="3" class="dg-host"/>
+            <text x="30" y="45" class="dg-l">SDK surface</text>
+            <rect x="16" y="68" width="269" height="76" rx="3" class="dg-host"/>
+            <text x="30" y="90" class="dg-s">asyncio socket loop</text>
+            <text x="30" y="108" class="dg-s">httpx REST (Fern-generated)</text>
+            <text x="30" y="126" class="dg-s">logging &middot; test fakes</text>
+
+            <text x="305" y="14" class="dg-h">TYPESCRIPT SDK</text>
+            <rect x="305" y="24" width="269" height="34" rx="3" class="dg-host"/>
+            <text x="319" y="45" class="dg-l">SDK surface</text>
+            <rect x="305" y="68" width="269" height="76" rx="3" class="dg-host"/>
+            <text x="319" y="90" class="dg-s">WebSocket loop (phoenix.js)</text>
+            <text x="319" y="108" class="dg-s">fetch REST</text>
+            <text x="319" y="126" class="dg-s">bundler &middot; edge &middot; browser</text>
+
+            <text x="594" y="14" class="dg-h">NATIVE RUST CLIENT</text>
+            <rect x="594" y="24" width="269" height="34" rx="3" class="dg-host"/>
+            <text x="608" y="45" class="dg-l">client surface</text>
+            <rect x="594" y="68" width="269" height="76" rx="3" class="dg-host"/>
+            <text x="608" y="90" class="dg-s">core-transport (tokio)</text>
+            <text x="608" y="108" class="dg-s">Rust REST client</text>
+            <text x="608" y="126" class="dg-s">tracing, directly</text>
+
+            <text x="440" y="162" text-anchor="middle" class="dg-cap">EACH HOST OWNS ITS OWN I/O</text>
+
+            <line x1="200" y1="178" x2="200" y2="258" class="dg-flow" marker-end="url(#f2head)"/>
+            <text x="214" y="196" class="dg-s">SessionInput</text>
+            <text x="214" y="210" class="dg-s">(topic + event only)</text>
+            <line x1="680" y1="258" x2="680" y2="178" class="dg-flow" marker-end="url(#f2head)"/>
+            <text x="666" y="196" text-anchor="end" class="dg-s">Vec&lt;SessionEffect&gt;</text>
+            <text x="666" y="210" text-anchor="end" class="dg-s">+ diagnostics</text>
+
+            <line x1="16" y1="224" x2="320" y2="224" class="dg-bound"/>
+            <text x="440" y="228" text-anchor="middle" class="dg-cap dg-ac">FFI BOUNDARY &middot; ENVELOPE ONLY</text>
+            <line x1="560" y1="224" x2="864" y2="224" class="dg-bound"/>
+
+            <rect x="16" y="284" width="848" height="116" rx="4" class="dg-core"/>
+            <text x="30" y="306" class="dg-l">core-protocol &mdash; shared, sans-io, zero I/O, compiles to wasm32</text>
+            <line x1="30" y1="318" x2="850" y2="318" class="dg-rule"/>
+            <text x="440" y="342" text-anchor="middle" class="dg-s">session state machine &middot; reconnect + backoff planner &middot; disconnect taxonomy</text>
+            <text x="440" y="364" text-anchor="middle" class="dg-s">frame codec &middot; rejoin policy &middot; topic builders &middot; wire payload models</text>
+            <text x="440" y="386" text-anchor="middle" class="dg-s">room_watch, folded in from core-runtime &middot; ~520 lines moved down from socket.rs</text>
+
+            <rect x="16" y="414" width="848" height="50" rx="3" class="dg-note"/>
+            <text x="30" y="434" class="dg-s">core-transport stays &mdash; as the native Rust client's transport, not as the SDKs' delivery vehicle.</text>
+            <text x="30" y="452" class="dg-s">REST never crosses. core-runtime dissolves. Two crates, one rule: does it perform I/O?</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>Recommended.</b> The line drops below the I/O. Sockets, REST, runtime and logging go back to each
+          host; only protocol decisions cross. <span class="hi">Nothing that crosses is a message payload</span>
+          &mdash; which is what removes backpressure, cancellation and the async bridge from the problem entirely.
+        </figcaption>
+      </figure>
+
+    </div>
+
+</section>
+
+  <!-- ============ 2. the reframe ============ -->
+  <section class="section pg" data-nav="What we ship today">
+    <div class="head col">
+      <span class="eyebrow">The finding that reframes the question</span>
+      <h2>We ship the cheap half, and none of the valuable half</h2>
+    </div>
+    <p class="col">
+      REST is <strong>83% of the Python binding</strong> and 78% of Node's &mdash; and <strong>nothing from
+      core-protocol crosses at all</strong>. Meanwhile ~900 lines across the two SDKs re-implement what it
+      already holds. The bindings export the layer with the least value per line, and none of the layer with the most.
+    </p>
+
+    <table class="minitable col">
+      <tbody>
+        <tr><td>REST &mdash; <span class="m">core-transport</span> plus both bindings</td><td>5,490 &middot; 54% of the core</td></tr>
+        <tr><td><span class="m">core-protocol</span> &mdash; the layer worth sharing</td><td class="bad">2,153 &middot; crosses nothing</td></tr>
+        <tr><td>Protocol logic re-derived per language, in the SDKs</td><td>929 &middot; already drifted</td></tr>
+      </tbody>
+    </table>
+    <div class="callout col">
+      <span class="eyebrow">And REST is the surface users touch most</span>
+      <p>It is also <strong>the single largest reclaimable investment in the repo</strong> &mdash; ~3,000 of
+      <code>core-transport</code>'s 4,831 lines, and ~80% of both bindings. The drift argument does not apply to it:
+      REST is stateless request/response, and <code>band-client-rest</code> is already Fern-generated from the
+      OpenAPI spec, which is a stronger single source of truth than a hand-written Rust client kept in step by hand.
+      <strong>Routing it through Rust takes away <code>httpx</code> / <code>fetch</code> interceptors, proxy
+      configuration, retry policies, custom timeouts and mock transports</strong> &mdash; the ordinary tools people
+      reach for when dropping an SDK into an existing service.</p>
+    </div>
+    <p class="caption col">
+      Platform layers only &mdash; framework adapters and ~123k lines of Python tests are excluded, or they
+      would bury the signal. And volume understates the risk: reconnect policy is <b>5 lines in Python
+      against 353 in <span class="m">backoff.rs</span></b> &mdash; the smallest gap on this table and the most
+      operationally serious one in the review.
+    </p>
+  </section>
+
+  <!-- ============ 3. why ============ -->
+  <section class="section pg" data-nav="Why this line">
+    <div class="head col">
+      <span class="eyebrow">Why this line specifically</span>
+      <h2>The drift we pay for is protocol drift, not socket drift</h2>
+    </div>
+    <p class="col">
+      Nobody re-derives "open a TCP connection" wrongly twice. What does get re-derived wrongly:
+      when is a session <em>Up</em>? Is this disconnect retryable? What's the backoff schedule?
+      Does a deferred <code>room_added</code> survive a reconnect?
+    </p>
+    <ul class="reasons">
+      <li>
+        <b>The SDKs stay native</b>
+        <span>Host-owned sockets mean a stuck reconnect is diagnosable in the host's own tooling, a test can inject a fake transport, and transport logs obey <code>BAND_LOG_*</code>. Rust's <code>tracing</code> never reaches Python's <code>logging</code>.</span>
+      </li>
+      <li>
+        <b>Backpressure disappears</b>
+        <span>Message payloads never cross. No bounded queue, no drop policy, and no <code>CancelledError</code> that has to reach a Tokio task as a silent drop.</span>
+      </li>
+      <li>
+        <b>Async bridging evaporates</b>
+        <span><code>apply(input, now) &rarr; [effects]</code> is synchronous and pure. No Rust runtime to own. Under this line there is no async bridge left to build.</span>
+      </li>
+      <li>
+        <b>Blast radius stays small</b>
+        <span>A Python transport bug stays a Python bug, fixable by a Python engineer &mdash; not a Rust PR behind a four-repo release chain.</span>
+      </li>
+    </ul>
+  </section>
+
+  <!-- ============ 3b. one runtime or two ============ -->
+  <section class="section pg" data-nav="One runtime or two">
+    <div class="head col">
+      <span class="eyebrow">What &ldquo;Rust owns transport&rdquo; actually decides</span>
+      <h2>Not Rust's async or Python's &mdash; one runtime or two</h2>
+    </div>
+    <p class="col">
+      A Rust-owned socket puts a <strong>second I/O runtime inside the host process for the life of the
+      program</strong>: Tokio's scheduler beside asyncio's loop, or Node's. Plenty of software does this and it
+      works. But the costs sit in the seam between the two, they multiply rather than add, and none of them
+      appear until production.
+    </p>
+
+    <div class="figpair">
+
+      <!-- ---------------- FIGURE 3: two runtimes ---------------- -->
+      <figure class="fig">
+        <div class="frame">
+          <svg viewBox="0 0 880 372" role="img" aria-label="With Rust owning transport, one process runs two I/O runtimes. A single await crosses a five-step seam: the coroutine parks on an asyncio Future, a Tokio worker polls the Rust future, a spawn_blocking hop takes the GIL, call_soon_threadsafe wakes the loop, and a loop turn resolves the future. Four costs follow: GIL contention, mismatched cancellation, ordered shutdown, and split observability.">
+            <defs>
+              <marker id="f3head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="dg-head-dead"/>
+              </marker>
+            </defs>
+
+            <text x="16" y="14" class="dg-h">HOST &mdash; ASYNCIO</text>
+            <rect x="16" y="24" width="230" height="160" rx="3" class="dg-host"/>
+            <text x="30" y="46" class="dg-l">event loop, one thread</text>
+            <text x="30" y="68" class="dg-s">holds the GIL while it runs</text>
+            <text x="30" y="86" class="dg-s">cancel = throw CancelledError</text>
+            <text x="30" y="104" class="dg-s">try/finally is the cleanup</text>
+            <text x="30" y="134" class="dg-s">asyncio.all_tasks() and</text>
+            <text x="30" y="152" class="dg-s">PYTHONASYNCIODEBUG</text>
+            <text x="30" y="170" class="dg-s">see this half only</text>
+
+            <rect x="274" y="24" width="332" height="160" rx="3" class="dg-dup"/>
+            <text x="440" y="46" text-anchor="middle" class="dg-cap dg-al">THE SEAM &mdash; WHAT ONE await COSTS</text>
+            <text x="288" y="72" class="dg-s">1 &middot; coroutine parks on an asyncio.Future</text>
+            <text x="288" y="92" class="dg-s">2 &middot; a tokio worker polls the rust future</text>
+            <text x="288" y="112" class="dg-s">3 &middot; spawn_blocking hop, purely to take the GIL</text>
+            <text x="288" y="132" class="dg-s">4 &middot; call_soon_threadsafe wakes the loop</text>
+            <text x="288" y="152" class="dg-s">5 &middot; a loop turn resolves the future</text>
+            <text x="440" y="174" text-anchor="middle" class="dg-s dg-al">on every crossing, for the life of the process</text>
+
+            <text x="634" y="14" class="dg-h">CORE &mdash; TOKIO</text>
+            <rect x="634" y="24" width="230" height="160" rx="3" class="dg-host"/>
+            <text x="648" y="46" class="dg-l">multi-thread scheduler</text>
+            <text x="648" y="68" class="dg-s">N workers + blocking pool</text>
+            <text x="648" y="86" class="dg-s">cancel = drop the future</text>
+            <text x="648" y="104" class="dg-s">Drop cannot await</text>
+            <text x="648" y="134" class="dg-s">tokio-console and</text>
+            <text x="648" y="152" class="dg-s">tracing spans</text>
+            <text x="648" y="170" class="dg-s">see this half only</text>
+
+            <line x1="246" y1="88" x2="270" y2="88" class="dg-dead" marker-end="url(#f3head)"/>
+            <line x1="606" y1="88" x2="630" y2="88" class="dg-dead" marker-end="url(#f3head)"/>
+            <line x1="630" y1="120" x2="606" y2="120" class="dg-dead" marker-end="url(#f3head)"/>
+            <line x1="270" y1="120" x2="246" y2="120" class="dg-dead" marker-end="url(#f3head)"/>
+
+            <rect x="16" y="200" width="203" height="104" rx="3" class="dg-box"/>
+            <text x="28" y="222" class="dg-cap dg-al">GIL</text>
+            <text x="28" y="244" class="dg-s">Two schedulers, one lock.</text>
+            <text x="28" y="262" class="dg-s">A busy interpreter stalls</text>
+            <text x="28" y="280" class="dg-s">tokio workers; heartbeats</text>
+            <text x="28" y="298" class="dg-s">queue behind app work.</text>
+
+            <rect x="231" y="200" width="203" height="104" rx="3" class="dg-box"/>
+            <text x="243" y="222" class="dg-cap dg-al">CANCELLATION</text>
+            <text x="243" y="244" class="dg-s">asyncio throws, tokio</text>
+            <text x="243" y="262" class="dg-s">drops. A dropped future</text>
+            <text x="243" y="280" class="dg-s">has no await point left</text>
+            <text x="243" y="298" class="dg-s">to send phx_leave from.</text>
+
+            <rect x="446" y="200" width="203" height="104" rx="3" class="dg-box"/>
+            <text x="458" y="222" class="dg-cap dg-al">SHUTDOWN</text>
+            <text x="458" y="244" class="dg-s">Two teardowns, one exit.</text>
+            <text x="458" y="262" class="dg-s">Drop the runtime on the</text>
+            <text x="458" y="280" class="dg-s">loop thread and the GIL</text>
+            <text x="458" y="298" class="dg-s">hop deadlocks against it.</text>
+
+            <rect x="661" y="200" width="203" height="104" rx="3" class="dg-box"/>
+            <text x="673" y="222" class="dg-cap dg-al">OBSERVABILITY</text>
+            <text x="673" y="244" class="dg-s">Two span trees, no causal</text>
+            <text x="673" y="262" class="dg-s">edge between them. Order</text>
+            <text x="673" y="280" class="dg-s">falls back to wall clock,</text>
+            <text x="673" y="298" class="dg-s">through a lossy queue.</text>
+
+            <rect x="16" y="318" width="848" height="44" rx="3" class="dg-note"/>
+            <text x="30" y="338" class="dg-s">None of it shows up in a hello-world: it needs a busy interpreter, fifty rooms, a socket mid-write &mdash; production, not tests.</text>
+            <text x="30" y="356" class="dg-s">And two schedulers do not add a second state space &mdash; they multiply it. The tools model each factor; the bugs live in the product.</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>Two runtimes.</b> The seam is not hypothetical &mdash; <span class="m">bindings/python</span> already
+          builds a multi-thread Tokio runtime at import and hands back
+          <span class="m">future_into_py</span> from every method. Those five steps are what a <em>correct</em>
+          bridge costs, and <span class="hi">none of them is removable</span> &mdash; each is there because one
+          runtime enforces a rule the other knows nothing about. The four boxes are what it costs to operate.
+          Each of those is fixable, and every fix is a rule that lives in no type system and gets rediscovered
+          during an incident.
+        </figcaption>
+      </figure>
+
+      <!-- ---------------- FIGURE 4: one runtime ---------------- -->
+      <figure class="fig">
+        <div class="frame">
+          <svg viewBox="0 0 880 200" role="img" aria-label="With the host owning transport, there is one runtime. The coroutine calls apply(input, now) on the thread it is already on and gets a Vec of SessionEffect back before it yields. No second scheduler, no queue, no second cancellation model, no second shutdown, and no context to propagate.">
+            <defs>
+              <marker id="f4head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="dg-head"/>
+              </marker>
+            </defs>
+
+            <text x="16" y="14" class="dg-h">HOST &mdash; ONE RUNTIME</text>
+            <rect x="16" y="24" width="848" height="96" rx="3" class="dg-host"/>
+            <text x="30" y="46" class="dg-l">asyncio event loop &mdash; the only scheduler in the process</text>
+            <text x="30" y="72" class="dg-s">your coroutine, on the thread it is already on,</text>
+            <text x="30" y="90" class="dg-s">holding the GIL it already holds, in the current task</text>
+
+            <text x="457" y="68" text-anchor="middle" class="dg-s dg-ac">a function call</text>
+            <line x1="400" y1="78" x2="514" y2="78" class="dg-flow" marker-end="url(#f4head)"/>
+
+            <rect x="520" y="48" width="328" height="58" rx="3" class="dg-core"/>
+            <text x="534" y="74" class="dg-l">apply(input, now) &rarr; Vec&lt;SessionEffect&gt;</text>
+            <text x="534" y="94" class="dg-s">synchronous, pure, no runtime behind it</text>
+
+            <rect x="16" y="132" width="848" height="52" rx="3" class="dg-note"/>
+            <text x="30" y="152" class="dg-s">No second scheduler &middot; no queue, bound or drop policy &middot; no second cancellation model &middot; no second shutdown</text>
+            <text x="30" y="170" class="dg-s">No context to propagate: control never left the caller's task, so the host logs the effects itself, under the span already open.</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>One runtime.</b> Sans-io does not bridge the seam, it <span class="hi">deletes it</span>. The host
+          calls a pure function on its own thread and gets a <span class="m">Vec</span> back before it yields, so
+          every row above stops being a question. This is why the four-variant effect enum settles the argument:
+          the interface is not merely small, it is <em>runtime-free</em>.
+        </figcaption>
+      </figure>
+
+    </div>
+
+    <p class="caption col">
+      &ldquo;Can a user set a breakpoint&rdquo; is the wrong question &mdash; very little async debugging happens
+      that way. The real one is whether an operator can reconstruct a stuck reconnect from what the process left
+      behind. Tracing and spans answer that <em>within one runtime</em>, because a span tree encodes causality
+      inside one scheduler. Two runtimes give you two span trees and a gap where the causal edge should be &mdash;
+      and the gap is where cross-runtime bugs concentrate.
+    </p>
+  </section>
+
+  <!-- ============ 4. evidence ============ -->
+  <section class="section pg" data-nav="The drift today">
+    <div class="head col">
+      <span class="eyebrow">Why now</span>
+      <h2>The drift is already in <code>main</code>, and some of it is user-visible</h2>
+    </div>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>What diverged</th><th>Consequence today</th><th class="sev">Severity</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>WebSocket close codes 1008 / 1012 / 1013 &mdash; handled by <code>backoff.rs</code>, by <strong>neither SDK</strong></td>
+            <td>A 1008 (platform means terminal) makes both SDKs reconnect forever. During a backend restart, a fleet of agents stampedes a service still coming up.</td>
+            <td class="sev"><span class="tag high">operational</span></td>
+          </tr>
+          <tr>
+            <td><code>RoomRemovedPayload</code> fields optional in Python, required in TypeScript</td>
+            <td>A <code>room_removed</code> push missing <code>title</code> is delivered to a Python agent and <strong>silently dropped</strong> for a TypeScript one. The agent never learns the room went away.</td>
+            <td class="sev"><span class="tag high">user-visible</span></td>
+          </tr>
+          <tr>
+            <td>Event vocabulary is three different closed sets &mdash; Python maps 13 types, TypeScript maps 10</td>
+            <td>TypeScript has no <code>agent.control</code>: it joins the channel but handles only <code>supersede</code>, so interrupt / stop / play never reaches a TS agent.</td>
+            <td class="sev"><span class="tag high">user-visible</span></td>
+          </tr>
+          <tr>
+            <td>TS <code>ParticipantAddedPayload</code> missing <code>description</code>, <code>is_remote</code></td>
+            <td>The exact bug Python shipped a fix for in <code>d59b0d37</code>. TypeScript still has it, because there was no shared model to fix once.</td>
+            <td class="sev"><span class="tag med">correctness</span></td>
+          </tr>
+          <tr>
+            <td>An <strong>unrecognized</strong> disconnect code &mdash; the four known ones agree, the behaviour around them does not</td>
+            <td>Rust retains it and deliberately calls it <em>not</em> retryable. TypeScript's <code>z.enum</code> rejects the whole body and falls through to a generic reason that is <code>retryable: true</code>. Python has no retryability concept at all. <strong>One backend change, three behaviours.</strong></td>
+            <td class="sev"><span class="tag high">operational</span></td>
+          </tr>
+          <tr>
+            <td>Topics inlined as f-strings &mdash; 14 sites in Python, 6 in TypeScript</td>
+            <td>A closed vocabulary the backend owns, with no builder and no inverse. Violates our own single-source-of-truth rule.</td>
+            <td class="sev"><span class="tag med">hygiene</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption col">Reconnect policy is the strongest single argument here. It isn't hygiene &mdash; it's whether a fleet stampedes a recovering backend, and today the answer differs by language.</p>
+  </section>
+
+  <!-- ============ 4b. what stays out ============ -->
+  <section class="section pg" data-nav="What stays out">
+    <div class="head col">
+      <span class="eyebrow">The other half of drawing a line</span>
+      <h2>What we deliberately keep out &mdash; and how three drivers stay honest</h2>
+    </div>
+    <p class="col">
+      A boundary is defined as much by what stays outside it. Three things read like candidates and are not,
+      and naming them matters as much as naming the candidates &mdash; <strong>this is where &ldquo;too much in
+      Rust&rdquo; gets stopped</strong>.
+    </p>
+    <ul class="reasons">
+      <li>
+        <b>Phoenix framing</b>
+        <span>Rust hand-rolls it in <code>phoenix.rs</code> because a native client must. Both SDKs already use mature libraries &mdash; <code>phoenix-channels-python-client</code>, phoenix.js. Replacing a working library with an FFI call is a pure loss.</span>
+      </li>
+      <li>
+        <b>Mention resolution</b>
+        <span>Reads like protocol, isn't. It needs the participant roster &mdash; REST-derived SDK state &mdash; and its fallback rules are product behaviour, not wire contract. Exactly the &ldquo;feels like a wrapper&rdquo; boundary.</span>
+      </li>
+      <li>
+        <b>REST endpoint construction</b>
+        <span>Codegen from the OpenAPI spec is the better single source of truth. <code>endpoints.rs</code> stays for the native Rust client and does not cross.</span>
+      </li>
+    </ul>
+
+    <figure class="fig">
+      <div class="frame">
+        <svg viewBox="0 0 880 192" role="img" aria-label="One recorded scenario corpus of input sequences, clock values and expected effect sequences is run against all three drivers: the Python driver on asyncio, the TypeScript driver on phoenix.js, and the Rust driver in core-transport.">
+          <defs>
+            <marker id="f5head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="dg-head"/>
+            </marker>
+          </defs>
+
+          <text x="16" y="26" class="dg-h">SHARE THE TEST CORPUS, NOT THE CODE</text>
+
+          <rect x="16" y="40" width="280" height="110" rx="4" class="dg-core"/>
+          <text x="30" y="64" class="dg-l">one scenario corpus</text>
+          <text x="30" y="88" class="dg-s">recorded input sequence + clock</text>
+          <text x="30" y="106" class="dg-s">asserted effect sequence</text>
+          <text x="30" y="130" class="dg-s">versioned beside core-protocol</text>
+
+          <line x1="300" y1="95" x2="396" y2="58" class="dg-flow" marker-end="url(#f5head)"/>
+          <line x1="300" y1="95" x2="396" y2="95" class="dg-flow" marker-end="url(#f5head)"/>
+          <line x1="300" y1="95" x2="396" y2="132" class="dg-flow" marker-end="url(#f5head)"/>
+
+          <rect x="400" y="40" width="464" height="34" rx="3" class="dg-host"/>
+          <text x="414" y="62" class="dg-l">Python driver &mdash; asyncio</text>
+          <rect x="400" y="78" width="464" height="34" rx="3" class="dg-host"/>
+          <text x="414" y="100" class="dg-l">TypeScript driver &mdash; phoenix.js</text>
+          <rect x="400" y="116" width="464" height="34" rx="3" class="dg-host"/>
+          <text x="414" y="138" class="dg-l">Rust driver &mdash; core-transport</text>
+
+          <text x="16" y="176" class="dg-s">A driver that mishandles a join-timeout-during-catch-up fails the same recorded case in every language.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>How you keep three drivers honest.</b> Not by sharing their code &mdash; by sharing their
+        <span class="hi">test corpus</span>. A cheaper and more durable single source of truth for driver
+        behaviour than an FFI data path, and we already run the pattern: <span class="m">band-sdk-python</span>'s
+        framework-conformance suite holds every adapter to one shared contract.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 5. fix first ============ -->
+  <section class="section pg" data-nav="Fix the line first">
+    <div class="head col">
+      <span class="eyebrow">Before anything ships &mdash; the line <em>inside</em> the Rust core, not the one to the SDKs</span>
+      <h2>Fix the line, then export it</h2>
+    </div>
+    <p class="col">
+      About <strong>520 of <code>socket.rs</code>'s 1,811 lines (29%) aren't transport</strong> &mdash; they're pure
+      decision logic sitting on the I/O side where no SDK can reach it. The prize is
+      <code>dispatch_frame</code>, the 113-line frame router that decides what an inbound frame
+      <em>means</em> &mdash; exactly what both SDKs hand-implement today.
+    </p>
+    <div class="stack col">
+      <div class="callout">
+        <span class="eyebrow">End state: two crates, one rule</span>
+        <p>Does it perform I/O? <strong>No &rarr; <code>core-protocol</code>. Yes &rarr; <code>core-transport</code>.</strong>
+        Fold <code>room_watch</code> in and dissolve <code>core-runtime</code> (186 lines that exist so two bindings can share one constant).
+        The rule is mechanical and CI-checkable &mdash; the existing <code>wasm32</code> gate enforces it, since sockets and Tokio can't compile there.</p>
+      </div>
+      <div class="callout">
+        <span class="eyebrow">One discipline to hold</span>
+        <p>The moved code carries 10 <code>tracing::</code> calls. <code>core-protocol</code> has zero and depends only on
+        <code>serde</code> and <code>serde_json</code>. Writing a log line <em>is</em> I/O &mdash; so <strong>return diagnostics instead of emitting them</strong>,
+        riding the return value the host already receives. No bridge, no queue, the wasm gate survives, and each SDK logs natively in its own words.</p>
+      </div>
+    </div>
+    <p class="caption col">This is pure refactoring, in a private repo, with zero external consumers. It is the cheapest it will ever be.</p>
+  </section>
+
+  <!-- ============ 6. bindings ============ -->
+  <section class="section pg" data-nav="Binding strategy">
+    <div class="head col">
+      <span class="eyebrow">Binding strategy</span>
+      <h2>PyO3 for Python, wasm for TypeScript</h2>
+    </div>
+    <p class="col">
+      Every front NAPI wins on &mdash; OS access, threads, zero-copy, Tokio &mdash; is a front
+      <code>core-protocol</code> doesn't compete on. Wasm keeps the browser and edge paths open;
+      a NAPI addon forecloses them permanently. For Python the asymmetry is the point:
+      <code>wasmtime-py</code> is itself a per-platform compiled extension, so wasm deepens the wheel matrix rather than escaping it.
+    </p>
+    <div class="callout col">
+      <span class="eyebrow">Measured, not assumed</span>
+      <p><strong>The boundary's shape dominates the boundary's technology by 3&ndash;6&times;.</strong> Keeping payloads out entirely &mdash;
+      only <code>topic</code> and <code>event</code> cross, a routing code comes back &mdash; costs 1.02&ndash;1.65&times; a bare <code>JSON.parse</code>
+      and is identical between wasm and NAPI. It's both the fastest option and the one that makes the binding technology performance-neutral.
+      Worst path measured still sustains ~154,000 frames/s on one core; Band runs at human chat rates. <em>Decide this on architecture, not benchmarks.</em></p>
+    </div>
+  </section>
+
+  <!-- ============ 6b. errors ============ -->
+  <section class="section pg" data-nav="Errors">
+    <div class="head col">
+      <span class="eyebrow">Where an SDK stops feeling native</span>
+      <h2>Errors have to land inside each SDK's hierarchy, not beside it</h2>
+    </div>
+    <p class="col">
+      Both bindings collapse the entire taxonomy into one flat exception today &mdash;
+      <code>PyRuntimeError::new_err(e.to_string())</code> on one side,
+      <code>napi::Error::from_reason(e.to_string())</code> on the other. <code>TransportError</code> has
+      <strong>eight variants</strong>, and the distinctions are exactly the operationally load-bearing ones:
+    </p>
+    <table class="minitable col">
+      <tbody>
+        <tr><td><span class="m">Suppressed</span> / <span class="m">Superseded</span></td><td>terminal &mdash; stop</td></tr>
+        <tr><td><span class="m">Disconnected</span></td><td>may still reconnect</td></tr>
+        <tr><td><span class="m">UpgradeRejected</span></td><td>carries a retryability verdict</td></tr>
+        <tr><td><span class="m">Api</span></td><td class="bad">request_id, for backend logs</td></tr>
+      </tbody>
+    </table>
+    <p class="col">
+      Flattened to a string, a caller recovers none of it except by matching on message text. And this gets
+      <strong>worse</strong> under the recommendation rather than better: with the host owning transport, the
+      host is what has to decide whether to reconnect.
+    </p>
+    <ul class="reasons">
+      <li>
+        <b>Preserve the discriminant</b>
+        <span>Whatever crosses must let a caller branch on which failure occurred without parsing a message. A subclass per group in Python; a discriminated union or <code>code</code> field in TypeScript &mdash; the shape <code>disconnectReason.ts</code> already uses.</span>
+      </li>
+      <li>
+        <b>Land inside the hierarchy, not beside it</b>
+        <span><code>band-sdk-python</code> already has <code>BandError</code> &rarr; <code>BandConnectionError</code>. A core failure should arrive as a subclass so existing <code>except BandError</code> handlers keep working. A bare <code>RuntimeError</code> from a Rust extension is the wrapper tell, where users meet it most.</span>
+      </li>
+      <li>
+        <b>Share the verdict, not the vocabulary</b>
+        <span>Retryable vs terminal is a protocol fact and belongs in <code>core-protocol</code>. How it is spelled &mdash; exception class, error code, union tag &mdash; is idiomatic and belongs to each SDK.</span>
+      </li>
+    </ul>
+    <p class="caption col">
+      Acceptable while the bindings have no consumers; not once an SDK depends on them. Under the narrow line the
+      protocol surface itself raises very little &mdash; malformed frame, invalid state transition &mdash; so this
+      is mostly about the errors each SDK's own transport raises, informed by one shared classification.
+    </p>
+  </section>
+
+  <!-- ============ 7. costs ============ -->
+  <section class="section pg" data-nav="What it costs">
+    <div class="head col">
+      <span class="eyebrow">What we'd be accepting</span>
+      <h2>Three real costs, worth naming out loud</h2>
+    </div>
+    <ul class="plainlist col">
+      <li><span><strong>A protocol hotfix stops being fast.</strong> Today a reconnect bug is one PR and one release. Afterwards: core PR &rarr; core release &rarr; dependency bump &rarr; SDK release &rarr; user upgrade. Five hops, four repos. Decide now whether that's acceptable for a Sev-1 &mdash; and keep an SDK-side override as the escape hatch. That hatch only exists <em>because</em> the SDKs keep their own transport.</span></li>
+      <li><span><strong>Python stops being pure-Python.</strong> One universal wheel becomes a build matrix. Our CI is currently <em>one cell</em> &mdash; all three jobs on <code>ubuntu-latest</code>, no macOS, no Windows, no arm64, no musl. ABI3 collapses the CPython axis for the default GIL build; the platform axis has to be built out before Phase 3, not after.</span></li>
+      <li><span><strong>Every SDK bug becomes potentially a Rust bug.</strong> The core repo is 11 days old: 53 commits, 42 from one author. This review is the second pair of eyes it was missing &mdash; what a review can't supply is a <em>standing</em> one, and once an SDK pins the core, every protocol fix needs a reviewer besides its author. Keep the core drivable from pytest, too, so a Python engineer can reproduce a protocol bug without a Rust toolchain.</span></li>
+    </ul>
+    <p class="caption col">The SDKs are maintained by a single developer today, and none of this is a criticism of
+    that &mdash; a small team is part of why the repo is as coherent as it is. But these questions outlast whoever
+    is answering them, and the team is likelier to grow than shrink, so they are stated in general terms.</p>
+  </section>
+
+  <!-- ============ 8. plan ============ -->
+  <section class="section pg" data-nav="The plan">
+    <div class="head col">
+      <span class="eyebrow">Migration &mdash; each phase ships independently, both SDKs stay releasable</span>
+      <h2>The path</h2>
+    </div>
+    <ol class="phases">
+      <li class="now"><span><span class="what">Fix the line.</span> <span class="why">Stop growing the REST binding. Move the ~520 lines of policy into <code>core-protocol</code>, fold in <code>room_watch</code>, dissolve <code>core-runtime</code>. No behaviour change; wasm32 gate verifies it.</span></span></li>
+      <li class="now"><span><span class="what">Prove the pipeline.</span> <span class="why">Export a trivial slice &mdash; topics, disconnect taxonomy &mdash; through PyO3 and wasm. Ship a real wheel and a real npm artifact end to end. De-risks packaging before any logic depends on it.</span></span></li>
+      <li><span><span class="what">Shadow mode in Python.</span> <span class="why">Existing transport stays in charge, but also feeds the Rust machine and logs divergence. Nothing user-visible ships. This is what makes the migration safe.</span></span></li>
+      <li><span><span class="what">Cut Python over.</span> <span class="why">Rust machine becomes the authority; delete duplicated decision logic from <code>link.py</code> and <code>streaming/client.py</code>. The SDK keeps its sockets, asyncio, logging, and test fakes.</span></span></li>
+      <li><span><span class="what">TypeScript, same path.</span> <span class="why">Via wasm, reusing the shadow-mode approach.</span></span></li>
+      <li><span><span class="what">Native client.</span> <span class="why">Consumes <code>core-transport</code> directly. Promote the shared scenario corpus to a gate across all three drivers.</span></span></li>
+    </ol>
+    <p class="caption col">Phases 0 and 1 are the ones worth starting now &mdash; both get more expensive with every week of binding growth.</p>
+  </section>
+
+  <!-- ============ 9. discussion ============ -->
+  <section class="section pg" data-nav="Open questions">
+    <div class="head col">
+      <span class="eyebrow">For the room</span>
+      <h2>What we need to settle</h2>
+    </div>
+    <ul class="plainlist col">
+      <li><span><strong>Does the TypeScript SDK need to run in a browser?</strong> Doesn't change the recommendation &mdash; wasm fits either way &mdash; but it changes how firmly we close the NAPI door.</span></li>
+      <li><span><strong>Does the native client share the SDKs' semantics, or only the wire protocol?</strong> If it wants rooms, tools and adapters too, the shared surface grows and needs the same line-drawing discipline.</span></li>
+      <li><span><strong>Is <code>band-mcp</code> a fourth consumer?</strong> It speaks the same protocol. The answer affects how general the shared surface should be.</span></li>
+      <li><span><strong>Does <code>core-protocol</code> version separately from <code>core-transport</code>?</strong> release-please ships one version across all five manifests, so once the SDKs pin the core exactly, a transport-only fix for the native client churns their pin. Unified is simpler and the churn is cosmetic &mdash; but it is invisible until the first SDK pins, and much cheaper to change before that.</span></li>
+      <li><span><strong>Who is on call for a core bug?</strong> The honest current answer is one person, and the escalation path is undefined.</span></li>
+    </ul>
+    <div class="callout col">
+      <span class="eyebrow">Already settled &mdash; Gavrie, 17 Aug 2026</span>
+      <p>Mobile / React Native is not designed for upfront. Hermes &mdash; React Native's JavaScript engine, not the agent of the same name &mdash; has no wasm support, which is the one runtime gap.
+      Safe to defer <em>because</em> <code>core-protocol</code> is sans-io: going native later is a second build target on unchanged source, not a rewrite.
+      <strong>Trigger to revisit:</strong> a committed mobile or React Native client.</p>
+    </div>
+  </section>
+
+  <!-- ============ 10. the ask ============ -->
+  <section class="section pg" data-nav="The ask">
+    <div class="head col">
+      <span class="eyebrow">The one-line ask</span>
+      <h2>Two decisions, very different reversibility</h2>
+    </div>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Decision</th><th>Nature</th><th>Cost to reverse</th></tr></thead>
+        <tbody>
+          <tr><td>wasm vs NAPI</td><td>a build target</td><td>Cheap &mdash; add a target, source unchanged. Can wait for evidence.</td></tr>
+          <tr><td><strong>Where the FFI line sits</strong></td><td>the binding surface, both SDKs' internals, whether the SDKs run one runtime or two, whether users can fake transport</td><td><strong>Expensive, and compounds weekly with binding growth.</strong> This is the live decision.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 11. adjacent items ============ -->
+  <section class="section pg" data-nav="Adjacent items">
+    <div class="head col">
+      <span class="eyebrow">Adjacent &mdash; not architectural, worth a minute at the end</span>
+      <h2>Four smaller things from the same review</h2>
+    </div>
+    <div class="sidecar">
+
+      <div class="note">
+        <h3>Tracing &mdash; the two bindings disagree</h3>
+        <ul>
+          <li><span><b>Node hands each event to the host; Python prints it to stdout.</b> <span class="m">initTracing(callback)</span> crosses once per event, so its logs land in whatever logger the JS app already uses. <span class="m">Tracing()</span> installs a Rust formatter filtered by <span class="m">RUST_LOG</span> and crosses only at setup &mdash; no log line ever reaches Python.</span></li>
+          <li><span><b>A Python operator gets two disjoint logging systems.</b> <span class="m">RUST_LOG</span> and <span class="m">BAND_LOG_LEVEL</span> don't know about each other, and Rust's output bypasses the configured file sink and rotation entirely. On this one axis Python is <em>behind</em> Node, despite being well ahead on REST and WebSocket coverage.</span></li>
+          <li><span><b>Both dissolve under the narrow line.</b> If only <code>core-protocol</code> crosses and it returns diagnostics instead of logging them, there is nothing to bridge. Fix it only if <code>core-transport</code> stays exposed through a binding.</span></li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h3>Tracing &mdash; no spans exist yet</h3>
+        <ul>
+          <li><span><b>All 21 call sites are flat events</b> &mdash; no <span class="m">#[instrument]</span>, no <span class="m">info_span!</span>, 19 of them in <span class="m">socket.rs</span> and mostly <span class="m">warn!</span>.</span></li>
+          <li><span><b>Node's binding has span machinery with nothing to flatten.</b> Its doc comment names <span class="m">correlation_id</span>, <span class="m">room_id</span> and <span class="m">message_id</span> as fields it merges &mdash; it reads as a description of current behaviour and is not one.</span></li>
+          <li><span><b>Instrument, reword, or delete.</b> A connection-scoped span in <code>core-transport</code> is worth having either way &mdash; the native Rust client is a real consumer. The machinery in <span class="m">bindings/node</span> has no consumer at all under the narrow line.</span></li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h3>Tooling &mdash; the justfile</h3>
+        <ul>
+          <li><span><b>Right call over a make&shy;file.</b> No phony targets to maintain, and real parameter support &mdash; both things make would have charged us for.</span></li>
+          <li><span><b>The header comment is the honest one, and it's right.</b> <span class="m">ci.yml</span> re-types the recipes by hand and must be kept in sync; <span class="m">e2e-live.yml</span> instead installs <span class="m">just</span> and calls the recipe, and that lane is drift-proof for exactly that reason. The fix is already demonstrated inside the repo &mdash; adopt it in <span class="m">ci.yml</span>: one setup step per job, and the sync burden retires.</span></li>
+          <li><span><b>Give <span class="m">just doctor</span> a <span class="m">--fix</span>.</b> Today it reports a missing <span class="m">cargo-nextest</span> or <span class="m">cargo-llvm-cov</span> and leaves you to install it by hand. They're all one <span class="m">cargo install</span> away, so <span class="m">--fix</span> turns a diagnostic into onboarding.</span></li>
+          <li><span><b>Bare <span class="m">just</span> should list the recipes.</b> With no arguments it runs the first one in the file &mdash; currently <span class="m">doctor</span> &mdash; so a newcomer typing <span class="m">just</span> gets a toolchain check rather than a menu.</span></li>
+        </ul>
+      </div>
+
+      <div class="note">
+        <h3>TypeScript &mdash; the Node pin</h3>
+        <ul>
+          <li><span><b>Why are we on Node 20?</b> It's past end of life, and both workflows pin it &mdash; <span class="m">ci.yml</span> and <span class="m">e2e-live.yml</span>. We should be on 24 and/or 26.</span></li>
+          <li><span><b>The sharper problem is the mismatch.</b> The addon is built and smoke-tested on a runtime the only SDK meant to consume it does not support, and the binding declares no floor at all:</span></li>
+        </ul>
+        <table class="minitable">
+          <tbody>
+            <tr><td>band-sdk-core CI, both workflows</td><td class="bad">20</td></tr>
+            <tr><td>band-sdk-typescript <span class="m">engines.node</span></td><td>&gt;=22.14.0</td></tr>
+            <tr><td>bindings/node/package.json</td><td class="bad">no engines field</td></tr>
+          </tbody>
+        </table>
+        <ul>
+          <li><span>Compiling a NAPI addon against Node 20's ABI is not evidence it runs on what the consumer will. <b>Moot for the SDK if wasm wins</b> &mdash; wasm has no ABI coupling to a Node version &mdash; but it still applies to any native addon we ship, and to CI's ability to catch a regression at all.</span></li>
+        </ul>
+      </div>
+
+    </div>
+    <p class="caption col">All four are written up in full in &sect;12 of the recommendation, alongside the argument each depends on.</p>
+  </section>
+
+  <nav class="pager" aria-label="Section navigation">
+    <button type="button" id="navprev" class="prev">
+      <span class="dir">Previous</span><span class="to"></span>
+    </button>
+    <button type="button" id="navnext" class="next">
+      <span class="dir">Next</span><span class="to"></span>
+    </button>
+  </nav>
+
+  <footer>
+    Summary of <span class="m">docs/rust-core-recommendations.md</span> (Terms, &sect;1&ndash;12 and Appendix A, 1,692 lines).
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var buttons = document.querySelectorAll("[data-theme-choice]");
+
+    function apply(choice) {
+      document.documentElement.dataset.theme = choice;
+      buttons.forEach(function (b) {
+        b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice));
+      });
+    }
+
+    buttons.forEach(function (b) {
+      b.addEventListener("click", function () { apply(b.dataset.themeChoice); });
+    });
+  })();
+</script>
+
+<script>
+  (function () {
+    var pages = Array.prototype.slice.call(document.querySelectorAll(".pg"));
+    var prev = document.getElementById("navprev");
+    var next = document.getElementById("navnext");
+    var now = document.getElementById("pgnow");
+    var footer = document.querySelector("footer");
+    if (pages.length < 2 || !prev || !next) return;
+
+    pages.forEach(function (p, i) {
+      p.id = (p.dataset.nav || "page " + (i + 1)).toLowerCase()
+             .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      p.setAttribute("tabindex", "-1");
+    });
+
+    var index = 0;
+
+    function face(btn, i, dir) {
+      if (i < 0 || i >= pages.length) { btn.hidden = true; return; }
+      btn.hidden = false;
+      btn.querySelector(".dir").textContent = dir;
+      btn.querySelector(".to").textContent = pages[i].dataset.nav;
+    }
+
+    function show(i, push, moveFocus) {
+      index = Math.max(0, Math.min(pages.length - 1, i));
+      pages.forEach(function (p, n) { p.classList.toggle("on", n === index); });
+      face(prev, index - 1, "Previous");
+      face(next, index + 1, "Next");
+      now.textContent = index + 1;
+      if (footer) footer.hidden = index !== 0;   // provenance belongs on the title page
+      window.scrollTo(0, 0);
+      // Sandboxed hosts (the artifact iframe) can refuse pushState. Navigation must
+      // not depend on the URL updating, so a refusal is swallowed, not thrown.
+      if (push) { try { history.pushState({ i: index }, "", "#" + pages[index].id); } catch (e) {} }
+      if (moveFocus) { try { pages[index].focus({ preventScroll: true }); } catch (e) { pages[index].focus(); } }
+    }
+
+    function fromHash() {
+      var id = decodeURIComponent(location.hash.slice(1));
+      for (var i = 0; i < pages.length; i++) if (pages[i].id === id) return i;
+      return 0;
+    }
+
+    prev.addEventListener("click", function () { show(index - 1, true, true); });
+    next.addEventListener("click", function () { show(index + 1, true, true); });
+    window.addEventListener("popstate", function () { show(fromHash(), false, true); });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      var t = e.target;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (e.key === "ArrowRight" || e.key === "PageDown") { show(index + 1, true, true); e.preventDefault(); }
+      else if (e.key === "ArrowLeft" || e.key === "PageUp") { show(index - 1, true, true); e.preventDefault(); }
+    });
+
+    document.getElementById("pgtotal").textContent = pages.length;
+    document.documentElement.classList.add("paged");
+    show(fromHash(), false, false);
+  })();
+</script>
