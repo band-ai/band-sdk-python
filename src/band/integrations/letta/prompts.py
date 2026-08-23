@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from band.runtime.tools import CHAT_ID_FIELD_NAME, SEND_MESSAGE_TOOL_NAME
+
 # Known names of the message/event send tools across the Band MCP surfaces the
 # adapter can be pointed at: the SDK's self-hosted LocalMCPServer exposes the
 # band_* names, the external band-mcp exposes create_agent_chat_*. The adapter
@@ -9,7 +11,7 @@ from __future__ import annotations
 # the enforcement prompt, silent-reporting set, and auto-relay detection all
 # follow whichever server is wired — first entry doubles as the fallback.
 SEND_MESSAGE_TOOL_NAMES: tuple[str, ...] = (
-    "band_send_message",
+    SEND_MESSAGE_TOOL_NAME,
     "create_agent_chat_message",
 )
 SEND_EVENT_TOOL_NAMES: tuple[str, ...] = (
@@ -31,13 +33,14 @@ def render_tool_enforcement(
     conflicts with ours.  This aggressive enforcement partially mitigates the
     issue but does not fully resolve it.
 
-    ``room_id`` is included when the tool schemas carry a required ``room_id``
+    ``room_id`` is included when the tool schemas carry a required ``chat_id``
     argument (the self-hosted MCP server resolves tools per room at call time).
     """
     room_section = (
         (
             "## Tool arguments\n\n"
-            f"Every tool call REQUIRES a `room_id` argument. Your room_id is:\n"
+            f"Every tool call REQUIRES a `{CHAT_ID_FIELD_NAME}` argument. "
+            f"Your {CHAT_ID_FIELD_NAME} is:\n"
             f"{room_id}\n\n"
         )
         if room_id

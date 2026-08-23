@@ -166,7 +166,7 @@ class SetReasoningInput(BaseModel):
 _DEFAULT_MODEL = "gpt-5.5"
 
 
-class _CodexClientProtocol(Protocol):
+class CodexClientProtocol(Protocol):
     async def connect(self) -> None: ...
 
     async def initialize(
@@ -204,7 +204,7 @@ class _CodexClientProtocol(Protocol):
 
 
 @dataclass
-class _PendingApproval:
+class PendingApproval:
     request_id: int | str
     method: str
     summary: str
@@ -214,7 +214,7 @@ class _PendingApproval:
 
 
 @dataclass
-class _TurnResult:
+class TurnResult:
     """Aggregated result from processing a single Codex turn's event stream."""
 
     final_text: str = ""
@@ -382,7 +382,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         *,
         additional_tools: list[CustomToolDef] | None = None,
         history_converter: CodexHistoryConverter | None = None,
-        client_factory: Callable[[CodexAdapterConfig], _CodexClientProtocol]
+        client_factory: Callable[[CodexAdapterConfig], CodexClientProtocol]
         | None = None,
         **features: Unpack[FeatureKwargs],
     ) -> None:
@@ -397,7 +397,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
         self._client_factory = client_factory
-        self._client: _CodexClientProtocol | None = None
+        self._client: CodexClientProtocol | None = None
         self._initialized = False
         self._selected_model: str | None = None
         self._system_prompt: str = ""
@@ -405,7 +405,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._prompt_injected_rooms: set[str] = set()
         self._task_titles_by_id: OrderedDict[str, str] = OrderedDict()
         self._max_task_titles: int = _MAX_TASK_TITLES
-        self._pending_approvals: dict[str, dict[str, _PendingApproval]] = {}
+        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -679,7 +679,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     thread_id,
                     turn_id,
                 )
-                result = _TurnResult(
+                result = TurnResult(
                     turn_status="failed",
                     turn_error="Internal error during turn processing",
                 )
@@ -707,12 +707,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         thread_id: str,
         turn_id: str | None,
         turn_start: float,
-    ) -> _TurnResult:
+    ) -> TurnResult:
         """Consume the Codex event stream for a single turn and return the result."""
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None during turn event loop")
 
-        result = _TurnResult()
+        result = TurnResult()
         try:
             while True:
                 _remaining = max(
@@ -1060,7 +1060,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._selected_model = await self._select_model()
             self._initialized = True
 
-    def _build_client(self, config: CodexAdapterConfig) -> _CodexClientProtocol:
+    def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
         if self._client_factory is not None:
             return self._client_factory(config)
 
@@ -2053,7 +2053,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise RuntimeError("approval request must have an id")
         token = self._approval_token(event.id, params)
         loop = asyncio.get_running_loop()
-        pending = _PendingApproval(
+        pending = PendingApproval(
             request_id=event.id,
             method=event.method,
             summary=summary,

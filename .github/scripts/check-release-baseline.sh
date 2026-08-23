@@ -29,9 +29,15 @@ COMMIT_SCAN_LIMIT="${COMMIT_SCAN_LIMIT:-40}"
 jq_latest="map(select(.context == \"$BASELINE_STATUS_CONTEXT\")) | .[0]"
 jq_latest="$jq_latest | select(. != null) | \"\\(.state) \\(.created_at)\""
 
-mapfile -t shas < <(
-  gh api "repos/$REPO/commits?sha=$BASE_REF&per_page=$COMMIT_SCAN_LIMIT" --jq '.[].sha'
-)
+# A `gh api` failure inside `< <(...)` process substitution does not trip
+# `set -e` (the pipeline's exit status is `mapfile`'s, not the substituted
+# command's) -- verified live: `bash -c 'set -euo pipefail; mapfile -t x < <(false); echo reached'`
+# prints "reached". Capture the output first so its own exit code is checked.
+if ! commits_json=$(gh api "repos/$REPO/commits?sha=$BASE_REF&per_page=$COMMIT_SCAN_LIMIT"); then
+  echo "::error::gh api failed listing commits for $BASE_REF -- aborting rather than scanning an empty/partial commit list."
+  exit 1
+fi
+mapfile -t shas < <(echo "$commits_json" | jq -r '.[].sha')
 
 entry=""
 tested_sha=""

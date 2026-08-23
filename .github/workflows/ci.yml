@@ -47,10 +47,14 @@ jobs:
       run: uv lock --check --directory docker/band_python_kit/echo-agent
 
     - name: Install dependencies
-      run: uv sync --locked --extra dev
+      # --all-packages: a plain `uv sync` installs only the root project, not
+      # workspace members that aren't a root dependency (packages/band-mcp) --
+      # every uv command in this workflow needs it, or tests/mcp/*.py (which
+      # import band_mcp) fail to collect and pyrefly misses packages/band-mcp/src.
+      run: uv sync --all-packages --locked --extra dev
 
     - name: Run pre-commit hooks
-      run: uv run pre-commit run --all-files
+      run: uv run --all-packages pre-commit run --all-files
 
 
   test:
@@ -86,10 +90,10 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: uv sync --locked --extra dev
+      run: uv sync --all-packages --locked --extra dev
 
     - name: Run tests
-      run: uv run pytest
+      run: uv run --all-packages pytest
 
     - name: Run markdown doc tests
       # Linux-only: doc snippets are OS-independent, and this step relies on
@@ -98,7 +102,7 @@ jobs:
       # examples/ READMEs have illustrative fragments not yet snippet-testable
       run: |
         # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
-        uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+        uv run --all-packages pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
@@ -134,7 +138,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install crewai dependencies
-      run: uv sync --locked --extra dev-crewai
+      run: uv sync --all-packages --locked --extra dev-crewai
 
     - name: Run crewai tests
       env:
@@ -146,7 +150,7 @@ jobs:
       # a second pass here would add no signal — just a path to forget.
       # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
       run: |
-        uv run pytest \
+        uv run --all-packages pytest \
           tests/adapters/test_crewai_flow_phase3.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
           tests/integrations/test_crewai_real_tools.py \
@@ -155,7 +159,7 @@ jobs:
 
     - name: Pyrefly check (crewai sources)
       run: |
-        uv run pyrefly check \
+        uv run --all-packages pyrefly check \
           src/band/adapters/crewai.py \
           src/band/adapters/crewai_flow.py \
           src/band/converters/crewai.py \
@@ -196,7 +200,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install parlant dependencies
-      run: uv sync --locked --extra dev-parlant
+      run: uv sync --all-packages --locked --extra dev-parlant
 
     - name: Run parlant tests
       env:
@@ -208,14 +212,14 @@ jobs:
       # a second pass here would add no signal — just a path to forget.
       # tests/framework_conformance/test_parlant_job_coverage.py keeps this honest.
       run: |
-        uv run pytest \
+        uv run --all-packages pytest \
           tests/integrations/parlant/test_server.py \
           tests/integrations/parlant/test_tools.py \
           tests/framework_conformance/ -k parlant
 
     - name: Pyrefly check (parlant sources)
       run: |
-        uv run pyrefly check \
+        uv run --all-packages pyrefly check \
           src/band/adapters/parlant.py \
           src/band/converters/parlant.py \
           src/band/integrations/parlant/
@@ -248,11 +252,11 @@ jobs:
 
     - name: Verify core imports (no extras)
       run: |
-        /tmp/test-install/bin/python -c "
+        /tmp/test-install/bin/python <<'PYEOF'
         from band import Agent, BandLink, AgentRuntime
         from band.config import load_agent_config
         print('Core imports successful')
-        "
+        PYEOF
 
     - name: Start the Desktop room view from a fresh resolve
       # The lockfile says nothing about what a user's `uv tool install` picks:
@@ -263,43 +267,51 @@ jobs:
         WHEEL=$(ls dist/*.whl)
         uv venv /tmp/desktop-install
         uv pip install "${WHEEL}[desktop]" --python /tmp/desktop-install/bin/python
-        /tmp/desktop-install/bin/python -c "
+        /tmp/desktop-install/bin/python <<'PYEOF'
         from band.integrations.desktop_app.server import create_server, room_view_tools
         from band.integrations.desktop_app.service import RoomTranscriptService
         create_server(RoomTranscriptService(object()))
         print(f'room view starts with {len(room_view_tools())} tools')
-        "
+        PYEOF
 
-    - name: Build the OpenCode Band-tools server from a fresh resolve
+    - name: Start the OpenCode Band-tools server from a fresh resolve
       # Same lesson as the room view above, and the extra that learned it late:
       # an unbounded mcp resolved to a major release whose lowlevel Server has
       # no decorator registration, so this path died on any fresh install while
-      # the locked environment stayed green.
+      # the locked environment stayed green. Runs a real start/stop cycle (not
+      # just an app build) so a fresh mcp's FastMCP mount + uvicorn serve/
+      # shutdown recipe is actually exercised.
       run: |
         WHEEL=$(ls dist/*.whl)
         uv venv /tmp/opencode-install
         uv pip install "${WHEEL}[opencode]" --python /tmp/opencode-install/bin/python
-        /tmp/opencode-install/bin/python -c "
-        from band.runtime.mcp_server import LocalMCPServer
-        LocalMCPServer('smoke', [])._build_server()
-        print('opencode band tools server builds')
-        "
+        /tmp/opencode-install/bin/python <<'PYEOF'
+        import asyncio
+        from band.integrations.mcp.local_server import LocalMCPServer
+
+        async def main() -> None:
+            async with LocalMCPServer('smoke', [], port_min=0, port_max=0):
+                pass
+
+        asyncio.run(main())
+        print('opencode band tools server starts and stops')
+        PYEOF
 
     - name: Verify gateway extras install independently
       run: |
         uv venv /tmp/test-a2a-gateway
         WHEEL=$(ls dist/*.whl)
         uv pip install "${WHEEL}[a2a_gateway]" --python /tmp/test-a2a-gateway/bin/python
-        /tmp/test-a2a-gateway/bin/python -c "
+        /tmp/test-a2a-gateway/bin/python <<'PYEOF'
         from band.adapters.a2a_gateway import A2AGatewayAdapter
         print('Gateway extra import successful')
-        "
+        PYEOF
         uv venv /tmp/test-a2a-gateway-demo
         uv pip install "${WHEEL}[a2a_gateway_demo]" --python /tmp/test-a2a-gateway-demo/bin/python
-        /tmp/test-a2a-gateway-demo/bin/python -c "
+        /tmp/test-a2a-gateway-demo/bin/python <<'PYEOF'
         from a2a.server.routes.rest_routes import create_rest_routes
         print('Gateway demo extra route import successful')
-        "
+        PYEOF
 
     - name: Install with all extras
       run: |
@@ -308,10 +320,35 @@ jobs:
 
     - name: Verify all imports (with extras)
       run: |
-        /tmp/test-install/bin/python -c "
+        /tmp/test-install/bin/python <<'PYEOF'
         from band import Agent, BandLink, AgentRuntime
         from band.adapters import LangGraphAdapter, AnthropicAdapter, PydanticAIAdapter, ClaudeSDKAdapter
         from band.converters import LangChainHistoryConverter, AnthropicHistoryConverter, PydanticAIHistoryConverter
         from band.config import load_agent_config
         print('All imports successful')
-        "
+        PYEOF
+
+    - name: Build the band-mcp wheel
+      run: uv build --package band-mcp --wheel -o dist-band-mcp
+
+    - name: Install band-mcp from wheel (workspace band-sdk, isolated venv)
+      # band-mcp's published floor (band-sdk>=1.6.0) predates this repo's
+      # in-flight MCP engine migration, so a PyPI-only install can't exercise
+      # today's code yet -- install both freshly-built wheels together
+      # instead. band-mcp-publish.yml is the workflow that waits for the
+      # matching band-sdk release and checks the real PyPI floor.
+      run: |
+        uv venv /tmp/band-mcp-install
+        uv pip install dist/*.whl dist-band-mcp/*.whl --python /tmp/band-mcp-install/bin/python
+
+    - name: Verify band-mcp imports
+      run: |
+        /tmp/band-mcp-install/bin/python <<'PYEOF'
+        from band_mcp import __version__
+        from band_mcp.server import run, standalone_spec
+        from band_mcp.shared import StandaloneResolver, build_standalone_resolver
+        print(f'band-mcp {__version__} imports successful')
+        PYEOF
+
+    - name: Verify band-mcp CLI entry point
+      run: /tmp/band-mcp-install/bin/band-mcp --version

@@ -39,6 +39,16 @@ def event_types(events: list[dict[str, object]]) -> list[object]:
     return [event["message_type"] for event in events]
 
 
+def events_of_type(tools: FakeAgentTools, message_type: str) -> list[dict[str, object]]:
+    """Events the handler sent, filtered to one message_type."""
+    return [e for e in tools.events_sent if e.get("message_type") == message_type]
+
+
+def metadata_values(events: list[dict[str, object]], key: str) -> list[object]:
+    """The ordered value of one metadata field across a set of events."""
+    return [event["metadata"][key] for event in events]
+
+
 class TestACPClientAdapterInit:
     """Tests for ACPClientAdapter initialization."""
 
@@ -63,7 +73,6 @@ class TestACPClientAdapterInit:
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._band_mcp_backend is None
-        assert adapter._band_mcp_server is None
 
     def test_init_codex_acp_uses_absolute_default_cwd(self) -> None:
         """Should normalize codex-acp default cwd to an absolute path."""
@@ -220,7 +229,7 @@ class TestACPClientAdapterLocalMcpConfig:
         assert server.headers == []
         assert server.type == "http"
         assert adapter._band_mcp_backend is backend
-        assert adapter._band_mcp_server is mock_server
+        assert adapter._band_mcp_backend.local_server is mock_server
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_returns_sse_config(self) -> None:
@@ -241,7 +250,7 @@ class TestACPClientAdapterLocalMcpConfig:
         assert server.headers == []
         assert server.type == "sse"
         assert adapter._band_mcp_backend is backend
-        assert adapter._band_mcp_server is mock_server
+        assert adapter._band_mcp_backend.local_server is mock_server
 
     @pytest.mark.asyncio
     async def test_get_or_start_band_mcp_server_reuses_shared_server(self) -> None:
@@ -324,6 +333,34 @@ class TestACPClientAdapterLocalMcpConfig:
             recreated = await adapter._ensure_band_mcp_backend()
 
         assert recreated is fresh_backend
+        mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ensure_band_mcp_backend_restarts_a_crashed_backend(self) -> None:
+        """A backend's serve task can crash on its own, independent of any
+        adapter call -- the next turn's cache read must notice via
+        ``is_running`` and self-heal, instead of handing every later room the
+        same dead host/port until a tool call times out."""
+        adapter = ACPClientAdapter(command="codex")
+        crashed_backend = MagicMock(
+            local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"),
+            is_running=False,
+        )
+        crashed_backend.stop = AsyncMock()
+        adapter._band_mcp_backend = crashed_backend
+
+        fresh_backend = MagicMock(
+            local_server=MagicMock(http_url="http://127.0.0.1:2/mcp"),
+            is_running=True,
+        )
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=fresh_backend),
+        ) as mock_create_backend:
+            recreated = await adapter._ensure_band_mcp_backend()
+
+        assert recreated is fresh_backend
+        crashed_backend.stop.assert_awaited_once()
         mock_create_backend.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -413,7 +450,7 @@ class TestACPClientAdapterLocalMcpConfig:
         system_context = adapter._build_system_context("room-123", msg)
 
         assert "Band tools" in system_context
-        assert "Current room_id: room-123" in system_context
+        assert "Current chat_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
         assert "Use each MCP tool's schema" in system_context
 
@@ -628,7 +665,7 @@ class TestACPClientAdapterOnMessage:
         )
 
         # Should have sent task event
-        task_events = [e for e in tools.events_sent if e.get("message_type") == "task"]
+        task_events = events_of_type(tools, "task")
         assert len(task_events) == 1
         assert task_events[0]["metadata"]["acp_client_session_id"] == "acp-session-123"
 
@@ -726,9 +763,7 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        error_events = [
-            e for e in tools.events_sent if e.get("message_type") == "error"
-        ]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
         assert "Agent crashed" in error_events[0]["content"]
 
@@ -961,9 +996,10 @@ class TestACPClientAdapterPermissionHandler:
         assert captured_result == {"outcome": {"outcome": "cancelled"}}
         perm_events = permission_events(tools)
         assert event_types(perm_events) == ["tool_call", "tool_result"]
-        assert all(
-            event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
-        )
+        assert metadata_values(perm_events, "tool_call_id") == [
+            "tc-danger",
+            "tc-danger",
+        ]
         call = parse_tool_call(str(perm_events[0]["content"]))
         assert call is not None
         assert call.args == {"path": "/tmp/important"}
@@ -1009,9 +1045,10 @@ class TestACPClientAdapterPermissionHandler:
 
         perm_events = permission_events(tools)
         assert event_types(perm_events) == ["tool_call", "tool_result"]
-        assert all(
-            event["metadata"]["tool_name"] == "band_send_event" for event in perm_events
-        )
+        assert metadata_values(perm_events, "tool_name") == [
+            "band_send_event",
+            "band_send_event",
+        ]
         call = parse_tool_call(str(perm_events[0]["content"]))
         assert call is not None and call.name == "band_send_event"
 
@@ -1048,7 +1085,7 @@ class TestACPClientAdapterPermissionHandler:
 
         perm_events = permission_events(tools)
         assert event_types(perm_events) == ["tool_call", "tool_result"]
-        assert all(event["metadata"]["tool_name"] == "bash" for event in perm_events)
+        assert metadata_values(perm_events, "tool_name") == ["bash", "bash"]
 
 
 class TestACPClientAdapterCleanup:
@@ -1065,7 +1102,6 @@ class TestACPClientAdapterCleanup:
         backend = MagicMock(local_server=local_server)
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
-        adapter._band_mcp_server = local_server
 
         await adapter.on_cleanup("room-123")
 
@@ -1111,7 +1147,6 @@ class TestACPClientAdapterStop:
         backend = MagicMock(local_server=local_server)
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
-        adapter._band_mcp_server = local_server
         adapter._bootstrapped_sessions.add("session-123")
 
         await adapter.stop()
@@ -1124,7 +1159,6 @@ class TestACPClientAdapterStop:
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._band_mcp_backend is None
-        assert adapter._band_mcp_server is None
         assert adapter._bootstrapped_sessions == set()
 
     @pytest.mark.asyncio
@@ -1136,7 +1170,6 @@ class TestACPClientAdapterStop:
         backend = MagicMock(local_server=local_server)
         backend.stop = AsyncMock()
         adapter._band_mcp_backend = backend
-        adapter._band_mcp_server = local_server
 
         await adapter.stop()
 
@@ -1293,9 +1326,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert adapter._runtime._ctx is None
 
         # Error event should be sent
-        error_events = [
-            e for e in tools.events_sent if e.get("message_type") == "error"
-        ]
+        error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
 
 

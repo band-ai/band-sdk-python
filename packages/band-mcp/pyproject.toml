@@ -1,0 +1,67 @@
+[project]
+name = "band-mcp"
+version = "1.3.2"
+description = "Model Context Protocol (MCP) server for Band integration"
+readme = "README.md"
+authors = [{ name = "band" }]
+requires-python = ">=3.11"
+dependencies = [
+    # Capped like every other mcp consumer in this repo: 2.x drops the
+    # lowlevel Server decorator registration the engine builds tools with.
+    # Floor raised from the old repo's uncapped mcp[cli]>=1.23.0, whose
+    # fresh installs resolve mcp 2.0.0 and fail at import.
+    #
+    # Floor pinned to exactly crewai's own transitive pin (mcp~=1.28.1, per
+    # both this repo's pinned crewai==1.15.5 and the latest crewai 1.15.16 on
+    # PyPI -- checked 2026-08-18), not the latest 1.x: band-mcp is
+    # an unconditional workspace member, not an extra, so it can't be forked
+    # away from the dev-crewai extra the way `[tool.uv] conflicts` forks
+    # crewai from parlant/pydantic-ai. A tighter floor here makes the shared
+    # uv.lock unsolvable whenever crewai is in the graph. A standalone
+    # `pip install band-mcp` is unaffected -- nothing else constrains it, so
+    # it still resolves the latest available 1.x.
+    "mcp[cli]>=1.28.1,<2",
+    # Already a real transitive dependency via mcp[cli] (its own cli extra
+    # requires typer>=0.16.0) -- declared explicitly since server.py now
+    # imports it directly, not just benefiting from mcp[cli]'s own choice.
+    # No added install footprint.
+    "typer>=0.16.0",
+    "pydantic-settings>=2.1.0",
+    # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
+    # for band-client-rest Bugs" for why this stays exact.
+    "band-client-rest==0.0.27",
+    # Auto-bumped after every band-sdk release by release.yml's
+    # bump-mcp-sdk-floor job, so this always tracks the most recently
+    # published band-sdk version -- band-mcp is developed in lockstep in
+    # this monorepo and can depend on any already-released SDK feature.
+    "band-sdk>=1.6.0",
+    "uvicorn>=0.30.0",  # Required for SSE transport mode
+]
+
+[project.scripts]
+band-mcp = "band_mcp.server:run"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+# Workspace-local resolution only -- the published wheel's metadata carries
+# the [project.dependencies] floor above, not this override.
+band-sdk = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "band_mcp"
+module-root = "src"
+
+[build-system]
+requires = ["uv_build>=0.8.22,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "1.3.2"
+version_files = [
+    "pyproject.toml:version",
+    "src/band_mcp/__init__.py:__version__",
+]
+tag_format = "band-mcp-v$version"

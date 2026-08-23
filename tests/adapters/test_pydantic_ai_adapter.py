@@ -479,6 +479,13 @@ def instrument_all_restored() -> Iterator[None]:
         Agent.instrument_all(previous)
 
 
+def message_types(mock_tools: MagicMock) -> list[str]:
+    """``message_type`` of every event posted through send_event, in order."""
+    return [
+        call.kwargs.get("message_type") for call in mock_tools.send_event.call_args_list
+    ]
+
+
 def _reply(text: str) -> FunctionModel:
     """A model that answers in plain text, so a run needs no network or tools."""
 
@@ -1129,9 +1136,7 @@ class TestExecutionReporting:
         )
 
         # Verify send_event was NOT called for tool_call or tool_result
-        for call in mock_tools.send_event.call_args_list:
-            _, kwargs = call
-            assert kwargs.get("message_type") not in ["tool_call", "tool_result"]
+        assert not set(message_types(mock_tools)) & {"tool_call", "tool_result"}
 
     @pytest.mark.asyncio
     async def test_multiple_tool_calls_all_reported(
@@ -1173,19 +1178,9 @@ class TestExecutionReporting:
         )
 
         # Count tool_call and tool_result events
-        tool_call_count = sum(
-            1
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "tool_call"
-        )
-        tool_result_count = sum(
-            1
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "tool_result"
-        )
-
-        assert tool_call_count == 3
-        assert tool_result_count == 3
+        types = message_types(mock_tools)
+        assert types.count("tool_call") == 3
+        assert types.count("tool_result") == 3
 
     @pytest.mark.asyncio
     async def test_event_failure_does_not_crash_run(

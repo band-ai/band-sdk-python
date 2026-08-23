@@ -10,7 +10,7 @@ from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.exceptions import BandConfigError
-from band.runtime.mcp_server import LOCAL_MCP_HOST
+from band.integrations.mcp.local_server import LOCAL_MCP_HOST
 
 MCPTransport = Literal["sse", "streamable_http"]
 

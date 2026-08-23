@@ -438,8 +438,8 @@ def test_own_band_tools_recognized_before_mcp_registration() -> None:
 
 
 async def test_turn_system_prompt_carries_room_context(make_adapter, tools) -> None:
-    """The per-turn system prompt must name the current room_id (band MCP
-    tool schemas require a room_id argument, so an untold model cannot
+    """The per-turn system prompt must name the current chat_id (band MCP
+    tool schemas require a chat_id argument, so an untold model cannot
     call any platform tool) and the requester."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_session_idle("sess-1")]]
@@ -449,6 +449,6 @@ async def test_turn_system_prompt_carries_room_context(make_adapter, tools) -> N
     await run_single_turn(adapter, tools)
 
     system = fake_client.prompt_calls[0]["system"]
-    assert "Current room_id: room-1" in system
+    assert "Current chat_id: room-1" in system
     assert "Current requester name: Alice" in system
     assert "Current requester id: user-1" in system

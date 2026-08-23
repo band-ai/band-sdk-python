@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from band.integrations.slack.adapter import _SlackTeeingTools
+from band.integrations.slack.adapter import SlackTeeingTools
 from band.integrations.slack.block_kit import (
     DEFAULT_WRITE_TOOL_NAMES,
     PlanState,
@@ -212,7 +212,7 @@ def test_default_write_tool_names_includes_known_mutators():
     assert "band_list_memories" not in DEFAULT_WRITE_TOOL_NAMES
 
 
-# ── _SlackTeeingTools tool-execution hook ───────────────────────────────────
+# ── SlackTeeingTools tool-execution hook ───────────────────────────────────
 #
 # The plan-rendering hook now lives in ``execute_tool_call`` (not
 # ``send_event``) so Slack progress is independent of the brain's
@@ -225,13 +225,13 @@ def test_default_write_tool_names_includes_known_mutators():
 def _make_tools(
     write_tool_names: frozenset[str] | set[str] | None = None,
     show_tool_progress: bool = True,
-) -> tuple[_SlackTeeingTools, MagicMock, AsyncMock]:
+) -> tuple[SlackTeeingTools, MagicMock, AsyncMock]:
     rest = MagicMock()
     base = AgentTools(room_id="r1", rest=rest, participants=[])
     slack = AsyncMock()
     slack.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "msg-1.000"})
     slack.chat_update = AsyncMock(return_value={"ok": True, "ts": "msg-1.000"})
-    tools = _SlackTeeingTools(
+    tools = SlackTeeingTools(
         wrap=base,
         slack=slack,
         binding=SlackRoomBinding(app_slug="dev", channel="C", thread_ts="1.0"),

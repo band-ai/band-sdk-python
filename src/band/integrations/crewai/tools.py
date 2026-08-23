@@ -54,6 +54,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
+    SEND_MESSAGE_TOOL_NAME,
     append_available_mention_handles,
     get_tool_description,
     is_terminal_success,
@@ -86,9 +87,6 @@ _CREWAI_TOOL_CATEGORIES = {
 
 
 # --- Shared context + reporter contracts ---
-
-# Tool whose successful execution counts as a user-facing reply.
-_SEND_MESSAGE_TOOL = "band_send_message"
 
 
 @dataclass
@@ -268,7 +266,7 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
-            if tool_name == _SEND_MESSAGE_TOOL and isinstance(
+            if tool_name == SEND_MESSAGE_TOOL_NAME and isinstance(
                 e, (ValueError, BandToolError)
             ):
                 error_msg = append_available_mention_handles(
@@ -301,7 +299,7 @@ def _execute_tool(
                     tool_name, succeeded=True, custom_terminal=custom_terminal
                 ):
                     context.reply_tracker.tool_executed = True
-                if tool_name == _SEND_MESSAGE_TOOL:
+                if tool_name == SEND_MESSAGE_TOOL_NAME:
                     context.reply_tracker.replied = True
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
@@ -341,7 +339,7 @@ def normalize_mentions_lenient(value: Any) -> list[str]:
 
 
 SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
-    "band_send_message",
+    SEND_MESSAGE_TOOL_NAME,
     validators={
         "normalize_mentions": field_validator("mentions", mode="before")(
             staticmethod(normalize_mentions_lenient)
@@ -379,8 +377,8 @@ def _make_platform_tools(
         )
 
     class SendMessageTool(BaseTool):
-        name: str = "band_send_message"
-        description: str = get_tool_description("band_send_message")
+        name: str = SEND_MESSAGE_TOOL_NAME
+        description: str = get_tool_description(SEND_MESSAGE_TOOL_NAME)
         args_schema: type[BaseModel] = SEND_MESSAGE_ARGS_SCHEMA
         cache_function: Any = _no_cache
 
@@ -402,14 +400,14 @@ def _make_platform_tools(
 
                 await reporter.report_call(
                     tools,
-                    "band_send_message",
+                    SEND_MESSAGE_TOOL_NAME,
                     {"content": content, "mentions": mention_list},
                 )
                 await tools.send_message(content, mention_list)
-                await reporter.report_result(tools, "band_send_message", "success")
+                await reporter.report_result(tools, SEND_MESSAGE_TOOL_NAME, "success")
                 return json.dumps({"status": "success", "message": "Message sent"})
 
-            return _exec("band_send_message", execute)
+            return _exec(SEND_MESSAGE_TOOL_NAME, execute)
 
     class SendEventTool(BaseTool):
         name: str = "band_send_event"

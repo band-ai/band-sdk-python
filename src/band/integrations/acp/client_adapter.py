@@ -41,9 +41,10 @@ from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ACPToolCall
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
-from band.runtime.mcp_server import LocalMCPServer
+from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
+    CHAT_ID_FIELD_NAME,
     ROOM_POSTING_TOOL_NAMES,
     ToolDefinition,
     canonicalize_mcp_tool_name,
@@ -171,7 +172,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._room_to_session: dict[str, str] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._band_mcp_backend: BandMCPBackend | None = None
-        self._band_mcp_server: LocalMCPServer | None = None
         self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
         # Guards the shared MCP backend singleton on its own lock: one creation
@@ -202,35 +202,28 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     def _registered_tools(self) -> tuple[list[ToolDefinition], frozenset[str]]:
         """The tools this adapter registers on the loopback MCP server.
 
-        Band platform tools plus custom tools. Computed once at construction
-        — both inputs are known here — so MCP registration and tool-name
-        canonicalization share one vocabulary. This resembles OpenCodeAdapter's
-        equivalent block (same idea: compute the vocabulary once, up front),
-        but is not extracted into a shared helper — the two sets already serve
-        different consumers (opencode's gates auto-approve/permission
-        matching; this one gates narration canonicalization and includes the
-        legacy alias below) and, per contacts below, no longer share the same
-        gating rule either. Merging genuinely-different vocabularies just
-        because they're built similarly would cost more than the duplication
-        it removes.
-
-        Memory tools are gated behind ``Capability.MEMORY`` — an opt-in,
-        enterprise feature. Contact tools are NOT gated behind
-        ``Capability.CONTACTS`` despite ``iter_tool_definitions`` taking the
-        same shape of flag for both: every existing caller (the ACP examples)
-        constructs this adapter with no ``features=`` of its own and expects
-        contacts to just work, so gating them would silently drop
-        ``band_list_contacts`` et al. for every one of them with no warning
-        (``SUPPORTED_CAPABILITIES`` already covers ``CONTACTS``, so the base
-        class's unsupported-capability warning never fires either). Declaring
-        ``Capability.CONTACTS`` in ``SUPPORTED_CAPABILITIES`` only stops that
-        warning for a caller that does declare it.
+        Band platform tools plus custom tools, computed once at construction
+        so MCP registration and tool-name canonicalization share one
+        vocabulary.
         """
         definitions = list(
             iter_tool_definitions(
+                # Memory is an opt-in enterprise capability; contacts are not
+                # gated on Capability.CONTACTS despite the same flag shape —
+                # every existing caller (the ACP examples) builds this adapter
+                # with no features= and expects contacts to just work, so
+                # gating them would silently drop band_list_contacts et al.
+                # with no warning (SUPPORTED_CAPABILITIES already covers
+                # CONTACTS, so the base class's unsupported-capability warning
+                # never fires either way).
                 include_memory=Capability.MEMORY in self.features.capabilities,
             )
         )
+        # Resembles OpenCodeAdapter's equivalent vocabulary block but isn't
+        # extracted into a shared helper: the two sets serve different
+        # consumers (opencode's gates auto-approve/permission matching; this
+        # one gates narration canonicalization and includes the legacy alias
+        # below) and no longer share the same gating rule either.
         names = frozenset(
             {definition.name for definition in definitions}
             | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
@@ -459,12 +452,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             f"room on your behalf. Never both — reply exactly once, and do "
             f"not narrate the tool calls you are about to make.\n"
             f"\n"
-            f"Current room_id: {room_id}\n"
+            f"Current {CHAT_ID_FIELD_NAME}: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             f"\n"
             f"Use each MCP tool's schema for its argument names. When a tool needs "
-            f"the current room, use the Current room_id value above.\n"
+            f"the current room, use the Current {CHAT_ID_FIELD_NAME} value above.\n"
         )
 
         return f"[System Context]\n{system_prompt}\n{room_context}"
@@ -510,12 +503,26 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         Raises once ``cleanup_all`` has run: a turn that was parked on this
         lock while shutdown completed must fail loudly rather than silently
         start a fresh backend that outlives shutdown and is never stopped.
+
+        Also re-checks liveness on every call: the serve task backing a
+        cached backend can crash on its own, independent of any adapter call,
+        and nothing else would ever notice -- every later room would keep
+        getting handed the same dead host/port until a tool call times out.
         """
         async with self._mcp_backend_lock:
             if self._stopped:
                 raise RuntimeError(
                     "ACP client adapter is stopped; cannot start the Band MCP backend"
                 )
+            if (
+                self._band_mcp_backend is not None
+                and not self._band_mcp_backend.is_running
+            ):
+                logger.warning(
+                    "Band MCP backend crashed; restarting for %s", self.agent_name
+                )
+                await self._band_mcp_backend.stop()
+                self._band_mcp_backend = None
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
                     kind=self._runtime._agent_mcp_transport,
@@ -524,7 +531,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     additional_tools=self._custom_tools,
                 )
                 self._band_mcp_backend = backend
-                self._band_mcp_server = backend.local_server
             return self._band_mcp_backend
 
     async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
@@ -674,9 +680,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._bootstrapped_sessions.clear()
         async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
-            local_mcp_server = self._band_mcp_server
             self._band_mcp_backend = None
-            self._band_mcp_server = None
             if final:
                 # Set before releasing the lock: a room's first turn parked on
                 # _mcp_backend_lock (e.g. via _load_persisted_session, which awaits
@@ -689,8 +693,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # None and start a fresh backend while this one is mid-teardown.
             if backend is not None:
                 await backend.stop()
-            elif local_mcp_server is not None:
-                await local_mcp_server.stop()
         await self._runtime.stop()
         logger.info("ACP client adapter stopped")
 

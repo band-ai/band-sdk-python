@@ -6923,11 +6923,11 @@ class TestCleanupOnCancel:
         # Simulate an active room with a pending approval.
         loop = asyncio.get_running_loop()
         approval_future: asyncio.Future[str] = loop.create_future()
-        from band.adapters.codex import _PendingApproval
+        from band.adapters.codex import PendingApproval
 
         adapter._room_threads["room-1"] = "thr-1"
         adapter._pending_approvals["room-1"] = {
-            "token-1": _PendingApproval(
+            "token-1": PendingApproval(
                 request_id=42,
                 method="item/commandExecution/requestApproval",
                 summary="rm -rf /",

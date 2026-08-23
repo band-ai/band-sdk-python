@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
 
 
@@ -25,19 +23,9 @@ class ACPClientSessionState:
 
 
 class BandACPClient(ACPCollectingClient):
-    """Compatibility wrapper around ``ACPCollectingClient``.
+    """Compatibility alias for ``ACPCollectingClient``.
 
     Existing tests and e2e helpers still construct ``BandACPClient``
     directly. Keep this alias stable while bridge adapters choose the
     runtime-specific profile explicitly.
     """
-
-    def __init__(
-        self,
-        profile: ACPClientProfile | None = None,
-        canonicalize_tool_name: Callable[[str], str] | None = None,
-    ) -> None:
-        super().__init__(profile=profile, canonicalize_tool_name=canonicalize_tool_name)
-
-
-BandACPClient = BandACPClient

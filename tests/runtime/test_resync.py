@@ -1,7 +1,7 @@
 """Tests for idle-timeout resync and reconnect resync (INT-333).
 
 Covers:
-- request_resync() enqueues _ResyncRequest sentinel
+- request_resync() enqueues ResyncRequest sentinel
 - Sentinel wakes Phase 2 loop and calls _resync_pending_messages()
 - Idle timeout calls _resync_pending_messages() after configured seconds
 - _resync_pending_messages() happy path: processes missed message
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.execution import ExecutionContext, _ResyncRequest
+from band.runtime.execution import ExecutionContext, ResyncRequest
 from band.runtime.presence import RoomPresence
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage, SessionConfig
@@ -115,14 +115,14 @@ class TestRequestResync:
     """Tests for ExecutionContext.request_resync()."""
 
     async def test_enqueues_resync_sentinel(self, mock_link, mock_handler):
-        """request_resync() should put a _ResyncRequest onto the queue."""
+        """request_resync() should put a ResyncRequest onto the queue."""
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
 
         await ctx.request_resync()
 
         assert ctx.queue.qsize() == 1
         item = ctx.queue.get_nowait()
-        assert isinstance(item, _ResyncRequest)
+        assert isinstance(item, ResyncRequest)
 
     async def test_sentinel_triggers_resync(self, mock_link, mock_handler):
         """Enqueueing a sentinel should cause the Phase 2 loop to call /next."""

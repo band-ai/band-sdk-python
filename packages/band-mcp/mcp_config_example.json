@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "band": {
+      "command": "band-mcp",
+      "args": [
+        "--scope",
+        "agent,human",
+        "--tools",
+        "contacts"
+      ],
+      "env": {
+        "BAND_AGENT_KEY": "band_a_your_agent_key",
+        "BAND_USER_KEY": "band_u_your_user_key",
+        "BAND_BASE_URL": "https://app.band.ai"
+      }
+    }
+  }
+}

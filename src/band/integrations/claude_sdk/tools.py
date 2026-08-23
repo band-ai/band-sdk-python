@@ -26,6 +26,7 @@ except ImportError as e:
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
+from band.integrations.mcp.engine import extend_with_chat_id
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -33,7 +34,9 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     BASE_TOOL_NAMES,
+    CHAT_ID_FIELD_NAME,
     CHAT_TOOL_NAMES,
+    SEND_MESSAGE_TOOL_NAME,
     ToolDefinition,
     append_mention_handles_hint,
     iter_tool_definitions,
@@ -95,31 +98,17 @@ def _build_sdk_schema(
     *,
     include_room_id: bool,
 ) -> dict[str, Any]:
-    """Convert a Pydantic model to Claude SDK JSON schema format."""
-    schema: dict[str, Any] = dict(input_model.model_json_schema())
+    """Convert a Pydantic model to Claude SDK JSON schema format.
+
+    Room-field injection reuses the engine's canonical
+    ``extend_with_chat_id`` rather than hand-splicing a schema dict: same
+    uniform-wrap shape every embedded consumer uses, one definition of
+    "how a room field gets added to a tool's schema."
+    """
+    model = extend_with_chat_id(input_model, None) if include_room_id else input_model
+    schema: dict[str, Any] = dict(model.model_json_schema())
     schema.pop("title", None)
-
-    raw_properties = schema.get("properties")
-    properties: dict[str, Any] = (
-        dict(raw_properties) if isinstance(raw_properties, dict) else {}
-    )
-    raw_required = schema.get("required")
-    required: list[str] = (
-        [item for item in raw_required if isinstance(item, str)]
-        if isinstance(raw_required, list)
-        else []
-    )
-
-    if include_room_id:
-        properties = {"room_id": {"type": "string"}, **properties}
-        if "room_id" not in required:
-            required.insert(0, "room_id")
-
     schema["type"] = "object"
-    schema["properties"] = properties
-    if required:
-        schema["required"] = required
-
     return schema
 
 
@@ -200,8 +189,8 @@ def _build_builtin_sdk_tool(
         schema,
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
-        room_id = args.get("room_id", "") if include_room_id else ""
-        raw_args = {k: v for k, v in args.items() if k != "room_id"}
+        room_id = args.get(CHAT_ID_FIELD_NAME, "") if include_room_id else ""
+        raw_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
         tools = get_tools(room_id)
         if tools is None:
             return _make_error(f"No tools available for room {room_id}")
@@ -225,7 +214,7 @@ def _build_builtin_sdk_tool(
             )
         except (ValueError, BandToolError) as error:
             if (
-                definition.name == "band_send_message"
+                definition.name == SEND_MESSAGE_TOOL_NAME
                 and get_participant_handles is not None
             ):
                 available = get_participant_handles(room_id)
@@ -254,7 +243,7 @@ def _build_custom_sdk_tool(
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
-            tool_args = {k: v for k, v in args.items() if k != "room_id"}
+            tool_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
             result = await execute_custom_tool(tool_def, tool_args)
             return _make_result(result)
         except Exception as error:

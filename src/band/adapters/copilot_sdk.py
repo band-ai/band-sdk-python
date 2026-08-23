@@ -42,7 +42,11 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category, is_room_posting_tool
+from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
+    get_band_tool_category,
+    is_room_posting_tool,
+)
 
 try:
     from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
@@ -816,7 +820,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         room_id: str,
         inject_text: str | None,
     ) -> str:
-        room_context = f"[room_id: {room_id}]"
+        # Label must read "chat_id" (the model-facing name everywhere else,
+        # e.g. claude_sdk.py's own room_context), not the Python-side room_id
+        # it's built from.
+        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
         parts: list[str] = []
         if inject_text:
             parts.append(f"[Previous conversation context:]\n{inject_text}")

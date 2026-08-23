@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
+from band.runtime.tools import CHAT_ID_FIELD_NAME
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     FakeCopilotSession,
@@ -44,7 +45,7 @@ class TestReply:
         await run_message(adapter, tools, content="What's up?")
 
         prompt = client.sessions[0].prompts[0]
-        assert "[room_id: room-1]" in prompt
+        assert f"[{CHAT_ID_FIELD_NAME}: room-1]" in prompt
         assert "[Alice]: What's up?" in prompt
 
     @pytest.mark.asyncio
