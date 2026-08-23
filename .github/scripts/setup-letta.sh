@@ -33,7 +33,11 @@ wait_healthy() {
   # dead server and the lane would fail opaquely at test time.
   local ready=false
   for _ in $(seq 1 45); do
-    if curl -fsS http://localhost:8283/v1/health/; then ready=true; break; fi
+    # --max-time bounds each attempt: without it, a server that accepts the
+    # connection but never finishes the response wedges this loop (and the
+    # whole job, up to its 240-minute timeout) on a single curl call instead
+    # of retrying and failing loudly within the intended ~90s budget.
+    if curl -fsS --max-time 5 http://localhost:8283/v1/health/; then ready=true; break; fi
     sleep 2
   done
   if [ "$ready" != true ]; then
