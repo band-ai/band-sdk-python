@@ -496,7 +496,7 @@ wheels = [
 
 [[package]]
 name = "band-mcp"
-version = "2.0.0"
+version = "2.0.1"
 source = { editable = "packages/band-mcp" }
 dependencies = [
     { name = "band-client-rest" },
