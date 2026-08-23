@@ -30,9 +30,11 @@ from tests.e2e.baseline.agents import (
     per_adapter,
 )
 from tests.e2e.baseline.scorecard import (
+    MASS_FAILURE_THRESHOLD,
     ScorecardCollector,
     ScorecardRow,
     digest_body,
+    failed_fraction,
     gate,
     gate_summary,
     merge,
@@ -277,6 +279,35 @@ def test_gate_fails_a_skip_cell_whose_lane_was_expected_to_run() -> None:
     result = gate([row], frozenset({str(_LANE_A.id)}))
     assert result.ok is False
     assert result.missing == (row,)
+
+
+def test_failed_fraction_ignores_skip_and_na() -> None:
+    rows = [
+        ScorecardRow("t", _ADAPTER_A, "fail"),
+        ScorecardRow("t", _ADAPTER_B, "pass"),
+        ScorecardRow("t", _ADAPTER_A, "skip"),
+        ScorecardRow("t", _ADAPTER_B, "na", "no usage"),
+    ]
+    assert failed_fraction(rows) == pytest.approx(0.5)
+
+
+def test_failed_fraction_zero_when_nothing_attempted() -> None:
+    rows = [ScorecardRow("t", _ADAPTER_A, "skip")]
+    assert failed_fraction(rows) == 0.0
+
+
+def test_failed_fraction_below_threshold_for_one_off_flakiness() -> None:
+    rows = [ScorecardRow("t", _ADAPTER_A, "fail")] + [
+        ScorecardRow("t", _ADAPTER_B, "pass") for _ in range(9)
+    ]
+    assert failed_fraction(rows) < MASS_FAILURE_THRESHOLD
+
+
+def test_failed_fraction_crosses_threshold_for_systemic_outage() -> None:
+    rows = [ScorecardRow("t", _ADAPTER_A, "fail") for _ in range(3)] + [
+        ScorecardRow("t", _ADAPTER_B, "pass")
+    ]
+    assert failed_fraction(rows) >= MASS_FAILURE_THRESHOLD
 
 
 def test_gate_passes_pass_and_na_cells() -> None:
