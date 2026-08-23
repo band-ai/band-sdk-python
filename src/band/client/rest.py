@@ -81,8 +81,10 @@ def _without_json_decode_chain(
     return wrapper
 
 
-AsyncRawAgentApiIdentityClient.get_agent_me = _without_json_decode_chain(
-    AsyncRawAgentApiIdentityClient.get_agent_me
+setattr(
+    AsyncRawAgentApiIdentityClient,
+    "get_agent_me",
+    _without_json_decode_chain(AsyncRawAgentApiIdentityClient.get_agent_me),
 )
 
 __all__ = [
