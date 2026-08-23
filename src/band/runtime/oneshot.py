@@ -48,7 +48,11 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    HistoryProvider,
+    PlatformMessage,
+)
 from band.platform.link import BandLink
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import (
@@ -149,9 +153,13 @@ class OneShotInvoker:
             return
 
         self._agent_name, self._agent_description = await self._fetch_agent_metadata()
-        # Parity with Agent.start(): some adapters read this via getattr at
-        # runtime to inject identity into the system prompt.
-        setattr(self._adapter, "_band_agent_id", self._agent_id)
+        # Parity with Agent.start(): adapters read their identity and platform
+        # coordinates from the injected connection.
+        setattr(
+            self._adapter,
+            "platform",
+            self._link.to_platform_connection(self._agent_id),
+        )
         await self._adapter.on_started(self._agent_name, self._agent_description)
         self._started = True
         logger.info(

@@ -9,6 +9,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput
 from band.runtime.types import AgentConfig, SessionConfig
 from band.preprocessing.default import DefaultPreprocessor
+from band.testing.platform import platform_connection_stub
 
 
 @pytest.fixture
@@ -71,8 +72,11 @@ class TestInitialization:
 class TestCreateFactory:
     """Tests for Agent.create() factory method."""
 
-    def test_creates_with_default_urls(self, mock_adapter):
+    def test_creates_with_default_urls(self, mock_adapter, monkeypatch):
         """Should create agent with default URLs."""
+        # Hermetic: a developer's shell may export the env overrides.
+        monkeypatch.delenv("BAND_WS_URL", raising=False)
+        monkeypatch.delenv("BAND_REST_URL", raising=False)
         with patch("band.agent.PlatformRuntime") as mock_runtime_class:
             mock_runtime = MagicMock()
             mock_runtime_class.return_value = mock_runtime
@@ -112,6 +116,39 @@ class TestCreateFactory:
             call_kwargs = mock_runtime_class.call_args.kwargs
             assert call_kwargs["ws_url"] == "wss://custom.example.com/ws"
             assert call_kwargs["rest_url"] == "https://custom.example.com"
+
+    def test_urls_resolve_from_environment(self, mock_adapter, monkeypatch):
+        """Omitted URLs resolve from BAND_WS_URL / BAND_REST_URL env vars."""
+        monkeypatch.setenv("BAND_WS_URL", "wss://env.example.com/ws")
+        monkeypatch.setenv("BAND_REST_URL", "https://env.example.com")
+        with patch("band.agent.PlatformRuntime") as mock_runtime_class:
+            mock_runtime_class.return_value = MagicMock()
+
+            Agent.create(
+                adapter=mock_adapter,
+                agent_id="agent-123",
+                api_key="test-key",
+            )
+
+            call_kwargs = mock_runtime_class.call_args.kwargs
+            assert call_kwargs["ws_url"] == "wss://env.example.com/ws"
+            assert call_kwargs["rest_url"] == "https://env.example.com"
+
+    def test_explicit_urls_beat_environment(self, mock_adapter, monkeypatch):
+        """An explicit argument wins over the environment variable."""
+        monkeypatch.setenv("BAND_REST_URL", "https://env.example.com")
+        with patch("band.agent.PlatformRuntime") as mock_runtime_class:
+            mock_runtime_class.return_value = MagicMock()
+
+            Agent.create(
+                adapter=mock_adapter,
+                agent_id="agent-123",
+                api_key="test-key",
+                rest_url="https://explicit.example.com",
+            )
+
+            call_kwargs = mock_runtime_class.call_args.kwargs
+            assert call_kwargs["rest_url"] == "https://explicit.example.com"
 
     def test_creates_with_configs(self, mock_adapter):
         """Should accept custom configs."""
@@ -500,6 +537,7 @@ class TestStartupRaceCondition:
             agent_name = "TestBot"
             agent_description = "A test bot"
             agent_id = "agent-123"
+            connection = platform_connection_stub(agent_id="agent-123")
             _on_execute = None
 
             async def initialize(self) -> None:

@@ -15,7 +15,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
+from band.core.types import Emit, PlatformMessage, TurnUsage
 from tests.adapters.usage_events import sent_usage_payloads
 
 
@@ -258,7 +258,7 @@ class TestToolExecution:
         """Should send events when execution reporting is enabled."""
         from anthropic.types import ToolUseBlock
 
-        adapter = AnthropicAdapter(enable_execution_reporting=True)
+        adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
         mock_response = MagicMock()
         mock_response.content = [
@@ -282,7 +282,7 @@ class TestToolExecution:
         """send_event 403 should not prevent tool from executing."""
         from anthropic.types import ToolUseBlock
 
-        adapter = AnthropicAdapter(enable_execution_reporting=True)
+        adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
         mock_response = MagicMock()
         mock_response.content = [
@@ -313,7 +313,7 @@ class TestToolExecution:
 
         from anthropic.types import ToolUseBlock
 
-        adapter = AnthropicAdapter(enable_execution_reporting=True)
+        adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
         mock_response = MagicMock()
         mock_response.content = [
@@ -370,7 +370,7 @@ class TestToolExecution:
         """With Emit.USAGE on, a non-empty TurnUsage rides a task event's metadata."""
         from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
 
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        adapter = AnthropicAdapter(emit=Emit.USAGE)
 
         await adapter.emit_usage(
             mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
@@ -386,7 +386,7 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_does_not_emit_usage_when_feature_off(self, mock_tools):
         """Without Emit.USAGE, emit_usage is a no-op (no event)."""
-        adapter = AnthropicAdapter()  # no emit features
+        adapter = AnthropicAdapter(emit=())
         await adapter.emit_usage(
             mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
         )
@@ -395,14 +395,14 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_does_not_emit_empty_usage(self, mock_tools):
         """An all-zero TurnUsage is skipped even with the feature on (no false zero)."""
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        adapter = AnthropicAdapter(emit=Emit.USAGE)
         await adapter.emit_usage(mock_tools, TurnUsage())
         mock_tools.send_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_usage_emit_failure_does_not_crash(self, mock_tools):
         """A send_event failure during usage emit is swallowed (best-effort)."""
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        adapter = AnthropicAdapter(emit=Emit.USAGE)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
         # Should not raise.
         await adapter.emit_usage(
@@ -416,7 +416,7 @@ class TestToolExecution:
         CancelledError raised mid-send could skip later cleanup."""
         import asyncio
 
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        adapter = AnthropicAdapter(emit=Emit.USAGE)
         started = asyncio.Event()
 
         async def turn() -> None:
@@ -449,7 +449,7 @@ class TestToolExecution:
         """
         from anthropic.types import TextBlock, ToolUseBlock
 
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        adapter = AnthropicAdapter(emit=Emit.USAGE)
 
         # Call 1: a tool_use round (continues the loop). Call 2: the final answer.
         resp1 = SimpleNamespace(
@@ -506,7 +506,7 @@ class TestToolExecution:
         exception still propagates (the turn is marked failed)."""
         from anthropic.types import ToolUseBlock
 
-        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        adapter = AnthropicAdapter(emit=Emit.USAGE)
 
         resp1 = SimpleNamespace(
             stop_reason="tool_use",

@@ -156,7 +156,7 @@ class TestAdapterFeaturesContract:
 
     Catches regressions where a new adapter is added without declaring
     SUPPORTED_EMIT or SUPPORTED_CAPABILITIES — which would break the
-    feature warning mechanism in SimpleAdapter.on_started().
+    construction-time validation in SimpleAdapter.__init__().
     """
 
     def test_supported_emit_declared(self, adapter_config):
@@ -202,9 +202,13 @@ class TestAdapterFeaturesContract:
                 f"non-Capability value: {value!r}"
             )
 
-    def test_features_param_accepted(self, adapter_config):
-        """Every adapter constructor must accept features=AdapterFeatures(...)."""
-        from band.core.types import AdapterFeatures
+    def test_features_kwargs_accepted(self, adapter_config):
+        """Every adapter constructor must accept emit=/capabilities=/... directly."""
+        adapter = adapter_config.adapter_factory(emit=(), capabilities=())
+        assert adapter.features.emit == frozenset()
+        assert adapter.features.capabilities == frozenset()
 
-        adapter = adapter_config.adapter_factory(features=AdapterFeatures())
-        assert adapter.features == AdapterFeatures()
+    def test_omitted_emit_defaults_to_supported_emit(self, adapter_config):
+        """Omitting emit= narrates everything the adapter declares support for."""
+        adapter = adapter_config.adapter_factory()
+        assert adapter.features.emit == type(adapter).SUPPORTED_EMIT

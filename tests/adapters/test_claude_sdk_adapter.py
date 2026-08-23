@@ -32,7 +32,7 @@ from band.adapters.claude_sdk import (
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.runtime.tools import ALL_TOOL_NAMES, missing_reply_error
-from band.core.types import AdapterFeatures, Emit, PlatformMessage, ToolEventKey
+from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
@@ -190,17 +190,11 @@ class TestInitialization:
     def test_default_initialization(self):
         """Should initialize with no memory capability by default."""
         adapter = ClaudeSDKAdapter()
-
-        from band.core.types import Capability
-
         assert Capability.MEMORY not in adapter.features.capabilities
 
     def test_enable_memory_tools(self):
-        """Should accept enable_memory_tools parameter (deprecated)."""
-        adapter = ClaudeSDKAdapter(enable_memory_tools=True)
-
-        from band.core.types import Capability
-
+        """Should accept capabilities=Capability.MEMORY."""
+        adapter = ClaudeSDKAdapter(capabilities=Capability.MEMORY)
         assert Capability.MEMORY in adapter.features.capabilities
 
 
@@ -882,7 +876,7 @@ class TestCustomTools:
 
         adapter = ClaudeSDKAdapter(
             additional_tools=[(EchoInput, echo)],
-            enable_memory_tools=True,
+            capabilities=Capability.MEMORY,
         )
 
         mock_backend = MagicMock()
@@ -937,7 +931,10 @@ class TestSessionPersistence:
     @pytest.mark.asyncio
     async def test_emits_task_event_after_session_id_capture(self, mock_tools):
         """Should emit task event with session_id after ResultMessage."""
-        adapter = ClaudeSDKAdapter()
+        # emit=() isolates the session task event, which posts unconditionally
+        # regardless of emit (see _persist_session_id) — narration is opt-out
+        # by default and would otherwise add tool_call/tool_result events too.
+        adapter = ClaudeSDKAdapter(emit=())
 
         # A turn that actually replied via band_send_message, so the missing-reply
         # guard stays quiet and the only send_event call is the session task event.
@@ -1208,9 +1205,9 @@ class TestTurnFailureSurfacing:
 
     @pytest.mark.asyncio
     async def test_execution_narration_covers_user_envelope_results(self, mock_tools):
-        """With Emit.EXECUTION on, a protocol-shaped turn narrates both the
+        """With Emit.TOOL_CALLS on, a protocol-shaped turn narrates both the
         tool_call and the tool_result (which arrives in a user envelope)."""
-        adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+        adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
         turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
         mock_client = self._client_yielding(*turn, _result_message())
 
@@ -1225,7 +1222,7 @@ class TestTurnFailureSurfacing:
         """The tool_result event must carry NAME and IS_ERROR: parse_tool_result
         (converters/parsing.py) drops any payload missing a name outright, and
         every sibling adapter's tool_result payload sets both."""
-        adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+        adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
         assistant_msg = AssistantMessage(
             content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
             model=_ANY_MODEL,

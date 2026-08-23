@@ -257,13 +257,11 @@ class TestPlatformToolsSnippets:
     def test_adapter_with_features(self) -> None:
         """README snippet: AnthropicAdapter with capabilities."""
         from band.adapters import AnthropicAdapter
-        from band.core.types import AdapterFeatures, Capability
+        from band.core.types import Capability
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
-            features=AdapterFeatures(
-                capabilities={Capability.CONTACTS, Capability.MEMORY},
-            ),
+            capabilities={Capability.CONTACTS, Capability.MEMORY},
         )
 
         assert Capability.CONTACTS in adapter.features.capabilities
@@ -281,54 +279,48 @@ class TestEmitOptionsSnippets:
     def test_emit_enum_values(self) -> None:
         from band import Emit
 
-        assert hasattr(Emit, "EXECUTION")
+        assert hasattr(Emit, "TOOL_CALLS")
         assert hasattr(Emit, "THOUGHTS")
         assert hasattr(Emit, "TASK_EVENTS")
 
     def test_anthropic_with_emit(self) -> None:
-        """README snippet: AdapterFeatures(emit={Emit.EXECUTION})."""
-        from band import AdapterFeatures, Emit
+        """README snippet: emit=Emit.TOOL_CALLS."""
+        from band import Emit
         from band.adapters import AnthropicAdapter
 
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5",
-            features=AdapterFeatures(
-                emit={Emit.EXECUTION},
-            ),
+            emit=Emit.TOOL_CALLS,
         )
 
-        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TOOL_CALLS in adapter.features.emit
 
     @skip_no_claude_sdk
     def test_claude_sdk_with_emit_and_capability(self) -> None:
         """README snippet: capabilities + emit combined."""
-        from band import AdapterFeatures, Capability, Emit
+        from band import Capability, Emit
         from band.adapters import ClaudeSDKAdapter
 
         adapter = ClaudeSDKAdapter(
             model="sonnet",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY},
-                emit={Emit.EXECUTION, Emit.THOUGHTS},
-            ),
+            capabilities={Capability.MEMORY},
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )
 
         assert Capability.MEMORY in adapter.features.capabilities
-        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TOOL_CALLS in adapter.features.emit
         assert Emit.THOUGHTS in adapter.features.emit
 
     def test_codex_all_emits(self) -> None:
         """README snippet: all three emit options on CodexAdapter."""
-        from band import AdapterFeatures, Emit
+        from band import Emit
         from band.adapters import CodexAdapter
 
         adapter = CodexAdapter(
-            features=AdapterFeatures(
-                emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
-            ),
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
         )
 
-        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TOOL_CALLS in adapter.features.emit
         assert Emit.THOUGHTS in adapter.features.emit
         assert Emit.TASK_EVENTS in adapter.features.emit
 
@@ -538,7 +530,7 @@ class TestA2ABridgeSnippet:
 
 
 class TestA2AGatewaySnippet:
-    """README snippet: A2AGatewayAdapter(api_key=..., gateway_url=..., port=...)."""
+    """README snippet: A2AGatewayAdapter(gateway_url=..., port=...)."""
 
     @patch.dict(
         os.environ,
@@ -555,7 +547,6 @@ class TestA2AGatewaySnippet:
         gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
         adapter = A2AGatewayAdapter(
-            api_key=os.environ["GATEWAY_API_KEY"],
             gateway_url=gateway_url,
             port=gateway_port,
         )

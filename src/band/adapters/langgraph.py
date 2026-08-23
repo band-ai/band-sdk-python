@@ -5,19 +5,18 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import warnings
 from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
 from langgraph.pregel import Pregel
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -79,7 +78,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -96,41 +95,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         prompt_template: str = "default",
         custom_section: str = "",
         additional_tools: list[Any] | None = None,
-        enable_memory_tools: bool = False,
-        enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
-        features: AdapterFeatures | None = None,
         inject_system_prompt: bool | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
-        # --- Deprecation shim: boolean → features migration ---
-        if (enable_memory_tools or enable_execution_reporting) and features is not None:
-            raise BandConfigError(
-                "Cannot pass both 'features' and legacy boolean params "
-                "(enable_memory_tools, enable_execution_reporting)."
-            )
-
-        if enable_memory_tools or enable_execution_reporting:
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated. "
-                "Use features=AdapterFeatures(...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capabilities = (
-                frozenset({Capability.MEMORY}) if enable_memory_tools else frozenset()
-            )
-            emit = (
-                frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset()
-            )
-            features = AdapterFeatures(capabilities=capabilities, emit=emit)
-
         # Use default LangChain converter if not provided
         super().__init__(
             history_converter=history_converter or LangChainHistoryConverter(),
-            features=features,
+            **features,
         )
 
         # Accept the SDK's portable custom-tool form: convert any CustomToolDef
@@ -401,7 +374,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
@@ -421,7 +394,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type in {"on_tool_end", "on_tool_error"}:
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")

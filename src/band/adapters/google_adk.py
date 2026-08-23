@@ -13,19 +13,18 @@ import json
 import logging
 import re
 import uuid
-import warnings
 from typing import ClassVar, TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -287,7 +286,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -297,46 +296,18 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         model: str = "gemini-2.5-flash",
         system_prompt: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: GoogleADKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         max_history_messages: int = _DEFAULT_MAX_HISTORY_MESSAGES,
         max_transcript_chars: int = _DEFAULT_MAX_TRANSCRIPT_CHARS,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         # Validate google-adk is installed early (cached, so cheap on repeat).
         _require_adk()
 
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or GoogleADKHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -561,7 +532,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     turn_usage = turn_usage + self._usage_from_event(event)
 
                 # Report tool calls/results if enabled
-                if Emit.EXECUTION in self.features.emit:
+                if Emit.TOOL_CALLS in self.features.emit:
                     try:
                         await self._report_event(event, tools)
                     except Exception as e:

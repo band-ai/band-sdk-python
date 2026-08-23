@@ -23,10 +23,7 @@ Example (ACP Server):
     from band import Agent
     from band.integrations.acp import BandACPServerAdapter, ACPServer, run_acp_server
 
-    adapter = BandACPServerAdapter(
-        rest_url="https://app.band.ai",
-        api_key="your-api-key",
-    )
+    adapter = BandACPServerAdapter()
     server = ACPServer(adapter)
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.start()

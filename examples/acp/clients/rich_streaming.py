@@ -50,39 +50,47 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shlex
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
 from band.config import load_agent_config
 
-setup_logging(logging.DEBUG)
+configure_logging(
+    level=logging.DEBUG,
+    root_level=logging.DEBUG,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    acp_agent_command: str = "npx @zed-industries/codex-acp"
+    acp_agent_cwd: str = "."
 
 
 async def main() -> None:
     load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
+    settings = Settings()
 
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("acp_client_agent")
 
     # Command to spawn the remote ACP agent
-    acp_command = shlex.split(
-        os.getenv("ACP_AGENT_COMMAND", "npx @zed-industries/codex-acp")
-    )
+    acp_command = shlex.split(settings.acp_agent_command)
 
     # Working directory for ACP sessions
-    acp_cwd = os.getenv("ACP_AGENT_CWD", ".")
+    acp_cwd = settings.acp_agent_cwd
 
     # Create adapter pointing to remote ACP agent
     adapter = ACPClientAdapter(
@@ -90,19 +98,15 @@ async def main() -> None:
         cwd=acp_cwd,
     )
 
-    # Create and start agent
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info("Starting ACP client bridge with rich streaming...")
     logger.info("Command: %s", " ".join(acp_command))
     logger.info("Thoughts, tool calls, and plans will be posted to the platform.")
-    await agent.run()
+    async with Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

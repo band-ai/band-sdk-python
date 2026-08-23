@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -25,9 +25,7 @@ class TestToolBridging:
     @pytest.mark.asyncio
     async def test_band_tool_executes_and_reports_events(self):
         client = FakeCopilotClient()
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.EXECUTION})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.TOOL_CALLS)
         tools = ToolSchemaFakeTools()
         await run_message(adapter, tools)
 
@@ -48,9 +46,7 @@ class TestToolBridging:
     async def test_band_send_message_tool_call_is_reported(self):
         """band_send_message is reported like any other tool — no suppression."""
         client = FakeCopilotClient()
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.EXECUTION})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.TOOL_CALLS)
         tools = ToolSchemaFakeTools()
         await run_message(adapter, tools)
 
@@ -70,7 +66,7 @@ class TestToolBridging:
     @pytest.mark.asyncio
     async def test_no_execution_events_when_emit_disabled(self):
         client = FakeCopilotClient()
-        adapter = await make_started_adapter(client)
+        adapter = await make_started_adapter(client, emit=())
         tools = ToolSchemaFakeTools()
         await run_message(adapter, tools)
 

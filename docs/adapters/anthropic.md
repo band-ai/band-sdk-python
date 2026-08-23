@@ -95,38 +95,38 @@ This section covers `AnthropicAdapter(...)` constructor parameters. Pass these d
 | `include_base_instructions` | `bool` | `True` | Include Band's base collaboration instructions. Only used when `system_prompt` is not set. |
 | `max_tokens` | `int` | `4096` | Maximum tokens for each Anthropic response. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
-| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `emit` | `Emit \| Iterable[Emit] \| None` | everything supported | Telemetry events the adapter sends back to Band. Opt-out: omitted, defaults to everything `SUPPORTED_EMIT` declares; pass `emit=()` for silence, or narrow with `\|`. |
+| `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `history_converter` | `AnthropicHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
-## AdapterFeatures: Capabilities and Emit
+## Feature flags: Capabilities and Emit
 
-`AdapterFeatures` is passed to the adapter constructor as `features=AdapterFeatures(...)`. It has two jobs:
+`emit=`/`capabilities=` are passed directly to the adapter constructor, never wrapped in an `AdapterFeatures(...)` object:
 
-- `capabilities` exposes optional Band tool categories to the model.
-- `emit` controls telemetry events the adapter sends back to Band.
+- `capabilities` exposes optional Band tool categories to the model. **Opt-in** — omitted, it defaults to empty.
+- `emit` controls telemetry events the adapter sends back to Band. **Opt-out** — omitted, it defaults to everything this adapter supports (every row marked "Yes" below).
 
-For this adapter, all capabilities and emit options are off by default.
+Requesting a value this adapter doesn't support raises `BandConfigError` immediately at construction.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
-| `Emit.EXECUTION` | Yes | Sends `tool_call` and `tool_result` events with tool name, arguments/output, and a `tool_call_id`. |
+| `Emit.TOOL_CALLS` | Yes | Sends `tool_call` and `tool_result` events with tool name, arguments/output, and a `tool_call_id`. |
+| `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 | `Emit.THOUGHTS` | No | Not supported by this adapter. |
 | `Emit.TASK_EVENTS` | No | Not supported by this adapter. |
 
 Example:
 
 ```python
-from band import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-        emit={Emit.EXECUTION},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
+    emit=Emit.TOOL_CALLS | Emit.USAGE,
 )
 ```
 

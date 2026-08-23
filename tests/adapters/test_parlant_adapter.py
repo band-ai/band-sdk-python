@@ -65,8 +65,12 @@ def mock_parlant_server():
     # Container returns Application
     server.container = {MagicMock: mock_app}
 
-    # Mock create_customer
+    # Mock create_customer / create_agent
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
+    created_agent = MagicMock()
+    created_agent.id = "parlant-agent-created"
+    created_agent.create_guideline = AsyncMock()
+    server.create_agent = AsyncMock(return_value=created_agent)
 
     return server
 
@@ -77,7 +81,20 @@ def mock_parlant_agent():
     agent = MagicMock()
     agent.id = "parlant-agent-123"
     agent.name = "TestBot"
+    agent.create_guideline = AsyncMock()
     return agent
+
+
+@pytest.fixture(autouse=True)
+def stub_band_tools():
+    """Stub the Band->Parlant tool build in on_started.
+
+    The real ``create_parlant_tools`` imports ``parlant.sdk``; doing that mid-suite,
+    after other tests have patched ``parlant.core.*`` into ``sys.modules``, corrupts
+    beartype's import hook and breaks later genuine parlant imports.
+    """
+    with patch("band.adapters.parlant.create_parlant_tools", return_value=[]) as stub:
+        yield stub
 
 
 class TestInitialization:
@@ -105,7 +122,23 @@ class TestInitialization:
         assert adapter._app is None
         assert adapter._room_sessions == {}
         assert adapter._room_customers == {}
-        assert adapter._system_prompt == ""
+
+    def test_prompt_params_rejected_with_borrowed_agent(
+        self, mock_parlant_server, mock_parlant_agent
+    ):
+        """system_prompt/custom_section only shape an adapter-created agent."""
+        with pytest.raises(ValueError, match="parlant_agent"):
+            ParlantAdapter(
+                server=mock_parlant_server,
+                parlant_agent=mock_parlant_agent,
+                system_prompt="You are a custom assistant.",
+            )
+        with pytest.raises(ValueError, match="parlant_agent"):
+            ParlantAdapter(
+                server=mock_parlant_server,
+                parlant_agent=mock_parlant_agent,
+                custom_section="Be helpful.",
+            )
 
 
 class TestOnStarted:
@@ -117,22 +150,18 @@ class TestOnStarted:
         return MagicMock(name="Application")
 
     @pytest.mark.asyncio
-    async def test_renders_system_prompt(
-        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    async def test_custom_section_appended_to_created_agent_description(
+        self, mock_parlant_server, mock_application_class
     ):
-        """Should render system prompt from agent metadata."""
+        """custom_section must reach the created Parlant agent's description."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
-            parlant_agent=mock_parlant_agent,
+            custom_section="Be helpful.",
         )
 
         mock_app = MagicMock()
-
-        # Create a mock module with Application
         mock_module = MagicMock()
         mock_module.Application = mock_application_class
-
-        # Set up container to return app when accessed with Application class
         mock_parlant_server.container = {mock_application_class: mock_app}
 
         with patch.dict(
@@ -143,17 +172,18 @@ class TestOnStarted:
                 agent_name="TestBot", agent_description="A test bot"
             )
 
-        assert adapter._system_prompt != ""
-        assert "TestBot" in adapter._system_prompt
+        mock_parlant_server.create_agent.assert_awaited_once_with(
+            name="TestBot",
+            description="A test bot\n\nBe helpful.",
+        )
 
     @pytest.mark.asyncio
-    async def test_uses_custom_system_prompt_if_provided(
-        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    async def test_system_prompt_overrides_created_agent_description(
+        self, mock_parlant_server, mock_application_class
     ):
-        """Should use custom system_prompt if provided."""
+        """system_prompt must fully replace the created agent's description."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
-            parlant_agent=mock_parlant_agent,
             system_prompt="You are a custom assistant.",
         )
 
@@ -170,7 +200,10 @@ class TestOnStarted:
                 agent_name="TestBot", agent_description="A test bot"
             )
 
-        assert adapter._system_prompt == "You are a custom assistant."
+        mock_parlant_server.create_agent.assert_awaited_once_with(
+            name="TestBot",
+            description="You are a custom assistant.",
+        )
 
     @pytest.mark.asyncio
     async def test_gets_application_from_container(
@@ -198,6 +231,214 @@ class TestOnStarted:
         assert adapter._app is mock_app
 
 
+class TestLifecycleOwnedServer:
+    """The adapter boots/owns the Parlant server inside its own lifecycle."""
+
+    @pytest.fixture
+    def application_modules(self):
+        """Mock parlant.core.application so on_started's import resolves."""
+        application_class = MagicMock(name="Application")
+        module = MagicMock()
+        module.Application = application_class
+        with patch.dict(sys.modules, {"parlant.core.application": module}):
+            yield application_class
+
+    @pytest.fixture
+    def owned_server(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        """Patch running_parlant_server with a fake CM yielding the mock server."""
+        mock_parlant_server.create_agent = AsyncMock(return_value=mock_parlant_agent)
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        cm = MagicMock()
+
+        async def enter():
+            setup = factory.call_args.kwargs["setup"]
+            await setup(mock_parlant_server)
+            return mock_parlant_server
+
+        cm.__aenter__ = AsyncMock(side_effect=enter)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "band.adapters.parlant.running_parlant_server", return_value=cm
+        ) as factory:
+            yield factory, cm, mock_parlant_server
+
+    async def test_boots_owned_server_and_creates_agent(
+        self, owned_server, mock_parlant_agent
+    ):
+        factory, cm, server = owned_server
+        adapter = ParlantAdapter(name="Tom", description="A cat", nlp_service="svc")
+
+        await adapter.on_started("BandName", "Band description")
+
+        assert factory.call_count == 1
+        assert factory.call_args.kwargs["nlp_service"] == "svc"
+        assert callable(factory.call_args.kwargs["setup"])
+        cm.__aenter__.assert_awaited_once()
+        server.create_agent.assert_awaited_once_with(name="Tom", description="A cat")
+        assert adapter.server is server
+        assert adapter.parlant_agent is mock_parlant_agent
+        assert adapter._app is not None
+
+    async def test_name_description_default_to_band_metadata(self, owned_server):
+        _, _, server = owned_server
+        adapter = ParlantAdapter()
+
+        await adapter.on_started("BandName", "Band description")
+
+        server.create_agent.assert_awaited_once_with(
+            name="BandName", description="Band description"
+        )
+
+    async def test_applies_deferred_guidelines_with_band_tools_default(
+        self, owned_server, mock_parlant_agent, stub_band_tools
+    ):
+        band_tools = ["band-tool-entry"]
+        stub_band_tools.return_value = band_tools
+        adapter = ParlantAdapter(name="X", description="Y")
+        adapter.add_guideline(condition="c1", action="a1")
+        adapter.add_guideline(condition="c2", action="a2", tools=[])
+        adapter.add_guideline(condition="c3", action="a3", metadata={"k": "v"})
+
+        await adapter.on_started("BandName", "Band description")
+
+        calls = mock_parlant_agent.create_guideline.await_args_list
+        assert [c.kwargs for c in calls] == [
+            {"condition": "c1", "action": "a1", "tools": band_tools},
+            {"condition": "c2", "action": "a2", "tools": []},
+            {
+                "condition": "c3",
+                "action": "a3",
+                "tools": band_tools,
+                "metadata": {"k": "v"},
+            },
+        ]
+
+    async def test_guideline_failure_has_no_live_siblings_and_retries_from_failure(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        """A failed create checkpoints earlier work and never starts later work."""
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        mock_parlant_agent.create_guideline = AsyncMock(
+            side_effect=[None, RuntimeError("bad guideline"), None, None]
+        )
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter.add_guideline(condition="first", action="done")
+        adapter.add_guideline(condition="second", action="retry")
+        adapter.add_guideline(condition="third", action="later")
+
+        with pytest.raises(RuntimeError, match="bad guideline"):
+            await adapter.on_started("BandName", "Band description")
+
+        assert [
+            call.kwargs["condition"]
+            for call in mock_parlant_agent.create_guideline.await_args_list
+        ] == ["first", "second"]
+
+        await adapter.on_started("BandName", "Band description")
+
+        assert [
+            call.kwargs["condition"]
+            for call in mock_parlant_agent.create_guideline.await_args_list
+        ] == ["first", "second", "second", "third"]
+
+    async def test_add_guideline_after_start_raises(self, owned_server):
+        adapter = ParlantAdapter(name="X", description="Y")
+        await adapter.on_started("BandName", "Band description")
+
+        with pytest.raises(RuntimeError, match="before the agent starts"):
+            adapter.add_guideline(condition="late", action="too late")
+
+    async def test_configure_callback_receives_live_objects(
+        self, owned_server, mock_parlant_agent
+    ):
+        _, _, server = owned_server
+        seen: list[tuple] = []
+
+        async def configure(srv, agent):
+            seen.append((srv, agent))
+
+        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+        await adapter.on_started("BandName", "Band description")
+
+        assert seen == [(server, mock_parlant_agent)]
+
+    async def test_cleanup_all_closes_owned_server(self, owned_server):
+        _, cm, _ = owned_server
+        adapter = ParlantAdapter(name="X", description="Y")
+        await adapter.on_started("BandName", "Band description")
+
+        await adapter.cleanup_all()
+
+        cm.__aexit__.assert_awaited_once()
+        assert adapter._server is None
+        assert adapter._app is None
+
+    async def test_cleanup_all_leaves_borrowed_server(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        await adapter.on_started("BandName", "Band description")
+
+        await adapter.cleanup_all()
+
+        assert adapter._server is mock_parlant_server
+        assert adapter._parlant_agent is mock_parlant_agent
+        assert adapter._app is None
+
+    async def test_restart_with_borrowed_server_does_not_duplicate_guidelines(
+        self, mock_parlant_server, mock_parlant_agent, application_modules
+    ):
+        """A borrowed agent survives cleanup; its guidelines must not re-create."""
+        mock_parlant_server.container = {application_modules: MagicMock()}
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter.add_guideline(condition="c", action="a")
+
+        await adapter.on_started("BandName", "Band description")
+        await adapter.cleanup_all()
+        await adapter.on_started("BandName", "Band description")
+
+        assert mock_parlant_agent.create_guideline.await_count == 1
+
+    async def test_restart_with_owned_server_applies_guidelines_to_fresh_agent(
+        self, owned_server, mock_parlant_agent
+    ):
+        adapter = ParlantAdapter(name="X", description="Y")
+        adapter.add_guideline(condition="c", action="a")
+
+        await adapter.on_started("BandName", "Band description")
+        await adapter.cleanup_all()
+        await adapter.on_started("BandName", "Band description")
+
+        assert mock_parlant_agent.create_guideline.await_count == 2
+
+    async def test_on_started_failure_leaves_cleanup_to_server_context(
+        self, owned_server
+    ):
+        _, cm, _ = owned_server
+
+        async def configure(srv, agent):
+            raise RuntimeError("configure blew up")
+
+        adapter = ParlantAdapter(name="X", description="Y", configure=configure)
+
+        with pytest.raises(RuntimeError, match="configure blew up"):
+            await adapter.on_started("BandName", "Band description")
+
+        # A context manager whose __aenter__ raises owns its partial-enter cleanup;
+        # calling __aexit__ again from the adapter would double-close it.
+        cm.__aexit__.assert_not_awaited()
+        assert adapter._server is None
+
+
 class TestOnMessage:
     """Tests for on_message() method."""
 
@@ -212,7 +453,6 @@ class TestOnMessage:
         )
         adapter.agent_name = "TestBot"
         adapter.agent_description = "A test bot"
-        adapter._system_prompt = "Test prompt"
 
         # Mock the application
         mock_app = MagicMock()
@@ -258,6 +498,24 @@ class TestOnMessage:
         # Verify session was created
         assert "room-123" in initialized_adapter._room_sessions
         mock_parlant_server.create_customer.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_customer_id_does_not_collide_across_rooms_sharing_a_prefix(
+        self, initialized_adapter, mock_parlant_server
+    ):
+        """Two rooms sharing a UUID prefix must map to distinct Parlant customers."""
+        room_a = "aaaaaaaa-1111-4444-8888-000000000001"
+        room_b = "aaaaaaaa-2222-4444-8888-000000000002"
+
+        await initialized_adapter._get_or_create_customer(room_a, "Alice")
+        await initialized_adapter._get_or_create_customer(room_b, "Bob")
+
+        customer_ids = [
+            call.kwargs["id"]
+            for call in mock_parlant_server.create_customer.await_args_list
+        ]
+        assert customer_ids == [f"band-{room_a}", f"band-{room_b}"]
+        assert len(set(customer_ids)) == 2
 
     @pytest.mark.asyncio
     async def test_sends_customer_message_to_parlant(
@@ -499,7 +757,6 @@ class TestErrorHandling:
             parlant_agent=mock_parlant_agent,
         )
         adapter.agent_name = "TestBot"
-        adapter._system_prompt = "Test prompt"
 
         # Mock app that fails on create_customer_message
         mock_app = MagicMock()
@@ -548,7 +805,6 @@ class TestErrorHandling:
             parlant_agent=mock_parlant_agent,
         )
         adapter.agent_name = "TestBot"
-        adapter._system_prompt = "Test prompt"
 
         mock_app = MagicMock()
         mock_app.sessions = AsyncMock()

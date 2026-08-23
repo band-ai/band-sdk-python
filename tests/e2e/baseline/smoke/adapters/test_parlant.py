@@ -1,14 +1,11 @@
 """Parlant showcase smokes — the toolkit driving the Parlant adapter live.
 
 Parlant is intentionally NOT a baseline *matrix* adapter (it is listed in
-``NON_AGENT_ADAPTERS``): it needs a running Parlant server and per-agent setup that
-the registry's synchronous ``build_adapter`` seam can't express. So, unlike the
-other adapter showcases, these bring up an in-process server via
-``running_parlant_server`` (which owns the hang-free teardown, OpenAI NLP service,
-and ephemeral ports), build the agent + adapter by hand, then hand the finished
-adapter to the toolkit's ``running_provisioned_agent`` — so everything else (agent
-provisioning, capture, the delivery-status barrier, reaping) is the same shared
-plumbing as every other baseline test.
+``NON_AGENT_ADAPTERS``), but its customer-facing adapter now owns the in-process
+server and per-agent setup. This showcase builds that adapter directly, then hands
+it to the toolkit's ``running_provisioned_agent`` so provisioning, capture, the
+delivery-status barrier, and reaping use the same shared plumbing as every other
+baseline test.
 
 This module ``importorskip``s parlant, so it skips cleanly where parlant isn't
 installed — e.g. the ``crewai`` lane, whose ``dev-crewai`` venv conflicts with
@@ -24,8 +21,6 @@ Run with:
 """
 
 from __future__ import annotations
-
-import contextlib
 
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
@@ -55,7 +50,7 @@ _SHORT = "You are a friendly assistant in a chat room. Reply in one short senten
 @lane(Lane.PARLANT)
 @requires(
     Dep.OPENAI
-)  # running_parlant_server uses the OpenAI NLP service (OPENAI_API_KEY)
+)  # ParlantAdapter is configured with the OpenAI NLP service (OPENAI_API_KEY)
 @flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 # The barrier below waits up to ``e2e_timeout * 3`` (360s at the 120s default) for
 # Parlant's cold multi-call pipeline. The outer cap is ``e2e_timeout + extra``, so
@@ -72,34 +67,24 @@ async def test_parlant_replies(
 ) -> None:
     """A Parlant agent (in-process server) processes a message and replies.
 
-    Construction is bespoke (server + parlant agent + adapter), but the run is the
-    standard toolkit flow: ``running_provisioned_agent`` provisions and runs it,
-    and the delivery barrier proves the turn completed before we read the reply.
-    The ``AsyncExitStack`` closes the agent before the server (LIFO), so the server
-    outlives the run; ``running_parlant_server`` then tears the server down without
-    hanging on Parlant's serve-forever ``__aexit__``.
+    The adapter owns its server and creates its Parlant agent with
+    ``custom_section`` in the ordinary customer-facing construction path. The
+    shared toolkit provisions and runs it, and the delivery barrier proves the
+    turn completed before we read the reply.
     """
+    import parlant.sdk as p
+
     from band.adapters.parlant import ParlantAdapter
 
-    from tests.e2e.baseline.toolkit.parlant_server import running_parlant_server
-
-    async with contextlib.AsyncExitStack() as stack:
-        # running_parlant_server fills in the OpenAI NLP service and fresh ephemeral
-        # ports by default, and tears the server down without hanging.
-        server = await stack.enter_async_context(running_parlant_server())
-        parlant_agent = await server.create_agent(
-            name="E2E Showcase Agent",
-            description=(
-                "A test agent for baseline E2E validation. Keep replies short."
-            ),
-        )
-        adapter = ParlantAdapter(
-            server=server, parlant_agent=parlant_agent, custom_section=_SHORT
-        )
-        agent = await stack.enter_async_context(
-            running_provisioned_agent(adapter, resource_manager, label="parlant")
-        )
-
+    adapter = ParlantAdapter(
+        name="E2E Showcase Agent",
+        description="A test agent for baseline E2E validation. Keep replies short.",
+        nlp_service=p.NLPServices.openai,
+        custom_section=_SHORT,
+    )
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="parlant"
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-parlant-reply", participants=[agent.id]
         )

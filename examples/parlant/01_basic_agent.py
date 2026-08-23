@@ -8,8 +8,10 @@
 """
 Basic Parlant agent example using the official Parlant SDK.
 
-This example shows how to create a Band agent using the Parlant SDK
-directly, with the full set of Band tools.
+The adapter owns the Parlant server: it reserves free ports, boots the server
+when the Band agent starts, and tears it down on stop. Guidelines declared with
+``add_guideline`` are created on the live agent at startup, with the full Band
+toolset attached by default.
 
 Run with:
     uv run examples/parlant/01_basic_agent.py
@@ -21,18 +23,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 import parlant.sdk as p
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.ports import reserve_server_ports
-from band.integrations.parlant.tools import create_parlant_tools
 
-setup_logging()
+configure_logging(
+    logging.INFO, style="rich", extra_loggers={"band_parlant_agent": logging.INFO}
+)
 logger = logging.getLogger(__name__)
 
 # Agent description with detailed instructions
@@ -66,99 +66,58 @@ AGENT_DESCRIPTION = """You are a helpful, knowledgeable assistant in the Band mu
 """
 
 
-async def setup_agent_with_guidelines(
-    server: p.Server,
-    tools: list,
-) -> p.Agent:
-    """Create and configure a Parlant agent with basic guidelines and tools."""
-    agent = await server.create_agent(
+def build_adapter() -> ParlantAdapter:
+    """Build the Parlant adapter with basic guidelines (Band tools auto-attached)."""
+    adapter = ParlantAdapter(
         name="Parlant",
         description=AGENT_DESCRIPTION,
+        nlp_service=p.NLPServices.openai,  # requires OPENAI_API_KEY
     )
 
     # When user asks a question or needs help
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks a question or needs help with something",
         action="Analyze the request. If you can answer directly, use band_send_message with the user's name in mentions. If you need to think through a complex problem, first use band_send_event with type='thought' to share your reasoning.",
-        tools=tools,
     )
 
     # When user asks to add someone or wants specialized help
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks to add someone to the chat, mentions a specific agent name, or asks for specialized help you can't provide",
         action="First use band_lookup_peers to find available agents. Then IMMEDIATELY call band_add_participant with the identifier parameter set to the exact identifier from the band_lookup_peers result. Do NOT ask for confirmation - just add them. If user wants multiple agents, call band_add_participant once for each.",
-        tools=tools,
     )
 
     # When user asks about participants
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks who is in the room, about participants, or who they're talking to",
         action="Use band_get_participants to list all current room members",
-        tools=tools,
     )
 
     # When user wants to create a new room
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User wants to create a new chat room, discussion space, or separate conversation",
         action="Use band_create_chatroom to create a dedicated space for the new topic",
-        tools=tools,
     )
 
     # When user asks to remove someone
-    await agent.create_guideline(
+    adapter.add_guideline(
         condition="User asks to remove someone from the chat",
         action="Use band_remove_participant with the identifier parameter set to the exact identifier to remove",
-        tools=tools,
     )
 
-    return agent
+    return adapter
 
 
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
+    adapter = build_adapter()
 
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-    # Start Parlant server with OpenAI (requires OPENAI_API_KEY env var)
-    ports = reserve_server_ports()
-    async with p.Server(
-        port=ports.port,
-        tool_service_port=ports.tool_service_port,
-        nlp_service=p.NLPServices.openai,
-    ) as server:
-        # Create Parlant tools INSIDE server context
-        parlant_tools = create_parlant_tools()
-        logger.info(
-            "Created %s Parlant tools: %s",
-            len(parlant_tools),
-            [t.tool.name for t in parlant_tools],
-        )
-
-        # Create Parlant agent with guidelines and tools
-        parlant_agent = await setup_agent_with_guidelines(server, parlant_tools)
-        logger.info("Parlant agent created: %s", parlant_agent.id)
-
-        # Create adapter using Parlant SDK directly
-        adapter = ParlantAdapter(
-            server=server,
-            parlant_agent=parlant_agent,
-        )
-
-        # Create and start Band agent
-        agent = Agent.from_config(
-            "parlant_agent",
-            adapter=adapter,
-            ws_url=ws_url,
-            rest_url=rest_url,
-        )
-
-        logger.info("Starting Band agent with Parlant SDK (full tools)...")
-        await agent.run()
+    logger.info("Starting Band agent with Parlant SDK (full tools)...")
+    async with Agent.from_config(
+        "parlant_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

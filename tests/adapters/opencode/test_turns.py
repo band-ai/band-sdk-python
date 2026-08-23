@@ -8,7 +8,6 @@ import json
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
 )
@@ -111,8 +110,8 @@ async def test_reports_tool_events_when_enabled() -> None:
         ]
     )
     adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(enable_execution_reporting=True),
         client_factory=lambda _config: fake_client,
+        emit=Emit.TOOL_CALLS,
     )
     tools = FakeAgentTools()
 
@@ -155,8 +154,8 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting(
         ]
     )
     adapter = OpencodeAdapter(
-        config=OpencodeAdapterConfig(enable_execution_reporting=True),
         client_factory=lambda _config: fake_client,
+        emit=Emit.TOOL_CALLS,
     )
     tools = FakeAgentTools()
 
@@ -332,7 +331,7 @@ async def test_emits_turn_usage_folding_reasoning_into_output(
     )
     adapter = OpencodeAdapter(
         client_factory=lambda _config: fake_client,
-        features=AdapterFeatures(emit={Emit.USAGE}),
+        emit=Emit.USAGE,
     )
     tools = FakeAgentTools()
 
@@ -401,9 +400,8 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
     fake_client = FakeOpencodeClient()
     adapter = OpencodeAdapter(
         client_factory=lambda _config: fake_client,
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY}, emit={Emit.EXECUTION}
-        ),
+        capabilities=Capability.MEMORY,
+        emit=Emit.TOOL_CALLS,
     )
     await adapter.on_started("OpenCode Agent", "A coding agent")
     # OpenCode prefixes the band MCP tool with the agent-scoped server name
@@ -529,7 +527,7 @@ async def test_room_posting_tool_reply_suppresses_text_fallback(
 ) -> None:
     """When the model replies via band_send_message, the adapter must not also
     post the assistant's plain text (double-post). Detection holds without
-    execution reporting: Emit.EXECUTION governs only the tool_call/tool_result
+    execution reporting: Emit.TOOL_CALLS governs only the tool_call/tool_result
     narration, not the text-fallback suppression."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[

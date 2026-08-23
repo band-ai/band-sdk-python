@@ -15,6 +15,7 @@ from uuid import uuid4
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Task, TaskState, TaskStatus
+from typing_extensions import Unpack
 
 from band.client.rest import (
     AsyncRestClient,
@@ -28,7 +29,7 @@ from band.client.rest import (
 from band.converters.a2a_gateway import GatewayHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -96,8 +97,6 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         from band.integrations.a2a.gateway import A2AGatewayAdapter
 
         adapter = A2AGatewayAdapter(
-            rest_url="https://app.band.ai",
-            api_key="your-api-key",
             gateway_url="http://localhost:10000",
             port=10000,
         )
@@ -114,32 +113,37 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
     def __init__(
         self,
-        rest_url: str = "https://app.band.ai",
-        api_key: str = "",
-        gateway_url: str = "http://localhost:10000",
+        gateway_url: str | None = None,
         port: int = 10000,
         config: A2AGatewayAdapterConfig | None = None,
-        features: AdapterFeatures | None = None,
+        rest_client: AsyncRestClient | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize gateway adapter.
 
         Args:
-            rest_url: Base URL for Band REST API.
-            api_key: API key for authentication (same as Agent.create()).
-            gateway_url: Base URL for A2A endpoints exposed by this gateway.
+            gateway_url: Base URL for A2A endpoints exposed by this gateway
+                (what remote clients see in agent cards). ``None`` (default)
+                derives ``http://localhost:{port}``; set explicitly when the
+                gateway is reachable at a different public address.
             port: Port for HTTP server to listen on.
             config: A2A Gateway runtime configuration.
+            rest_client: Optional ``AsyncRestClient`` injection seam (tests).
+                Normally the client is built at startup from the platform
+                connection the runtime injects — the credentials given to
+                ``Agent.create()`` are not repeated here.
         """
         super().__init__(
             history_converter=GatewayHistoryConverter(),
-            features=features,
+            **features,
         )
-        self.gateway_url = gateway_url
+        self.gateway_url = gateway_url or f"http://localhost:{port}"
         self.port = port
         self.config = config or A2AGatewayAdapterConfig()
 
-        # Direct REST client for room/message operations
-        self._rest = AsyncRestClient(base_url=rest_url, api_key=api_key)
+        # Direct REST client for room/message operations; built at startup
+        # from the injected platform connection unless a seam is provided.
+        self._rest: AsyncRestClient | None = rest_client
 
         # Peers keyed by slug (primary) and UUID (fallback)
         self._peers: dict[str, Peer] = {}  # slug → Peer
@@ -161,6 +165,9 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             agent_description: Description of this agent.
         """
         await super().on_started(agent_name, agent_description)
+
+        if self._rest is None:
+            self._rest = self.build_rest_client()
 
         # Fetch ALL peers at startup using REST client (with pagination)
         all_peers = await self._fetch_all_peers()
@@ -184,6 +191,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
         logger.info("Gateway HTTP server started on port %d", self.port)
 
+    @property
+    def rest(self) -> AsyncRestClient:
+        """The gateway's REST client; raises before the agent starts."""
+        return self.require_rest_client(self._rest)
+
     async def _fetch_all_peers(self) -> list[Peer]:
         """Fetch every peer page using the REST client's retry policy."""
         all_peers: list[Peer] = []
@@ -191,7 +203,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         page_size = 100
 
         while True:
-            response = await self._rest.agent_api_peers.list_agent_peers(
+            response = await self.rest.agent_api_peers.list_agent_peers(
                 page=page,
                 page_size=page_size,
                 request_options=DEFAULT_REQUEST_OPTIONS,
@@ -373,7 +385,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> None:
         """Send the A2A request text to the selected Band peer."""
         content = context.get_user_input()
-        await self._rest.agent_api_messages.create_agent_chat_message(
+        await self.rest.agent_api_messages.create_agent_chat_message(
             chat_id=request.room_id,
             message=ChatMessageRequest(
                 content=f"@{request.peer.name} {content}",
@@ -456,14 +468,14 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         # New or None context_id → create new room
         if context_id is None or context_id not in self._context_to_room:
             # Create new room via REST
-            response = await self._rest.agent_api_chats.create_agent_chat(
+            response = await self.rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             room_id = response.data.id
 
             # Add target peer to room
-            await self._rest.agent_api_participants.add_agent_chat_participant(
+            await self.rest.agent_api_participants.add_agent_chat_participant(
                 chat_id=room_id,
                 participant=ParticipantRequest(
                     participant_id=target_peer_id, role="member"
@@ -487,7 +499,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
             # Same context, different peer → add to room (multi-agent conversation)
             if target_peer_id not in self._room_participants.get(room_id, set()):
-                await self._rest.agent_api_participants.add_agent_chat_participant(
+                await self.rest.agent_api_participants.add_agent_chat_participant(
                     chat_id=room_id,
                     participant=ParticipantRequest(
                         participant_id=target_peer_id, role="member"
@@ -548,7 +560,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             room_id: The room ID.
             context_id: The A2A context ID.
         """
-        await self._rest.agent_api_events.create_agent_chat_event(
+        await self.rest.agent_api_events.create_agent_chat_event(
             chat_id=room_id,
             event=ChatEventRequest(
                 content="A2A gateway context",

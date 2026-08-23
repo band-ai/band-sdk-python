@@ -142,7 +142,8 @@ This section covers `LangGraphAdapter(...)` constructor parameters. Pass these d
 | `custom_section` | `str` | `""` | Custom instructions appended to Band's generated system prompt. Applies in the simple or `graph_factory` path. |
 | `additional_tools` | `list \| None` | `None` | Extra LangChain tools merged with Band tools in the simple pattern. For a custom factory, merge your tools inside the factory. |
 | `recursion_limit` | `int` | `50` | LangGraph recursion limit for each invocation. |
-| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings for capability gates, tool filters, and supported emit telemetry. |
+| `emit` | `Emit \| Iterable[Emit] \| None` | everything supported | Telemetry events the adapter sends back to Band. Opt-out: omitted, defaults to everything `SUPPORTED_EMIT` declares; pass `emit=()` for silence, or narrow with `\|`. |
+| `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `history_converter` | `LangChainHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
 You must provide one of these:
@@ -151,35 +152,34 @@ You must provide one of these:
 - `graph_factory` for a custom graph that receives Band tools.
 - `graph` for a self-contained static graph.
 
-## AdapterFeatures: Capabilities and Emit
+## Feature flags: Capabilities and Emit
 
-`AdapterFeatures` is passed to the adapter constructor as `features=AdapterFeatures(...)`. It has two common groups:
+`emit=`/`capabilities=` are passed directly to the adapter constructor, never wrapped in an `AdapterFeatures(...)` object:
 
-- `capabilities` exposes optional Band tool categories to the model.
-- `emit` controls supported telemetry events emitted while the graph streams.
+- `capabilities` exposes optional Band tool categories to the model. **Opt-in** — omitted, it defaults to empty.
+- `emit` controls supported telemetry events emitted while the graph streams. **Opt-out** — omitted, it defaults to everything this adapter supports (every row marked "Yes" below).
 
-For this adapter, optional capabilities are off by default.
+Requesting a value this adapter doesn't support raises `BandConfigError` immediately at construction.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to the graph. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
-| `Emit.EXECUTION` | Yes | Emits LangGraph tool start/end/error events as Band `tool_call` and `tool_result` events with shared `{name, args|output, tool_call_id}` payloads. |
+| `Emit.TOOL_CALLS` | Yes | Emits LangGraph tool start/end/error events as Band `tool_call` and `tool_result` events with shared `{name, args|output, tool_call_id}` payloads. |
+| `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 | `Emit.THOUGHTS` | No | Not supported by this adapter. |
 | `Emit.TASK_EVENTS` | No | Not supported by this adapter. |
 
 Example with optional capability tools:
 
 ```python
-from band import AdapterFeatures, Capability
+from band.core.types import Capability
 from band.adapters import LangGraphAdapter
 
 adapter = LangGraphAdapter(
     llm=llm,
     checkpointer=checkpointer,
-    features=AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-    ),
+    capabilities=Capability.CONTACTS | Capability.MEMORY,
 )
 ```
 

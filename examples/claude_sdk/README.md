@@ -101,13 +101,13 @@ Features:
 Enable extended thinking for complex reasoning tasks:
 
 ```python
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
 adapter = ClaudeSDKAdapter(
     model="opus",
     fallback_model="sonnet",
     max_thinking_tokens=10000,  # Enable extended thinking
-    features=AdapterFeatures(emit={Emit.EXECUTION}),
+    emit=Emit.TOOL_CALLS | Emit.THOUGHTS,  # Report tool calls and thinking as events
 )
 ```
 

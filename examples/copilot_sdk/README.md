@@ -68,15 +68,17 @@ uv run examples/copilot_sdk/01_basic_agent.py
 
 ## Feature flags
 
-Event reporting and platform-tool exposure are **off by default** — opt in
-via `AdapterFeatures`:
+Event reporting (`emit`) defaults to everything the adapter supports; pass
+`emit=` yourself only to narrow it. Platform-tool exposure (`capabilities`)
+stays opt-in — pass it explicitly to expose the memory/contacts tool groups:
 
 ```python
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 
-features=AdapterFeatures(
-    emit={Emit.EXECUTION, Emit.THOUGHTS},          # tool_call/thought events
-    capabilities={Capability.MEMORY, Capability.CONTACTS},  # band_* tool groups
+adapter = CopilotSDKAdapter(
+    config,
+    emit=Emit.TOOL_CALLS | Emit.THOUGHTS,                    # narrow (optional)
+    capabilities=Capability.MEMORY | Capability.CONTACTS,    # band_* tool groups
 )
 ```
 
@@ -168,7 +170,7 @@ on-disk Copilot sessions). Opt out with `AgentConfig(single_instance=False)`.
 | BYOK turns fail: `Session error: Failed to get response from the AI model … 429 You exceeded your current quota` | Provider key out of quota or invalid | Fund/replace the provider key, or drop `provider=` to use the Copilot subscription |
 | Agent startup is slow | Runtime downloading/spawning at boot | Pre-fetch with `python -m copilot download-runtime` |
 | Turn raises after `turn_timeout_s` (default 120s) | Long-running turn | Raise `CopilotSDKAdapterConfig(turn_timeout_s=...)` |
-| Agent replies but no tool/thought events appear | `Emit` flags not set | Pass `features=AdapterFeatures(emit={...})` |
+| Agent replies but no tool/thought events appear | `emit=` was passed and narrowed past what's needed (default already includes everything) | Drop `emit=`, or widen it to include `Emit.TOOL_CALLS`/`Emit.THOUGHTS` |
 | `BandConfigError: … already running on this host` at startup | Another process runs the same agent id | Stop it, or set `AgentConfig(single_instance=False)` |
 | Room reply says the operator did not answer (console handler) | `ask_user` question expired unanswered | Answer within `answer_timeout_s`, or raise it (keep it below `turn_timeout_s`) |
 | Every question answers "no operator is attached" (console handler) | stdin closed (headless run / piped input exhausted) | Run in a real terminal, or use `ask_user="room"` |

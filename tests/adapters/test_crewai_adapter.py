@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from band.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage
 
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
@@ -66,19 +66,6 @@ def CrewAIAdapter(crewai_mocks) -> type["CrewAIAdapterType"]:
 
     module = importlib.import_module("band.adapters.crewai")
     return module.CrewAIAdapter
-
-
-@pytest.fixture
-def started_tools(CrewAIAdapter, crewai_mocks):
-    """Start a CrewAIAdapter with adapter_kwargs, returning its registered
-    platform tools keyed by name."""
-
-    async def _start(**adapter_kwargs: Any) -> dict[str, Any]:
-        adapter = CrewAIAdapter(**adapter_kwargs)
-        await adapter.on_started("TestBot", "Test bot")
-        return {t.name: t for t in crewai_mocks.Agent.call_args[1]["tools"]}
-
-    return _start
 
 
 @pytest.fixture
@@ -273,10 +260,17 @@ class TestOnStarted:
         assert call_kwargs["role"] == "TestBot"
 
     @pytest.mark.asyncio
-    async def test_creates_platform_tools(self, started_tools):
-        started = await started_tools()
+    async def test_creates_platform_tools(self, CrewAIAdapter, crewai_mocks):
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
 
         # Check for required platform tools (don't check exact count to avoid brittleness)
+        tool_names = [t.name for t in tools]
         required_tools = [
             "band_send_message",
             "band_send_event",
@@ -287,7 +281,7 @@ class TestOnStarted:
             "band_create_chatroom",
         ]
         for tool_name in required_tools:
-            assert tool_name in started, f"Missing required tool: {tool_name}"
+            assert tool_name in tool_names, f"Missing required tool: {tool_name}"
 
     @pytest.mark.asyncio
     async def test_includes_platform_instructions_in_backstory(
@@ -845,46 +839,78 @@ class TestContactsUpdate:
 
 class TestContactAndMemoryToolRegistration:
     @pytest.mark.asyncio
-    async def test_contact_tools_are_excluded_by_default(self, started_tools):
-        started = await started_tools()
+    async def test_contact_tools_are_excluded_by_default(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
 
-        assert "band_list_contacts" not in started
-        assert "band_add_contact" not in started
-        assert "band_remove_contact" not in started
-        assert "band_list_contact_requests" not in started
-        assert "band_respond_contact_request" not in started
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        tool_names = {tool.name for tool in tools}
+
+        assert "band_list_contacts" not in tool_names
+        assert "band_add_contact" not in tool_names
+        assert "band_remove_contact" not in tool_names
+        assert "band_list_contact_requests" not in tool_names
+        assert "band_respond_contact_request" not in tool_names
 
     @pytest.mark.asyncio
-    async def test_contact_tools_are_included_when_enabled(self, started_tools):
-        started = await started_tools(
-            features=AdapterFeatures(capabilities={Capability.CONTACTS}),
+    async def test_contact_tools_are_included_when_enabled(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            capabilities=Capability.CONTACTS,
         )
+        await adapter.on_started("TestBot", "Test bot")
 
-        assert "band_list_contacts" in started
-        assert "band_add_contact" in started
-        assert "band_remove_contact" in started
-        assert "band_list_contact_requests" in started
-        assert "band_respond_contact_request" in started
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        tool_names = {tool.name for tool in tools}
 
-    @pytest.mark.asyncio
-    async def test_memory_tools_are_excluded_by_default(self, started_tools):
-        started = await started_tools()
-
-        assert "band_list_memories" not in started
-        assert "band_store_memory" not in started
-        assert "band_get_memory" not in started
-        assert "band_supersede_memory" not in started
-        assert "band_archive_memory" not in started
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
+        assert "band_remove_contact" in tool_names
+        assert "band_list_contact_requests" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
     @pytest.mark.asyncio
-    async def test_memory_tools_are_included_when_enabled(self, started_tools):
-        started = await started_tools(enable_memory_tools=True)
+    async def test_memory_tools_are_excluded_by_default(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
 
-        assert "band_list_memories" in started
-        assert "band_store_memory" in started
-        assert "band_get_memory" in started
-        assert "band_supersede_memory" in started
-        assert "band_archive_memory" in started
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        tool_names = {tool.name for tool in tools}
+
+        assert "band_list_memories" not in tool_names
+        assert "band_store_memory" not in tool_names
+        assert "band_get_memory" not in tool_names
+        assert "band_supersede_memory" not in tool_names
+        assert "band_archive_memory" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_memory_tools_are_included_when_enabled(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
+        await adapter.on_started("TestBot", "Test bot")
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        tool_names = {tool.name for tool in tools}
+
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_get_memory" in tool_names
+        assert "band_supersede_memory" in tool_names
+        assert "band_archive_memory" in tool_names
 
 
 class TestCacheDisabling:
@@ -898,14 +924,19 @@ class TestCacheDisabling:
     """
 
     @pytest.mark.asyncio
-    async def test_all_crewai_platform_tools_disable_cache(self, started_tools):
+    async def test_all_crewai_platform_tools_disable_cache(
+        self, CrewAIAdapter, crewai_mocks
+    ):
         """Every band_* platform tool must have cache_function returning False."""
-        started = await started_tools(
-            features=AdapterFeatures(
-                capabilities={Capability.CONTACTS, Capability.MEMORY}
-            ),
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            capabilities=Capability.CONTACTS | Capability.MEMORY,
         )
-        platform_tools = [t for t in started.values() if t.name.startswith("band_")]
+        await adapter.on_started("TestBot", "Test bot")
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        platform_tools = [t for t in tools if t.name.startswith("band_")]
 
         assert len(platform_tools) > 0, "Expected at least one band_* tool"
 
@@ -918,10 +949,17 @@ class TestCacheDisabling:
             )
 
     @pytest.mark.asyncio
-    async def test_custom_crewai_tools_disable_cache(self, started_tools):
+    async def test_custom_crewai_tools_disable_cache(self, CrewAIAdapter, crewai_mocks):
         """Custom tools passed via additional_tools must also disable cache."""
-        started = await started_tools(additional_tools=[(EchoInput, echo_message)])
-        echo_tool = started.get("echo")
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            additional_tools=[(EchoInput, echo_message)],
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        echo_tool = next((t for t in tools if t.name == "echo"), None)
         assert echo_tool is not None, "Expected 'echo' tool in tool list"
 
         assert callable(echo_tool.cache_function), (
@@ -933,13 +971,21 @@ class TestCacheDisabling:
 
 
 class TestContactToolExecution:
-    def _started(self, started_tools) -> dict[str, Any]:
-        return asyncio.run(
-            started_tools(features=AdapterFeatures(capabilities={Capability.CONTACTS}))
+    def _make_adapter(self, CrewAIAdapter: type) -> Any:
+        return CrewAIAdapter(
+            capabilities=Capability.CONTACTS,
         )
 
-    def test_list_contacts_tool_executes(self, started_tools, mock_tools, room_context):
-        list_contacts_tool = self._started(started_tools)["band_list_contacts"]
+    def test_list_contacts_tool_executes(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
+        import asyncio
+
+        adapter = self._make_adapter(CrewAIAdapter)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        list_contacts_tool = next(t for t in tools if t.name == "band_list_contacts")
 
         with room_context("room-123"):
             result = list_contacts_tool._run(page=2, page_size=25)
@@ -949,8 +995,16 @@ class TestContactToolExecution:
         assert result_data["data"][0]["handle"] == "@alice"
         mock_tools.list_contacts.assert_awaited_once_with(2, 25)
 
-    def test_add_contact_tool_executes(self, started_tools, mock_tools, room_context):
-        add_contact_tool = self._started(started_tools)["band_add_contact"]
+    def test_add_contact_tool_executes(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
+        import asyncio
+
+        adapter = self._make_adapter(CrewAIAdapter)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        add_contact_tool = next(t for t in tools if t.name == "band_add_contact")
 
         with room_context("room-123"):
             result = add_contact_tool._run(handle="@alice", message="Hi Alice")
@@ -962,9 +1016,15 @@ class TestContactToolExecution:
         mock_tools.add_contact.assert_awaited_once_with("@alice", "Hi Alice")
 
     def test_remove_contact_tool_executes(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        remove_contact_tool = self._started(started_tools)["band_remove_contact"]
+        import asyncio
+
+        adapter = self._make_adapter(CrewAIAdapter)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        remove_contact_tool = next(t for t in tools if t.name == "band_remove_contact")
 
         with room_context("room-123"):
             result = remove_contact_tool._run(handle="@alice", contact_id="contact-1")
@@ -975,9 +1035,17 @@ class TestContactToolExecution:
         mock_tools.remove_contact.assert_awaited_once_with("@alice", "contact-1")
 
     def test_list_contact_requests_tool_executes(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        list_requests_tool = self._started(started_tools)["band_list_contact_requests"]
+        import asyncio
+
+        adapter = self._make_adapter(CrewAIAdapter)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        list_requests_tool = next(
+            t for t in tools if t.name == "band_list_contact_requests"
+        )
 
         with room_context("room-123"):
             result = list_requests_tool._run(
@@ -990,11 +1058,17 @@ class TestContactToolExecution:
         mock_tools.list_contact_requests.assert_awaited_once_with(3, 10, "approved")
 
     def test_respond_contact_request_tool_executes(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        respond_request_tool = self._started(started_tools)[
-            "band_respond_contact_request"
-        ]
+        import asyncio
+
+        adapter = self._make_adapter(CrewAIAdapter)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        respond_request_tool = next(
+            t for t in tools if t.name == "band_respond_contact_request"
+        )
 
         with room_context("room-123"):
             result = respond_request_tool._run(
@@ -1015,11 +1089,16 @@ class TestContactToolExecution:
 
 
 class TestMemoryToolExecution:
-    def _started(self, started_tools) -> dict[str, Any]:
-        return asyncio.run(started_tools(enable_memory_tools=True))
+    def test_list_memories_tool_executes(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
+        import asyncio
 
-    def test_list_memories_tool_executes(self, started_tools, mock_tools, room_context):
-        list_memories_tool = self._started(started_tools)["band_list_memories"]
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        list_memories_tool = next(t for t in tools if t.name == "band_list_memories")
 
         with room_context("room-123"):
             result = list_memories_tool._run(
@@ -1047,8 +1126,16 @@ class TestMemoryToolExecution:
             status="active",
         )
 
-    def test_store_memory_tool_executes(self, started_tools, mock_tools, room_context):
-        store_memory_tool = self._started(started_tools)["band_store_memory"]
+    def test_store_memory_tool_executes(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
+        import asyncio
+
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        store_memory_tool = next(t for t in tools if t.name == "band_store_memory")
 
         with room_context("room-123"):
             result = store_memory_tool._run(
@@ -1075,8 +1162,16 @@ class TestMemoryToolExecution:
             subject_id="subject-1",
         )
 
-    def test_get_memory_tool_executes(self, started_tools, mock_tools, room_context):
-        get_memory_tool = self._started(started_tools)["band_get_memory"]
+    def test_get_memory_tool_executes(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
+        import asyncio
+
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        get_memory_tool = next(t for t in tools if t.name == "band_get_memory")
 
         with room_context("room-123"):
             result = get_memory_tool._run(memory_id="memory-1")
@@ -1087,9 +1182,17 @@ class TestMemoryToolExecution:
         mock_tools.get_memory.assert_awaited_once_with("memory-1")
 
     def test_supersede_memory_tool_executes(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        supersede_memory_tool = self._started(started_tools)["band_supersede_memory"]
+        import asyncio
+
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        supersede_memory_tool = next(
+            t for t in tools if t.name == "band_supersede_memory"
+        )
 
         with room_context("room-123"):
             result = supersede_memory_tool._run(memory_id="memory-1")
@@ -1101,9 +1204,15 @@ class TestMemoryToolExecution:
         mock_tools.supersede_memory.assert_awaited_once_with("memory-1")
 
     def test_archive_memory_tool_executes(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        archive_memory_tool = self._started(started_tools)["band_archive_memory"]
+        import asyncio
+
+        adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        archive_memory_tool = next(t for t in tools if t.name == "band_archive_memory")
 
         with room_context("room-123"):
             result = archive_memory_tool._run(memory_id="memory-1")
@@ -1116,10 +1225,18 @@ class TestMemoryToolExecution:
 
 
 class TestToolExecution:
-    def test_tool_returns_error_without_room_context(self, started_tools):
+    def test_tool_returns_error_without_room_context(self, CrewAIAdapter, crewai_mocks):
         """Tools return error when called outside message handling (no context set)."""
-        started = asyncio.run(started_tools())
-        send_message_tool = started["band_send_message"]
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         # Call tool without setting context variable (simulates call outside message handling)
         result = send_message_tool._run(content="Hello!", mentions=[])
@@ -1129,12 +1246,18 @@ class TestToolExecution:
         assert "No room context available" in result_data["message"]
 
     @pytest.mark.asyncio
-    async def test_all_tools_have_correct_schemas(self, started_tools):
+    async def test_all_tools_have_correct_schemas(self, CrewAIAdapter, crewai_mocks):
         """Tools no longer require room_id - context is managed via context variable."""
-        started = await started_tools()
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
 
         # band_send_message should have content and mentions, but NOT room_id
-        send_message = started["band_send_message"]
+        send_message = next(t for t in tools if t.name == "band_send_message")
         assert send_message.args_schema is not None
         schema_fields = send_message.args_schema.model_fields
         assert "room_id" not in schema_fields
@@ -1142,23 +1265,32 @@ class TestToolExecution:
         assert "mentions" in schema_fields
 
         # band_add_participant should have identifier and role, but NOT room_id
-        add_participant = started["band_add_participant"]
+        add_participant = next(t for t in tools if t.name == "band_add_participant")
         schema_fields = add_participant.args_schema.model_fields
         assert "room_id" not in schema_fields
         assert "identifier" in schema_fields
         assert "role" in schema_fields
 
         # band_lookup_peers should expose pagination, but NOT room_id
-        lookup_peers = started["band_lookup_peers"]
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
         schema_fields = lookup_peers.args_schema.model_fields
         assert "room_id" not in schema_fields
         assert "page" in schema_fields
         assert "page_size" in schema_fields
 
     @pytest.mark.asyncio
-    async def test_send_event_message_type_validation(self, started_tools):
-        started = await started_tools()
-        send_event = started["band_send_event"]
+    async def test_send_event_message_type_validation(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+
+        send_event = next(t for t in tools if t.name == "band_send_event")
         schema_fields = send_event.args_schema.model_fields
 
         assert "message_type" in schema_fields
@@ -1167,7 +1299,7 @@ class TestToolExecution:
         assert schema_fields["message_type"].is_required()
 
     def test_send_event_run_rejects_missing_message_type(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """A direct `_run` call must enforce the requiredness the schema enforces.
 
@@ -1175,8 +1307,14 @@ class TestToolExecution:
         without this an omitted message_type would silently post as "thought"
         again.
         """
-        started = asyncio.run(started_tools())
-        send_event = started["band_send_event"]
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        send_event = next(t for t in tools if t.name == "band_send_event")
 
         with room_context("room-123"):
             result = send_event._run(content="no type given")
@@ -1187,11 +1325,21 @@ class TestToolExecution:
         mock_tools.send_event.assert_not_called()
 
     def test_successful_tool_execution_with_room_context(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Tools work when context variable is set (simulates call during message handling)."""
-        started = asyncio.run(started_tools())
-        get_participants_tool = started["band_get_participants"]
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        get_participants_tool = next(
+            t for t in tools if t.name == "band_get_participants"
+        )
 
         with room_context("room-123"):
             result = get_participants_tool._run()
@@ -1202,11 +1350,20 @@ class TestToolExecution:
         assert result_data["count"] == 1
 
     def test_tool_execution_handles_exception(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        started = asyncio.run(started_tools())
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
         mock_tools.get_participants.side_effect = Exception("Connection failed")
-        get_participants_tool = started["band_get_participants"]
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        get_participants_tool = next(
+            t for t in tools if t.name == "band_get_participants"
+        )
 
         with room_context("room-123"):
             result = get_participants_tool._run()
@@ -1217,9 +1374,13 @@ class TestToolExecution:
 
     @pytest.mark.asyncio
     async def test_lookup_peers_uses_adapter_loop_when_tool_runs_in_worker_thread(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        started = await started_tools()
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
         expected_loop = asyncio.get_running_loop()
 
         async def lookup_peers(page: int, page_size: int) -> dict[str, object]:
@@ -1235,7 +1396,10 @@ class TestToolExecution:
             }
 
         mock_tools.lookup_peers = AsyncMock(side_effect=lookup_peers)
-        lookup_peers_tool = started["band_lookup_peers"]
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        lookup_peers_tool = next(t for t in tools if t.name == "band_lookup_peers")
 
         with room_context("room-123"):
             result = await asyncio.to_thread(lookup_peers_tool._run)
@@ -1247,20 +1411,28 @@ class TestToolExecution:
 
 class TestExecutionReporting:
     @pytest.mark.asyncio
-    async def test_execution_reporting_flag_stored(self, CrewAIAdapter, crewai_mocks):
-        adapter_enabled = CrewAIAdapter(enable_execution_reporting=True)
-        adapter_disabled = CrewAIAdapter(enable_execution_reporting=False)
+    async def test_emit_kwarg_controls_tool_call_reporting(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        adapter_enabled = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        adapter_disabled = CrewAIAdapter(emit=())
 
-        from band.core.types import Emit
-
-        assert Emit.EXECUTION in adapter_enabled.features.emit
-        assert Emit.EXECUTION not in adapter_disabled.features.emit
+        assert Emit.TOOL_CALLS in adapter_enabled.features.emit
+        assert Emit.TOOL_CALLS not in adapter_disabled.features.emit
 
     def test_reports_tool_call_when_enabled(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        started = asyncio.run(started_tools(enable_execution_reporting=True))
-        send_message_tool = started["band_send_message"]
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         with room_context("room-123"):
             send_message_tool._run(content="Hello!", mentions=[])
@@ -1271,11 +1443,11 @@ class TestExecutionReporting:
     async def test_report_tool_call_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in EmitExecutionReporter.report_call should not propagate."""
-        from band.integrations.crewai import EmitExecutionReporter
+        """send_event 403 in EmitToolCallsReporter.report_call should not propagate."""
+        from band.integrations.crewai import EmitToolCallsReporter
 
-        adapter = CrewAIAdapter(enable_execution_reporting=True)
-        reporter = EmitExecutionReporter(adapter.features)
+        adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        reporter = EmitToolCallsReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
@@ -1285,11 +1457,11 @@ class TestExecutionReporting:
     async def test_report_tool_result_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in EmitExecutionReporter.report_result should not propagate."""
-        from band.integrations.crewai import EmitExecutionReporter
+        """send_event 403 in EmitToolCallsReporter.report_result should not propagate."""
+        from band.integrations.crewai import EmitToolCallsReporter
 
-        adapter = CrewAIAdapter(enable_execution_reporting=True)
-        reporter = EmitExecutionReporter(adapter.features)
+        adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
+        reporter = EmitToolCallsReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
@@ -1408,9 +1580,14 @@ class TestMentionsValidator:
     """Models driving CrewAI emit mentions in several shapes; all reach list[str]."""
 
     @pytest.fixture
-    async def send_message_schema(self, started_tools):
-        started = await started_tools()
-        return started["band_send_message"].args_schema
+    async def send_message_schema(self, CrewAIAdapter, crewai_mocks):
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
+        tools = crewai_mocks.Agent.call_args[1]["tools"]
+        return next(t for t in tools if t.name == "band_send_message").args_schema
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
@@ -1505,39 +1682,69 @@ class TestCustomTools:
         assert len(adapter._custom_tools) == 2
 
     @pytest.mark.asyncio
-    async def test_custom_tools_converted_to_crewai_format(self, started_tools):
+    async def test_custom_tools_converted_to_crewai_format(
+        self, CrewAIAdapter, crewai_mocks
+    ):
         """Custom tools should be converted to CrewAI BaseTool instances."""
-        started = await started_tools(additional_tools=[(EchoInput, echo_message)])
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            additional_tools=[(EchoInput, echo_message)],
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
 
         # Check that custom tool is included alongside platform tools
-        assert "band_send_message" in started  # Platform tool should exist
-        assert "echo" in started  # Custom tool should exist
+        tool_names = [t.name for t in tools]
+        assert "band_send_message" in tool_names  # Platform tool should exist
+        assert "echo" in tool_names  # Custom tool should exist
 
-        echo_tool = started["echo"]
+        # Find the echo tool
+        echo_tool = next((t for t in tools if t.name == "echo"), None)
+        assert echo_tool is not None
         assert echo_tool.description == "Echo back the provided message."
         assert echo_tool.args_schema is EchoInput
 
     @pytest.mark.asyncio
-    async def test_multiple_custom_tools_in_agent(self, started_tools):
+    async def test_multiple_custom_tools_in_agent(self, CrewAIAdapter, crewai_mocks):
         """Multiple custom tools should all be available to the agent."""
-        started = await started_tools(
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
             additional_tools=[
                 (EchoInput, echo_message),
                 (CalculatorInput, calculate),
             ],
         )
+        await adapter.on_started("TestBot", "Test bot")
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
 
         # Check that both custom tools are included alongside platform tools
-        assert "band_send_message" in started  # Platform tool should exist
-        assert "echo" in started  # Custom tool should exist
-        assert "calculator" in started  # Custom tool should exist
+        tool_names = [t.name for t in tools]
+        assert "band_send_message" in tool_names  # Platform tool should exist
+        assert "echo" in tool_names  # Custom tool should exist
+        assert "calculator" in tool_names  # Custom tool should exist
 
-    def test_custom_tool_execution_async(self, started_tools, mock_tools, room_context):
+    def test_custom_tool_execution_async(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
         """Async custom tool should execute correctly."""
-        started = asyncio.run(
-            started_tools(additional_tools=[(EchoInput, echo_message)])
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            additional_tools=[(EchoInput, echo_message)],
         )
-        echo_tool = started["echo"]
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        echo_tool = next(t for t in tools if t.name == "echo")
 
         with room_context("room-123"):
             result = echo_tool._run(message="Hello world")
@@ -1546,12 +1753,22 @@ class TestCustomTools:
         assert result_data["status"] == "success"
         assert "Echo: Hello world" in result_data["result"]
 
-    def test_custom_tool_execution_sync(self, started_tools, mock_tools, room_context):
+    def test_custom_tool_execution_sync(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
         """Sync custom tool should execute correctly."""
-        started = asyncio.run(
-            started_tools(additional_tools=[(CalculatorInput, calculate)])
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            additional_tools=[(CalculatorInput, calculate)],
         )
-        calc_tool = started["calculator"]
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        calc_tool = next(t for t in tools if t.name == "calculator")
 
         with room_context("room-123"):
             result = calc_tool._run(operation="add", left=5.0, right=3.0)
@@ -1560,12 +1777,22 @@ class TestCustomTools:
         assert result_data["status"] == "success"
         assert "8.0" in result_data["result"]
 
-    def test_custom_tool_error_handling(self, started_tools, mock_tools, room_context):
+    def test_custom_tool_error_handling(
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
+    ):
         """Custom tool exception should result in error response."""
-        started = asyncio.run(
-            started_tools(additional_tools=[(EchoInput, failing_tool)])
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            additional_tools=[(EchoInput, failing_tool)],
         )
-        echo_tool = started["echo"]
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        echo_tool = next(t for t in tools if t.name == "echo")
 
         with room_context("room-123"):
             result = echo_tool._run(message="test")
@@ -1575,16 +1802,22 @@ class TestCustomTools:
         assert "Service unavailable" in result_data["message"]
 
     def test_custom_tool_reports_execution_when_enabled(
-        self, started_tools, mock_tools, room_context
+        self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Custom tool should report tool_call and tool_result events when enabled."""
-        started = asyncio.run(
-            started_tools(
-                enable_execution_reporting=True,
-                additional_tools=[(EchoInput, echo_message)],
-            )
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            emit=Emit.TOOL_CALLS,
+            additional_tools=[(EchoInput, echo_message)],
         )
-        echo_tool = started["echo"]
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        echo_tool = next(t for t in tools if t.name == "echo")
 
         with room_context("room-123"):
             echo_tool._run(message="Hello!")
@@ -1592,12 +1825,20 @@ class TestCustomTools:
         # Should have called send_event for tool_call and tool_result
         assert mock_tools.send_event.call_count >= 2
 
-    def test_custom_tool_without_room_context(self, started_tools):
+    def test_custom_tool_without_room_context(self, CrewAIAdapter, crewai_mocks):
         """Custom tool should return error when called without room context."""
-        started = asyncio.run(
-            started_tools(additional_tools=[(EchoInput, echo_message)])
+        import asyncio
+
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(
+            additional_tools=[(EchoInput, echo_message)],
         )
-        echo_tool = started["echo"]
+        asyncio.run(adapter.on_started("TestBot", "Test bot"))
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        tools = call_kwargs["tools"]
+        echo_tool = next(t for t in tools if t.name == "echo")
 
         # Call without setting context
         result = echo_tool._run(message="Hello!")

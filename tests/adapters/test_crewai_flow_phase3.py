@@ -57,7 +57,7 @@ from band.adapters.crewai_flow import (  # noqa: E402
     get_current_flow_runtime,
 )
 from band.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage  # noqa: E402
+from band.core.types import Capability, Emit, PlatformMessage  # noqa: E402
 from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 
@@ -593,7 +593,7 @@ class TestRuntimeTools:
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
             additional_tools=[(EchoInput, echo)],
-            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+            emit=Emit.TOOL_CALLS,
         )
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
@@ -732,10 +732,8 @@ class TestRuntimeTools:
         adapter = CrewAIFlowAdapter(
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
-            features=AdapterFeatures(
-                include_categories=("contacts",),
-                exclude_tools=("band_remove_contact",),
-            ),
+            include_categories=("contacts",),
+            exclude_tools=("band_remove_contact",),
         )
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())

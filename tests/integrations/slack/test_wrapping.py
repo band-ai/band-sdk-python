@@ -49,6 +49,7 @@ from band.integrations.slack.adapter import (
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.runtime.tools import AgentTools
+from band.testing.platform import platform_connection_stub
 
 
 # ── Test doubles ─────────────────────────────────────────────────────────────
@@ -197,12 +198,11 @@ def _make_adapter(
     adapter = SlackAdapter(
         inner=inner,
         apps=apps,
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
         **adapter_kwargs,
     )
-    adapter._band_agent_id = bridge_agent_id  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id=bridge_agent_id)
     return adapter, inner, web_mocks, rest
 
 
@@ -262,21 +262,22 @@ async def test_on_started_propagates_to_inner_and_sets_agent_id():
     await adapter.on_started("MyBot", "describes me")
 
     assert inner.started == ("MyBot", "describes me")
-    assert getattr(inner, "_band_agent_id", None) == "bridge-uuid"
+    assert inner.platform is not None
+    assert inner.platform.agent_id == "bridge-uuid"
 
 
 @pytest.mark.asyncio
-async def test_on_started_requires_api_key_when_no_rest_client_injected():
+async def test_on_started_requires_platform_when_no_rest_client_injected():
     inner = _SlackReplyBrain()
     adapter = SlackAdapter(inner=inner, apps=[_slack_app()])
-    with pytest.raises(ValueError, match="requires api_key"):
+    with pytest.raises(RuntimeError, match="platform connection"):
         await adapter.on_started("MyBot", "")
 
 
 class _EmitBrain(_SlackReplyBrain):
     """Inner brain that declares (and is configured to use) execution emit."""
 
-    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
     SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY})
 
 
@@ -290,7 +291,7 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
     """
     inner = _EmitBrain(reply=None)
     inner.features = AdapterFeatures(
-        emit=frozenset({Emit.EXECUTION}),
+        emit=frozenset({Emit.TOOL_CALLS}),
         capabilities=frozenset({Capability.MEMORY}),
     )
     adapter, _, _, _ = _make_adapter(inner=inner)
@@ -303,12 +304,48 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
             await adapter.on_started("MyBot", "")
 
     # Wrapper now reflects the inner's declared support.
-    assert adapter.SUPPORTED_EMIT == frozenset({Emit.EXECUTION})
+    assert adapter.SUPPORTED_EMIT == frozenset({Emit.TOOL_CALLS})
     assert adapter.SUPPORTED_CAPABILITIES == frozenset({Capability.MEMORY})
     # No misleading "does not support" warning for values the brain handles.
     assert not any("does not support" in r.getMessage() for r in caplog.records), [
         r.getMessage() for r in caplog.records
     ]
+
+
+def test_explicit_feature_override_reaches_inner():
+    """An explicit emit=/capabilities= kwarg must govern the actual turn.
+
+    A turn dispatches straight to ``inner.on_message(...)``, whose body reads
+    the inner instance's own ``self.features`` — not the wrapper's. Without
+    propagating the override onto ``inner.features``, passing
+    ``capabilities=`` to ``SlackAdapter`` would silently do nothing.
+    """
+    inner = _EmitBrain(reply=None)
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    assert adapter.features.capabilities == frozenset({Capability.MEMORY})
+    assert inner.features.capabilities == frozenset({Capability.MEMORY})
+
+
+def test_partial_feature_override_merges_over_inner_features():
+    """A partial override must not reset the inner's unrelated narrowing.
+
+    Adding only ``capabilities=`` must keep the inner's explicit ``emit=()``
+    silence and its tool filters — merging over ``inner.features``, not
+    re-deriving unsupplied fields from defaults (which would resurrect every
+    supported emission).
+    """
+    inner = _EmitBrain(reply=None)
+    inner.features = AdapterFeatures(
+        emit=(),
+        include_tools=("band_send_message",),
+    )
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    assert inner.features.capabilities == frozenset({Capability.MEMORY})
+    assert inner.features.emit == frozenset()
+    assert inner.features.include_tools == ("band_send_message",)
+    assert adapter.features == inner.features
 
 
 # ── Slack ingress (HTTP webhook → brain invocation) ─────────────────────────

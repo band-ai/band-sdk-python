@@ -23,6 +23,7 @@ from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
+from band.testing import feature_kwargs
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
@@ -52,7 +53,7 @@ def _build_anthropic(
         provider_key=s.llm_credentials.anthropic_api_key or None,
         prompt=prompt,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -70,7 +71,7 @@ def _build_claude_sdk(
         model=s.llm_models.anthropic_model,
         custom_section=prompt,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -107,7 +108,7 @@ def _build_copilot_sdk(
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -138,7 +139,7 @@ def _build_langgraph(
         checkpointer=MemorySaver(),
         custom_section=prompt or "",
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -162,7 +163,7 @@ def _build_pydantic_ai(
         model=f"openai:{s.llm_models.openai_model}",
         custom_section=prompt,
         additional_tools=native,
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -188,7 +189,7 @@ def _build_strands(
         ),
         custom_section=prompt,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -207,7 +208,7 @@ def _build_gemini(
         provider_key=s.llm_credentials.google_api_key or None,
         prompt=prompt,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -226,7 +227,7 @@ def _build_google_adk(
         model=s.llm_models.gemini_model,
         custom_section=prompt,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -247,7 +248,7 @@ def _build_crewai(
         backstory="A test agent for E2E validation.",
         custom_section=prompt,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -276,7 +277,7 @@ def _build_agno(
             instructions=prompt,
             tools=native,
         ),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -310,7 +311,7 @@ def _build_crewai_flow(
         # to peers without ever looping on its own output.
         accept_agent_initiated=True,
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -350,7 +351,7 @@ def _build_codex(
     return CodexAdapter(
         config=CodexAdapterConfig(**codex_config_kwargs(s, prompt=prompt)),
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -382,7 +383,7 @@ def _build_opencode(
             approval_mode="auto_accept",
         ),
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **feature_kwargs(features),
     )
 
 
@@ -465,10 +466,20 @@ def _build_copilot_acp(
     if s.backends.copilot_command.strip():
         config_kwargs["command"] = tuple(s.backends.copilot_command.split())
 
+    built_features = feature_kwargs(features)
+    if "emit" in built_features:
+        # memory_features()/contacts_features() request Emit.TOOL_CALLS so tool
+        # calls surface as tool_call events for the rest of the matrix, but this
+        # adapter narrates every tool call unconditionally and declares no
+        # SUPPORTED_EMIT (see ACPClientAdapter) -- clamp to what it actually
+        # supports so the shared fixture's intent survives without tripping the
+        # construction-time unsupported-emit check.
+        built_features["emit"] &= CopilotACPAdapter.SUPPORTED_EMIT
+
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
-        features=features,
+        **built_features,
     )
 
 
@@ -515,5 +526,5 @@ def _build_letta(
             custom_section=prompt or "",
             consolidate_memory_on_cleanup=False,
         ),
-        features=features,
+        **feature_kwargs(features),
     )

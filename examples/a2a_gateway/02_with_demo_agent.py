@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -79,25 +78,62 @@ from a2a.server.tasks import (
 )
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 
 from demo_orchestrator.agent import OrchestratorAgent
 from demo_orchestrator.agent_executor import OrchestratorAgentExecutor
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+        "uvicorn": logging.WARNING,
+    },
+)
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    gateway_port: int = 10000
+    orchestrator_port: int = 10001
+    # Fallback credentials, used only when agent_config.yaml has no
+    # gateway_agent entry.
+    band_api_key: str = ""
+    band_agent_id: str = "a2a-gateway"
+
+
+class OrchestratorSettings(BaseSettings):
+    """Only constructed by run_orchestrator(); run_gateway() needs none of this."""
+
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    openai_api_key: str
+    openai_model: str = "gpt-5.4-mini"
+    # Comma-separated peer handles (e.g. "weather,translator").
+    available_peers: str = ""
+
+
+settings = Settings()
+
 # Configuration
 GATEWAY_HOST = "localhost"
-GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "10000"))
+GATEWAY_PORT = settings.gateway_port
 ORCHESTRATOR_HOST = "localhost"
-ORCHESTRATOR_PORT = int(os.getenv("ORCHESTRATOR_PORT", "10001"))
+ORCHESTRATOR_PORT = settings.orchestrator_port
 
 
 def _load_gateway_credentials() -> tuple[str, str]:
@@ -105,65 +141,48 @@ def _load_gateway_credentials() -> tuple[str, str]:
     try:
         return load_agent_config("gateway_agent")
     except Exception as exc:
-        api_key = os.getenv("BAND_API_KEY")
-        if api_key:
-            return os.getenv("BAND_AGENT_ID", "a2a-gateway"), api_key
+        if settings.band_api_key:
+            return settings.band_agent_id, settings.band_api_key
         raise ValueError(
             "Configure 'gateway_agent' in agent_config.yaml, or set "
             "BAND_API_KEY and BAND_AGENT_ID environment variables"
         ) from exc
 
 
-def _require_openai_api_key() -> str:
-    """Ensure the orchestrator model API key is configured."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENAI_API_KEY environment variable is required for the demo orchestrator"
-        )
-    return api_key
-
-
 async def run_gateway() -> None:
     """Run the A2A Gateway that exposes Band peers."""
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     agent_id, api_key = _load_gateway_credentials()
 
     gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"
 
     adapter = A2AGatewayAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
         gateway_url=gateway_url,
         port=GATEWAY_PORT,
     )
 
-    agent = Agent.create(
+    logger.info("Starting A2A Gateway on %s...", gateway_url)
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A Gateway on %s...", gateway_url)
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 def run_orchestrator() -> None:
     """Run the Demo Orchestrator that calls gateway peers."""
-    _require_openai_api_key()
+    orchestrator_settings = OrchestratorSettings()
 
     gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"
-    available_peers = os.getenv("AVAILABLE_PEERS", "").split(",")
-    available_peers = [p.strip() for p in available_peers if p.strip()]
+    available_peers = [
+        p.strip() for p in orchestrator_settings.available_peers.split(",") if p.strip()
+    ]
 
     # Create orchestrator agent
     agent = OrchestratorAgent(
         gateway_url=gateway_url,
         available_peers=available_peers,
-        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+        model=orchestrator_settings.openai_model,
     )
 
     # Define agent capabilities and card
@@ -226,7 +245,7 @@ def run_orchestrator() -> None:
 async def main() -> None:
     """Run both gateway and orchestrator concurrently."""
     _load_gateway_credentials()
-    _require_openai_api_key()
+    OrchestratorSettings()
 
     logger.info("=" * 60)
     logger.info("A2A Gateway + Demo Orchestrator Example")

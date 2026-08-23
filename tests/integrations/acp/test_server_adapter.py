@@ -11,6 +11,7 @@ from band.integrations.acp.router import AgentRouter
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
+from band.testing.platform import platform_connection_stub
 
 from tests.integrations.acp.conftest import (
     make_platform_message,
@@ -31,14 +32,11 @@ class TestBandACPServerAdapterInit:
         assert adapter._pending_prompts == {}
         assert adapter._acp_client is None
 
-    def test_init_creates_rest_client(self) -> None:
-        """Should create AsyncRestClient."""
-        adapter = BandACPServerAdapter(
-            rest_url="https://api.example.com",
-            api_key="my-key",
-        )
+    def test_init_defers_rest_client_to_startup(self) -> None:
+        """No REST client until the runtime injects the platform connection."""
+        adapter = BandACPServerAdapter()
 
-        assert adapter._rest is not None
+        assert adapter._rest is None
 
     def test_init_sets_history_converter(self) -> None:
         """Should set ACPServerHistoryConverter."""
@@ -54,6 +52,7 @@ class TestBandACPServerAdapterOnStarted:
     async def test_on_started_stores_agent_info(self) -> None:
         """Should store agent name and description."""
         adapter = BandACPServerAdapter()
+        adapter.platform = platform_connection_stub()
 
         await adapter.on_started("Test ACP Agent", "An ACP agent for testing")
 

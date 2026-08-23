@@ -28,6 +28,7 @@ from band.integrations.slack.socket import (
     start_socket_listeners,
 )
 from band.integrations.slack.types import SlackApp
+from band.testing.platform import platform_connection_stub
 
 from tests.integrations.slack.test_wrapping import (
     _SlackReplyBrain,
@@ -95,12 +96,11 @@ def _build_adapter_with_socket(
     adapter = SlackAdapter(
         inner=inner,
         apps=apps,
-        api_key="k",
         transport="socket",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
 
     socket_clients: dict[str, _FakeSocketModeClient] = {
         a.slug: _FakeSocketModeClient() for a in apps
@@ -143,7 +143,6 @@ def test_http_transport_requires_signing_secret():
         SlackAdapter(
             inner=_SlackReplyBrain(),
             apps=[bad],
-            api_key="k",
             rest_client=MagicMock(),
         )
 
@@ -154,7 +153,6 @@ def test_socket_transport_requires_app_token():
         SlackAdapter(
             inner=_SlackReplyBrain(),
             apps=[bad],
-            api_key="k",
             transport="socket",
             rest_client=MagicMock(),
         )
@@ -165,7 +163,6 @@ def test_socket_transport_accepts_apps_without_signing_secret():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
         apps=[_socket_app()],
-        api_key="k",
         transport="socket",
         rest_client=MagicMock(),
         web_client_factory=lambda a: AsyncMock(),
@@ -178,7 +175,6 @@ def test_unknown_transport_rejected():
         SlackAdapter(
             inner=_SlackReplyBrain(),
             apps=[_http_app()],
-            api_key="k",
             transport="banana",  # type: ignore[arg-type]
             rest_client=MagicMock(),
         )
@@ -188,7 +184,6 @@ def test_router_unavailable_in_socket_mode():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
         apps=[_socket_app()],
-        api_key="k",
         transport="socket",
         rest_client=MagicMock(),
         web_client_factory=lambda a: AsyncMock(),
@@ -362,7 +357,6 @@ async def test_close_is_safe_when_no_listeners():
     adapter = SlackAdapter(
         inner=_SlackReplyBrain(),
         apps=[_http_app()],
-        api_key="k",
         rest_client=MagicMock(),
     )
     await adapter.close()  # Must not raise.

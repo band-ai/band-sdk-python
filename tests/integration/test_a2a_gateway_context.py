@@ -73,10 +73,12 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with real REST client credentials
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.band_base_url,
-            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
+            rest_client=AsyncRestClient(
+                base_url=integration_settings.band_base_url,
+                api_key=integration_settings.band_api_key,
+            ),
         )
         adapter._peers = {peer.name.lower().replace(" ", "-"): peer}
         adapter._peers_by_uuid = {peer.id: peer}
@@ -159,10 +161,12 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with both peers
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.band_base_url,
-            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
+            rest_client=AsyncRestClient(
+                base_url=integration_settings.band_base_url,
+                api_key=integration_settings.band_api_key,
+            ),
         )
         adapter._peers = {
             peer_1.name.lower().replace(" ", "-"): peer_1,

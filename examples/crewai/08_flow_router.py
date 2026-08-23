@@ -25,20 +25,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 from typing import Any
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging  # noqa: E402
-
-from band import Agent  # noqa: E402
+from band import Agent  # noqa: E402, configure_logging
 from band.adapters import CrewAIFlowAdapter  # noqa: E402
+from band import configure_logging  # noqa: E402
 
-setup_logging()
+configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)
 
 
@@ -132,26 +128,18 @@ def flow_factory() -> ToyRouterFlow:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         join_policy="all",
         sequential_chains={"data-fetcher": "presenter"},
     )
 
-    agent = Agent.from_config(
+    logger.info("CrewAI Flow router agent starting")
+    async with Agent.from_config(
         "crewai_flow_router",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-    logger.info("CrewAI Flow router agent starting")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

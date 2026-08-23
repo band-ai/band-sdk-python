@@ -67,7 +67,7 @@ pytest.importorskip("strands", reason="strands extra not installed")
 
 from band.adapters.strands import StrandsAdapter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
-from band.core.types import AdapterFeatures, Emit, PlatformMessage  # noqa: E402
+from band.core.types import Emit, PlatformMessage  # noqa: E402
 from band.testing import (  # noqa: E402
     FakeAgentTools,
     ScriptedStrandsModel,
@@ -171,12 +171,12 @@ async def test_custom_tool_decision_dispatches_to_handler() -> None:
 
 @pytest.mark.asyncio
 async def test_l6_execution_events_ordered_paired_and_correlated() -> None:
-    """Emit.EXECUTION produces tool_call before tool_result, correlated by id (L6)."""
+    """Emit.TOOL_CALLS produces tool_call before tool_result, correlated by id (L6)."""
     room_id = "strands-spike-l6"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
         model=ScriptedStrandsModel([_SEND_TURN]),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        emit=Emit.TOOL_CALLS,
     )
     await _run(adapter, tools, room_id)
 

@@ -11,10 +11,7 @@ from pydantic import BaseModel
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import (
-    AdapterFeatures,
-    Capability,
-)
+from band.core.types import Capability
 from band.integrations.opencode import (
     OpencodeClientProtocol,
     OpencodePermissionRequest,
@@ -1023,7 +1020,7 @@ async def test_band_tool_permission_bypasses_auto_decline() -> None:
     )
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(approval_mode="auto_decline"),
-        features=AdapterFeatures(capabilities={Capability.MEMORY}),
+        capabilities=Capability.MEMORY,
         client_factory=lambda _config: fake_client,
     )
     tools = FakeAgentTools()

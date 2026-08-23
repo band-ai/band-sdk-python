@@ -110,8 +110,8 @@ class Agent:
         adapter: FrameworkAdapter | SimpleAdapter,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
-        rest_url: str = "https://app.band.ai",
+        ws_url: str | None = None,
+        rest_url: str | None = None,
         config: AgentConfig | None = None,
         session_config: SessionConfig | None = None,
         contact_config: ContactEventConfig | None = None,
@@ -132,8 +132,12 @@ class Agent:
                      trusted host-side proxy replaces the request credential. The
                      value is passed through verbatim to the REST and WebSocket
                      transports — it is never validated or treated specially here.
-            ws_url: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
-            rest_url: REST API URL (default: https://app.band.ai)
+            ws_url: WebSocket URL. ``None`` (default) resolves from the
+                    ``BAND_WS_URL`` environment variable, falling back to
+                    the production URL.
+            rest_url: REST API URL. ``None`` (default) resolves from the
+                    ``BAND_REST_URL`` environment variable, falling back to
+                    the production URL.
             config: Agent configuration options
             session_config: Session lifecycle configuration
             contact_config: Contact event handling configuration.
@@ -143,11 +147,14 @@ class Agent:
             on_participant_removed: Optional callback for participant_removed events.
             preprocessor: Custom event preprocessor (default: DefaultPreprocessor)
         """
+        from band.config.settings import PlatformSettings
+
+        settings = PlatformSettings()
         runtime = PlatformRuntime(
             agent_id=agent_id,
             api_key=api_key,
-            ws_url=ws_url,
-            rest_url=rest_url,
+            ws_url=ws_url or settings.BAND_WS_URL,
+            rest_url=rest_url or settings.BAND_REST_URL,
             config=config,
             session_config=session_config,
             contact_config=contact_config,
@@ -236,8 +243,10 @@ class Agent:
             # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
             await self._runtime.initialize()
 
-            # 2. Initialize adapter with agent metadata BEFORE message processing
-            setattr(self._adapter, "_band_agent_id", self._runtime.agent_id)
+            # 2. Initialize adapter with agent metadata BEFORE message processing.
+            # setattr rather than assignment: FrameworkAdapter is a Protocol, so
+            # a duck-typed adapter may not declare the attribute.
+            setattr(self._adapter, "platform", self._runtime.connection)
             await self._adapter.on_started(
                 self._runtime.agent_name,
                 self._runtime.agent_description,

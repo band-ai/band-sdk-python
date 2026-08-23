@@ -8,12 +8,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
-from band import BandConfigError
+from band import BandConnectionError
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import (
-    AdapterFeatures,
-    Capability,
-)
+from band.core.types import Capability
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools
@@ -32,10 +29,32 @@ from tests.adapters.opencode.helpers import (
 )
 
 
+def test_no_leaked_adapter_config_env_vars(
+    assert_no_leaked_adapter_config_env: None,
+) -> None:
+    """Requesting the fixture is the assertion — see its docstring."""
+
+
+async def test_startup_fails_loudly_when_server_unreachable() -> None:
+    """The default (real-server) path must fail at startup naming the fix."""
+    import httpx
+
+    adapter = OpencodeAdapter()
+    with patch(
+        "band.integrations.opencode.client.HttpOpencodeClient.health",
+        side_effect=httpx.ConnectError("All connection attempts failed"),
+    ):
+        with pytest.raises(BandConnectionError, match="opencode serve"):
+            await adapter.on_started("Tom", "A cat")
+
+
 async def test_mcp_server_name_is_stable_per_agent_and_distinct_per_agent() -> None:
-    first = OpencodeAdapter()
-    restarted = OpencodeAdapter()
-    other = OpencodeAdapter()
+    def factory(_config: OpencodeAdapterConfig) -> FakeOpencodeClient:
+        return FakeOpencodeClient()
+
+    first = OpencodeAdapter(client_factory=factory)
+    restarted = OpencodeAdapter(client_factory=factory)
+    other = OpencodeAdapter(client_factory=factory)
 
     await first.on_started("Tom", "A cat")
     await restarted.on_started("Tom", "A cat")
@@ -200,14 +219,6 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     await adapter.on_cleanup("room-1")
     assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
     assert fake_backend.stop_calls == 1
-
-
-def test_legacy_feature_flags_cannot_mix_with_features() -> None:
-    with pytest.raises(BandConfigError, match="Cannot pass both legacy boolean flags"):
-        OpencodeAdapter(
-            config=OpencodeAdapterConfig(enable_memory_tools=True),
-            features=AdapterFeatures(),
-        )
 
 
 async def test_bootstrap_creates_session_relays_text_and_persists_task(
@@ -385,9 +396,7 @@ async def test_capability_gating_controls_registered_tool_set(
             client_factory=lambda _config: FakeOpencodeClient(
                 prompt_event_sequences=[[event_session_idle("sess-1")]]
             ),
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY, Capability.CONTACTS}
-            ),
+            capabilities={Capability.MEMORY, Capability.CONTACTS},
         )
         await full_adapter.on_started("OpenCode Agent", "A coding agent")
         await full_adapter.on_message(
@@ -416,7 +425,7 @@ def test_own_band_tools_recognized_before_mcp_registration() -> None:
     on_message, or any register_mcp_server call."""
     adapter = OpencodeAdapter(
         client_factory=lambda _config: FakeOpencodeClient(),
-        features=AdapterFeatures(capabilities={Capability.MEMORY, Capability.CONTACTS}),
+        capabilities={Capability.MEMORY, Capability.CONTACTS},
     )
 
     # Nothing has been registered with OpenCode yet.

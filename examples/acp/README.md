@@ -51,7 +51,3 @@ Each `.py` example is a standalone PEP 723 script:
 ```bash
 uv run examples/acp/clients/copilot.py
 ```
-
-`setup_logging.py` is a shared helper for the `servers/` and `clients/` examples.
-The `copilot_docker/*` clients are self-contained (no shared helper) so they copy
-cleanly into a deployment.

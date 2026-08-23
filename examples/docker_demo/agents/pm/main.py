@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, LogSettings
 from band.adapters.claude_sdk import ClaudeSDKAdapter
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
 
@@ -28,8 +28,6 @@ class Identity(BaseSettings):
 
     agent_id: str
     api_key: str
-    ws_url: str
-    rest_url: str
 
 
 class PMConfig(BaseSettings):
@@ -74,19 +72,16 @@ async def main() -> None:
         model=config.model,
         custom_section=build_persona(config.architect_name),
         # Surface the meeting's mechanics live in the room: tool_call/tool_result
-        # for every Band tool (the peer lookup + add-participant handoff), the
-        # agent's reasoning, and memory tools so decisions can be recorded.
-        features=AdapterFeatures(
-            emit={Emit.EXECUTION, Emit.THOUGHTS},
-            capabilities={Capability.MEMORY},
-        ),
+        # for every Band tool (the peer lookup + add-participant handoff) and the
+        # agent's reasoning, but not usage events. Memory tools are opt-in so
+        # decisions can be recorded.
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
+        capabilities=Capability.MEMORY,
     )
     agent = Agent.create(
         adapter=adapter,
         agent_id=identity.agent_id,
         api_key=identity.api_key,
-        ws_url=identity.ws_url,
-        rest_url=identity.rest_url,
     )
     await run_with_graceful_shutdown(agent)
 

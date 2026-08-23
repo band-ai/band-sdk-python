@@ -13,8 +13,8 @@ bidirectional communication.  Works with both Letta Cloud and self-hosted
 Letta servers.
 
 Environment variables:
-    BAND_WS_URL      Band WebSocket URL (required)
-    BAND_REST_URL    Band REST URL (required)
+    BAND_WS_URL      Band WebSocket URL (optional; defaults to production)
+    BAND_REST_URL    Band REST URL (optional; defaults to production)
     LETTA_BASE_URL      Letta server URL (default: https://api.letta.com)
                         Set to http://localhost:8283 for self-hosted.
     LETTA_API_KEY       Letta API key (required for Cloud, optional for self-hosted)
@@ -67,20 +67,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging
-
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -89,13 +84,7 @@ class ExampleSettings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    band_ws_url: str = ""  # BAND_WS_URL (required)
-    band_rest_url: str = ""  # BAND_REST_URL (required)
-    letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
-    letta_api_key: str | None = None  # LETTA_API_KEY (required for Letta Cloud)
-    letta_project: str | None = None  # LETTA_PROJECT
     letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
-    letta_embedding: str | None = None  # LETTA_EMBEDDING
     letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str | None = None  # MCP_SERVER_URL (external band-mcp)
 
@@ -104,10 +93,6 @@ async def main() -> None:
     load_dotenv()
     settings = ExampleSettings()
 
-    if not settings.band_ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not settings.band_rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # An explicit MCP_SERVER_URL selects an external band-mcp (the Letta Cloud
     # topology); otherwise the adapter self-hosts its Band MCP server in-process.
     if settings.mcp_server_url:
@@ -122,32 +107,24 @@ async def main() -> None:
 
     # Create adapter — defaults to Letta Cloud (https://api.letta.com).
     # For self-hosted, set LETTA_BASE_URL=http://localhost:8283
+    #
+    # base_url/provider_key/project/embedding self-source from
+    # LETTA_BASE_URL/LETTA_API_KEY/LETTA_PROJECT/LETTA_EMBEDDING when omitted.
     adapter = LettaAdapter(
         config=LettaAdapterConfig(
-            base_url=settings.letta_base_url,
-            # Required for Letta Cloud, optional for self-hosted
-            provider_key=settings.letta_api_key,
-            # Letta Cloud project scoping (optional)
-            project=settings.letta_project,
             model=settings.letta_model,
-            # Required by Letta's Docker server on agent create
-            embedding=settings.letta_embedding,
             # MCP tool path (self-hosted unless MCP_SERVER_URL is set)
             mcp=mcp_config,
             custom_section="You are a helpful assistant. Be concise and friendly.",
         ),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting Letta agent...")
+    async with Agent.from_config(
         "letta_agent",
         adapter=adapter,
-        ws_url=settings.band_ws_url,
-        rest_url=settings.band_rest_url,
-    )
-
-    logger.info("Starting Letta agent...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

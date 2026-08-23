@@ -10,7 +10,7 @@ import pytest
 from acp.helpers import update_agent_message_text
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import Capability
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -105,11 +105,6 @@ class TestACPClientAdapterInit:
         """Should normalize explicit cwd values to absolute paths."""
         adapter = ACPClientAdapter(command="codex", cwd="examples")
         assert adapter._cwd == os.path.abspath("examples")
-
-    def test_init_rejects_invalid_rest_url(self) -> None:
-        """Should fail fast on invalid Band base URLs."""
-        with pytest.raises(ValueError, match="rest_url"):
-            ACPClientAdapter(command="codex", rest_url="ftp://invalid")
 
 
 class TestACPClientAdapterTransport:
@@ -388,7 +383,7 @@ class TestACPClientAdapterLocalMcpConfig:
         """Declared MEMORY capability puts its tool group on the loopback server."""
         adapter = ACPClientAdapter(
             command="codex",
-            features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            capabilities=Capability.MEMORY,
         )
         assert "band_store_memory" in await self._registered_tool_names(adapter)
 

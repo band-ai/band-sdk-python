@@ -25,6 +25,8 @@ class OpencodeClientProtocol(Protocol):
 
     async def get_session(self, session_id: str) -> dict[str, Any]: ...
 
+    async def health(self) -> None: ...
+
     async def prompt_async(
         self,
         session_id: str,
@@ -101,6 +103,11 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         if self._workspace:
             params["workspace"] = self._workspace
         return params
+
+    async def health(self) -> None:
+        """Probe the server's health endpoint; raises when unreachable."""
+        response = await self._client.get("/global/health")
+        response.raise_for_status()
 
     async def create_session(
         self,

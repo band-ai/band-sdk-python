@@ -8,7 +8,7 @@ The builder takes three injectables:
 - get_context: callable returning the current room context (room_id + tools).
   Each adapter owns its own ContextVar and supplies its own getter.
 - reporter: CrewAIToolReporter implementation. Two ship in this module:
-  EmitExecutionReporter (gates by Emit.EXECUTION) and NoopReporter.
+  EmitToolCallsReporter (gates by Emit.TOOL_CALLS) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
 Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
@@ -53,6 +53,7 @@ from band.runtime.custom_tools import (
     is_marked_terminal,
 )
 from band.runtime.tools import (
+    EVENT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAME,
     append_available_mention_handles,
     get_tool_description,
@@ -121,8 +122,8 @@ class CrewAIToolReporter(Protocol):
     """Hook for tool execution event emission.
 
     Implementations decide whether to send tool_call / tool_result events to
-    the platform. The default EmitExecutionReporter gates emission on
-    Emit.EXECUTION. NoopReporter never emits.
+    the platform. The default EmitToolCallsReporter gates emission on
+    Emit.TOOL_CALLS. NoopReporter never emits.
 
     Both methods are best-effort: implementations must not raise on transport
     failure. Wrappers depend on this contract.
@@ -144,8 +145,8 @@ class CrewAIToolReporter(Protocol):
     ) -> None: ...
 
 
-class EmitExecutionReporter:
-    """Reporter gated by Emit.EXECUTION — matches legacy CrewAIAdapter behavior."""
+class EmitToolCallsReporter:
+    """Reporter gated by Emit.TOOL_CALLS — matches legacy CrewAIAdapter behavior."""
 
     def __init__(self, features: AdapterFeatures) -> None:
         self._features = features
@@ -156,7 +157,7 @@ class EmitExecutionReporter:
         tool_name: str,
         input_data: dict[str, Any],
     ) -> None:
-        if Emit.EXECUTION not in self._features.emit:
+        if Emit.TOOL_CALLS not in self._features.emit:
             return
         try:
             await tools.send_event(
@@ -175,7 +176,7 @@ class EmitExecutionReporter:
         result: Any,
         is_error: bool = False,
     ) -> None:
-        if Emit.EXECUTION not in self._features.emit:
+        if Emit.TOOL_CALLS not in self._features.emit:
             return
         try:
             await tools.send_event(
@@ -274,7 +275,8 @@ def _execute_tool(
                     getattr(tools, "agent_id", None),
                 )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
-            await reporter.report_result(tools, tool_name, error_msg, is_error=True)
+            if tool_name not in EVENT_TOOL_NAMES:
+                await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
     result = run_async(_execute(), fallback_loop=fallback_loop)
@@ -421,7 +423,8 @@ def _make_platform_tools(
                 args = validate_tool_arguments(
                     "band_send_event", self.args_schema, kwargs
                 )
-                # No execution reporting for send_event to avoid meta-events.
+                # No execution reporting for send_event to avoid meta-events
+                # (the failure path honors this too — see _SEND_EVENT_TOOL).
                 await tools.send_event(
                     args["content"], args["message_type"], metadata=args.get("metadata")
                 )
@@ -993,7 +996,7 @@ def build_band_crewai_tools(
 __all__ = [
     "CrewAIToolContext",
     "CrewAIToolReporter",
-    "EmitExecutionReporter",
+    "EmitToolCallsReporter",
     "NoopReporter",
     "build_band_crewai_tools",
     "serialize_success_result",

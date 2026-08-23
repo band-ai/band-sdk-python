@@ -198,7 +198,7 @@ class TestStartup:
         assert invoker.agent_name == "Weather"
         assert invoker.agent_description == "forecasts"
         # Adapter primed with identity + metadata.
-        assert getattr(adapter, "_band_agent_id") == "agent-1"
+        assert getattr(adapter, "platform").agent_id == "agent-1"
         adapter.on_started.assert_awaited_once_with("Weather", "forecasts")
 
     async def test_startup_is_idempotent(self) -> None:

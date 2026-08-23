@@ -1,7 +1,7 @@
 """Block Kit rendering for the tool-call progress UI.
 
 When the inner brain emits ``tool_call`` / ``tool_result`` events
-(gated on ``Emit.EXECUTION``), the SlackAdapter surfaces them as a
+(gated on ``Emit.TOOL_CALLS``), the SlackAdapter surfaces them as a
 Block Kit "plan" rendered into the bound Slack thread. Tasks flip
 state (``in_progress`` → ``completed``/``error``) as work progresses;
 the same message is updated in place via ``chat.update``.

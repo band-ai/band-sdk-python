@@ -46,12 +46,12 @@ TOOL_AGENT_SYSTEM_PROMPT = (
 def memory_features() -> AdapterFeatures:
     """Features for the memory smokes: expose the memory tools, and record the
     tool call as a ``tool_call`` event so the call layer is observable."""
-    return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
+    return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.TOOL_CALLS})
 
 
 def contacts_features() -> AdapterFeatures:
     """Features for contacts smokes: expose contact tools and record their calls."""
-    return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.EXECUTION})
+    return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.TOOL_CALLS})
 
 
 def usage_features() -> AdapterFeatures:
@@ -311,11 +311,16 @@ def recall_memory_instruction(marker: str) -> str:
 
 
 def retrieve_memory_instruction(marker: str) -> str:
-    """User message forcing retrieval of an already-stored org memory."""
+    """User message forcing retrieval of an already-stored org memory, then a
+    chat reply naming what was found -- the rehydration smoke asserts on that
+    reply's text, so the instruction must explicitly ask for it rather than
+    leaving the agent to infer it against a system prompt that otherwise tells
+    it not to send a chat message unless asked."""
     return (
         f"Call {MemoryTool.LIST.value} with content_query={marker} to find the "
         f"memory. Then call {MemoryTool.GET.value} with memory_id set to the id "
-        "of a memory the list returned. Do not call any other tool."
+        "of a memory the list returned. Then use band_send_message to state the "
+        "exact token you found. Do not call any other tools."
     )
 
 

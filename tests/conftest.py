@@ -16,6 +16,7 @@ return SDK-native types for pattern matching compatibility.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from functools import cache
 from itertools import count
@@ -24,6 +25,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
+from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.client.rest import AsyncRestClient
@@ -55,9 +57,44 @@ from band.platform.event import (
 )
 from band.runtime.types import PlatformMessage
 
+from tests.paths import ENV_TEST_FILE
+
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
 pytest_plugins = ["pytester"]
+
+# Env-var prefixes that adapter config classes (CodexAdapterConfig,
+# LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
+_ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Block ``.env.test``'s adapter-config keys before collection can leak them.
+
+    ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
+    override=False)`` at import time; several subdirectory ``conftest.py``
+    modules (e.g. ``tests/docker/conftest.py``,
+    ``tests/framework_conformance/conftest.py``) import it transitively, at
+    whichever indeterminate, collection-order-dependent moment they happen to
+    load. Any ``CODEX_``/``LETTA_``/``OPENCODE_`` key it would set is one the
+    adapter config classes above now read by default, so a contributor's
+    local ``.env.test`` would otherwise leak into unrelated unit tests'
+    "no override" defaults, and inconsistently depending on whether a given
+    default was baked before or after that key got set.
+
+    Reserving each such key as an empty string here — before any subdirectory
+    conftest can run — makes the later ``load_dotenv(override=False)`` skip
+    it (already present), while ``env_ignore_empty=True`` on those settings
+    classes treats an empty value the same as unset.
+
+    Skipped entirely when ``E2E_TESTS_ENABLED`` is set: a live E2E run wants
+    ``.env.test``'s real values (e.g. ``CODEX_CWD``), not neutralized ones.
+    """
+    if os.environ.get("E2E_TESTS_ENABLED", "").lower() == "true":
+        return
+    for key in dotenv_values(ENV_TEST_FILE):
+        if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
+            os.environ[key] = ""
 
 
 class CollectionGateSettings(BaseSettings):
@@ -168,6 +205,40 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     # the lock fd (and its process-registry entry) for the whole session.
     for guard in created:
         guard.release()
+
+
+@pytest.fixture(autouse=True)
+def isolated_adapter_config_env(request, monkeypatch):
+    """Defense-in-depth: strip adapter-config env vars before each unit test.
+
+    ``pytest_configure`` above closes the ``.env.test`` leak at its source;
+    this additionally protects against a test that sets one of these vars
+    directly (``monkeypatch.setenv`` without cleanup, a subprocess, etc.)
+    from bleeding into an unrelated later test's "no override" defaults.
+
+    Live tests (e2e/integration) keep the real environment: there, those
+    values are the point.
+    """
+    if {"e2e", "integration"} & set(request.node.path.parts):
+        yield
+        return
+
+    for key in list(os.environ):
+        if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES):
+            monkeypatch.delenv(key, raising=False)
+    yield
+
+
+@pytest.fixture
+def assert_no_leaked_adapter_config_env() -> None:
+    """Fail loudly if a CODEX_/LETTA_/OPENCODE_ var reached this test.
+
+    Requested by a handful of adapters' own "config defaults" tests to prove
+    ``isolated_adapter_config_env`` above is actually doing its job, rather
+    than each repeating the prefix tuple and the check.
+    """
+    leaked = [k for k in os.environ if k.startswith(_ADAPTER_CONFIG_ENV_PREFIXES)]
+    assert leaked == [], f"leaked adapter-config env vars: {leaked}"
 
 
 # =============================================================================

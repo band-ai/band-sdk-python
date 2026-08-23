@@ -14,6 +14,9 @@ using the Codex adapter.
 The character prompt is loaded from a shared prompts module that can be
 reused across different adapter implementations.
 
+Prerequisites: Codex CLI installed and authenticated (`codex login`).
+A missing or unreachable backend fails at startup with instructions.
+
 Run with (from repo root):
     uv run examples/codex/02_tom_agent.py
 
@@ -25,8 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import subprocess
 import sys
 
 from dotenv import load_dotenv
@@ -36,76 +37,44 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    style="json",
+    root_level=logging.INFO,
+    stream="stdout",
+    extra_loggers={
+        "websockets": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
-    codex_bin = shutil.which("codex")
-    if codex_bin is None:
-        logger.error(
-            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
-        )
-        sys.exit(1)
-
-    login_check = subprocess.run(
-        [codex_bin, "login", "status"],
-        capture_output=True,
-        text=True,
-    )
-    if login_check.returncode != 0:
-        print("Codex is not logged in.")
-        try:
-            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
-        except EOFError:
-            print("Non-interactive shell. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-        if answer in ("", "y", "yes"):
-            result = subprocess.run([codex_bin, "login"], check=False)
-            if result.returncode != 0:
-                print("Login failed. Check the output above and retry.")
-                sys.exit(1)
-        else:
-            print("Exiting. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-
+    # cwd/model self-source from CODEX_CWD/CODEX_MODEL when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport="stdio",
-            cwd=os.getenv("CODEX_CWD", os.getcwd()),
-            model=os.getenv("CODEX_MODEL") or None,
             personality="none",
             custom_section=generate_tom_prompt("Tom"),
             include_base_instructions=True,
             fallback_send_agent_text=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS, Emit.THOUGHTS}),
-    )
-
-    agent = Agent.from_config(
-        "tom_agent",
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        emit={Emit.TASK_EVENTS, Emit.THOUGHTS},
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")
-    await agent.run()
+    async with Agent.from_config(
+        "tom_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

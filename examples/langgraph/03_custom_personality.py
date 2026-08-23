@@ -22,23 +22,15 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # Define pirate personality to add on top of base system prompt
     pirate_personality = """
 
@@ -72,16 +64,12 @@ But speak like a PIRATE while doin' it! Arrr!
         custom_section=pirate_personality,
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting pirate agent...")
+    async with Agent.from_config(
         "custom_personality_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting pirate agent...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

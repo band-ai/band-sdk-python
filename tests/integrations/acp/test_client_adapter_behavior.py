@@ -19,7 +19,7 @@ import re
 import pytest
 from pydantic import BaseModel
 
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import Capability
 from band.integrations.acp.client_adapter import (
     HISTORY_REPLAY_HEADER,
     NEW_MESSAGE_MARKER_PREFIX,
@@ -215,8 +215,7 @@ async def test_canonical_vocabulary_follows_declared_capabilities(fake_agent) ->
     fake_agent.will_call_tool(
         "tc-1", "band-band_store_memory", raw_input={"content": "x"}, result="ok"
     ).will_say("stored")
-    features = AdapterFeatures(capabilities={Capability.MEMORY})
-    async with acp_adapter(fake_agent, features=features) as session:
+    async with acp_adapter(fake_agent, capabilities=Capability.MEMORY) as session:
         reply = await session.send("remember x")
 
     assert reply.tool_call_names == ["band_store_memory"]
