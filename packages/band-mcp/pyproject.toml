@@ -34,7 +34,7 @@ dependencies = [
     # bump-mcp-sdk-floor job, so this always tracks the most recently
     # published band-sdk version -- band-mcp is developed in lockstep in
     # this monorepo and can depend on any already-released SDK feature.
-    "band-sdk>=1.6.0",
+    "band-sdk>=3.0.0",
     "uvicorn>=0.30.0",  # Required for SSE transport mode
 ]
 
