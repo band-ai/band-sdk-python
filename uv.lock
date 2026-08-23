@@ -521,7 +521,7 @@ requires-dist = [
 
 [[package]]
 name = "band-sdk"
-version = "3.0.0"
+version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "band-client-rest" },
