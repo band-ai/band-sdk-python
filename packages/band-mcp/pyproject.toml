@@ -29,7 +29,7 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     # Aligned to the root repo's exact pin -- see CLAUDE.md's "Workarounds
     # for band-client-rest Bugs" for why this stays exact.
-    "band-client-rest==0.0.27",
+    "band-client-rest==0.0.28",
     # Auto-bumped after every band-sdk release by release.yml's
     # bump-mcp-sdk-floor job, so this always tracks the most recently
     # published band-sdk version -- band-mcp is developed in lockstep in
