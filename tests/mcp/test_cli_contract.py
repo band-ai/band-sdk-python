@@ -22,6 +22,8 @@ import sys
 
 import pytest
 
+from band_mcp import __version__
+
 _BAND_CREDENTIAL_ENV_VARS = (
     "BAND_USER_KEY",
     "BAND_AGENT_KEY",
@@ -68,7 +70,7 @@ def _run_cli(*args: str, timeout: float = 15.0) -> tuple[int, str, str]:
 def test_version_flag() -> None:
     returncode, stdout, _ = _run_cli("--version")
     assert returncode == 0
-    assert stdout.strip() == "band-mcp 1.3.2"
+    assert stdout.strip() == f"band-mcp {__version__}"
 
 
 def test_help_flag_lists_flags() -> None:
