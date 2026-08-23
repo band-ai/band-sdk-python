@@ -379,9 +379,20 @@ def _build_handler_signature(input_model: type[BaseModel]) -> inspect.Signature:
             else base_annotation
         )
 
-        default = (
-            inspect.Parameter.empty if field_info.is_required() else field_info.default
-        )
+        if field_info.is_required():
+            default = inspect.Parameter.empty
+        elif field_info.default_factory is not None:
+            # ``field_info.default`` is Pydantic's ``PydanticUndefined``
+            # sentinel for a factory-only field -- passing that through as a
+            # literal default makes create_model() below read it as "no
+            # default provided" and mark the field required, the opposite of
+            # what a default_factory field should advertise. A real
+            # ``Field(default_factory=...)`` here reproduces
+            # ``model_json_schema()``'s own behavior instead: optional, no
+            # advertised default value.
+            default = Field(default_factory=field_info.default_factory)
+        else:
+            default = field_info.default
         parameters.append(
             inspect.Parameter(
                 field_name,

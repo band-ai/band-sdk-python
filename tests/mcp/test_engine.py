@@ -419,6 +419,37 @@ async def test_custom_tool_accepts_bare_tuple_contract() -> None:
         assert result == {"echo": "hi"}
 
 
+async def test_custom_tool_default_factory_field_advertised_as_optional() -> None:
+    """Regression: a field declared with ``Field(default_factory=...)`` (no
+    literal ``default=``) must be advertised the same way Pydantic's own
+    ``model_json_schema()`` advertises it -- optional, with no ``default`` key
+    -- not marked required. ``field_info.default`` is Pydantic's
+    ``PydanticUndefined`` sentinel for a factory-only field; passed through
+    as a literal default it makes the synthesized handler signature's
+    ``create_model()`` read "no default provided" and mark the field required."""
+
+    class TagsInput(BaseModel):
+        """Echo the given tags, defaulting to none."""
+
+        tags: list[str] = Field(default_factory=list, description="tags to echo")
+
+    async def handler(input_data: TagsInput) -> dict[str, list[str]]:
+        return {"tags": input_data.tags}
+
+    registration = build_custom_tool_registration(
+        CustomToolSpec(input_model=TagsInput, handler=handler)
+    )
+    mcp = build_engine(EngineSpec(name="test-default-factory", tools=(registration,)))
+
+    async with create_connected_server_and_client_session(mcp) as session:
+        tool = await _list_tool(session, "tags")
+        assert tool.inputSchema.get("required") in (None, [])
+        assert "default" not in tool.inputSchema["properties"]["tags"]
+
+        result = await _call(session, "tags")  # tags omitted entirely
+        assert result == {"tags": []}
+
+
 async def test_agent_multi_step_room_lifecycle(agent_session_factory) -> None:
     """One FakeAgentTools, one engine, three real dispatched calls in
     sequence: add_participant -> send_message (mentioning the participant

@@ -227,6 +227,74 @@ async def test_get_agent_tools_cache_evicts_oldest_room(fake_agent_tools):
     assert "room_overflow" in resolver._agent_tools_cache
 
 
+class SlowSendAgentTools(FakeAgentTools):
+    """A send that blocks mid-dispatch until released, so a test can force a
+    concurrent cache-miss insert to land while this call is still in flight."""
+
+    def __init__(
+        self, *args: Any, ready: asyncio.Event, release: asyncio.Event, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._ready = ready
+        self._release = release
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        self._ready.set()
+        await self._release.wait()
+        return await super().send_message(content, mentions=mentions)
+
+
+async def test_invoke_agent_survives_its_own_cache_entry_evicted_mid_flight(
+    fake_agent_tools,
+):
+    """Review finding: ``popitem(last=False)`` doesn't hold the evicted
+    room's own stripe lock, so a room's cached ``AgentTools`` can be evicted
+    while a call for that same room is still in flight elsewhere. Impact is
+    bounded -- the in-flight call already holds a direct reference to its
+    own instance, unaffected by the dict eviction -- but the race itself is
+    real, so pin down that it stays bounded rather than assuming it."""
+    resolver = StandaloneResolver(agent_rest=_fake_agent_rest())
+
+    ready = asyncio.Event()
+    release = asyncio.Event()
+    room_a_tools = SlowSendAgentTools(room_id="room_A", ready=ready, release=release)
+    resolver._agent_tools_cache["room_A"] = room_a_tools
+
+    send_task = asyncio.create_task(
+        resolver.invoke(
+            _definition("band_send_message", "send_message"),
+            "room_A",
+            {"content": "hi", "mentions": ["@x"]},
+        )
+    )
+    # room_A's own cache lookup already ran (and move_to_end'd it) on the way
+    # to this blocking point, so it's the *freshest* entry here -- filling
+    # every other slot afterwards is what ages it back into the LRU spot.
+    await ready.wait()  # room_A's send is mid-dispatch, its stripe lock held
+
+    for i in range(AGENT_TOOLS_CACHE_MAX_SIZE):
+        await resolver._get_or_create_agent_tools(f"room_{i}", "band_get_participants")
+
+    # The last insert above overflowed the cache and evicted the LRU entry --
+    # room_A's, via the un-locked _get_or_create_agent_tools path -- even
+    # though room_A's own call above hasn't returned yet.
+    assert "room_A" not in resolver._agent_tools_cache
+
+    release.set()
+    result = await send_task
+
+    room_a_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
+    assert result == room_a_tools.messages_sent[0]
+
+    release.set()
+    result = await send_task
+
+    room_a_tools.assert_message_sent(content="hi", mentions=["@x"], count=1)
+    assert result == room_a_tools.messages_sent[0]
+
+
 async def test_get_agent_tools_accepts_none_cache_key_with_sdk_room_sentinel(
     fake_agent_tools,
 ):
