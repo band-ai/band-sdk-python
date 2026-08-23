@@ -39,5 +39,5 @@ async def test_empty_429_raises_api_error_without_json_decode_chain(
     assert not isinstance(error.__cause__, JSONDecodeError)
     assert error.__suppress_context__ or not isinstance(
         error.__context__, JSONDecodeError
-    )
+    ), formatted
     assert "JSONDecodeError" not in formatted
