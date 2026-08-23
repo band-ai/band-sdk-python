@@ -80,9 +80,14 @@ jobs:
           print(re.search(r'>=([0-9]+\.[0-9]+\.[0-9]+)', band_sdk).group(1))
           PYEOF
           )
+          # Dry-run into a scratch venv: the runner's bare python3 is
+          # Ubuntu's externally-managed interpreter, which uv refuses to
+          # target, so probing it fails on every attempt regardless of
+          # whether the version is indexed.
+          uv venv /tmp/floor-check
           echo "Waiting for band-sdk==${FLOOR} to be indexed on PyPI..."
           for _ in $(seq 1 60); do
-            if uv pip install "band-sdk==${FLOOR}" --dry-run --python "$(which python3)" >/dev/null 2>&1; then
+            if uv pip install "band-sdk==${FLOOR}" --dry-run --python /tmp/floor-check/bin/python; then
               echo "band-sdk==${FLOOR} is available."
               exit 0
             fi
