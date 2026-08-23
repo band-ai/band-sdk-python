@@ -32,6 +32,15 @@ class BandMCPBackend:
     allowed_tools: list[str]
     local_server: LocalMCPServer | None = None
 
+    @property
+    def is_running(self) -> bool:
+        """False once the backing local server has crashed or stopped.
+
+        The ``sdk`` kind runs in-process with no server task to crash, so it's
+        always considered running.
+        """
+        return self.local_server is None or self.local_server.is_running
+
     async def stop(self) -> None:
         """Clean up backend resources when needed."""
         if self.local_server is not None:

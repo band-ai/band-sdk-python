@@ -183,6 +183,16 @@ class LocalMCPServer:
     def http_url(self) -> str:
         return f"http://{self._host}:{self.port}{self._http_path}"
 
+    @property
+    def is_running(self) -> bool:
+        """False once the serve task has ended, crashed or not.
+
+        A crash leaves every cached reference to this server (host/port,
+        session config) pointing at a dead process; a caller holding one of
+        those references checks this before reusing it.
+        """
+        return self._serve_task is not None and not self._serve_task.done()
+
     async def start(self) -> None:
         """Start the local MCP server."""
         async with self._lifecycle_lock:

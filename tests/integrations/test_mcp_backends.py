@@ -28,6 +28,8 @@ class TestBandMcpBackends:
         assert backend.kind == "sdk"
         assert backend.local_server is None
         assert backend.allowed_tools == [f"mcp__band__{tool_definitions[0].name}"]
+        # No server task to crash -- always considered running.
+        assert backend.is_running
 
     @pytest.mark.asyncio
     async def test_create_http_backend(self) -> None:
@@ -46,5 +48,7 @@ class TestBandMcpBackends:
             assert backend.allowed_tools == [f"mcp__band__{tool_definitions[0].name}"]
             assert backend.local_server is not None
             assert backend.local_server.http_url.startswith("http://127.0.0.1:")
+            assert backend.is_running
         finally:
             await backend.stop()
+            assert backend.is_running is False

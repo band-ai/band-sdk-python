@@ -348,6 +348,30 @@ class TestLocalMcpServer:
         _assert_fully_stopped(server)
 
     @pytest.mark.asyncio
+    async def test_is_running_reflects_a_crashed_serve_task(self) -> None:
+        """A caller holding a reference to this server (host/port, session
+        config) needs a way to notice its serve task died on its own --
+        ``is_running`` is that check, independent of ``stop()`` ever running."""
+        server = LocalMCPServer(
+            name="test-is-running", tool_registrations=[], port_min=0, port_max=0
+        )
+        reserved_socket, port = server._reserve_socket()
+        server._socket = reserved_socket
+        server._port = port
+
+        async def _raise() -> None:
+            raise RuntimeError("simulated serve-task crash")
+
+        server._serve_task = asyncio.create_task(_raise())
+        assert server.is_running  # task created, hasn't run yet
+
+        with suppress(RuntimeError):
+            await server._serve_task
+        assert server.is_running is False
+
+        await server.stop()
+
+    @pytest.mark.asyncio
     async def test_start_forwards_real_host_to_build_engine(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

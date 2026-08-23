@@ -503,12 +503,26 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         Raises once ``cleanup_all`` has run: a turn that was parked on this
         lock while shutdown completed must fail loudly rather than silently
         start a fresh backend that outlives shutdown and is never stopped.
+
+        Also re-checks liveness on every call: the serve task backing a
+        cached backend can crash on its own, independent of any adapter call,
+        and nothing else would ever notice -- every later room would keep
+        getting handed the same dead host/port until a tool call times out.
         """
         async with self._mcp_backend_lock:
             if self._stopped:
                 raise RuntimeError(
                     "ACP client adapter is stopped; cannot start the Band MCP backend"
                 )
+            if (
+                self._band_mcp_backend is not None
+                and not self._band_mcp_backend.is_running
+            ):
+                logger.warning(
+                    "Band MCP backend crashed; restarting for %s", self.agent_name
+                )
+                await self._band_mcp_backend.stop()
+                self._band_mcp_backend = None
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
                     kind=self._runtime._agent_mcp_transport,

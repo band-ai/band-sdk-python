@@ -336,6 +336,34 @@ class TestACPClientAdapterLocalMcpConfig:
         mock_create_backend.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_ensure_band_mcp_backend_restarts_a_crashed_backend(self) -> None:
+        """A backend's serve task can crash on its own, independent of any
+        adapter call -- the next turn's cache read must notice via
+        ``is_running`` and self-heal, instead of handing every later room the
+        same dead host/port until a tool call times out."""
+        adapter = ACPClientAdapter(command="codex")
+        crashed_backend = MagicMock(
+            local_server=MagicMock(http_url="http://127.0.0.1:1/mcp"),
+            is_running=False,
+        )
+        crashed_backend.stop = AsyncMock()
+        adapter._band_mcp_backend = crashed_backend
+
+        fresh_backend = MagicMock(
+            local_server=MagicMock(http_url="http://127.0.0.1:2/mcp"),
+            is_running=True,
+        )
+        with patch(
+            "band.integrations.acp.client_adapter.create_band_mcp_backend",
+            new=AsyncMock(return_value=fresh_backend),
+        ) as mock_create_backend:
+            recreated = await adapter._ensure_band_mcp_backend()
+
+        assert recreated is fresh_backend
+        crashed_backend.stop.assert_awaited_once()
+        mock_create_backend.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_shutdown_racing_a_parked_first_turn_fails_loudly(self) -> None:
         """The exact reachability the review named: a room's first-turn
         bootstrap is genuinely parked on ``_mcp_backend_lock`` (not just
