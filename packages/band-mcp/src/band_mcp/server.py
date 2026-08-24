@@ -51,24 +51,12 @@ from band_mcp.config import (
     CliArgs,
     Config,
     ConfigError,
-    ToolGroup,
     Transport,
     resolve_config,
     settings,
     validate,
 )
 from band_mcp.shared import StandaloneResolver, build_standalone_resolver, logger
-
-# band-mcp's `--tools` vocabulary is CLI-facing (shell flags) and genuinely
-# distinct from the SDK's `Capability` enum -- not merged into it -- but the
-# two share values for the groups band-mcp exposes today, so this is the one
-# place that translates between them. `ToolGroup` has no `FILES` member yet:
-# this CLI's tool list is built synchronously at startup, before any
-# feature-flag negotiation against the platform is possible.
-_TOOL_GROUP_TO_CAPABILITY: dict[ToolGroup, Capability] = {
-    ToolGroup.CONTACTS: Capability.CONTACTS,
-    ToolGroup.MEMORY: Capability.MEMORY,
-}
 
 
 def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
@@ -85,10 +73,19 @@ def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
     ``SendEventWideInput`` (row 6): a standalone agent has no adapter
     narrating tool_call/tool_result for it.
     """
+    # band-mcp's `--tools` vocabulary (`ToolGroup`) is CLI-facing (shell
+    # flags) and genuinely distinct from the SDK's `Capability` enum -- not
+    # merged into it -- but every group band-mcp exposes today shares its
+    # string value with the matching capability, so converting by value
+    # needs no maintained mapping and fails loudly (`ValueError`) the day a
+    # group's value stops lining up, instead of silently registering no
+    # tools for it. `ToolGroup` has no `FILES` member yet: this CLI's tool
+    # list is built synchronously at startup, before any feature-flag
+    # negotiation against the platform is possible. Add an explicit mapping
+    # only once a CLI group genuinely differs from, or maps to more than
+    # one, SDK capability.
     capabilities: frozenset[Capability] = frozenset(
-        capability
-        for group, capability in _TOOL_GROUP_TO_CAPABILITY.items()
-        if group in config.tools
+        Capability(group) for group in config.tools
     )
     pinned_room_id = config.room_id
 
