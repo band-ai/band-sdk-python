@@ -85,6 +85,11 @@ class AgentToolsProtocol(Protocol):
         """Read-only snapshot of cached room participants."""
         ...
 
+    @property
+    def is_hub_room(self) -> bool:
+        """True if this instance is bound to the contact hub room."""
+        ...
+
     async def get_participants(self) -> Any:
         """Get participants in the current room."""
         ...

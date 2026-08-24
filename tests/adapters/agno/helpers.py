@@ -24,6 +24,7 @@ from band.core.types import (
     HistoryProvider,
     PlatformMessage,
 )
+from band.runtime.tools import DEFAULT_CAPABILITIES
 from band.testing import FakeAgentTools
 
 
@@ -119,9 +120,7 @@ class SchemaTools(FakeAgentTools):
     def get_openai_tool_schemas(
         self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
-        resolved = (
-            frozenset({Capability.CONTACTS}) if capabilities is None else capabilities
-        )
+        resolved = DEFAULT_CAPABILITIES if capabilities is None else capabilities
         self.schema_calls.append(
             {
                 "include_memory": Capability.MEMORY in resolved,
@@ -142,9 +141,7 @@ class ContactAwareTools(SchemaTools):
     def get_openai_tool_schemas(
         self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
-        resolved = (
-            frozenset({Capability.CONTACTS}) if capabilities is None else capabilities
-        )
+        resolved = DEFAULT_CAPABILITIES if capabilities is None else capabilities
         include_contacts = Capability.CONTACTS in resolved
         self.schema_calls.append(
             {

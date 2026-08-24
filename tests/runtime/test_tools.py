@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -25,6 +26,7 @@ from band.runtime.tools import (
     TOOL_MODELS,
     AgentTools,
     SendMessageInput,
+    SendRoomFileInput,
     SendEventInput,
     StoreMemoryInput,
     AddParticipantInput,
@@ -304,8 +306,6 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_inlines_small_image(self, mock_rest_client):
-        import base64
-
         attachment = _attachment(content_type="image/png", size=100)
         mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
             return_value=_messages_response(
@@ -1669,6 +1669,20 @@ class TestToolInputModels:
     def test_send_message_input_accepts_empty_mentions(self):
         """SendMessageInput allows empty mentions (runtime validates instead)."""
         model = SendMessageInput(content="Hello", mentions=[])
+        assert model.mentions == []
+
+    def test_send_room_file_input_requires_mentions(self):
+        """band_send_room_file posts a message to attach the file, so its
+        schema must require mentions just like SendMessageInput -- an
+        optional-looking field here would let the LLM omit it, upload the
+        file, and only then discover the platform's mention requirement."""
+        with pytest.raises(ValidationError):
+            SendRoomFileInput(content="hi", filename="f.txt")
+
+    def test_send_room_file_input_accepts_empty_mentions(self):
+        """Present but empty is still valid at the schema level (runtime
+        validates the "at least one" rule instead, same as SendMessageInput)."""
+        model = SendRoomFileInput(content="hi", filename="f.txt", mentions=[])
         assert model.mentions == []
 
     def test_send_event_input_validation(self):

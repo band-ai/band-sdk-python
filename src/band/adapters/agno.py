@@ -24,6 +24,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import SEND_MESSAGE_TOOL_NAME, get_band_tool_category
 
@@ -581,10 +582,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             # own tools rather than guessing Band tool visibility.
             return user_tools
 
-        effective_capabilities = self.features.capabilities | (
-            {Capability.CONTACTS}
-            if getattr(active, "is_hub_room", False)
-            else frozenset()
+        effective_capabilities = with_hub_room_contacts(
+            self.features.capabilities,
+            is_hub_room=active.is_hub_room if active is not None else False,
         )
         band = self._band_tools_cache.get(effective_capabilities)
         if band is None:

@@ -17,6 +17,7 @@ from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -87,10 +88,8 @@ def agent_tools_to_langchain(
             capabilities, Capability.CONTACTS, include_contacts
         )
 
-    effective_capabilities = capabilities | (
-        {Capability.CONTACTS}
-        if getattr(tools, "is_hub_room", False) is True
-        else frozenset()
+    effective_capabilities = with_hub_room_contacts(
+        capabilities, is_hub_room=tools.is_hub_room
     )
 
     definitions = iter_tool_definitions(capabilities=effective_capabilities)

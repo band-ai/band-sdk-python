@@ -539,7 +539,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         ``self._inner.features`` directly, so an inner adapter that itself
         needs cache-rebuilding is handled correctly too.
         """
-        self.features = features
+        super().apply_effective_features(features)
         self._inner.apply_effective_features(features)
 
     @property

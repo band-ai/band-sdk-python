@@ -26,6 +26,7 @@ from pydantic import (
 )
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS, NotFoundError
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
@@ -449,9 +450,9 @@ class ArchiveMemoryInput(BaseModel):
 class ListRoomFilesInput(BaseModel):
     """List files that have been shared in the current room.
 
-    Returns attachment metadata (id, name, content type, size) for every file
-    attached to any message in the room, including ones sent before you
-    joined. Use band_read_room_file with a returned id to fetch its contents.
+    Returns attachment metadata for every file attached to any message in the
+    room, including ones sent before you joined. Use band_read_room_file with
+    a returned id to fetch its contents.
     """
 
     cursor: str | None = Field(
@@ -487,8 +488,13 @@ class SendRoomFileInput(BaseModel):
         "", description="Optional message text to send alongside the file"
     )
     mentions: list[str] = Field(
-        default_factory=list,
-        description="Participant handles to @mention, same format as band_send_message",
+        ...,
+        description=(
+            "List of participant handles to @mention. At least one required -- "
+            "sharing a file still posts a message, and the platform requires "
+            "every message to mention at least one recipient. Same format as "
+            "band_send_message."
+        ),
     )
 
 
@@ -1291,8 +1297,9 @@ PREVIEWABLE_IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(
 # The platform answers an identical 404 for "file transfer is off in this
 # deployment" and "wrong id / wrong room / file doesn't exist" -- there is no
 # truthful way to tell those apart from the response, so one message covers
-# both rather than claiming a specific cause. Shared by every file tool's
-# error translation and by the not-found case of the room-scan lookup below.
+# both rather than claiming a specific cause. Shared by read_room_file's and
+# send_room_file's error translation, and by the not-found case of the
+# room-scan lookup below.
 FILE_UNAVAILABLE_MESSAGE = (
     "File not found, or file transfer is unavailable in this room."
 )
@@ -1473,17 +1480,13 @@ CAPABILITY_TOOL_NAMES: dict[Capability, frozenset[str]] = {
 }
 
 
-def _default_capabilities(*, surface: Surface | None) -> frozenset[Capability]:
-    """The capability set assumed when a caller passes ``capabilities=None``.
-
-    This is the pre-existing, unrelated legacy default of
-    ``iter_tool_definitions`` itself (contact tools were never
-    capability-gated before this mechanism existed) — named and resolved
-    explicitly here so it is never mistaken for ``AdapterFeatures``'
-    separately-documented opt-in-empty default.
-    """
-    del surface  # accepted for future per-surface defaults; unused today
-    return frozenset({Capability.CONTACTS})
+# The capability set assumed when a caller passes capabilities=None to
+# iter_tool_definitions()/AgentTools' schema methods. Pre-existing, unrelated
+# legacy default of iter_tool_definitions itself (contact tools were never
+# capability-gated before this mechanism existed) — named explicitly so it is
+# never mistaken for AdapterFeatures' separately-documented opt-in-empty
+# default.
+DEFAULT_CAPABILITIES: frozenset[Capability] = frozenset({Capability.CONTACTS})
 
 
 def get_band_tool_category(name: str) -> str | None:
@@ -1634,10 +1637,12 @@ def iter_tool_definitions(
       ``acp``) that pipe the result straight into ``AgentTools``-shaped
       backends don't silently gain ``HumanTools``-bound entries.
     - ``capabilities``: which optional tool categories to include (see
-      ``CAPABILITY_TOOL_NAMES``). A capability not in the set excludes both
-      its agent- and human-surface tool names. ``None`` resolves to
-      ``_default_capabilities(surface=surface)`` -- today, contacts only,
-      preserving this function's pre-existing default. The hub-room
+      ``CAPABILITY_TOOL_NAMES``). A capability not in the set excludes its
+      agent-surface tool names, plus its human-surface tool names for the
+      capabilities that have any (memory, contacts -- files does not).
+      ``None`` resolves to
+      ``DEFAULT_CAPABILITIES`` -- today, contacts only, preserving this
+      function's pre-existing default. The hub-room
       execution path always unions ``Capability.CONTACTS`` in regardless of
       what's passed here (see ``AgentTools.get_tool_schemas`` HUB_ROOM
       auto-enable rule).
@@ -1649,9 +1654,7 @@ def iter_tool_definitions(
         capabilities: Optional tool categories to include. ``None`` (default)
             means contacts only, for backward compatibility.
     """
-    resolved = (
-        _default_capabilities(surface=surface) if capabilities is None else capabilities
-    )
+    resolved = DEFAULT_CAPABILITIES if capabilities is None else capabilities
     excluded: set[str] = set()
     for capability, names in CAPABILITY_TOOL_NAMES.items():
         if capability not in resolved:
@@ -2571,15 +2574,32 @@ class AgentTools(AgentToolsProtocol):
 
     # --- File tools ---
 
+    async def _list_message_page(self, cursor: str | None) -> Any:
+        """Fetch one page of the room's message history, attachments included.
+
+        ``status="all"``: the default filter drops an already-processed
+        message entirely, attachments and all, not just its own attachment
+        field. Shared by ``list_room_files`` and ``_find_attachment`` -- the
+        only two callers that need attachment metadata off message history.
+        """
+        kwargs: dict[str, Any] = {}
+        if cursor is not None:
+            kwargs["cursor"] = cursor
+        return await self.rest.agent_api_messages.list_agent_messages(
+            chat_id=self.room_id,
+            status="all",
+            sort_order="desc",
+            request_options=DEFAULT_REQUEST_OPTIONS,
+            **kwargs,
+        )
+
     async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
         """
         List files shared in the current room.
 
         There is no dedicated "list files" endpoint -- attachment metadata
         only exists on the messages that carry it, so this derives one bounded
-        page from the room's message history (``status="all"``: the default
-        filter drops an already-processed message entirely, attachments and
-        all, not just its own attachment field).
+        page from the room's message history.
 
         Args:
             cursor: Pagination cursor from a previous call's response.
@@ -2588,16 +2608,7 @@ class AgentTools(AgentToolsProtocol):
             Dict with "data" (attachment dicts, deduplicated by id -- a file
             can be attached to more than one message) and "next_cursor".
         """
-        kwargs: dict[str, Any] = {}
-        if cursor is not None:
-            kwargs["cursor"] = cursor
-        response = await self.rest.agent_api_messages.list_agent_messages(
-            chat_id=self.room_id,
-            status="all",
-            sort_order="desc",
-            request_options=DEFAULT_REQUEST_OPTIONS,
-            **kwargs,
-        )
+        response = await self._list_message_page(cursor)
         seen: set[str] = set()
         attachments: list[dict[str, Any]] = []
         for message in response.data:
@@ -2608,33 +2619,34 @@ class AgentTools(AgentToolsProtocol):
                 attachments.append(attachment.model_dump())
         return {"data": attachments, "next_cursor": response.metadata.next_cursor}
 
-    async def _find_attachment(self, file_id: str) -> Any:
-        """Locate an attachment by id by scanning the room's message history.
+    async def _iter_message_pages(self) -> AsyncIterator[Any]:
+        """Walk every page of the room's message history, oldest cursor first.
 
-        Mirrors ``list_room_files``'s own lookup, but exhausts pagination
-        (like ``_lookup_peer``) instead of returning one page: the target
-        file may be older than the first page, and there is no dedicated
-        "get attachment by id" endpoint to reach it directly.
+        Termination is data-driven -- the platform's own ``has_more``/
+        ``next_cursor`` on the page just fetched, not knowable in advance --
+        so this is where that walk lives, once, as a plain page-at-a-time
+        generator. Callers that only need a match (``_find_attachment``)
+        drive it with a plain ``async for`` and no loop-control of their own.
         """
         cursor: str | None = None
-        while True:
-            kwargs: dict[str, Any] = {}
-            if cursor is not None:
-                kwargs["cursor"] = cursor
-            response = await self.rest.agent_api_messages.list_agent_messages(
-                chat_id=self.room_id,
-                status="all",
-                sort_order="desc",
-                request_options=DEFAULT_REQUEST_OPTIONS,
-                **kwargs,
-            )
+        more_pages = True
+        while more_pages:
+            response = await self._list_message_page(cursor)
+            yield response
+            cursor = response.metadata.next_cursor
+            more_pages = bool(response.metadata.has_more and cursor)
+
+    async def _find_attachment(self, file_id: str) -> Any:
+        """Locate an attachment by id, exhausting pagination (like
+        ``_lookup_peer``) instead of returning one page: the target file may
+        be older than the first page, and there is no dedicated "get
+        attachment by id" endpoint to reach it directly.
+        """
+        async for response in self._iter_message_pages():
             for message in response.data:
                 for attachment in message.attachments or []:
                     if attachment.id == file_id:
                         return attachment
-            if not response.metadata.has_more or not response.metadata.next_cursor:
-                break
-            cursor = response.metadata.next_cursor
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
 
     async def _download_file(self, file_id: str) -> bytes:
@@ -2671,12 +2683,28 @@ class AgentTools(AgentToolsProtocol):
             a "description" summarizing why the file wasn't shown inline.
         """
         attachment = await self._find_attachment(file_id)
-        is_text = attachment.content_type.startswith("text/")
-        is_previewable_image = (
-            attachment.content_type in PREVIEWABLE_IMAGE_CONTENT_TYPES
-        )
 
-        if is_text and attachment.bytes <= MAX_INLINE_TEXT_BYTES:
+        match attachment.content_type:
+            case ct if ct.startswith("text/"):
+                kind, cap, reason = (
+                    "text",
+                    MAX_INLINE_TEXT_BYTES,
+                    f"exceeds the {MAX_INLINE_TEXT_BYTES}-byte inline text limit",
+                )
+            case ct if ct in PREVIEWABLE_IMAGE_CONTENT_TYPES:
+                kind, cap, reason = (
+                    "image",
+                    MAX_INLINE_IMAGE_BYTES,
+                    f"exceeds the {MAX_INLINE_IMAGE_BYTES}-byte inline image limit",
+                )
+            case _:
+                kind, cap, reason = (
+                    None,
+                    None,
+                    "is not a previewable text or image type",
+                )
+
+        if kind == "text" and attachment.bytes <= cap:
             body = await self._download_file(file_id)
             return {
                 "name": attachment.name,
@@ -2685,7 +2713,7 @@ class AgentTools(AgentToolsProtocol):
                 "text": body.decode("utf-8", errors="replace"),
             }
 
-        if is_previewable_image and attachment.bytes <= MAX_INLINE_IMAGE_BYTES:
+        if kind == "image" and attachment.bytes <= cap:
             body = await self._download_file(file_id)
             return {
                 "content": [
@@ -2697,13 +2725,6 @@ class AgentTools(AgentToolsProtocol):
                 ]
             }
 
-        match attachment.content_type:
-            case ct if ct.startswith("text/"):
-                reason = f"exceeds the {MAX_INLINE_TEXT_BYTES}-byte inline text limit"
-            case ct if ct in PREVIEWABLE_IMAGE_CONTENT_TYPES:
-                reason = f"exceeds the {MAX_INLINE_IMAGE_BYTES}-byte inline image limit"
-            case _:
-                reason = "is not a previewable text or image type"
         return {
             "name": attachment.name,
             "content_type": attachment.content_type,
@@ -2905,18 +2926,9 @@ class AgentTools(AgentToolsProtocol):
                 f"Invalid format: {format}. Must be 'openai' or 'anthropic'"
             )
 
-        resolved = (
-            _default_capabilities(surface=Surface.AGENT)
-            if capabilities is None
-            else capabilities
-        )
-        # HUB_ROOM auto-enable: force contact tools on for the hub-room
-        # execution path, regardless of what was requested. The hub-room
-        # prompt instructs the LLM to call contact tools, so they must be
-        # exposed even if the caller explicitly asked for a set omitting
-        # CONTACTS.
-        effective_capabilities = resolved | (
-            {Capability.CONTACTS} if self.is_hub_room else frozenset()
+        resolved = DEFAULT_CAPABILITIES if capabilities is None else capabilities
+        effective_capabilities = with_hub_room_contacts(
+            resolved, is_hub_room=self.is_hub_room
         )
 
         tools: list[Any] = []

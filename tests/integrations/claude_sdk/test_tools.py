@@ -4,9 +4,17 @@
 (``{"content": [{"type": "image", ...}]}``) so the model receives real vision
 input. Before this fix, ``_make_result`` would json-dumps *any* dict --
 including that image block -- into a text content block, so the model never
-actually saw an image. These tests pin the passthrough at both the unit level
-(``_make_result``/``_format_success_payload``) and through the real
-``@tool``-decorated handler ``build_band_sdk_tools`` produces.
+actually saw an image.
+
+The passthrough decision is scoped to the one caller that needs it (the
+``band_read_room_file`` branch of ``_build_builtin_sdk_tool``'s handler), not
+baked into ``_make_result`` itself: ``_make_result`` also formats every custom
+tool's result, and a loose structural check there would misfire on an
+unrelated custom tool whose own return value happens to look MCP-content-shaped.
+These tests pin that scoping at the unit level (``_make_result`` always
+encodes; ``_format_success_payload`` only special-cases ``band_read_room_file``)
+and through the real ``@tool``-decorated handler ``build_band_sdk_tools``
+produces.
 """
 
 from __future__ import annotations
@@ -14,6 +22,8 @@ from __future__ import annotations
 import json
 
 import pytest
+
+from pydantic import BaseModel
 
 from band.integrations.claude_sdk.tools import (
     _format_success_payload,
@@ -43,15 +53,26 @@ class TestIsMcpContentResult:
         assert not _is_mcp_content_result({"content": [{"no_type": 1}]})
 
 
-class TestMakeResultPassthrough:
-    def test_image_result_passes_through_untouched(self) -> None:
-        assert _make_result(_IMAGE_RESULT) is _IMAGE_RESULT
+class TestMakeResultAlwaysEncodes:
+    """``_make_result`` has no per-tool identity, so it never special-cases a
+    dict's shape -- including one that happens to look MCP-content-shaped,
+    which is exactly what a custom tool's own return value could look like."""
 
-    def test_plain_dict_is_still_json_encoded(self) -> None:
+    def test_plain_dict_is_json_encoded(self) -> None:
         result = _make_result(_TEXT_RESULT)
 
         assert result["content"][0]["type"] == "text"
         assert json.loads(result["content"][0]["text"]) == _TEXT_RESULT
+
+    def test_mcp_shaped_dict_is_still_json_encoded(self) -> None:
+        """Regression guard: an MCP-content-shaped dict from a source other
+        than band_read_room_file (e.g. a custom tool) must not be passed
+        through bare -- only the scoped call site in
+        _build_builtin_sdk_tool's handler does that."""
+        result = _make_result(_IMAGE_RESULT)
+
+        assert result["content"][0]["type"] == "text"
+        assert json.loads(result["content"][0]["text"]) == _IMAGE_RESULT
 
 
 class TestFormatSuccessPayloadReadRoomFile:
@@ -68,7 +89,7 @@ class TestFormatSuccessPayloadReadRoomFile:
         assert payload["text"] == "hi"
 
 
-class _StubReadRoomFileTools:
+class StubReadRoomFileTools:
     """Minimal AgentToolsProtocol double whose read_room_file returns a fixed
     result -- only what the handler under test actually calls."""
 
@@ -85,7 +106,7 @@ async def test_band_read_room_file_handler_hands_back_a_real_image_block() -> No
     """End-to-end through the real @tool-decorated handler: an image result
     from AgentTools.read_room_file must reach the SDK exactly as an MCP image
     content block, not json-dumped into a text block."""
-    tools = _StubReadRoomFileTools(_IMAGE_RESULT)
+    tools = StubReadRoomFileTools(_IMAGE_RESULT)
     sdk_tools = build_band_sdk_tools(
         tool_definitions=[TOOL_DEFINITIONS["band_read_room_file"]],
         get_tools=lambda _room_id: tools,
@@ -101,7 +122,7 @@ async def test_band_read_room_file_handler_hands_back_a_real_image_block() -> No
 @pytest.mark.asyncio
 async def test_band_read_room_file_handler_still_json_encodes_text_result() -> None:
     """Non-image results keep the existing status-wrapped JSON-text shape."""
-    tools = _StubReadRoomFileTools(_TEXT_RESULT)
+    tools = StubReadRoomFileTools(_TEXT_RESULT)
     sdk_tools = build_band_sdk_tools(
         tool_definitions=[TOOL_DEFINITIONS["band_read_room_file"]],
         get_tools=lambda _room_id: tools,
@@ -115,3 +136,32 @@ async def test_band_read_room_file_handler_still_json_encodes_text_result() -> N
     payload = json.loads(result["content"][0]["text"])
     assert payload["status"] == "success"
     assert payload["text"] == "hi"
+
+
+class ReportInput(BaseModel):
+    """A custom tool whose own data model happens to look MCP-content-shaped."""
+
+
+async def _report_handler(_input: ReportInput) -> dict[str, object]:
+    return _IMAGE_RESULT
+
+
+@pytest.mark.asyncio
+async def test_custom_tool_result_that_looks_mcp_shaped_is_still_json_encoded() -> None:
+    """Regression guard for the _make_result scoping fix: a custom tool's own
+    return value can coincidentally match the MCP-content shape
+    (``{"content": [{"type": ..., ...}]}``) without being band_read_room_file's
+    image block. It must still reach the SDK as a json-encoded text block, not
+    be passed through bare as if it were real vision content."""
+    sdk_tools = build_band_sdk_tools(
+        tool_definitions=[],
+        get_tools=lambda _room_id: None,
+        additional_tools=[(ReportInput, _report_handler)],
+        include_room_id=False,
+    )
+    handler = next(t for t in sdk_tools if t.name == "report").handler
+
+    result = await handler({})
+
+    assert result["content"][0]["type"] == "text"
+    assert json.loads(result["content"][0]["text"]) == _IMAGE_RESULT

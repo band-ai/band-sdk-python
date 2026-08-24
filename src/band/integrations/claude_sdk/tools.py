@@ -97,12 +97,16 @@ def _is_mcp_content_result(data: Any) -> bool:
 def _make_result(data: Any) -> dict[str, Any]:
     """Format tool result for Claude SDK MCP responses.
 
-    An already-MCP-shaped result passes through untouched instead of being
-    json-dumped into a text block -- otherwise an image content block would
-    reach the model as a JSON string, not real vision input.
+    Always json-encodes into a text block. This function has no per-tool
+    identity to scope a passthrough decision against -- it also formats every
+    custom tool's result (``_build_custom_sdk_tool``), so a loose structural
+    check here (e.g. "does this dict merely look MCP-content-shaped?") would
+    misfire on an unrelated custom tool whose own return value happens to
+    have a "content" list of dicts each carrying a "type" key. The
+    band_read_room_file passthrough is instead decided by the one caller that
+    actually needs it -- see ``_is_mcp_content_result`` at the
+    ``_build_builtin_sdk_tool`` call site.
     """
-    if _is_mcp_content_result(data):
-        return data
     return {"content": [{"type": "text", "text": json.dumps(data, default=str)}]}
 
 
@@ -240,9 +244,16 @@ def _build_builtin_sdk_tool(
                 room_id,
                 result,
             )
-            return _make_result(
-                _format_success_payload(definition.name, call_args, result)
-            )
+            payload = _format_success_payload(definition.name, call_args, result)
+            # band_read_room_file's image branch already returns a real MCP
+            # content block (see _format_success_payload) -- pass it through
+            # bare instead of json-encoding it into a text block, which is
+            # what _make_result would otherwise do to any dict.
+            if definition.name == "band_read_room_file" and _is_mcp_content_result(
+                payload
+            ):
+                return payload
+            return _make_result(payload)
         except (ValueError, BandToolError) as error:
             if (
                 definition.name == SEND_MESSAGE_TOOL_NAME

@@ -57,3 +57,20 @@ def prune_unsupported(
     if pruned == features.capabilities:
         return features
     return dataclasses.replace(features, capabilities=pruned)
+
+
+def with_hub_room_contacts(
+    capabilities: frozenset[Capability], *, is_hub_room: bool
+) -> frozenset[Capability]:
+    """Force ``Capability.CONTACTS`` on for the hub-room execution path.
+
+    The hub-room prompt instructs the LLM to call contact tools regardless of
+    what an adapter's own capabilities negotiated, so every tool-schema
+    call site that can be bound to the hub room applies this on top of its
+    own resolved set. One definition shared by ``AgentTools.get_tool_schemas``
+    and every adapter that separately re-resolves capabilities per turn
+    (``AgnoAdapter``, ``langchain_tools.get_band_tools``).
+    """
+    if is_hub_room:
+        return capabilities | {Capability.CONTACTS}
+    return capabilities
