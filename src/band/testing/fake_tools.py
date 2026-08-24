@@ -28,6 +28,7 @@ from band.client.rest import (
 from band.core.exceptions import BandToolError
 from band.core.types import Capability
 from band.runtime.tools import (
+    DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
     ToolCallOutcome,
     append_mention_handles_hint,
@@ -402,6 +403,7 @@ class FakeAgentTools:
         via ``send_message``, so the fake's mention requirement applies
         before the file is recorded, same as the real tool validates
         mentions before uploading."""
+        caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
         body = content.encode("utf-8")
         attachment = Attachment(
             id=str(uuid.uuid4()),

@@ -8,7 +8,7 @@ import pytest
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.runtime.tools import serialize_tool_result
+from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools
 
 
@@ -366,6 +366,18 @@ class TestFileTools:
         assert [f["name"] for f in tools.files] == ["report.txt"]
         assert result["attachment"]["name"] == "report.txt"
         assert tools.messages_sent[0]["content"] == "here"
+
+    async def test_send_room_file_defaults_caption_when_omitted(self) -> None:
+        """Mirrors AgentTools.send_room_file's real fix: the platform
+        rejects blank message content, so the fake must not let a
+        captionless call pass a unit test that the real API would reject."""
+        tools = FakeAgentTools()
+
+        await tools.send_room_file("hello world", "report.txt", mentions=["user-1"])
+
+        assert tools.messages_sent[0]["content"] == DEFAULT_FILE_CAPTION.format(
+            filename="report.txt"
+        )
 
     async def test_send_room_file_rejects_a_message_with_no_mentions(self) -> None:
         """Reuses send_message's mention requirement, matching the real tool.

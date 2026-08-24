@@ -452,10 +452,9 @@ class ArchiveMemoryInput(BaseModel):
 class ListRoomFilesInput(BaseModel):
     """List files that have been shared in the current room.
 
-    Returns attachment metadata for every message that mentions you,
-    including ones sent before you joined. Files you attached yourself with
-    band_send_room_file are not included -- use the id from that call's own
-    response instead, which band_read_room_file can still fetch by id.
+    Returns attachment metadata for every file attached to a message you
+    sent or were mentioned in, including ones sent before you joined. Use
+    band_read_room_file with a returned id to fetch its contents.
     """
 
     cursor: str | None = Field(
@@ -1811,8 +1810,6 @@ class AgentTools(AgentToolsProtocol):
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
-        # Files this instance uploaded -- see _find_attachment for why.
-        self._sent_attachments: dict[str, "Attachment"] = {}
 
     @property
     def agent_id(self) -> str | None:
@@ -2593,22 +2590,19 @@ class AgentTools(AgentToolsProtocol):
     async def _list_message_page(self, cursor: str | None) -> Any:
         """Fetch one page of the room's message history, attachments included.
 
-        ``status="all"``: the default filter drops an already-processed
-        message entirely, attachments and all, not just its own attachment
-        field. Shared by ``list_room_files`` and ``_find_attachment`` -- the
-        only two callers that need attachment metadata off message history.
-
-        Separately, and regardless of ``status``, the endpoint itself only
-        ever returns messages that mention this agent -- never ones it
-        authored.
+        Uses the context/rehydration endpoint, not the plain agent messages
+        one: that one only ever returns messages that mention this agent,
+        excluding ones it authored -- which would make a file this agent
+        just sent via ``send_room_file`` undiscoverable by itself, forever.
+        The context endpoint's server-side query is explicitly ``sender_id
+        == agent_id OR mentions agent_id``, with no delivery-status concept
+        to filter on.
         """
         kwargs: dict[str, Any] = {}
         if cursor is not None:
             kwargs["cursor"] = cursor
-        return await self.rest.agent_api_messages.list_agent_messages(
+        return await self.rest.agent_api_context.get_agent_chat_context(
             chat_id=self.room_id,
-            status="all",
-            sort_order="desc",
             request_options=DEFAULT_REQUEST_OPTIONS,
             **kwargs,
         )
@@ -2620,8 +2614,6 @@ class AgentTools(AgentToolsProtocol):
         There is no dedicated "list files" endpoint -- attachment metadata
         only exists on the messages that carry it, so this derives one bounded
         page from the room's message history (see ``_list_message_page``).
-        That means a file you sent yourself with ``send_room_file`` never
-        appears here.
 
         Args:
             cursor: Pagination cursor from a previous call's response.
@@ -2663,13 +2655,7 @@ class AgentTools(AgentToolsProtocol):
         ``_lookup_peer``) instead of returning one page: the target file may
         be older than the first page, and there is no dedicated "get
         attachment by id" endpoint to reach it directly.
-
-        Checks ``_sent_attachments`` first: a file this instance uploaded via
-        ``send_room_file`` would otherwise never be found (see
-        ``_list_message_page``), no matter how far the walk below goes.
         """
-        if file_id in self._sent_attachments:
-            return self._sent_attachments[file_id]
         async for response in self._iter_message_pages():
             for message in response.data:
                 for attachment in message.attachments or []:
@@ -2836,7 +2822,6 @@ class AgentTools(AgentToolsProtocol):
         except NotFoundError as error:
             raise BandToolError(FILE_UNAVAILABLE_MESSAGE) from error
         attachment = upload_response.data
-        self._sent_attachments[attachment.id] = attachment
 
         message = await self.send_message(
             content=caption,

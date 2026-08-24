@@ -9,12 +9,17 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from band_rest import (
     ChatMessage,
-    ListAgentMessagesResponse,
-    ListAgentMessagesResponseMetadata,
+    GetAgentChatContextResponse,
+    GetAgentChatContextResponseMetadata,
 )
 from pydantic import BaseModel, ValidationError
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, Attachment, NotFoundError
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    Attachment,
+    ChatMessageRequest,
+    NotFoundError,
+)
 from band.core.exceptions import BandToolError
 from band.core.types import Capability
 from tests.conftest import make_participant_mock
@@ -189,15 +194,15 @@ def _attachment(
     )
 
 
-def _messages_response(
+def _context_response(
     messages: list[ChatMessage],
     *,
     next_cursor: str | None = None,
     has_more: bool = False,
-) -> ListAgentMessagesResponse:
-    return ListAgentMessagesResponse(
+) -> GetAgentChatContextResponse:
+    return GetAgentChatContextResponse(
         data=messages,
-        metadata=ListAgentMessagesResponseMetadata(
+        metadata=GetAgentChatContextResponseMetadata(
             has_more=has_more, limit=50, next_cursor=next_cursor
         ),
     )
@@ -216,6 +221,16 @@ def _message_with_attachments(
     )
 
 
+def _mock_attachment_page(mock_rest_client: MagicMock, attachment: Attachment) -> None:
+    """Configure the context endpoint to return one message carrying `attachment` --
+    the shared setup for every read_room_file test that only cares about one file."""
+    mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+        return_value=_context_response(
+            [_message_with_attachments("msg-1", [attachment])]
+        )
+    )
+
+
 async def _fake_download(body: bytes):
     """A ``download_agent_chat_file`` double: an async generator, not a
     coroutine -- assigning an ``AsyncMock`` here would make the *call* itself
@@ -230,6 +245,17 @@ async def _fake_download_not_found():
     raise NotFoundError(body=MagicMock())
 
 
+def _posted_message(mock_rest_client: MagicMock) -> ChatMessageRequest:
+    """The ``ChatMessageRequest`` a preceding ``send_message``/``send_room_file``
+    call actually posted -- the one observable outcome a REST-backed
+    ``AgentTools`` test has for "what did the message body look like"."""
+    return (
+        mock_rest_client.agent_api_messages.create_agent_chat_message.await_args.kwargs[
+            "message"
+        ]
+    )
+
+
 class TestFileTools:
     """Tests for band_list_room_files / band_read_room_file / band_send_room_file."""
 
@@ -239,13 +265,13 @@ class TestFileTools:
     async def test_list_room_files_dedupes_by_attachment_id(self, mock_rest_client):
         shared = _attachment("file-1")
         other = _attachment("file-2")
-        response = _messages_response(
+        response = _context_response(
             [
                 _message_with_attachments("msg-1", [shared]),
                 _message_with_attachments("msg-2", [shared, other]),
             ]
         )
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
             return_value=response
         )
         tools = AgentTools("room-123", mock_rest_client)
@@ -253,10 +279,8 @@ class TestFileTools:
         result = await tools.list_room_files()
 
         assert [a["id"] for a in result["data"]] == ["file-1", "file-2"]
-        mock_rest_client.agent_api_messages.list_agent_messages.assert_awaited_once_with(
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once_with(
             chat_id="room-123",
-            status="all",
-            sort_order="desc",
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
 
@@ -264,12 +288,12 @@ class TestFileTools:
     async def test_list_room_files_forwards_cursor_and_returns_next(
         self, mock_rest_client
     ):
-        response = _messages_response(
+        response = _context_response(
             [_message_with_attachments("msg-1", [_attachment()])],
             next_cursor="cursor-2",
             has_more=True,
         )
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
             return_value=response
         )
         tools = AgentTools("room-123", mock_rest_client)
@@ -277,10 +301,8 @@ class TestFileTools:
         result = await tools.list_room_files(cursor="cursor-1")
 
         assert result["next_cursor"] == "cursor-2"
-        mock_rest_client.agent_api_messages.list_agent_messages.assert_awaited_once_with(
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once_with(
             chat_id="room-123",
-            status="all",
-            sort_order="desc",
             request_options=DEFAULT_REQUEST_OPTIONS,
             cursor="cursor-1",
         )
@@ -290,11 +312,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_read_room_file_inlines_small_text(self, mock_rest_client):
         attachment = _attachment(content_type="text/plain", size=5)
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
             _fake_download(b"hello")
         )
@@ -318,11 +336,7 @@ class TestFileTools:
         attachment = _attachment(
             content_type="text/plain", size=len(windows_1252_bytes)
         )
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
             _fake_download(windows_1252_bytes)
         )
@@ -336,11 +350,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_read_room_file_inlines_small_image(self, mock_rest_client):
         attachment = _attachment(content_type="image/png", size=100)
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
             _fake_download(b"\x89PNG-fake-bytes")
         )
@@ -358,11 +368,7 @@ class TestFileTools:
         self, mock_rest_client
     ):
         attachment = _attachment(content_type="text/plain", size=MAX_INLINE_TEXT_BYTES)
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
         mock_rest_client.agent_api_files.download_agent_chat_file = download
         tools = AgentTools("room-123", mock_rest_client)
@@ -379,11 +385,7 @@ class TestFileTools:
         attachment = _attachment(
             content_type="text/plain", size=MAX_INLINE_TEXT_BYTES + 1
         )
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
         mock_rest_client.agent_api_files.download_agent_chat_file = download
         tools = AgentTools("room-123", mock_rest_client)
@@ -399,11 +401,7 @@ class TestFileTools:
         self, mock_rest_client
     ):
         attachment = _attachment(content_type="image/png", size=MAX_INLINE_IMAGE_BYTES)
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
         mock_rest_client.agent_api_files.download_agent_chat_file = download
         tools = AgentTools("room-123", mock_rest_client)
@@ -420,11 +418,7 @@ class TestFileTools:
         attachment = _attachment(
             content_type="image/png", size=MAX_INLINE_IMAGE_BYTES + 1
         )
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
         mock_rest_client.agent_api_files.download_agent_chat_file = download
         tools = AgentTools("room-123", mock_rest_client)
@@ -440,11 +434,7 @@ class TestFileTools:
         self, mock_rest_client
     ):
         attachment = _attachment(content_type="application/pdf", size=10)
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
         mock_rest_client.agent_api_files.download_agent_chat_file = download
         tools = AgentTools("room-123", mock_rest_client)
@@ -458,8 +448,8 @@ class TestFileTools:
     async def test_read_room_file_unknown_id_raises_band_tool_error(
         self, mock_rest_client
     ):
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response([])
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            return_value=_context_response([])
         )
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -471,11 +461,7 @@ class TestFileTools:
         self, mock_rest_client
     ):
         attachment = _attachment(content_type="text/plain", size=5)
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response(
-                [_message_with_attachments("msg-1", [attachment])]
-            )
-        )
+        _mock_attachment_page(mock_rest_client, attachment)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
             _fake_download_not_found()
         )
@@ -488,19 +474,19 @@ class TestFileTools:
     async def test_read_room_file_searches_past_the_first_page(self, mock_rest_client):
         """_find_attachment must walk every page -- the target file may be
         older than the first page returned."""
-        page_one = _messages_response(
+        page_one = _context_response(
             [_message_with_attachments("msg-1", [_attachment("other-file")])],
             next_cursor="cursor-2",
             has_more=True,
         )
-        page_two = _messages_response(
+        page_two = _context_response(
             [
                 _message_with_attachments(
                     "msg-2", [_attachment(content_type="text/plain", size=5)]
                 )
             ]
         )
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
             side_effect=[page_one, page_two]
         )
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
@@ -511,9 +497,9 @@ class TestFileTools:
         result = await tools.read_room_file("file-1")
 
         assert result["text"] == "hello"
-        list_messages = mock_rest_client.agent_api_messages.list_agent_messages
-        assert list_messages.await_count == 2
-        _, second_call_kwargs = list_messages.await_args_list[1]
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == 2
+        _, second_call_kwargs = get_context.await_args_list[1]
         assert second_call_kwargs["cursor"] == "cursor-2"
 
     # --- send_room_file ---
@@ -544,11 +530,9 @@ class TestFileTools:
         headers = kwargs["request_options"]["additional_headers"]
         assert headers["x-file-name"] == "report.txt"
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_awaited_once()
-        _, message_kwargs = (
-            mock_rest_client.agent_api_messages.create_agent_chat_message.await_args
-        )
-        assert message_kwargs["message"].attachment_ids == ["file-9"]
-        assert message_kwargs["message"].content == "here you go"
+        posted = _posted_message(mock_rest_client)
+        assert posted.attachment_ids == ["file-9"]
+        assert posted.content == "here you go"
 
     @pytest.mark.asyncio
     async def test_send_room_file_exactly_at_limit_succeeds(
@@ -659,41 +643,43 @@ class TestFileTools:
         )
 
         assert result["attachment"]["id"] == "file-9"
-        _, message_kwargs = (
-            mock_rest_client.agent_api_messages.create_agent_chat_message.await_args
+        assert _posted_message(mock_rest_client).content == (
+            DEFAULT_FILE_CAPTION.format(filename="report.txt")
         )
-        posted_content = message_kwargs["message"].content
-        assert posted_content == DEFAULT_FILE_CAPTION.format(filename="report.txt")
 
     @pytest.mark.asyncio
-    async def test_send_room_file_result_is_immediately_readable(
+    async def test_send_room_file_discoverable_from_a_new_agenttools_instance(
         self, mock_rest_client, participants
     ):
-        """A file this instance just sent never appears in its own message
-        history -- the agent messages endpoint excludes messages the calling
-        agent authored, regardless of any status filter -- so read_room_file
-        must not depend on that history to find it."""
+        """AgentTools is recreated per execution (a fresh instance per turn),
+        so a file must be discoverable through the REST layer alone, not
+        through any in-process state the sending instance happened to hold.
+        Regression guard for the agent messages endpoint's direct_only
+        exclusion of self-authored messages: file discovery must go through
+        the context endpoint instead, which includes them."""
         uploaded = _attachment("file-9", name="report.txt", size=5)
         upload_response = MagicMock()
         upload_response.data = uploaded
         mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
             return_value=upload_response
         )
-        # Mirrors the real platform: this agent's own send never shows up in
-        # its own message history.
-        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
-            return_value=_messages_response([])
-        )
+        sender = AgentTools("room-123", mock_rest_client, participants)
+        sent = await sender.send_room_file("hello", "report.txt", mentions=["User One"])
+
+        # A later turn: brand new instance, no shared state with `sender`.
+        # Mirrors what the real platform now returns -- the context endpoint
+        # includes messages this agent sent, unlike the plain messages one.
+        _mock_attachment_page(mock_rest_client, uploaded)
         mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
             _fake_download(b"hello")
         )
-        tools = AgentTools("room-123", mock_rest_client, participants)
-        sent = await tools.send_room_file("hello", "report.txt", mentions=["User One"])
+        reader = AgentTools("room-123", mock_rest_client, participants)
 
-        result = await tools.read_room_file(sent["attachment"]["id"])
+        listed = await reader.list_room_files()
+        read = await reader.read_room_file(sent["attachment"]["id"])
 
-        assert result["text"] == "hello"
-        mock_rest_client.agent_api_messages.list_agent_messages.assert_not_awaited()
+        assert [a["id"] for a in listed["data"]] == ["file-9"]
+        assert read["text"] == "hello"
 
 
 class TestAgentToolsConstruction:
