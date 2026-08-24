@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
     from band.client.rest import (
         AsyncRestClient,
+        Attachment,
         ListAgentContactRequestsResponse,
         ListAgentContactsResponse,
         ListAgentMemoriesResponse,
@@ -1317,23 +1318,13 @@ FILE_UNAVAILABLE_MESSAGE = (
     "File not found, or file transfer is unavailable in this room."
 )
 
-# band_send_room_file's message content is required, non-empty text on the
-# platform (ChatMessage.changeset validates min length 1 unconditionally, even
-# when attachment_ids is present) -- an omitted caption cannot become "", or
-# the message post fails after the file has already been uploaded, leaving an
-# orphaned attachment nothing points at. Used only when the caller passes no
-# caption at all.
+# The platform rejects blank message content even on an attachment-only
+# post, so an omitted caption can't stay "".
 DEFAULT_FILE_CAPTION = "Shared a file: {filename}"
 
-# band_send_room_file's filename travels as the raw "x-file-name" HTTP header
-# value, so it must satisfy RFC 7230's field-value grammar: visible ASCII plus
-# space, nothing else. That excludes not just accents/CJK/emoji (httpx refuses
-# to encode those into a header at all) but also CR/LF and other control
-# characters -- those *do* encode to ASCII, so a bare "not ascii" check would
-# still let a filename like "evil\r\nX-Injected: yes" reach the upload call,
-# where h11 rejects it as an illegal header value only once the request is
-# already being sent. Reject anything outside this set upfront instead of
-# discovering which failure mode a given filename hits.
+# band_send_room_file's filename becomes a raw "x-file-name" HTTP header
+# value: printable ASCII only. CR/LF pass a plain "is it ASCII" check but
+# still break the header, so this excludes them too.
 FILENAME_HEADER_SAFE_PATTERN = re.compile(r"[\x20-\x7e]+")
 
 # Read-only / informational agent tools - explicitly listed (not derived by a
@@ -1820,13 +1811,8 @@ class AgentTools(AgentToolsProtocol):
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
-        # send_room_file's own upload is invisible to this same agent's later
-        # _find_attachment lookups: the agent messages endpoint always excludes
-        # messages the calling agent authored (see _list_message_page), so a
-        # file this instance just sent can never turn up in its own paginated
-        # history walk. Remember it locally instead of asking the network for
-        # something it structurally cannot answer.
-        self._sent_attachments: dict[str, Any] = {}
+        # Files this instance uploaded -- see _find_attachment for why.
+        self._sent_attachments: dict[str, "Attachment"] = {}
 
     @property
     def agent_id(self) -> str | None:
@@ -2612,12 +2598,9 @@ class AgentTools(AgentToolsProtocol):
         field. Shared by ``list_room_files`` and ``_find_attachment`` -- the
         only two callers that need attachment metadata off message history.
 
-        This is unrelated to a separate, unconditional exclusion the endpoint
-        itself applies: it only ever returns messages that mention this
-        agent, never ones it authored (confirmed server-side, not something
-        any client-side parameter can widen). ``status="all"`` controls
-        delivery-status filtering among those mention-matched messages; it
-        does not reach messages this agent sent itself.
+        Separately, and regardless of ``status``, the endpoint itself only
+        ever returns messages that mention this agent -- never ones it
+        authored.
         """
         kwargs: dict[str, Any] = {}
         if cursor is not None:
@@ -2636,11 +2619,9 @@ class AgentTools(AgentToolsProtocol):
 
         There is no dedicated "list files" endpoint -- attachment metadata
         only exists on the messages that carry it, so this derives one bounded
-        page from the room's message history. That history, like every
-        agent-facing message endpoint, only includes messages that mention
-        this agent (see ``_list_message_page``) -- a file this instance sent
-        itself via ``send_room_file`` never appears here, even once uploaded
-        and posted successfully.
+        page from the room's message history (see ``_list_message_page``).
+        That means a file you sent yourself with ``send_room_file`` never
+        appears here.
 
         Args:
             cursor: Pagination cursor from a previous call's response.
@@ -2677,16 +2658,15 @@ class AgentTools(AgentToolsProtocol):
             cursor = response.metadata.next_cursor
             more_pages = bool(response.metadata.has_more and cursor)
 
-    async def _find_attachment(self, file_id: str) -> Any:
+    async def _find_attachment(self, file_id: str) -> "Attachment":
         """Locate an attachment by id, exhausting pagination (like
         ``_lookup_peer``) instead of returning one page: the target file may
         be older than the first page, and there is no dedicated "get
         attachment by id" endpoint to reach it directly.
 
-        Checks ``_sent_attachments`` first -- a file this instance uploaded
-        via ``send_room_file`` would otherwise never be found, since the
-        agent messages endpoint excludes messages the calling agent authored
-        (see ``_list_message_page``) no matter how far the walk below goes.
+        Checks ``_sent_attachments`` first: a file this instance uploaded via
+        ``send_room_file`` would otherwise never be found (see
+        ``_list_message_page``), no matter how far the walk below goes.
         """
         if file_id in self._sent_attachments:
             return self._sent_attachments[file_id]
@@ -2752,37 +2732,28 @@ class AgentTools(AgentToolsProtocol):
                     "is not a previewable text or image type",
                 )
 
-        if kind == "text" and attachment.bytes <= cap:
+        if kind == "text" and cap is not None and attachment.bytes <= cap:
             body = await self._download_file(file_id)
-            # The platform derives content_type from magic bytes alone, with
-            # no charset -- a non-UTF-8 text file (a Windows-1252 export, for
-            # instance) has no metadata to decode it correctly. Try strict
-            # UTF-8 first; only fall back to lossy replacement when that
-            # fails, and say so, rather than silently handing back text that
-            # looks intact but was quietly rewritten.
+            result: dict[str, Any] = {
+                "name": attachment.name,
+                "content_type": attachment.content_type,
+                "bytes": attachment.bytes,
+            }
             try:
-                text = body.decode("utf-8")
-                result: dict[str, Any] = {
-                    "name": attachment.name,
-                    "content_type": attachment.content_type,
-                    "bytes": attachment.bytes,
-                    "text": text,
-                }
+                result["text"] = body.decode("utf-8")
             except UnicodeDecodeError:
-                result = {
-                    "name": attachment.name,
-                    "content_type": attachment.content_type,
-                    "bytes": attachment.bytes,
-                    "text": body.decode("utf-8", errors="replace"),
-                    "description": (
-                        "This file is not valid UTF-8; non-UTF-8 bytes were "
-                        "replaced with �, so the text above may not "
-                        "exactly match the original."
-                    ),
-                }
+                # content_type has no charset (derived from magic bytes
+                # alone), so a non-UTF-8 file can't be decoded correctly.
+                # Say so rather than silently handing back replaced bytes.
+                result["text"] = body.decode("utf-8", errors="replace")
+                result["description"] = (
+                    "This file is not valid UTF-8; non-UTF-8 bytes were "
+                    "replaced with �, so the text above may not exactly "
+                    "match the original."
+                )
             return result
 
-        if kind == "image" and attachment.bytes <= cap:
+        if kind == "image" and cap is not None and attachment.bytes <= cap:
             body = await self._download_file(file_id)
             return {
                 "content": [
@@ -2830,10 +2801,6 @@ class AgentTools(AgentToolsProtocol):
         """
         caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
         if not FILENAME_HEADER_SAFE_PATTERN.fullmatch(filename):
-            # Fail clearly before uploading, rather than deep inside the
-            # upload call with a raw UnicodeEncodeError (accents/CJK/emoji)
-            # or h11 LocalProtocolError (a stray \r or \n) -- see
-            # FILENAME_HEADER_SAFE_PATTERN for why both are illegal here.
             raise BandToolError(
                 f"Filename {filename!r} must use plain printable ASCII "
                 "characters only -- the upload header cannot carry accents, "
