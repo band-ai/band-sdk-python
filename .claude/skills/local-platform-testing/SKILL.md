@@ -118,7 +118,21 @@ cd "$PLATFORM_DIR"
 make ensure-docker-services
 ```
 
-`docker compose ps` should show `db`, `unleash`, `minio` healthy before continuing.
+That target itself only waits on `db` before moving on — the rest (including
+`minio`) start with a fire-and-forget `docker compose up -d`. `minio` is safe
+regardless: `minio-init` (also run by `ensure-docker-services`) declares
+`depends_on: minio: condition: service_healthy` in `docker-compose.yml`, so
+Compose itself blocks the bucket-creation step on it. `unleash` has no such
+guard here — nothing later in this Make target waits for it, and Step 4 talks
+to it directly from the host. Poll for it explicitly before relying on it:
+
+```bash
+timeout=60
+while [ $timeout -gt 0 ] && ! docker compose ps unleash | grep -q "(healthy)"; do
+  sleep 1; timeout=$((timeout - 1))
+done
+[ $timeout -gt 0 ] || { echo "unleash never became healthy"; exit 1; }
+```
 
 ## Step 2 — Generate secrets and install dependencies
 
@@ -177,14 +191,10 @@ curl -s -b /tmp/unleash_cookies.txt -X POST \
   "http://localhost:4242/api/admin/projects/default/features/<FLAG_NAME>/environments/development/on"
 ```
 
-The running server doesn't see this instantly — its Unleash client polls for
-flag changes every 15 seconds (`features_period` in `config/config.exs`), not
-on every request. Wait past that interval before relying on the flag in
-Step 5/6, or a request made in the gap sees the fail-closed default:
-
-```bash
-sleep 20
-```
+The **currently running** server would need up to `features_period` (15s in
+`config/config.exs`) to poll this change in. Don't wait for that here, though
+— Step 5 below stops and restarts this same server, and a restart throws that
+poll state away. Wait once, after that restart (end of Step 5), not here.
 
 ## Step 5 — Get a working `BAND_API_KEY_USER`
 
@@ -222,7 +232,18 @@ name above sidesteps that without needing to look up or delete the prior key.
 
 Both `mix run -e` invocations boot a **second** BEAM node against the same
 Postgres. Run them only while the Step 3 server is stopped (they'll collide on
-the fixed PromEx port `9568`), then restart the server.
+the fixed PromEx port `9568`), then restart it (Step 3's command again) and
+wait for `/health` as before.
+
+A fresh boot's `Unleash.Repo` fetches current flag state as soon as it starts
+(`Unleash.Repo.start_link/1` sends itself an `:initialize` message with no
+delay) rather than waiting out a full poll cycle — but that fetch is still
+asynchronous against a real network call, and `/health` passing doesn't prove
+it has landed yet. A short margin here is cheaper than a flaky first request:
+
+```bash
+sleep 5
+```
 
 ## Step 6 — Point the SDK at it and write the test
 
