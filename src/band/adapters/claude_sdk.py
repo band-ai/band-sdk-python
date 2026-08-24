@@ -102,8 +102,8 @@ logger = logging.getLogger(__name__)
 # Derived from TOOL_MODELS — single source of truth
 BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
 BAND_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
-# All tools: chat + contacts + memory (17 total). For chat-only tools (7),
-# see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
+# All tools: chat + contacts + memory + files (20 total). For chat-only
+# tools (7), see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
 BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
