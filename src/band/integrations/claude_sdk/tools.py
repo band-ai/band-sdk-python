@@ -26,6 +26,7 @@ except ImportError as e:
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
+from band.core.types import Capability
 from band.integrations.mcp.engine import extend_with_chat_id
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -75,8 +76,33 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def _is_mcp_content_result(data: Any) -> bool:
+    """True when ``data`` is already MCP-content-shaped (``{"content": [...]}``).
+
+    ``band_read_room_file``'s image branch returns exactly this shape (a real
+    MCP image content block) so ``claude_agent_sdk`` can hand it to the model
+    as vision input. Everything else this module produces (status payloads,
+    error payloads) is a plain dict that still needs json-encoding into a
+    text block.
+    """
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("content"), list)
+        and all(
+            isinstance(block, dict) and "type" in block for block in data["content"]
+        )
+    )
+
+
 def _make_result(data: Any) -> dict[str, Any]:
-    """Format tool result for Claude SDK MCP responses."""
+    """Format tool result for Claude SDK MCP responses.
+
+    An already-MCP-shaped result passes through untouched instead of being
+    json-dumped into a text block -- otherwise an image content block would
+    reach the model as a JSON string, not real vision input.
+    """
+    if _is_mcp_content_result(data):
+        return data
     return {"content": [{"type": "text", "text": json.dumps(data, default=str)}]}
 
 
@@ -118,6 +144,11 @@ def _format_success_payload(
     result: Any,
 ) -> dict[str, Any]:
     """Keep tool result payloads stable across Claude integrations."""
+    if tool_name == "band_read_room_file" and _is_mcp_content_result(result):
+        # Pass the image content block through bare -- wrapping it in
+        # {"status": "success", **result} would bury "content" behind an
+        # extra key, and _make_result would no longer recognize the shape.
+        return result
     if tool_name == "band_send_message":
         return {"status": "success", "message": "Message sent"}
     if tool_name == "band_send_event":
@@ -321,7 +352,9 @@ def create_band_mcp_server(agent: Any) -> Any:
 
     tool_definitions = [
         definition
-        for definition in iter_tool_definitions(include_memory=False)
+        for definition in iter_tool_definitions(
+            capabilities=frozenset({Capability.CONTACTS})
+        )
         if definition.name in BASE_TOOL_NAMES
     ]
     sdk_tools = build_band_sdk_tools(

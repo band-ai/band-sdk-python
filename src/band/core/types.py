@@ -90,6 +90,7 @@ class Capability(_FlagEnum):
 
     MEMORY = "memory"
     CONTACTS = "contacts"
+    FILES = "files"
 
 
 class Emit(_FlagEnum):

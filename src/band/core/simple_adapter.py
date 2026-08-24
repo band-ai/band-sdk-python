@@ -165,6 +165,19 @@ class SimpleAdapter(Generic[H], ABC):
             include_categories=include_categories,
         )
 
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Adopt ``features`` as the post-negotiation feature set.
+
+        Called by ``Agent.start()``/``OneShotInvoker.startup()`` after
+        pruning capabilities the connected deployment doesn't actually serve
+        (see ``runtime.capabilities.prune_unsupported``). The default body is
+        a plain reassignment, sufficient for any adapter that doesn't cache
+        something derived from ``self.features`` at construction time. An
+        adapter that does (e.g. a tool-definition list built once in
+        ``__init__``) overrides this to also rebuild that cache.
+        """
+        self.features = features
+
     def require_platform(self) -> PlatformConnection:
         """The injected platform connection; raises before the agent starts."""
         if self.platform is None:

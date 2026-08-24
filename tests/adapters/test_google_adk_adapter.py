@@ -496,12 +496,13 @@ class TestToolBridge:
         asserts the cached declaration carries no leftover ``$ref``/``$defs`` — the
         gap that only surfaced at E2E when memory tools were enabled.
         """
+        from band.core.types import Capability
         from band.runtime.tools import AgentTools
 
         # Real platform schemas, link-free (schema building reads TOOL_DEFINITIONS,
-        # not the REST client), with the enum-bearing memory tools included.
+        # not the REST client), with every optional tool category included.
         schemas = AgentTools("room-1", MagicMock()).get_openai_tool_schemas(
-            include_memory=True, include_contacts=True
+            capabilities=frozenset(Capability)
         )
         names = {s["function"]["name"] for s in schemas}
 

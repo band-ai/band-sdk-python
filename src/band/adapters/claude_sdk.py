@@ -143,6 +143,26 @@ _REDACT_RE = re.compile(
 )
 
 
+def _redact_image_data(content: str | list[dict[str, Any]] | None) -> Any:
+    """Replace an image content block's base64 payload before narration.
+
+    ``band_read_room_file``'s image branch hands the model a real MCP image
+    block (``{"type": "image", "data": <base64>, ...}``) round-tripped back
+    unchanged in ``ToolResultBlock.content`` -- exactly what the vision fix
+    intends. But this narration event is a room-visible log, not the model
+    input: dumping the raw base64 into it would bloat the room's stored
+    history with megabytes of text nobody reads. Only the size survives.
+    """
+    if not isinstance(content, list):
+        return content
+    return [
+        {**block, "data": f"<{len(block['data'])} base64 chars omitted>"}
+        if isinstance(block, dict) and isinstance(block.get("data"), str)
+        else block
+        for block in content
+    ]
+
+
 async def _pre_tool_use_continue_hook(
     _hook_input: HookInput,
     _tool_name: str | None,
@@ -207,7 +227,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -451,13 +471,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
     async def _create_mcp_backend(self) -> BandMCPBackend:
         """Create shared MCP backend that uses stored room tools."""
-        include_memory = Capability.MEMORY in self.features.capabilities
-        include_contacts = Capability.CONTACTS in self.features.capabilities
         tool_definitions = list(
-            iter_tool_definitions(
-                include_memory=include_memory,
-                include_contacts=include_contacts,
-            )
+            iter_tool_definitions(capabilities=self.features.capabilities)
         )
         backend = await create_band_mcp_backend(
             kind="sdk",
@@ -1020,7 +1035,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             content=lambda: json.dumps(
                 {
                     ToolEventKey.NAME: result_tool_name,
-                    ToolEventKey.OUTPUT: block.content,
+                    ToolEventKey.OUTPUT: _redact_image_data(block.content),
                     ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
                     ToolEventKey.IS_ERROR: block.is_error,
                 }

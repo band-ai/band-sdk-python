@@ -89,10 +89,7 @@ class TestLangGraphToolFilters:
     def test_every_agent_tool_has_shared_category(self) -> None:
         missing = [
             definition.name
-            for definition in iter_tool_definitions(
-                include_memory=True,
-                include_contacts=True,
-            )
+            for definition in iter_tool_definitions(capabilities=frozenset(Capability))
             if get_band_tool_category(definition.name) is None
         ]
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.core.types import Capability
 from band.runtime.tools import ToolCallOutcome, serialize_tool_result
 from band.testing.fake_tools import FakeAgentTools
 
@@ -22,8 +23,13 @@ class BaselineTools(FakeAgentTools):
         self.contact_requests: list[dict[str, Any]] = []
 
     def get_anthropic_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
+        resolved = (
+            frozenset({Capability.CONTACTS}) if capabilities is None else capabilities
+        )
+        include_memory = Capability.MEMORY in resolved
+        include_contacts = Capability.CONTACTS in resolved
         self.schema_requests.append(
             {
                 "format": "anthropic",

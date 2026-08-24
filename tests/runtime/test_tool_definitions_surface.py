@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+from band.core.types import Capability
 from band.integrations.mcp.engine import (
     build_band_mcp_tool_registrations,
     build_resolved_band_mcp_tool_registrations,
@@ -167,12 +168,12 @@ class TestIterToolDefinitionsFilterComposition:
     compose as independent predicates."""
 
     def test_human_memory_only(self) -> None:
-        """``surface=human, include_memory=True, include_contacts=False`` returns
-        only human memory tools."""
+        """``surface=human, capabilities={MEMORY}`` returns only human memory
+        tools."""
         names = {
             d.name
             for d in iter_tool_definitions(
-                surface="human", include_memory=True, include_contacts=False
+                surface="human", capabilities=frozenset({Capability.MEMORY})
             )
         }
         expected_memory = {
@@ -202,13 +203,11 @@ class TestIterToolDefinitionsFilterComposition:
         assert names.isdisjoint(PRE_PHASE1_AGENT_TOOLS)
 
     def test_baseline_across_both_surfaces(self) -> None:
-        """``surface=None, include_memory=False, include_contacts=False``
-        returns baseline tools from both surfaces — no memory, no contacts."""
+        """``surface=None, capabilities=frozenset()`` returns baseline tools
+        from both surfaces — no memory, no contacts."""
         names = {
             d.name
-            for d in iter_tool_definitions(
-                surface=None, include_memory=False, include_contacts=False
-            )
+            for d in iter_tool_definitions(surface=None, capabilities=frozenset())
         }
         # No contact tools of either surface.
         assert names.isdisjoint(
@@ -251,9 +250,14 @@ class TestIterToolDefinitionsFilterComposition:
         assert "band_send_my_chat_message" in names
 
     def test_include_memory_true_agent_only(self) -> None:
-        """``surface=agent, include_memory=True`` includes agent memory tools."""
+        """``surface=agent, capabilities={MEMORY, CONTACTS}`` includes agent
+        memory tools."""
         names = {
-            d.name for d in iter_tool_definitions(surface="agent", include_memory=True)
+            d.name
+            for d in iter_tool_definitions(
+                surface="agent",
+                capabilities=frozenset({Capability.MEMORY, Capability.CONTACTS}),
+            )
         }
         agent_memory = {
             "band_list_memories",
@@ -279,7 +283,7 @@ class TestMethodNameResolution:
 
     def test_every_agent_method_name_resolves_on_agenttools(self) -> None:
         for definition in iter_tool_definitions(
-            surface="agent", include_memory=True, include_contacts=True
+            surface="agent", capabilities=frozenset(Capability)
         ):
             assert hasattr(AgentTools, definition.method_name), (
                 f"AgentTools has no method {definition.method_name} "
@@ -288,7 +292,7 @@ class TestMethodNameResolution:
 
     def test_every_human_method_name_resolves_on_humantools(self) -> None:
         for definition in iter_tool_definitions(
-            surface="human", include_memory=True, include_contacts=True
+            surface="human", capabilities=frozenset(Capability)
         ):
             assert hasattr(HumanTools, definition.method_name), (
                 f"HumanTools has no method {definition.method_name} "

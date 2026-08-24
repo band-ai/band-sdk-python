@@ -6,7 +6,7 @@ import pytest
 
 from band.agent import Agent, DEFAULT_SHUTDOWN_TIMEOUT
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AgentInput
+from band.core.types import AdapterFeatures, AgentInput
 from band.runtime.types import AgentConfig, SessionConfig
 from band.preprocessing.default import DefaultPreprocessor
 from band.testing.platform import platform_connection_stub
@@ -29,6 +29,7 @@ def mock_runtime():
     runtime.agent_name = "TestBot"
     runtime.agent_description = "A test bot"
     runtime.agent_id = "agent-123"
+    runtime.feature_flags = None
     runtime.initialize = AsyncMock()
     runtime.start = AsyncMock()
     runtime.stop = AsyncMock()
@@ -419,12 +420,59 @@ class TestSimpleAdapterIntegration:
         adapter.on_started = AsyncMock()
         adapter.on_cleanup = AsyncMock()
         adapter.on_event = AsyncMock()
+        adapter.features = AdapterFeatures()
 
         agent = Agent(runtime=mock_runtime, adapter=adapter)
 
         await agent.start()
 
         adapter.on_started.assert_awaited_once()
+
+
+class TestCapabilityNegotiationOnStart:
+    """Agent.start() prunes capabilities the connected deployment doesn't serve."""
+
+    @pytest.mark.asyncio
+    async def test_files_capability_pruned_when_flag_off(self, mock_runtime):
+        from band.core.types import Capability
+
+        class FilesAdapter(SimpleAdapter):
+            SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
+
+            async def on_started(self, agent_name, agent_description) -> None:
+                pass
+
+            async def on_message(self, *args, **kwargs) -> None:
+                pass
+
+        mock_runtime.feature_flags = {"ff_file_transfer": False}
+        adapter = FilesAdapter(capabilities=Capability.FILES)
+        agent = Agent(runtime=mock_runtime, adapter=adapter)
+
+        await agent.start()
+
+        assert Capability.FILES not in adapter.features.capabilities
+
+    @pytest.mark.asyncio
+    async def test_files_capability_kept_when_flag_on(self, mock_runtime):
+        from band.core.types import Capability
+
+        class FilesAdapter(SimpleAdapter):
+            SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
+
+            async def on_started(self, agent_name, agent_description) -> None:
+                pass
+
+            async def on_message(self, *args, **kwargs) -> None:
+                pass
+
+        mock_runtime.feature_flags = {"ff_file_transfer": True}
+        adapter = FilesAdapter(capabilities=Capability.FILES)
+        agent = Agent(runtime=mock_runtime, adapter=adapter)
+
+        await agent.start()
+
+        assert Capability.FILES in adapter.features.capabilities
 
 
 class TestDefaultPreprocessorIntegration:
@@ -538,6 +586,7 @@ class TestStartupRaceCondition:
             agent_description = "A test bot"
             agent_id = "agent-123"
             connection = platform_connection_stub(agent_id="agent-123")
+            feature_flags = None
             _on_execute = None
 
             async def initialize(self) -> None:

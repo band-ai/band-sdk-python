@@ -348,6 +348,24 @@ def test_partial_feature_override_merges_over_inner_features():
     assert adapter.features == inner.features
 
 
+def test_apply_effective_features_reaches_inner():
+    """Post-construction pruning (Agent.start()'s capability negotiation) must
+    reach the inner adapter too, not just the wrapper's own attribute.
+
+    ``_resolve_features`` only mirrors into ``inner.features`` once, at
+    construction -- a Slack-wrapped adapter is exactly the shape a real
+    capability-negotiation prune runs against, so this has to keep working
+    after construction, not just at it.
+    """
+    inner = _EmitBrain(reply=None)
+    adapter, _, _, _ = _make_adapter(inner=inner, capabilities=Capability.MEMORY)
+
+    adapter.apply_effective_features(AdapterFeatures())
+
+    assert adapter.features.capabilities == frozenset()
+    assert inner.features.capabilities == frozenset()
+
+
 # ── Slack ingress (HTTP webhook → brain invocation) ─────────────────────────
 
 

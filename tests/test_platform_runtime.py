@@ -196,6 +196,26 @@ class TestStart:
                 assert runtime.agent_description == "A test bot"
 
     @pytest.mark.asyncio
+    async def test_captures_feature_flags(self, mock_link, mock_runtime):
+        """The /me response's feature_flags is retained for capability negotiation."""
+        mock_link.rest.agent_api_identity.get_agent_me.return_value.data.feature_flags = {
+            "ff_file_transfer": True
+        }
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(agent_id="agent-123", api_key="test-key")
+                assert runtime.feature_flags is None
+
+                await runtime.start(on_execute=AsyncMock())
+
+                assert runtime.feature_flags == {"ff_file_transfer": True}
+
+    @pytest.mark.asyncio
     async def test_creates_agent_runtime(self, mock_link, mock_runtime):
         """Should create AgentRuntime with correct config."""
         with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:

@@ -40,18 +40,14 @@ class TestScopeFiltering:
     def test_agent_only_registers_agent_surface(self) -> None:
         expected = {
             d.name
-            for d in iter_tool_definitions(
-                surface="agent", include_contacts=False, include_memory=False
-            )
+            for d in iter_tool_definitions(surface="agent", capabilities=frozenset())
         }
         assert _spec_names(Config(scope=["agent"], tools=[])) == expected
 
     def test_human_only_registers_human_surface(self) -> None:
         expected = {
             d.name
-            for d in iter_tool_definitions(
-                surface="human", include_contacts=False, include_memory=False
-            )
+            for d in iter_tool_definitions(surface="human", capabilities=frozenset())
         }
         assert _spec_names(Config(scope=["human"], tools=[])) == expected
 
@@ -61,7 +57,7 @@ class TestScopeFiltering:
             expected |= {
                 d.name
                 for d in iter_tool_definitions(
-                    surface=surface, include_contacts=False, include_memory=False
+                    surface=surface, capabilities=frozenset()
                 )
             }
         assert _spec_names(Config(scope=["agent", "human"], tools=[])) == expected
@@ -75,7 +71,7 @@ class TestScopeFiltering:
             surface="human",
         )
 
-        def fake_iter_tool_definitions(*, surface, include_contacts, include_memory):
+        def fake_iter_tool_definitions(*, surface, capabilities):
             return [agent_definition] if surface == "agent" else [human_definition]
 
         monkeypatch.setattr(

@@ -31,7 +31,7 @@ from band.adapters.claude_sdk import (
     BAND_MEMORY_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.runtime.tools import ALL_TOOL_NAMES, missing_reply_error
+from band.runtime.tools import ALL_TOOL_NAMES, FILE_TOOL_NAMES, missing_reply_error
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 
 pytestmark = pytest.mark.skipif(
@@ -720,10 +720,15 @@ class TestBandTools:
         )
 
     def test_band_all_tools_combines_base_and_memory(self):
-        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
+        """BAND_ALL_TOOLS should combine base, memory, and file tools without
+        duplicates."""
         from band.runtime.tools import mcp_tool_names
 
-        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert set(BAND_ALL_TOOLS) == (
+            set(BAND_BASE_TOOLS)
+            | set(BAND_MEMORY_TOOLS)
+            | set(mcp_tool_names(FILE_TOOL_NAMES))
+        )
         assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
         assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
             "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "

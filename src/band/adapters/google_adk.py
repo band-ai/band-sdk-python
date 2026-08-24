@@ -358,8 +358,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         """Build ADK tool bridges from Band tool schemas."""
         ToolBridge = _get_tool_bridge_class()
         openai_schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
 
         adk_tools: list[Any] = []

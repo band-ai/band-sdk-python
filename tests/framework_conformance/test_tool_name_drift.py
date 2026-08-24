@@ -22,11 +22,13 @@ import re
 
 import pytest
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
+from band.core.types import Capability
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     CONTACT_TOOL_NAMES,
+    FILE_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
     iter_tool_definitions,
 )
@@ -92,7 +94,7 @@ class TestClaudeSDKAdapterToolDrift:
     def test_shared_builder_covers_all_tools(self):
         """Every Band tool should be buildable for the Claude SDK adapter."""
         sdk_tools = build_band_sdk_tools(
-            tool_definitions=iter_tool_definitions(include_memory=True),
+            tool_definitions=iter_tool_definitions(capabilities=frozenset(Capability)),
             get_tools=lambda _room_id: None,
         )
         found = {tool.name for tool in sdk_tools}
@@ -170,10 +172,16 @@ class TestCrewAIToolDrift:
     _FILE = SRC_ROOT / "integrations" / "crewai" / "tools.py"
 
     def test_all_tools_registered(self):
-        """Every tool in TOOL_MODELS has a CrewAI tool class."""
+        """Every non-file tool in TOOL_MODELS has a CrewAI tool class.
+
+        File tools are excluded: CrewAI hand-wraps each Band tool as its own
+        ``BaseTool`` subclass, so exposing ``Capability.FILES`` here needs a
+        real new wrapper per tool, not just a capability declaration -- not
+        yet done.
+        """
         source = self._FILE.read_text()
         found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - found
+        missing = ALL_TOOL_NAMES - FILE_TOOL_NAMES - found
         assert not missing, (
             f"CrewAI adapter is missing tool classes for: {sorted(missing)}. "
             f"Add tool classes in _register_tools()."
@@ -186,10 +194,16 @@ class TestPydanticAIToolDrift:
     _FILE = SRC_ROOT / "adapters" / "pydantic_ai.py"
 
     def test_all_tools_registered(self):
-        """Every tool in TOOL_MODELS has a PydanticAI tool function."""
+        """Every non-file tool in TOOL_MODELS has a PydanticAI tool function.
+
+        File tools are excluded: each Band tool is its own
+        ``@platform_tool``-decorated function here, so exposing
+        ``Capability.FILES`` needs a real new function per tool, not just a
+        capability declaration -- not yet done.
+        """
         source = self._FILE.read_text()
         found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - found
+        missing = ALL_TOOL_NAMES - FILE_TOOL_NAMES - found
         assert not missing, (
             f"PydanticAI adapter is missing tool functions for: {sorted(missing)}. "
             f"Add tool registrations in _register_tools()."
@@ -214,12 +228,12 @@ class TestGeminiToolDrift:
             "tool declarations dynamically from the central registry."
         )
 
-    def test_supports_memory_tools_toggle(self):
-        """Verify include_memory is wired through to get_openai_tool_schemas."""
+    def test_supports_capability_gating(self):
+        """Verify the adapter's declared capabilities reach get_openai_tool_schemas."""
         source = self._FILE.read_text()
-        assert "include_memory" in source, (
-            "Gemini adapter should pass include_memory to "
-            "get_openai_tool_schemas() so memory tools can be toggled."
+        assert "capabilities" in source, (
+            "Gemini adapter should pass capabilities= to "
+            "get_openai_tool_schemas() so memory/contacts/files can be toggled."
         )
 
 
@@ -247,8 +261,8 @@ class TestParlantToolDrift:
 class TestToolRegistryConsistency:
     """Verify the derived sets are consistent with TOOL_MODELS."""
 
-    def test_all_equals_base_plus_memory(self):
-        assert ALL_TOOL_NAMES == BASE_TOOL_NAMES | MEMORY_TOOL_NAMES
+    def test_all_equals_base_plus_memory_plus_files(self):
+        assert ALL_TOOL_NAMES == BASE_TOOL_NAMES | MEMORY_TOOL_NAMES | FILE_TOOL_NAMES
 
     def test_base_equals_chat_plus_contact(self):
         assert BASE_TOOL_NAMES == CHAT_TOOL_NAMES | CONTACT_TOOL_NAMES

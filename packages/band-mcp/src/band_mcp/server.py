@@ -34,6 +34,7 @@ from band.integrations.mcp.engine import (
     extend_with_chat_id,
     pin_existing_chat_id,
 )
+from band.core.types import Capability
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
     Surface,
@@ -58,6 +59,17 @@ from band_mcp.config import (
 )
 from band_mcp.shared import StandaloneResolver, build_standalone_resolver, logger
 
+# band-mcp's `--tools` vocabulary is CLI-facing (shell flags) and genuinely
+# distinct from the SDK's `Capability` enum -- not merged into it -- but the
+# two share values for the groups band-mcp exposes today, so this is the one
+# place that translates between them. `ToolGroup` has no `FILES` member yet:
+# this CLI's tool list is built synchronously at startup, before any
+# feature-flag negotiation against the platform is possible.
+_TOOL_GROUP_TO_CAPABILITY: dict[ToolGroup, Capability] = {
+    ToolGroup.CONTACTS: Capability.CONTACTS,
+    ToolGroup.MEMORY: Capability.MEMORY,
+}
+
 
 def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
     """Build the CLI door's :class:`EngineSpec` from a resolved :class:`Config`.
@@ -73,8 +85,11 @@ def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
     ``SendEventWideInput`` (row 6): a standalone agent has no adapter
     narrating tool_call/tool_result for it.
     """
-    include_contacts = ToolGroup.CONTACTS in config.tools
-    include_memory = ToolGroup.MEMORY in config.tools
+    capabilities: frozenset[Capability] = frozenset(
+        capability
+        for group, capability in _TOOL_GROUP_TO_CAPABILITY.items()
+        if group in config.tools
+    )
     pinned_room_id = config.room_id
 
     registrations = []
@@ -87,8 +102,7 @@ def standalone_spec(config: Config, resolver: StandaloneResolver) -> EngineSpec:
             # vocabularies, so the boundary is converted explicitly rather
             # than merged.
             surface=Surface(surface),
-            include_contacts=include_contacts,
-            include_memory=include_memory,
+            capabilities=capabilities,
         ):
             previous_surface = seen_names.get(definition.name)
             if previous_surface is not None:

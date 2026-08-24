@@ -201,6 +201,42 @@ class TestStartup:
         assert getattr(adapter, "platform").agent_id == "agent-1"
         adapter.on_started.assert_awaited_once_with("Weather", "forecasts")
 
+    async def test_prunes_files_capability_when_flag_off(self) -> None:
+        from band.core.simple_adapter import SimpleAdapter
+        from band.core.types import Capability
+
+        class FilesAdapter(SimpleAdapter):
+            SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
+
+            async def on_message(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+        link = make_link_mock(feature_flags={"ff_file_transfer": False})
+        adapter = FilesAdapter(capabilities=Capability.FILES)
+        invoker = OneShotInvoker(link=link, adapter=adapter, agent_id="agent-1")
+
+        await invoker.startup()
+
+        assert Capability.FILES not in adapter.features.capabilities
+
+    async def test_keeps_files_capability_when_flag_on(self) -> None:
+        from band.core.simple_adapter import SimpleAdapter
+        from band.core.types import Capability
+
+        class FilesAdapter(SimpleAdapter):
+            SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
+
+            async def on_message(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+        link = make_link_mock(feature_flags={"ff_file_transfer": True})
+        adapter = FilesAdapter(capabilities=Capability.FILES)
+        invoker = OneShotInvoker(link=link, adapter=adapter, agent_id="agent-1")
+
+        await invoker.startup()
+
+        assert Capability.FILES in adapter.features.capabilities
+
     async def test_startup_is_idempotent(self) -> None:
         link = make_link_mock()
         adapter = _make_adapter_mock()

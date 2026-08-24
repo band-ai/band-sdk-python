@@ -32,6 +32,13 @@ from band.runtime.tools import (
 logger = logging.getLogger(__name__)
 
 
+def _with_capability(
+    capabilities: frozenset[Capability], capability: Capability, enabled: bool
+) -> frozenset[Capability]:
+    """``capabilities`` with ``capability`` forced on or off per ``enabled``."""
+    return capabilities | {capability} if enabled else capabilities - {capability}
+
+
 def agent_tools_to_langchain(
     tools: AgentToolsProtocol,
     *,
@@ -58,8 +65,7 @@ def agent_tools_to_langchain(
     """
     features = features or AdapterFeatures()
 
-    include_memory = Capability.MEMORY in features.capabilities
-    include_contact_tools = Capability.CONTACTS in features.capabilities
+    capabilities = features.capabilities
 
     if include_memory_tools is not None:
         warnings.warn(
@@ -67,7 +73,9 @@ def agent_tools_to_langchain(
             DeprecationWarning,
             stacklevel=2,
         )
-        include_memory = include_memory_tools
+        capabilities = _with_capability(
+            capabilities, Capability.MEMORY, include_memory_tools
+        )
 
     if include_contacts is not None:
         warnings.warn(
@@ -75,16 +83,17 @@ def agent_tools_to_langchain(
             DeprecationWarning,
             stacklevel=2,
         )
-        include_contact_tools = include_contacts
+        capabilities = _with_capability(
+            capabilities, Capability.CONTACTS, include_contacts
+        )
 
-    effective_include_contacts = include_contact_tools or (
-        getattr(tools, "is_hub_room", False) is True
+    effective_capabilities = capabilities | (
+        {Capability.CONTACTS}
+        if getattr(tools, "is_hub_room", False) is True
+        else frozenset()
     )
 
-    definitions = iter_tool_definitions(
-        include_memory=include_memory,
-        include_contacts=effective_include_contacts,
-    )
+    definitions = iter_tool_definitions(capabilities=effective_capabilities)
     definitions = filter_tool_schemas(
         definitions,
         features,

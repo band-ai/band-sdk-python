@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from typing import Any
 from band.client.rest import (
     AgentContact,
     AgentMemory,
+    Attachment,
     ListAgentContactRequestsResponse,
     ListAgentContactRequestsResponseData,
     ListAgentContactRequestsResponseMetadata,
@@ -24,7 +26,9 @@ from band.client.rest import (
     Peer,
 )
 from band.core.exceptions import BandToolError
+from band.core.types import Capability
 from band.runtime.tools import (
+    FILE_UNAVAILABLE_MESSAGE,
     ToolCallOutcome,
     append_mention_handles_hint,
     available_mention_handles,
@@ -73,6 +77,7 @@ class FakeAgentTools:
         hub_room_id: str | None = None,
         room_context: list[dict[str, Any]] | None = None,
         memories: list[dict[str, Any]] | None = None,
+        files: list[dict[str, Any]] | None = None,
     ):
         self.room_id = room_id
         self._hub_room_id = hub_room_id
@@ -92,6 +97,9 @@ class FakeAgentTools:
         self.memories: list[dict[str, Any]] = [
             AgentMemory.model_validate(memory).model_dump()
             for memory in (memories or [])
+        ]
+        self.files: list[dict[str, Any]] = [
+            Attachment.model_validate(file).model_dump() for file in (files or [])
         ]
         self.participants_added: list[dict[str, Any]] = []
         self.participants_removed: list[dict[str, Any]] = []
@@ -365,28 +373,66 @@ class FakeAgentTools:
         projection for test assertions."""
         return [memory["content"] for memory in self.memories]
 
+    async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
+        return {"data": [deepcopy(file) for file in self.files], "next_cursor": None}
+
+    async def read_room_file(self, file_id: str) -> dict[str, Any]:
+        """Return a description-only result; the fake never fabricates bytes."""
+        file = next((f for f in self.files if f["id"] == file_id), None)
+        if file is None:
+            raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+        return {
+            "name": file["name"],
+            "content_type": file["content_type"],
+            "bytes": file["bytes"],
+            "description": (
+                f"Fake file '{file['name']}' ({file['content_type']}, "
+                f"{file['bytes']} bytes)."
+            ),
+        }
+
+    async def send_room_file(
+        self,
+        content: str,
+        filename: str,
+        caption: str = "",
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Store the file and send it the same way the real tool does --
+        via ``send_message``, so the fake's mention requirement applies here
+        too."""
+        body = content.encode("utf-8")
+        attachment = Attachment(
+            id=str(uuid.uuid4()),
+            name=filename,
+            content_type="text/plain",
+            bytes=len(body),
+            sha256=hashlib.sha256(body).hexdigest(),
+            has_thumb=False,
+        ).model_dump()
+        self.files.append(attachment)
+        message = await self.send_message(content=caption, mentions=mentions or [])
+        return {"attachment": deepcopy(attachment), "message_id": message["id"]}
+
     def get_tool_schemas(
         self,
         format: str,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
     def get_anthropic_tool_schemas(
         self,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
     def get_openai_tool_schemas(
         self,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]]:
         return []
 

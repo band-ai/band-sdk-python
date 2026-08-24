@@ -13,7 +13,7 @@ if TYPE_CHECKING:
         ListAgentMemoriesResponse,
         ListAgentPeersResponse,
     )
-    from band.core.types import AgentInput
+    from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
     from band.runtime.tools import ToolCallOutcome
@@ -120,20 +120,19 @@ class AgentToolsProtocol(Protocol):
         self,
         format: str,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]] | list["ToolParam"]:
         """Get tool schemas in provider-specific format (openai/anthropic)."""
         ...
 
     def get_anthropic_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list["ToolParam"]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         ...
 
     def get_openai_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
         """Get tool schemas in OpenAI format (strongly typed)."""
         ...

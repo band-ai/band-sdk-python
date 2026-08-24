@@ -20,6 +20,7 @@ from agno.run.agent import ToolCallCompletedEvent, ToolCallStartedEvent
 
 from band.core.types import (
     AgentInput,
+    Capability,
     HistoryProvider,
     PlatformMessage,
 )
@@ -116,10 +117,16 @@ class SchemaTools(FakeAgentTools):
         self.schema_calls: list[dict[str, bool]] = []
 
     def get_openai_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
+        resolved = (
+            frozenset({Capability.CONTACTS}) if capabilities is None else capabilities
+        )
         self.schema_calls.append(
-            {"include_memory": include_memory, "include_contacts": include_contacts}
+            {
+                "include_memory": Capability.MEMORY in resolved,
+                "include_contacts": Capability.CONTACTS in resolved,
+            }
         )
         return self._schemas
 
@@ -127,16 +134,23 @@ class SchemaTools(FakeAgentTools):
 class ContactAwareTools(SchemaTools):
     """Like real AgentTools: contact tool schemas appear only when contacts are
     requested. Always exposes ``band_send_message``; adds ``band_add_contact``
-    when ``include_contacts`` is True (CONTACTS capability or a hub room)."""
+    when ``Capability.CONTACTS`` is requested (or unioned in for a hub room)."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__([], **kwargs)
 
     def get_openai_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
+        resolved = (
+            frozenset({Capability.CONTACTS}) if capabilities is None else capabilities
+        )
+        include_contacts = Capability.CONTACTS in resolved
         self.schema_calls.append(
-            {"include_memory": include_memory, "include_contacts": include_contacts}
+            {
+                "include_memory": Capability.MEMORY in resolved,
+                "include_contacts": include_contacts,
+            }
         )
         schemas = [openai_tool_schema("band_send_message")]
         if include_contacts:

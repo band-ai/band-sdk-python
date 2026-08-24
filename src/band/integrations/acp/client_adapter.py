@@ -216,7 +216,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 # with no warning (SUPPORTED_CAPABILITIES already covers
                 # CONTACTS, so the base class's unsupported-capability warning
                 # never fires either way).
-                include_memory=Capability.MEMORY in self.features.capabilities,
+                capabilities=self.features.capabilities | {Capability.CONTACTS},
             )
         )
         # Resembles OpenCodeAdapter's equivalent vocabulary block but isn't

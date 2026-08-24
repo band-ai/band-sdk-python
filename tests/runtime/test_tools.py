@@ -6,11 +6,22 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from band_rest import (
+    ChatMessage,
+    ListAgentMessagesResponse,
+    ListAgentMessagesResponseMetadata,
+)
 from pydantic import BaseModel, ValidationError
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, Attachment, NotFoundError
+from band.core.exceptions import BandToolError
+from band.core.types import Capability
 from tests.conftest import make_participant_mock
 from band.runtime.tools import (
+    FILE_UNAVAILABLE_MESSAGE,
+    MAX_INLINE_IMAGE_BYTES,
+    MAX_INLINE_TEXT_BYTES,
+    MAX_SEND_CONTENT_BYTES,
     TOOL_MODELS,
     AgentTools,
     SendMessageInput,
@@ -892,7 +903,9 @@ class TestAgentToolsSchemas:
         """get_tool_schemas('openai', include_memory=True) should include memory tools."""
         tools = AgentTools("room-123", mock_rest_client)
 
-        schemas = tools.get_tool_schemas("openai", include_memory=True)
+        schemas = tools.get_tool_schemas(
+            "openai", capabilities=frozenset({Capability.MEMORY, Capability.CONTACTS})
+        )
 
         tool_names = [s["function"]["name"] for s in schemas]
         # Memory tools present
@@ -924,7 +937,10 @@ class TestAgentToolsSchemas:
         """get_tool_schemas('anthropic', include_memory=True) should include memory tools."""
         tools = AgentTools("room-123", mock_rest_client)
 
-        schemas = tools.get_tool_schemas("anthropic", include_memory=True)
+        schemas = tools.get_tool_schemas(
+            "anthropic",
+            capabilities=frozenset({Capability.MEMORY, Capability.CONTACTS}),
+        )
 
         tool_names = [s["name"] for s in schemas]
         assert "band_list_memories" in tool_names
@@ -938,7 +954,9 @@ class TestAgentToolsSchemas:
         models still enforce the bounds at execution."""
         tools = AgentTools("room-123", mock_rest_client)
 
-        schemas = tools.get_tool_schemas("openai", include_memory=True)
+        schemas = tools.get_tool_schemas(
+            "openai", capabilities=frozenset({Capability.MEMORY, Capability.CONTACTS})
+        )
 
         page_size = next(
             s["function"]["parameters"]["properties"]["page_size"]

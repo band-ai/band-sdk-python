@@ -182,11 +182,13 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # re-included on every run, and may be either a static list or a per-run
         # callable factory.
         self._user_tools: list[Any] | Callable[..., Any] = []
-        # Built Functions cached by their only dynamic input (include_contacts),
-        # so the schema build runs at most twice for the process lifetime rather
-        # than on every run. Entrypoints route through the _current_tools
-        # ContextVar, so the cached list is safe to reuse across rooms.
-        self._band_tools_cache: dict[bool, list[Function]] = {}
+        # Built Functions cached by their only dynamic input (the effective
+        # capability set, including the hub-room CONTACTS union), so the
+        # schema build runs at most once per distinct set for the process
+        # lifetime rather than on every run. Entrypoints route through the
+        # _current_tools ContextVar, so the cached list is safe to reuse
+        # across rooms.
+        self._band_tools_cache: dict[frozenset[Capability], list[Function]] = {}
 
         # Resolved against the runtime agent in on_started, once it exists.
         self._agno_manages_history = False
@@ -579,13 +581,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             # own tools rather than guessing Band tool visibility.
             return user_tools
 
-        include_contacts = Capability.CONTACTS in self.features.capabilities or bool(
-            getattr(active, "is_hub_room", False)
+        effective_capabilities = self.features.capabilities | (
+            {Capability.CONTACTS}
+            if getattr(active, "is_hub_room", False)
+            else frozenset()
         )
-        band = self._band_tools_cache.get(include_contacts)
+        band = self._band_tools_cache.get(effective_capabilities)
         if band is None:
-            band = self._build_band_tools(active, include_contacts=include_contacts)
-            self._band_tools_cache[include_contacts] = band
+            band = self._build_band_tools(active, capabilities=effective_capabilities)
+            self._band_tools_cache[effective_capabilities] = band
         return [*user_tools, *band]
 
     async def _resolve_user_tools(self, run_context: Any) -> list[Any]:
@@ -644,19 +648,16 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
 
     def _build_band_tools(
-        self, tools: AgentToolsProtocol, *, include_contacts: bool
+        self, tools: AgentToolsProtocol, *, capabilities: frozenset[Capability]
     ) -> list[Function]:
         """Convert Band tool schemas into Agno Functions.
 
         Honors the AdapterFeatures include/exclude/category filters via
-        :func:`filter_tool_schemas`. ``include_contacts`` is resolved by the
-        caller (CONTACTS capability or a contact-hub room, mirroring LangGraph)
-        so the built set can be cached on that flag.
+        :func:`filter_tool_schemas`. ``capabilities`` is resolved by the
+        caller (declared capabilities unioned with CONTACTS for a contact-hub
+        room, mirroring LangGraph) so the built set can be cached on it.
         """
-        schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=include_contacts,
-        )
+        schemas = tools.get_openai_tool_schemas(capabilities=capabilities)
         schemas = filter_tool_schemas(
             schemas,
             self.features,
