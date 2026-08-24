@@ -248,13 +248,17 @@ class TestOnStarted:
             assert sdk_options.fallback_model is None
 
     @pytest.mark.asyncio
-    async def test_max_buffer_size_fits_a_full_inline_image(self):
-        """claude_agent_sdk's stdio transport defaults to a 1 MiB buffer and
-        fatally drops the whole CLI connection if one JSON message exceeds
-        it; band_read_room_file can inline an image up to
-        MAX_INLINE_IMAGE_BYTES as base64 (~4/3 size increase) inside such a
-        message. The configured buffer must comfortably exceed that, not the
-        library's unrelated default.
+    async def test_max_buffer_size_exceeds_claude_agent_sdks_default(self):
+        """Reproduced live: band_read_room_file inlined a 737.8 KB JPEG as
+        base64 (~4/3 size increase) inside one JSON-per-line message from the
+        Claude CLI subprocess -- comfortably clearing claude_agent_sdk's
+        stdio transport's default max_buffer_size of 1 MiB
+        (claude_agent_sdk._internal.transport.subprocess_cli.
+        _DEFAULT_MAX_BUFFER_SIZE) -- and that fatally dropped the whole CLI
+        connection, not just the one tool call. The configured buffer must
+        clear both the library's real default and the base64-inflated size
+        of the largest image band_read_room_file advertises inlining
+        (MAX_INLINE_IMAGE_BYTES); anything less reopens the same crash.
         """
         adapter = ClaudeSDKAdapter()
 
@@ -268,8 +272,12 @@ class TestOnStarted:
             )
 
             sdk_options = mock_manager_class.call_args[0][0]
+            claude_agent_sdk_default_buffer_bytes = 1024 * 1024
+            largest_inline_image_base64_bytes = MAX_INLINE_IMAGE_BYTES * 4 // 3
+
             assert sdk_options.max_buffer_size == _CLAUDE_SDK_MAX_BUFFER_BYTES
-            assert sdk_options.max_buffer_size > MAX_INLINE_IMAGE_BYTES * 4 // 3
+            assert sdk_options.max_buffer_size > claude_agent_sdk_default_buffer_bytes
+            assert sdk_options.max_buffer_size > largest_inline_image_base64_bytes
 
     @pytest.mark.asyncio
     async def test_explicit_model_is_forwarded(self):
