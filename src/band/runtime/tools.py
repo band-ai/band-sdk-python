@@ -469,7 +469,13 @@ class ReadRoomFileInput(BaseModel):
     """
 
     file_id: str = Field(
-        ..., description="File ID, from a message's attachments or band_list_room_files"
+        ...,
+        description=(
+            "File ID, from a message's attachments or band_list_room_files. "
+            "Use the id from the most recent band_list_room_files call, not one "
+            "remembered from earlier in the conversation -- files can expire or "
+            "be replaced."
+        ),
     )
 
 
