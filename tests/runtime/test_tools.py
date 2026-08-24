@@ -455,6 +455,38 @@ class TestFileTools:
         with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
             await tools.read_room_file("file-1")
 
+    @pytest.mark.asyncio
+    async def test_read_room_file_searches_past_the_first_page(self, mock_rest_client):
+        """_find_attachment must walk every page -- the target file may be
+        older than the first page returned."""
+        page_one = _messages_response(
+            [_message_with_attachments("msg-1", [_attachment("other-file")])],
+            next_cursor="cursor-2",
+            has_more=True,
+        )
+        page_two = _messages_response(
+            [
+                _message_with_attachments(
+                    "msg-2", [_attachment(content_type="text/plain", size=5)]
+                )
+            ]
+        )
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            side_effect=[page_one, page_two]
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["text"] == "hello"
+        list_messages = mock_rest_client.agent_api_messages.list_agent_messages
+        assert list_messages.await_count == 2
+        _, second_call_kwargs = list_messages.await_args_list[1]
+        assert second_call_kwargs["cursor"] == "cursor-2"
+
     # --- send_room_file ---
 
     @pytest.mark.asyncio

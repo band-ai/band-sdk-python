@@ -370,9 +370,9 @@ class TestFileTools:
     async def test_send_room_file_rejects_a_message_with_no_mentions(self) -> None:
         """Reuses send_message's mention requirement, matching the real tool.
 
-        The upload itself already happened by this point (same order as the
-        real tool: upload, then attach via send_message) -- only the message
-        send fails.
+        Same order as the real tool: mentions are validated via send_message
+        before the file is recorded, so a rejected call leaves no orphaned
+        upload behind.
         """
         tools = FakeAgentTools()
 
@@ -380,6 +380,7 @@ class TestFileTools:
             await tools.send_room_file("hello world", "report.txt")
 
         assert tools.messages_sent == []
+        assert tools.files == []
 
 
 class TestToolSchemas:

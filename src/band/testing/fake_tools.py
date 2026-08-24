@@ -399,8 +399,9 @@ class FakeAgentTools:
         mentions: list[str] | None = None,
     ) -> dict[str, Any]:
         """Store the file and send it the same way the real tool does --
-        via ``send_message``, so the fake's mention requirement applies here
-        too."""
+        via ``send_message``, so the fake's mention requirement applies
+        before the file is recorded, same as the real tool validates
+        mentions before uploading."""
         body = content.encode("utf-8")
         attachment = Attachment(
             id=str(uuid.uuid4()),
@@ -410,8 +411,8 @@ class FakeAgentTools:
             sha256=hashlib.sha256(body).hexdigest(),
             has_thumb=False,
         ).model_dump()
-        self.files.append(attachment)
         message = await self.send_message(content=caption, mentions=mentions or [])
+        self.files.append(attachment)
         return {"attachment": deepcopy(attachment), "message_id": message["id"]}
 
     def get_tool_schemas(

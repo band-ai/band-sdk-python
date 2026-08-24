@@ -121,6 +121,24 @@ class AgentToolsProtocol(Protocol):
         """
         ...
 
+    async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
+        """List files shared in the current room, paginated."""
+        ...
+
+    async def read_room_file(self, file_id: str) -> dict[str, Any]:
+        """Read a file shared in the current room by id."""
+        ...
+
+    async def send_room_file(
+        self,
+        content: str,
+        filename: str,
+        caption: str = "",
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Upload text content as a file and share it in the current room."""
+        ...
+
     def get_tool_schemas(
         self,
         format: str,
