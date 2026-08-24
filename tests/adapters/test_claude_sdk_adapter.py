@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
+    _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
     PendingApproval,
@@ -31,7 +32,12 @@ from band.adapters.claude_sdk import (
     BAND_MEMORY_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.runtime.tools import ALL_TOOL_NAMES, FILE_TOOL_NAMES, missing_reply_error
+from band.runtime.tools import (
+    ALL_TOOL_NAMES,
+    FILE_TOOL_NAMES,
+    MAX_INLINE_IMAGE_BYTES,
+    missing_reply_error,
+)
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 
 pytestmark = pytest.mark.skipif(
@@ -240,6 +246,30 @@ class TestOnStarted:
             sdk_options = mock_manager_class.call_args[0][0]
             assert sdk_options.model == _DEFAULT_MODEL
             assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_max_buffer_size_fits_a_full_inline_image(self):
+        """claude_agent_sdk's stdio transport defaults to a 1 MiB buffer and
+        fatally drops the whole CLI connection if one JSON message exceeds
+        it; band_read_room_file can inline an image up to
+        MAX_INLINE_IMAGE_BYTES as base64 (~4/3 size increase) inside such a
+        message. The configured buffer must comfortably exceed that, not the
+        library's unrelated default.
+        """
+        adapter = ClaudeSDKAdapter()
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.max_buffer_size == _CLAUDE_SDK_MAX_BUFFER_BYTES
+            assert sdk_options.max_buffer_size > MAX_INLINE_IMAGE_BYTES * 4 // 3
 
     @pytest.mark.asyncio
     async def test_explicit_model_is_forwarded(self):

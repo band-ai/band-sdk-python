@@ -86,6 +86,7 @@ from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,
+    MAX_INLINE_IMAGE_BYTES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     band_tool_errored,
@@ -115,6 +116,15 @@ _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 # thinking.type.adaptive"), so the run returns an error result with no output.
 # Pinning a known-good model avoids that path; callers can override via `model=`.
 _DEFAULT_MODEL = "claude-sonnet-4-6"
+
+# claude_agent_sdk's stdio transport defaults max_buffer_size to 1 MiB and
+# fatally drops the whole CLI connection (not just the one tool call) if a
+# single JSON-per-line message from the CLI exceeds it. band_read_room_file
+# inlines images up to MAX_INLINE_IMAGE_BYTES as base64 (~4/3 size increase)
+# inside that message, so an image well under our own advertised cap can
+# already exceed the library's unrelated default. Size the buffer off the
+# same constant instead of a second, driftable number.
+_CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -416,6 +426,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             mcp_servers={"band": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
             permission_mode=self.permission_mode,
+            max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
             # Left at the SDK default, setting_sources loads the host's user + project
             # settings (~/.claude and ./.claude): filesystem skills and subagents then
