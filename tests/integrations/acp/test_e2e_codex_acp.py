@@ -189,6 +189,7 @@ async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
 @pytest.mark.asyncio(loop_scope="session")
 async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
     """Should send a prompt and collect response chunks from codex-acp."""
+    assert acp_runtime.client is not None
     session_id = await asyncio.wait_for(
         acp_runtime.create_session(cwd="/tmp", mcp_servers=[]),
         timeout=_INIT_TIMEOUT,
@@ -202,7 +203,7 @@ async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
         ),
         timeout=_PROMPT_TIMEOUT,
     )
-    text = acp_runtime.get_collected_text(session_id)
+    text = acp_runtime.client.get_collected_text(session_id)
     logger.info("Collected %d chunks, text: %s", len(chunks), text[:200])
 
     assert len(chunks) > 0, "Expected at least one response chunk"
@@ -220,6 +221,8 @@ async def test_codex_acp_http_mcp_server_tool_call(
 ) -> None:
     """Should connect to a local HTTP MCP server and execute a tool."""
     from acp.schema import HttpMcpServer
+
+    assert acp_runtime.client is not None
 
     # execute() must return a wire-serialized string: the dynamic handler
     # build_engine() creates always declares -> str, so FastMCP's
@@ -271,7 +274,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
             ),
             timeout=_PROMPT_TIMEOUT,
         )
-        text = acp_runtime.get_collected_text(session_id)
+        text = acp_runtime.client.get_collected_text(session_id)
 
         assert any(chunk.chunk_type == "tool_call" for chunk in chunks)
         assert any(chunk.chunk_type == "tool_result" for chunk in chunks)
@@ -288,6 +291,8 @@ async def test_codex_acp_band_mcp_tool_call(
     from acp.schema import HttpMcpServer
 
     from tests.runtime.conftest import make_participant
+
+    assert acp_runtime.client is not None
 
     rest = SimpleNamespace(
         agent_api_participants=SimpleNamespace(
@@ -355,7 +360,7 @@ async def test_codex_acp_band_mcp_tool_call(
             ),
             timeout=_PROMPT_TIMEOUT,
         )
-        text = acp_runtime.get_collected_text(session_id)
+        text = acp_runtime.client.get_collected_text(session_id)
 
         tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
         if not tool_calls:
@@ -373,6 +378,7 @@ async def test_codex_acp_band_mcp_tool_call(
 @pytest.mark.asyncio(loop_scope="session")
 async def test_codex_acp_multiple_sessions(acp_runtime: ACPRuntime) -> None:
     """Should handle multiple concurrent sessions with separate buffers."""
+    assert acp_runtime.client is not None
     s1_id = await asyncio.wait_for(
         acp_runtime.create_session(cwd="/tmp", mcp_servers=[]), timeout=_INIT_TIMEOUT
     )
@@ -402,8 +408,8 @@ async def test_codex_acp_multiple_sessions(acp_runtime: ACPRuntime) -> None:
     assert len(chunks_1) > 0, "Session 1 should have response chunks"
     assert len(chunks_2) > 0, "Session 2 should have response chunks"
 
-    text_1 = acp_runtime.get_collected_text(s1_id)
-    text_2 = acp_runtime.get_collected_text(s2_id)
+    text_1 = acp_runtime.client.get_collected_text(s1_id)
+    text_2 = acp_runtime.client.get_collected_text(s2_id)
     logger.info("Session 1: %s", text_1[:100])
     logger.info("Session 2: %s", text_2[:100])
 
