@@ -317,6 +317,71 @@ class TestCreateChatroom:
         assert result.startswith("room-")
 
 
+class TestFileTools:
+    """Tests for list_room_files / read_room_file / send_room_file."""
+
+    async def test_seeded_files_are_listed(self) -> None:
+        seeded = {
+            "id": "file-1",
+            "name": "notes.txt",
+            "content_type": "text/plain",
+            "bytes": 12,
+            "sha256": "a" * 64,
+            "has_thumb": False,
+        }
+        tools = FakeAgentTools(files=[seeded])
+
+        listing = await tools.list_room_files()
+
+        assert [f["id"] for f in listing["data"]] == ["file-1"]
+
+    async def test_read_room_file_describes_a_seeded_file(self) -> None:
+        seeded = {
+            "id": "file-1",
+            "name": "notes.txt",
+            "content_type": "text/plain",
+            "bytes": 12,
+            "sha256": "a" * 64,
+            "has_thumb": False,
+        }
+        tools = FakeAgentTools(files=[seeded])
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["name"] == "notes.txt"
+
+    async def test_read_room_file_unknown_id_raises(self) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(BandToolError):
+            await tools.read_room_file("nope")
+
+    async def test_send_room_file_stores_and_sends_message(self) -> None:
+        tools = FakeAgentTools()
+
+        result = await tools.send_room_file(
+            "hello world", "report.txt", caption="here", mentions=["user-1"]
+        )
+
+        assert [f["name"] for f in tools.files] == ["report.txt"]
+        assert result["attachment"]["name"] == "report.txt"
+        assert tools.messages_sent[0]["content"] == "here"
+
+    async def test_send_room_file_rejects_a_message_with_no_mentions(self) -> None:
+        """Reuses send_message's mention requirement, matching the real tool.
+
+        The upload itself already happened by this point (same order as the
+        real tool: upload, then attach via send_message) -- only the message
+        send fails.
+        """
+        tools = FakeAgentTools()
+
+        with pytest.raises(BandToolError, match="At least one mention is required"):
+            await tools.send_room_file("hello world", "report.txt")
+
+        assert tools.messages_sent == []
+
+
 class TestToolSchemas:
     """Tests for get_tool_schemas."""
 

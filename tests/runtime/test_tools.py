@@ -169,6 +169,368 @@ class TestMemoryTools:
         )
 
 
+def _attachment(
+    file_id: str = "file-1",
+    *,
+    name: str = "notes.txt",
+    content_type: str = "text/plain",
+    size: int = 20,
+) -> Attachment:
+    return Attachment(
+        id=file_id,
+        name=name,
+        content_type=content_type,
+        bytes=size,
+        sha256="a" * 64,
+        has_thumb=False,
+    )
+
+
+def _messages_response(
+    messages: list[ChatMessage],
+    *,
+    next_cursor: str | None = None,
+    has_more: bool = False,
+) -> ListAgentMessagesResponse:
+    return ListAgentMessagesResponse(
+        data=messages,
+        metadata=ListAgentMessagesResponseMetadata(
+            has_more=has_more, limit=50, next_cursor=next_cursor
+        ),
+    )
+
+
+def _message_with_attachments(
+    msg_id: str, attachments: list[Attachment]
+) -> ChatMessage:
+    return ChatMessage(
+        id=msg_id,
+        content="",
+        sender_id="user-1",
+        sender_type="User",
+        message_type="text",
+        attachments=attachments,
+    )
+
+
+async def _fake_download(body: bytes):
+    """A ``download_agent_chat_file`` double: an async generator, not a
+    coroutine -- assigning an ``AsyncMock`` here would make the *call* itself
+    awaitable, which nothing in the real client does."""
+    yield body
+
+
+async def _fake_download_not_found():
+    """Same shape as ``_fake_download``, but raises before ever yielding."""
+    if False:
+        yield b""
+    raise NotFoundError(body=MagicMock())
+
+
+class TestFileTools:
+    """Tests for band_list_room_files / band_read_room_file / band_send_room_file."""
+
+    # --- list_room_files ---
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_dedupes_by_attachment_id(self, mock_rest_client):
+        shared = _attachment("file-1")
+        other = _attachment("file-2")
+        response = _messages_response(
+            [
+                _message_with_attachments("msg-1", [shared]),
+                _message_with_attachments("msg-2", [shared, other]),
+            ]
+        )
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=response
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.list_room_files()
+
+        assert [a["id"] for a in result["data"]] == ["file-1", "file-2"]
+        mock_rest_client.agent_api_messages.list_agent_messages.assert_awaited_once_with(
+            chat_id="room-123",
+            status="all",
+            sort_order="desc",
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_forwards_cursor_and_returns_next(
+        self, mock_rest_client
+    ):
+        response = _messages_response(
+            [_message_with_attachments("msg-1", [_attachment()])],
+            next_cursor="cursor-2",
+            has_more=True,
+        )
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=response
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.list_room_files(cursor="cursor-1")
+
+        assert result["next_cursor"] == "cursor-2"
+        mock_rest_client.agent_api_messages.list_agent_messages.assert_awaited_once_with(
+            chat_id="room-123",
+            status="all",
+            sort_order="desc",
+            request_options=DEFAULT_REQUEST_OPTIONS,
+            cursor="cursor-1",
+        )
+
+    # --- read_room_file ---
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_inlines_small_text(self, mock_rest_client):
+        attachment = _attachment(content_type="text/plain", size=5)
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["text"] == "hello"
+        assert result["content_type"] == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_inlines_small_image(self, mock_rest_client):
+        import base64
+
+        attachment = _attachment(content_type="image/png", size=100)
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"\x89PNG-fake-bytes")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        block = result["content"][0]
+        assert block["type"] == "image"
+        assert block["mimeType"] == "image/png"
+        assert base64.b64decode(block["data"]) == b"\x89PNG-fake-bytes"
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_text_exactly_at_limit_downloads(
+        self, mock_rest_client
+    ):
+        attachment = _attachment(content_type="text/plain", size=MAX_INLINE_TEXT_BYTES)
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
+        mock_rest_client.agent_api_files.download_agent_chat_file = download
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        download.assert_called_once()
+        assert result["text"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_text_one_byte_over_limit_skips_download(
+        self, mock_rest_client
+    ):
+        attachment = _attachment(
+            content_type="text/plain", size=MAX_INLINE_TEXT_BYTES + 1
+        )
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
+        mock_rest_client.agent_api_files.download_agent_chat_file = download
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        download.assert_not_called()
+        assert "text" not in result
+        assert "description" in result
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_exactly_at_limit_downloads(
+        self, mock_rest_client
+    ):
+        attachment = _attachment(content_type="image/png", size=MAX_INLINE_IMAGE_BYTES)
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
+        mock_rest_client.agent_api_files.download_agent_chat_file = download
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        download.assert_called_once()
+        assert result["content"][0]["type"] == "image"
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_one_byte_over_limit_skips_download(
+        self, mock_rest_client
+    ):
+        attachment = _attachment(
+            content_type="image/png", size=MAX_INLINE_IMAGE_BYTES + 1
+        )
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
+        mock_rest_client.agent_api_files.download_agent_chat_file = download
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        download.assert_not_called()
+        assert "content" not in result
+        assert "description" in result
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_non_previewable_type_is_described(
+        self, mock_rest_client
+    ):
+        attachment = _attachment(content_type="application/pdf", size=10)
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        download = MagicMock(side_effect=lambda **_kw: _fake_download(b"ok"))
+        mock_rest_client.agent_api_files.download_agent_chat_file = download
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        download.assert_not_called()
+        assert result["description"]
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_unknown_id_raises_band_tool_error(
+        self, mock_rest_client
+    ):
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response([])
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools.read_room_file("nope")
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_download_not_found_raises_band_tool_error(
+        self, mock_rest_client
+    ):
+        attachment = _attachment(content_type="text/plain", size=5)
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download_not_found()
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools.read_room_file("file-1")
+
+    # --- send_room_file ---
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_uploads_and_posts_message(
+        self, mock_rest_client, participants
+    ):
+        uploaded = _attachment("file-9", name="report.txt")
+        upload_response = MagicMock()
+        upload_response.data = uploaded
+        mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
+            return_value=upload_response
+        )
+
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        result = await tools.send_room_file(
+            "hello world", "report.txt", caption="here you go", mentions=["User One"]
+        )
+
+        assert result["attachment"]["id"] == "file-9"
+        upload_call = mock_rest_client.agent_api_files.upload_agent_chat_file
+        upload_call.assert_awaited_once()
+        _, kwargs = upload_call.await_args
+        assert kwargs["chat_id"] == "room-123"
+        assert kwargs["request"] == b"hello world"
+        headers = kwargs["request_options"]["additional_headers"]
+        assert headers["x-file-name"] == "report.txt"
+        mock_rest_client.agent_api_messages.create_agent_chat_message.assert_awaited_once()
+        _, message_kwargs = (
+            mock_rest_client.agent_api_messages.create_agent_chat_message.await_args
+        )
+        assert message_kwargs["message"].attachment_ids == ["file-9"]
+        assert message_kwargs["message"].content == "here you go"
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_exactly_at_limit_succeeds(
+        self, mock_rest_client, participants
+    ):
+        uploaded = _attachment("file-9")
+        upload_response = MagicMock()
+        upload_response.data = uploaded
+        mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
+            return_value=upload_response
+        )
+        tools = AgentTools("room-123", mock_rest_client, participants)
+        body = "a" * MAX_SEND_CONTENT_BYTES
+
+        await tools.send_room_file(body, "big.txt", mentions=["User One"])
+
+        mock_rest_client.agent_api_files.upload_agent_chat_file.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_one_byte_over_limit_raises_before_upload(
+        self, mock_rest_client, participants
+    ):
+        tools = AgentTools("room-123", mock_rest_client, participants)
+        body = "a" * (MAX_SEND_CONTENT_BYTES + 1)
+
+        with pytest.raises(BandToolError, match="exceeds"):
+            await tools.send_room_file(body, "big.txt", mentions=["User One"])
+
+        mock_rest_client.agent_api_files.upload_agent_chat_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_upload_not_found_raises_band_tool_error(
+        self, mock_rest_client, participants
+    ):
+        mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
+            side_effect=NotFoundError(body=MagicMock())
+        )
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools.send_room_file("hi", "f.txt", mentions=["User One"])
+
+
 class TestAgentToolsConstruction:
     """Test AgentTools initialization."""
 

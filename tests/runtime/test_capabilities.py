@@ -43,7 +43,9 @@ class TestPruneUnsupported:
     def test_capabilities_with_no_platform_gate_are_never_pruned(self) -> None:
         """MEMORY/CONTACTS have no CAPABILITY_FEATURE_FLAGS entry -- only FILES
         is subject to this negotiation today."""
-        features = AdapterFeatures(capabilities={Capability.MEMORY, Capability.CONTACTS})
+        features = AdapterFeatures(
+            capabilities={Capability.MEMORY, Capability.CONTACTS}
+        )
 
         result = prune_unsupported(features, {})
 
