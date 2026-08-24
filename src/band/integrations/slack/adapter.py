@@ -531,13 +531,10 @@ class SlackAdapter(SimpleAdapter[Any]):
     def apply_effective_features(self, features: AdapterFeatures) -> None:
         """Mirror post-negotiation features onto the wrapped inner adapter too.
 
-        ``_resolve_features`` only mirrors into ``self._inner.features`` once,
-        at construction -- a post-construction ``self.features = features``
-        here would update only this wrapper's own attribute, leaving
-        ``self._inner.features`` (and anything the inner adapter caches from
-        it) stale. Delegates to the inner's own hook rather than assigning
-        ``self._inner.features`` directly, so an inner adapter that itself
-        needs cache-rebuilding is handled correctly too.
+        ``_resolve_features`` mirrors into ``self._inner.features`` only once,
+        at construction, so this keeps it in sync afterward. Delegates to the
+        inner's own hook (not a direct assignment) so an inner adapter that
+        overrides it for its own caching still runs.
         """
         super().apply_effective_features(features)
         self._inner.apply_effective_features(features)
