@@ -85,7 +85,7 @@ docker info >/dev/null 2>&1 || echo "Docker is not running -- start it first"
   proceed without one. Check what's already there before assuming anything:
   ```bash
   [ -f "$PLATFORM_DIR/.env" ] || touch "$PLATFORM_DIR/.env"
-  ADMIN_FUSIONAUTH_ID="$(grep -oP '(?<=^ADMIN_FUSIONAUTH_ID=).+' "$PLATFORM_DIR/.env" 2>/dev/null)"
+  ADMIN_FUSIONAUTH_ID="$(sed -n 's/^ADMIN_FUSIONAUTH_ID=//p' "$PLATFORM_DIR/.env" 2>/dev/null | tail -n 1)"
   echo "ADMIN_FUSIONAUTH_ID=${ADMIN_FUSIONAUTH_ID:-<not set>}"
   ```
   If that's `<not set>`, **ask the user** whether to use the seeded
