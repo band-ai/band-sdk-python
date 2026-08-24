@@ -855,6 +855,11 @@ class ACPRuntime:
             return []
         return self._client.get_collected_chunks(session_id)
 
+    def get_collected_text(self, session_id: str) -> str:
+        if self._client is None:
+            return ""
+        return self._client.get_collected_text(session_id)
+
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         async with self._stop_lock:
