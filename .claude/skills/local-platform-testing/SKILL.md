@@ -16,10 +16,11 @@ on-prem-only feature flag (`ff_file_transfer`) that never exists on SaaS.
 Every step below exists because it silently fails a different way otherwise —
 follow them in order rather than skipping to "just start the server." Assume
 nothing about the machine: the platform repo may not be cloned, may be stale,
-its toolchain/dependencies may never have been installed, and it may not live
-at any particular path — every command below uses `$PLATFORM_DIR`, never a
-hardcoded location. Run this skill from the SDK repo root and capture that
-before moving anywhere else:
+its toolchain/dependencies may never have been installed, and neither its
+location nor its per-checkout config (`ADMIN_FUSIONAUTH_ID`, etc.) can be
+guessed — every such value gets resolved explicitly below, and the human is
+asked whenever it can't be. Run this skill from the SDK repo root and capture
+that before moving anywhere else:
 
 ```bash
 SDK_DIR="$(pwd)"
@@ -31,24 +32,31 @@ Check each of these; don't assume any is already satisfied.
 
 ```bash
 docker info >/dev/null 2>&1 || echo "Docker is not running -- start it first"
-command -v mise >/dev/null 2>&1 && echo "mise found" || echo "no mise -- see fallback below"
 ```
 
-- **Docker** must be running (the infra in Step 1 is entirely containers).
-- **Locate or clone the platform repo.** Don't assume a fixed path — resolve
-  it once into `$PLATFORM_DIR` and reuse that variable for every command
-  below:
+- **Locate the platform repo — never guess by directory name, never silently
+  clone.** A checkout can be named anything (`thenvoi-platform`,
+  `band-platform`, a fork, whatever the user called it) — identify it by
+  content, not name: it's the repo whose `mix.exs` declares `app:
+  :thenvoi_com`. Only `$THENVOI_PLATFORM_DIR` (if the user already set it) or
+  a same-named sibling of this SDK checkout that passes that content check
+  count as found automatically; anything else means asking:
   ```bash
+  is_platform_repo() { [ -f "$1/mix.exs" ] && grep -q "app: :thenvoi_com" "$1/mix.exs"; }
+
   PLATFORM_DIR="${THENVOI_PLATFORM_DIR:-}"
-  [ -z "$PLATFORM_DIR" ] && [ -d "$SDK_DIR/../thenvoi-platform/.git" ] \
+  [ -n "$PLATFORM_DIR" ] && ! is_platform_repo "$PLATFORM_DIR" && PLATFORM_DIR=""
+  [ -z "$PLATFORM_DIR" ] && is_platform_repo "$SDK_DIR/../thenvoi-platform" \
     && PLATFORM_DIR="$(cd "$SDK_DIR/../thenvoi-platform" && pwd)"
   echo "PLATFORM_DIR=${PLATFORM_DIR:-<not found>}"
   ```
-  Not found? Clone it (sibling to this SDK checkout is the convention, but
-  ask the user if they'd rather put it elsewhere) and set `PLATFORM_DIR`:
+  If that came back `<not found>`, **stop and ask the user** where their
+  `thenvoi-platform` (or equivalently-named fork) checkout is, or whether to
+  clone a fresh one and where — do not guess a path or clone unprompted.
+  Once they answer, set `PLATFORM_DIR` accordingly, cloning only if they
+  confirm there isn't one yet:
   ```bash
-  git clone --recurse-submodules https://github.com/thenvoi/thenvoi-platform.git "$SDK_DIR/../thenvoi-platform"
-  PLATFORM_DIR="$(cd "$SDK_DIR/../thenvoi-platform" && pwd)"
+  git clone --recurse-submodules https://github.com/thenvoi/thenvoi-platform.git "$PLATFORM_DIR"
   ```
 - **Repo present but possibly stale?** Don't blindly pull over uncommitted
   work:
@@ -57,39 +65,43 @@ command -v mise >/dev/null 2>&1 && echo "mise found" || echo "no mise -- see fal
   git status --short          # stop and ask if this is non-empty and not yours
   git fetch origin main
   git checkout main && git pull --ff-only origin main
-  git submodule update --init --recursive
   ```
-- **Elixir/Erlang/Node toolchain.** The repo pins versions in `.tool-versions`
-  (`mise`- or `asdf`-compatible). If neither `mise` nor `asdf` is installed,
-  stop and follow the README's Prerequisites section (asdf + elixir/erlang
-  plugins) — installing a version manager isn't something to script blind.
-  Otherwise:
-  ```bash
-  mise install        # or: asdf install
-  ```
-  Every command below uses `mise exec --`; substitute `asdf exec --` (or just
-  drop the prefix if the versions are already the active shell's default) if
-  using asdf instead.
-- **`.env` file and its two non-generatable secrets.** `docker-compose.yml`
-  declares `env_file: [.env.example, .env]` for several services and treats a
-  *missing* `.env` as a hard error, so it must exist (empty is fine to start):
-  ```bash
-  [ -f .env ] || touch .env
-  ```
-  `ADMIN_FUSIONAUTH_ID` (`Makefile`'s `generate-secrets` will refuse to
-  proceed without it) defaults to `00000000-0000-0000-0000-000000000001`
-  (the seeded kickstart admin) if unset — that default is what the rest of
-  this skill assumes. **`OBAN_PRO_KEY`** is a private Hex repo credential
-  (Oban Pro) that cannot be generated or guessed — if it isn't already
-  configured (`make check-oban-repo` from the platform repo reports its
-  status), stop and get one from whoever owns the platform's Oban Pro
-  access; `mix deps.get` fails without it.
-- **Dependencies installed?** Safe to (re-)run even when already satisfied:
+- **Elixir/Erlang/Node toolchain.** Don't hand-roll a `mise`/`asdf` check —
+  the platform's own `make check-version-manager-prereqs` already detects
+  which one is present, installs missing plugins/versions from
+  `.tool-versions`, and prints install instructions (plus opens the docs) if
+  neither exists:
   ```bash
   cd "$PLATFORM_DIR"
-  mise exec -- mix deps.get
-  mise exec -- mix setup       # ecto.create/migrate + asset deps; idempotent
+  make check-version-manager-prereqs
   ```
+  Every later command that invokes `mix` is prefixed `mise exec --` (or
+  `asdf exec --`, or dropped if the versions are already the active shell's
+  default) so it resolves against `.tool-versions`, not a system-wide
+  install.
+- **`ADMIN_FUSIONAUTH_ID` — required, and not something to default without
+  asking.** It must be the UUID of an admin FusionAuth user; a fresh `.env`
+  has no value for it at all, and `make generate-secrets` below refuses to
+  proceed without one. Check what's already there before assuming anything:
+  ```bash
+  [ -f "$PLATFORM_DIR/.env" ] || touch "$PLATFORM_DIR/.env"
+  ADMIN_FUSIONAUTH_ID="$(grep -oP '(?<=^ADMIN_FUSIONAUTH_ID=).+' "$PLATFORM_DIR/.env" 2>/dev/null)"
+  echo "ADMIN_FUSIONAUTH_ID=${ADMIN_FUSIONAUTH_ID:-<not set>}"
+  ```
+  If that's `<not set>`, **ask the user** whether to use the seeded
+  kickstart admin (`00000000-0000-0000-0000-000000000001` — matches
+  `development_analytics_tools/fusionauth/kickstart/kickstart.json`, the
+  right choice for a from-scratch local dev database) or a UUID of their
+  own. Once they answer, write it in and keep the shell variable in sync —
+  every later step reuses `$ADMIN_FUSIONAUTH_ID`, never a hardcoded literal:
+  ```bash
+  echo "ADMIN_FUSIONAUTH_ID=$ADMIN_FUSIONAUTH_ID" >> "$PLATFORM_DIR/.env"
+  ```
+- **`OBAN_PRO_KEY`** is a private Hex repo credential (Oban Pro) that cannot
+  be generated or guessed. It's validated automatically in Step 2 below
+  (`make generate-secrets` depends on `check-oban-repo`) — if that step
+  fails on it, stop and get one from whoever owns the platform's Oban Pro
+  access; there is no workaround.
 
 ## Step 1 — Bring up Docker infra
 
@@ -108,7 +120,21 @@ make ensure-docker-services
 
 `docker compose ps` should show `db`, `unleash`, `minio` healthy before continuing.
 
-## Step 2 — Start the Phoenix server headless
+## Step 2 — Generate secrets and install dependencies
+
+Reuse the platform's own targets rather than re-deriving what they already
+check — `generate-secrets` fills in `SECRET_KEY_BASE`/`CLOAK_KEY`/etc. and
+validates `ADMIN_FUSIONAUTH_ID`/`OBAN_PRO_KEY` (failing loud, with actionable
+messages, if either is missing); `setup` installs `mix`/npm dependencies and
+runs `ecto.setup` — which needs the `db` container from Step 1 already up:
+
+```bash
+cd "$PLATFORM_DIR"
+mise exec -- make generate-secrets
+mise exec -- make setup
+```
+
+## Step 3 — Start the Phoenix server headless
 
 **Do not use `make dev`.** It runs `iex -S mix phx.server`; with no TTY attached
 (any backgrounded/non-interactive invocation), IEx hits EOF on stdin and exits
@@ -125,13 +151,15 @@ mise exec -- mix phx.server < /dev/null   # mise supplies elixir/erlang from .to
 
 Wait for `curl -sf http://localhost:4000/health` to return before continuing.
 
-## Step 3 — Enable the feature flag under test (if it's on-prem-only)
+## Step 4 — Enable the feature flag under test (if it's on-prem-only)
 
-`ff_file_transfer` (and any flag like it) stays off by default even in local
-dev — the Unleash seed (`thenvoi-basic-flags.json`) is deliberately `enabled:
-false` with its strategy `disabled: true`, and re-imports on every Unleash
-restart so a developer's choice is never silently overridden. Flip it via the
-admin API (local default creds, `AUTH_TYPE=open-source` still requires login):
+`<FLAG_NAME>` below is whatever flag the task at hand needs (e.g.
+`ff_file_transfer`) — take it from the task/user, never guess which flag to
+flip. Flags like it stay off by default even in local dev — the Unleash seed
+(`thenvoi-basic-flags.json`) is deliberately `enabled: false` with its
+strategy `disabled: true`, and re-imports on every Unleash restart so a
+developer's choice is never silently overridden. Flip it via the admin API
+(local default creds, `AUTH_TYPE=open-source` still requires login):
 
 ```bash
 curl -s -c /tmp/unleash_cookies.txt -X POST http://localhost:4242/auth/simple/login \
@@ -152,31 +180,37 @@ curl -s -b /tmp/unleash_cookies.txt -X POST \
 The running server doesn't see this instantly — its Unleash client polls for
 flag changes every 15 seconds (`features_period` in `config/config.exs`), not
 on every request. Wait past that interval before relying on the flag in
-Step 4/5, or a request made in the gap sees the fail-closed default:
+Step 5/6, or a request made in the gap sees the fail-closed default:
 
 ```bash
 sleep 20
 ```
 
-## Step 4 — Get a working `BAND_API_KEY_USER`
+## Step 5 — Get a working `BAND_API_KEY_USER`
 
 A FusionAuth kickstart user has no local platform `users` row until it first
 logs in for real — that row is created lazily, keyed by `fusionauth_uuid`. An
-API key minted against `ADMIN_FUSIONAUTH_ID` (`.env`'s default,
-`00000000-0000-0000-0000-000000000001`) fails with `"API key not linked to a
-user or agent"` (401) until the row exists. Create it once, then mint the key:
+API key minted against `$ADMIN_FUSIONAUTH_ID` fails with `"API key not linked
+to a user or agent"` (401) until the row exists. Create it once, then mint
+the key — both `mix run -e` calls read `ADMIN_FUSIONAUTH_ID` from the
+environment rather than a hardcoded literal, so export the value resolved in
+Step 0 first:
 
 ```bash
 cd "$PLATFORM_DIR"
+export ADMIN_FUSIONAUTH_ID
+
 mise exec -- mix run -e '
-case ThenvoiCom.Accounts.register_fusionauth_user(%{fusionauth_uuid: "00000000-0000-0000-0000-000000000001", email: "admin@band.ai", first_name: "FusionAuth", last_name: "Admin"}) do
+uuid = System.fetch_env!("ADMIN_FUSIONAUTH_ID")
+case ThenvoiCom.Accounts.register_fusionauth_user(%{fusionauth_uuid: uuid, email: "admin@band.ai", first_name: "FusionAuth", last_name: "Admin"}) do
   {:ok, user} -> IO.puts("created user id=#{user.id} role=#{user.role}")
   {:error, cs} -> IO.inspect(cs.errors, label: "FAILED")
 end'
 
 mise exec -- mix run -e '
+uuid = System.fetch_env!("ADMIN_FUSIONAUTH_ID")
 name = "local-test-#{System.system_time(:second)}"
-{:ok, _key, plain} = ThenvoiCom.Context.ApiKeys.create_api_key_with_value(%{name: name, fusionauth_uuid: "00000000-0000-0000-0000-000000000001"})
+{:ok, _key, plain} = ThenvoiCom.Context.ApiKeys.create_api_key_with_value(%{name: name, fusionauth_uuid: uuid})
 File.write!("/tmp/band_user_api_key.txt", plain)
 IO.puts("wrote key name=#{name}, length=#{String.length(plain)}")'
 ```
@@ -187,10 +221,10 @@ every later run against the same persistent local database. The timestamped
 name above sidesteps that without needing to look up or delete the prior key.
 
 Both `mix run -e` invocations boot a **second** BEAM node against the same
-Postgres. Run them only while the Step 2 server is stopped (they'll collide on
+Postgres. Run them only while the Step 3 server is stopped (they'll collide on
 the fixed PromEx port `9568`), then restart the server.
 
-## Step 5 — Point the SDK at it and write the test
+## Step 6 — Point the SDK at it and write the test
 
 From the SDK repo root, reuse `tests/e2e/baseline/toolkit/provisioning.py`
 (`ResourceManager`, `agent_rest_client`, `user_rest_client`) to register agents
