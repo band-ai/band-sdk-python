@@ -1,6 +1,6 @@
 ---
 name: local-platform-testing
-description: Stand up ~/repo/thenvoi-platform locally (Docker infra + a headless Phoenix server) and point the SDK at it for a real, non-mocked integration test — no VPN, no shared dev/prod platform. Use when asked to test a feature "against a real/live/local platform", when ff_file_transfer or another on-prem-only feature flag needs to be exercised, or when troubleshooting a local platform that won't start, rejects an API key, or serves the wrong platform to the SDK.
+description: Stand up thenvoi-platform locally (Docker infra + a headless Phoenix server) and point the SDK at it for a real, non-mocked integration test — no VPN, no shared dev/prod platform. Use when asked to test a feature "against a real/live/local platform", when ff_file_transfer or another on-prem-only feature flag needs to be exercised, or when troubleshooting a local platform that won't start, rejects an API key, or serves the wrong platform to the SDK.
 ---
 
 # Local platform testing
@@ -16,7 +16,14 @@ on-prem-only feature flag (`ff_file_transfer`) that never exists on SaaS.
 Every step below exists because it silently fails a different way otherwise —
 follow them in order rather than skipping to "just start the server." Assume
 nothing about the machine: the platform repo may not be cloned, may be stale,
-and its toolchain/dependencies may never have been installed.
+its toolchain/dependencies may never have been installed, and it may not live
+at any particular path — every command below uses `$PLATFORM_DIR`, never a
+hardcoded location. Run this skill from the SDK repo root and capture that
+before moving anywhere else:
+
+```bash
+SDK_DIR="$(pwd)"
+```
 
 ## Step 0 — Prerequisites and fresh checkout
 
@@ -28,14 +35,28 @@ command -v mise >/dev/null 2>&1 && echo "mise found" || echo "no mise -- see fal
 ```
 
 - **Docker** must be running (the infra in Step 1 is entirely containers).
-- **Repo present?** If `~/repo/thenvoi-platform` doesn't exist:
+- **Locate or clone the platform repo.** Don't assume a fixed path — resolve
+  it once into `$PLATFORM_DIR` and reuse that variable for every command
+  below:
   ```bash
-  git clone --recurse-submodules https://github.com/thenvoi/thenvoi-platform.git ~/repo/thenvoi-platform
+  PLATFORM_DIR="${THENVOI_PLATFORM_DIR:-}"
+  if [ -z "$PLATFORM_DIR" ]; then
+    for candidate in "$SDK_DIR/../thenvoi-platform" ~/repo/thenvoi-platform; do
+      [ -d "$candidate/.git" ] && PLATFORM_DIR="$(cd "$candidate" && pwd)" && break
+    done
+  fi
+  echo "PLATFORM_DIR=${PLATFORM_DIR:-<not found>}"
+  ```
+  Not found? Clone it (sibling to this SDK checkout is the convention, but
+  ask the user if they'd rather put it elsewhere) and set `PLATFORM_DIR`:
+  ```bash
+  git clone --recurse-submodules https://github.com/thenvoi/thenvoi-platform.git "$SDK_DIR/../thenvoi-platform"
+  PLATFORM_DIR="$(cd "$SDK_DIR/../thenvoi-platform" && pwd)"
   ```
 - **Repo present but possibly stale?** Don't blindly pull over uncommitted
   work:
   ```bash
-  cd ~/repo/thenvoi-platform
+  cd "$PLATFORM_DIR"
   git status --short          # stop and ask if this is non-empty and not yours
   git fetch origin main
   git checkout main && git pull --ff-only origin main
@@ -68,17 +89,24 @@ command -v mise >/dev/null 2>&1 && echo "mise found" || echo "no mise -- see fal
   access; `mix deps.get` fails without it.
 - **Dependencies installed?** Safe to (re-)run even when already satisfied:
   ```bash
-  cd ~/repo/thenvoi-platform
+  cd "$PLATFORM_DIR"
   mise exec -- mix deps.get
   mise exec -- mix setup       # ecto.create/migrate + asset deps; idempotent
   ```
 
 ## Step 1 — Bring up Docker infra
 
+Don't hand-roll a combined `docker compose up -d <all services>` — a slow or
+failing service can leave another silently absent while the rest come up fine,
+with nothing waiting on it. The platform's own `make ensure-docker-services`
+target already starts `db` first, waits for it to report healthy, then brings
+up each remaining service independently (so one failure doesn't block the
+rest) and creates the file-transfer bucket — use it instead of reimplementing
+that sequencing:
+
 ```bash
-cd ~/repo/thenvoi-platform
-docker compose up -d db unleash opensearch fusionauth otel-collector minio
-docker compose up --exit-code-from minio-init minio-init      # creates the file-transfer bucket
+cd "$PLATFORM_DIR"
+make ensure-docker-services
 ```
 
 `docker compose ps` should show `db`, `unleash`, `minio` healthy before continuing.
@@ -94,7 +122,7 @@ process group ends — use your tool's real background-job tracking, e.g. Claude
 Code's `run_in_background: true`, not a shell `&`):
 
 ```bash
-cd ~/repo/thenvoi-platform
+cd "$PLATFORM_DIR"
 mise exec -- mix phx.server < /dev/null   # mise supplies elixir/erlang from .tool-versions
 ```
 
@@ -124,6 +152,15 @@ curl -s -b /tmp/unleash_cookies.txt -X POST \
   "http://localhost:4242/api/admin/projects/default/features/<FLAG_NAME>/environments/development/on"
 ```
 
+The running server doesn't see this instantly — its Unleash client polls for
+flag changes every 15 seconds (`features_period` in `config/config.exs`), not
+on every request. Wait past that interval before relying on the flag in
+Step 4/5, or a request made in the gap sees the fail-closed default:
+
+```bash
+sleep 20
+```
+
 ## Step 4 — Get a working `BAND_API_KEY_USER`
 
 A FusionAuth kickstart user has no local platform `users` row until it first
@@ -133,7 +170,7 @@ API key minted against `ADMIN_FUSIONAUTH_ID` (`.env`'s default,
 user or agent"` (401) until the row exists. Create it once, then mint the key:
 
 ```bash
-cd ~/repo/thenvoi-platform
+cd "$PLATFORM_DIR"
 mise exec -- mix run -e '
 case ThenvoiCom.Accounts.register_fusionauth_user(%{fusionauth_uuid: "00000000-0000-0000-0000-000000000001", email: "admin@band.ai", first_name: "FusionAuth", last_name: "Admin"}) do
   {:ok, user} -> IO.puts("created user id=#{user.id} role=#{user.role}")
@@ -141,10 +178,16 @@ case ThenvoiCom.Accounts.register_fusionauth_user(%{fusionauth_uuid: "00000000-0
 end'
 
 mise exec -- mix run -e '
-{:ok, _key, plain} = ThenvoiCom.Context.ApiKeys.create_api_key_with_value(%{name: "local-test", fusionauth_uuid: "00000000-0000-0000-0000-000000000001"})
+name = "local-test-#{System.system_time(:second)}"
+{:ok, _key, plain} = ThenvoiCom.Context.ApiKeys.create_api_key_with_value(%{name: name, fusionauth_uuid: "00000000-0000-0000-0000-000000000001"})
 File.write!("/tmp/band_user_api_key.txt", plain)
-IO.puts("wrote key, length=#{String.length(plain)}")'
+IO.puts("wrote key name=#{name}, length=#{String.length(plain)}")'
 ```
+
+`ApiKey` has a `unique_index` on `(fusionauth_uuid, name)` — a fixed name like
+`"local-test"` mints fine the first time, then fails with a changeset error on
+every later run against the same persistent local database. The timestamped
+name above sidesteps that without needing to look up or delete the prior key.
 
 Both `mix run -e` invocations boot a **second** BEAM node against the same
 Postgres. Run them only while the Step 2 server is stopped (they'll collide on
@@ -152,14 +195,14 @@ the fixed PromEx port `9568`), then restart the server.
 
 ## Step 5 — Point the SDK at it and write the test
 
-From `~/repo/thenvoi-sdk-python`, reuse `tests/e2e/baseline/toolkit/provisioning.py`
+From the SDK repo root, reuse `tests/e2e/baseline/toolkit/provisioning.py`
 (`ResourceManager`, `agent_rest_client`, `user_rest_client`) to register agents
 and rooms, then call `band.runtime.tools.AgentTools` methods directly — no LLM
 needed for a platform-integration check. Set **both** aliases the settings
 class checks, or the dev platform wins silently:
 
 ```bash
-cd ~/repo/thenvoi-sdk-python
+cd "$SDK_DIR"
 PYTHONPATH=. \
 BAND_BASE_URL=http://localhost:4000 BAND_REST_URL=http://localhost:4000 \
 BAND_API_KEY_USER=$(cat /tmp/band_user_api_key.txt) \
