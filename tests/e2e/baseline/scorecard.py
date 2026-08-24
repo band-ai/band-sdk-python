@@ -277,6 +277,28 @@ def gate(rows: list[ScorecardRow], expected_lanes: frozenset[str]) -> GateResult
     return GateResult(ok=not failing and not missing, failing=failing, missing=missing)
 
 
+# Fraction of attempted cells that must fail before a lane's whole-suite retry
+# (run-baseline-e2e.sh) is skipped as unlikely to help. This many failures in one
+# pass reads as a systemic outage (a degraded provider) rather than one-off
+# flakiness, and retrying a systemic outage only spends the same wall clock again
+# -- observed live 2026-08-23: a provider slowdown made the core lane's retry
+# multiply an already-doomed run instead of catching a transient.
+MASS_FAILURE_THRESHOLD = 0.25
+
+
+def failed_fraction(rows: list[ScorecardRow]) -> float:
+    """Fraction of *attempted* rows (``pass``/``fail``; ``skip``/``na`` excluded)
+    that failed.
+
+    Used to tell one-off flakiness from a systemic outage — see
+    ``MASS_FAILURE_THRESHOLD``. ``0.0`` when nothing was attempted.
+    """
+    attempted = [r for r in rows if r.status in ("pass", "fail")]
+    if not attempted:
+        return 0.0
+    return sum(1 for r in attempted if r.status == "fail") / len(attempted)
+
+
 def gate_summary(result: GateResult, rows: list[ScorecardRow]) -> str:
     """A one-line verdict + totals, meant to sit above the markdown grid."""
     counts = {status: sum(1 for r in rows if r.status == status) for status in _RANK}
@@ -405,9 +427,23 @@ def _overlay_cmd(args: argparse.Namespace) -> None:
     logger.info("scorecard: overlaid %d cell(s) -> %s", len(rows), args.out)
 
 
+def _mass_failure_cmd(args: argparse.Namespace) -> None:
+    rows = _load(args.scorecard)
+    fraction = failed_fraction(rows)
+    logger.info(
+        "scorecard: %.0f%% of attempted cells failed (mass-failure threshold %.0f%%)",
+        fraction * 100,
+        MASS_FAILURE_THRESHOLD * 100,
+    )
+    if fraction < MASS_FAILURE_THRESHOLD:
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI: ``merge`` the per-lane scorecards CI uploads into one artifact and gate on
-    it, or ``overlay`` a same-lane retry attempt onto its original run."""
+    it, ``overlay`` a same-lane retry attempt onto its original run, or
+    ``mass-failure`` check whether an attempt's failure rate crossed
+    ``MASS_FAILURE_THRESHOLD`` (exit 0 if so)."""
     parser = argparse.ArgumentParser(prog="scorecard")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -439,11 +475,21 @@ def main(argv: list[str] | None = None) -> None:
         "--out", required=True, help="combined scorecard JSON path"
     )
 
+    mass_failure_cmd = sub.add_parser(
+        "mass-failure",
+        help="exit 0 if a scorecard's failure rate crosses MASS_FAILURE_THRESHOLD, "
+        "exit 1 otherwise -- used to skip a whole-lane retry that would only repeat "
+        "a systemic outage rather than catch a one-off",
+    )
+    mass_failure_cmd.add_argument("scorecard", help="the attempt's scorecard JSON")
+
     args = parser.parse_args(argv)
     if args.cmd == "merge":
         _merge_cmd(args, parser)
-    else:
+    elif args.cmd == "overlay":
         _overlay_cmd(args)
+    else:
+        _mass_failure_cmd(args)
 
 
 if __name__ == "__main__":
