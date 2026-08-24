@@ -202,7 +202,7 @@ def __getattr__(name: str) -> Any:
     if name == "BAND_TOOLS":
         warnings.warn(
             "BAND_TOOLS is deprecated, use BAND_ALL_TOOLS instead. "
-            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory). "
+            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory + files). "
             "For chat-only tools, use "
             "band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.",
             DeprecationWarning,

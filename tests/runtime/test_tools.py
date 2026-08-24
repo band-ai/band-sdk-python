@@ -19,6 +19,7 @@ from band.core.exceptions import BandToolError
 from band.core.types import Capability
 from tests.conftest import make_participant_mock
 from band.runtime.tools import (
+    DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
     MAX_INLINE_IMAGE_BYTES,
     MAX_INLINE_TEXT_BYTES,
@@ -303,6 +304,34 @@ class TestFileTools:
 
         assert result["text"] == "hello"
         assert result["content_type"] == "text/plain"
+        assert "description" not in result
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_non_utf8_text_flags_lossy_decode(
+        self, mock_rest_client
+    ):
+        """A Windows-1252-encoded file (no charset in content_type -- the
+        platform derives it from magic bytes alone) must not come back
+        looking like a clean decode: 0x93/0x94 are curly quotes in
+        Windows-1252 but invalid UTF-8 continuation bytes on their own."""
+        windows_1252_bytes = "“quoted”".encode("windows-1252")
+        attachment = _attachment(
+            content_type="text/plain", size=len(windows_1252_bytes)
+        )
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response(
+                [_message_with_attachments("msg-1", [attachment])]
+            )
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(windows_1252_bytes)
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert "�" in result["text"]
+        assert "not valid UTF-8" in result["description"]
 
     @pytest.mark.asyncio
     async def test_read_room_file_inlines_small_image(self, mock_rest_client):
@@ -551,6 +580,38 @@ class TestFileTools:
         mock_rest_client.agent_api_files.upload_agent_chat_file.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_send_room_file_non_ascii_filename_raises_before_upload(
+        self, mock_rest_client, participants
+    ):
+        """x-file-name travels as a raw HTTP header value -- httpx refuses to
+        encode a non-ASCII header and raises UnicodeEncodeError deep inside
+        the upload call. Catch it before uploading with a clear message
+        instead of letting that raw codec error surface to the LLM."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        with pytest.raises(BandToolError, match="ASCII characters only"):
+            await tools.send_room_file("hi", "报告.txt", mentions=["User One"])
+
+        mock_rest_client.agent_api_files.upload_agent_chat_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_crlf_in_filename_raises_before_upload(
+        self, mock_rest_client, participants
+    ):
+        """A bare '\\r'/'\\n' encodes to ASCII fine, so an "is it ASCII"
+        check alone would wave a header-injection payload straight through
+        to the upload call -- only rejected there, deep inside h11, as an
+        "Illegal header value" once the request is already being built."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        with pytest.raises(BandToolError, match="ASCII characters only"):
+            await tools.send_room_file(
+                "hi", "evil\r\nX-Injected: yes", mentions=["User One"]
+            )
+
+        mock_rest_client.agent_api_files.upload_agent_chat_file.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_send_room_file_upload_not_found_raises_band_tool_error(
         self, mock_rest_client, participants
     ):
@@ -575,6 +636,64 @@ class TestFileTools:
             await tools.send_room_file("hi", "f.txt", mentions=[])
 
         mock_rest_client.agent_api_files.upload_agent_chat_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_empty_caption_uses_default(
+        self, mock_rest_client, participants
+    ):
+        """The platform rejects blank message content outright
+        (``validate_length(:content, min: 1)``, unconditional even with
+        ``attachment_ids`` set) -- an omitted caption must never reach
+        ``send_message`` as ``""``, or the post 422s after the file has
+        already been uploaded, leaving an orphaned attachment."""
+        uploaded = _attachment("file-9", name="report.txt")
+        upload_response = MagicMock()
+        upload_response.data = uploaded
+        mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
+            return_value=upload_response
+        )
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        result = await tools.send_room_file(
+            "hello world", "report.txt", mentions=["User One"]
+        )
+
+        assert result["attachment"]["id"] == "file-9"
+        _, message_kwargs = (
+            mock_rest_client.agent_api_messages.create_agent_chat_message.await_args
+        )
+        posted_content = message_kwargs["message"].content
+        assert posted_content == DEFAULT_FILE_CAPTION.format(filename="report.txt")
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_result_is_immediately_readable(
+        self, mock_rest_client, participants
+    ):
+        """A file this instance just sent never appears in its own message
+        history -- the agent messages endpoint excludes messages the calling
+        agent authored, regardless of any status filter -- so read_room_file
+        must not depend on that history to find it."""
+        uploaded = _attachment("file-9", name="report.txt", size=5)
+        upload_response = MagicMock()
+        upload_response.data = uploaded
+        mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
+            return_value=upload_response
+        )
+        # Mirrors the real platform: this agent's own send never shows up in
+        # its own message history.
+        mock_rest_client.agent_api_messages.list_agent_messages = AsyncMock(
+            return_value=_messages_response([])
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client, participants)
+        sent = await tools.send_room_file("hello", "report.txt", mentions=["User One"])
+
+        result = await tools.read_room_file(sent["attachment"]["id"])
+
+        assert result["text"] == "hello"
+        mock_rest_client.agent_api_messages.list_agent_messages.assert_not_awaited()
 
 
 class TestAgentToolsConstruction:

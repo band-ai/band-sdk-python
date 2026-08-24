@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import re
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
@@ -450,9 +451,10 @@ class ArchiveMemoryInput(BaseModel):
 class ListRoomFilesInput(BaseModel):
     """List files that have been shared in the current room.
 
-    Returns attachment metadata for every file attached to any message in the
-    room, including ones sent before you joined. Use band_read_room_file with
-    a returned id to fetch its contents.
+    Returns attachment metadata for every message that mentions you,
+    including ones sent before you joined. Files you attached yourself with
+    band_send_room_file are not included -- use the id from that call's own
+    response instead, which band_read_room_file can still fetch by id.
     """
 
     cursor: str | None = Field(
@@ -488,7 +490,12 @@ class SendRoomFileInput(BaseModel):
 
     content: str = Field(..., description="Text content to upload as a file")
     filename: str = Field(
-        ..., description="Name for the uploaded file, including extension"
+        ...,
+        description=(
+            "Name for the uploaded file, including extension. Plain ASCII "
+            "only (e.g. 'report.txt') -- accents, CJK, emoji, and other "
+            "non-ASCII characters are rejected."
+        ),
     )
     caption: str = Field(
         "", description="Optional message text to send alongside the file"
@@ -1310,6 +1317,25 @@ FILE_UNAVAILABLE_MESSAGE = (
     "File not found, or file transfer is unavailable in this room."
 )
 
+# band_send_room_file's message content is required, non-empty text on the
+# platform (ChatMessage.changeset validates min length 1 unconditionally, even
+# when attachment_ids is present) -- an omitted caption cannot become "", or
+# the message post fails after the file has already been uploaded, leaving an
+# orphaned attachment nothing points at. Used only when the caller passes no
+# caption at all.
+DEFAULT_FILE_CAPTION = "Shared a file: {filename}"
+
+# band_send_room_file's filename travels as the raw "x-file-name" HTTP header
+# value, so it must satisfy RFC 7230's field-value grammar: visible ASCII plus
+# space, nothing else. That excludes not just accents/CJK/emoji (httpx refuses
+# to encode those into a header at all) but also CR/LF and other control
+# characters -- those *do* encode to ASCII, so a bare "not ascii" check would
+# still let a filename like "evil\r\nX-Injected: yes" reach the upload call,
+# where h11 rejects it as an illegal header value only once the request is
+# already being sent. Reject anything outside this set upfront instead of
+# discovering which failure mode a given filename hits.
+FILENAME_HEADER_SAFE_PATTERN = re.compile(r"[\x20-\x7e]+")
+
 # Read-only / informational agent tools - explicitly listed (not derived by a
 # name heuristic) because misclassifying a write tool as read-only would weaken
 # the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
@@ -1794,6 +1820,13 @@ class AgentTools(AgentToolsProtocol):
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+        # send_room_file's own upload is invisible to this same agent's later
+        # _find_attachment lookups: the agent messages endpoint always excludes
+        # messages the calling agent authored (see _list_message_page), so a
+        # file this instance just sent can never turn up in its own paginated
+        # history walk. Remember it locally instead of asking the network for
+        # something it structurally cannot answer.
+        self._sent_attachments: dict[str, Any] = {}
 
     @property
     def agent_id(self) -> str | None:
@@ -2578,6 +2611,13 @@ class AgentTools(AgentToolsProtocol):
         message entirely, attachments and all, not just its own attachment
         field. Shared by ``list_room_files`` and ``_find_attachment`` -- the
         only two callers that need attachment metadata off message history.
+
+        This is unrelated to a separate, unconditional exclusion the endpoint
+        itself applies: it only ever returns messages that mention this
+        agent, never ones it authored (confirmed server-side, not something
+        any client-side parameter can widen). ``status="all"`` controls
+        delivery-status filtering among those mention-matched messages; it
+        does not reach messages this agent sent itself.
         """
         kwargs: dict[str, Any] = {}
         if cursor is not None:
@@ -2596,7 +2636,11 @@ class AgentTools(AgentToolsProtocol):
 
         There is no dedicated "list files" endpoint -- attachment metadata
         only exists on the messages that carry it, so this derives one bounded
-        page from the room's message history.
+        page from the room's message history. That history, like every
+        agent-facing message endpoint, only includes messages that mention
+        this agent (see ``_list_message_page``) -- a file this instance sent
+        itself via ``send_room_file`` never appears here, even once uploaded
+        and posted successfully.
 
         Args:
             cursor: Pagination cursor from a previous call's response.
@@ -2638,7 +2682,14 @@ class AgentTools(AgentToolsProtocol):
         ``_lookup_peer``) instead of returning one page: the target file may
         be older than the first page, and there is no dedicated "get
         attachment by id" endpoint to reach it directly.
+
+        Checks ``_sent_attachments`` first -- a file this instance uploaded
+        via ``send_room_file`` would otherwise never be found, since the
+        agent messages endpoint excludes messages the calling agent authored
+        (see ``_list_message_page``) no matter how far the walk below goes.
         """
+        if file_id in self._sent_attachments:
+            return self._sent_attachments[file_id]
         async for response in self._iter_message_pages():
             for message in response.data:
                 for attachment in message.attachments or []:
@@ -2703,12 +2754,33 @@ class AgentTools(AgentToolsProtocol):
 
         if kind == "text" and attachment.bytes <= cap:
             body = await self._download_file(file_id)
-            return {
-                "name": attachment.name,
-                "content_type": attachment.content_type,
-                "bytes": attachment.bytes,
-                "text": body.decode("utf-8", errors="replace"),
-            }
+            # The platform derives content_type from magic bytes alone, with
+            # no charset -- a non-UTF-8 text file (a Windows-1252 export, for
+            # instance) has no metadata to decode it correctly. Try strict
+            # UTF-8 first; only fall back to lossy replacement when that
+            # fails, and say so, rather than silently handing back text that
+            # looks intact but was quietly rewritten.
+            try:
+                text = body.decode("utf-8")
+                result: dict[str, Any] = {
+                    "name": attachment.name,
+                    "content_type": attachment.content_type,
+                    "bytes": attachment.bytes,
+                    "text": text,
+                }
+            except UnicodeDecodeError:
+                result = {
+                    "name": attachment.name,
+                    "content_type": attachment.content_type,
+                    "bytes": attachment.bytes,
+                    "text": body.decode("utf-8", errors="replace"),
+                    "description": (
+                        "This file is not valid UTF-8; non-UTF-8 bytes were "
+                        "replaced with �, so the text above may not "
+                        "exactly match the original."
+                    ),
+                }
+            return result
 
         if kind == "image" and attachment.bytes <= cap:
             body = await self._download_file(file_id)
@@ -2743,8 +2815,12 @@ class AgentTools(AgentToolsProtocol):
 
         Args:
             content: Text content to upload as a file.
-            filename: Name for the uploaded file, including extension.
-            caption: Optional message text to send alongside the file.
+            filename: Name for the uploaded file, including extension. Plain
+                ASCII only -- it travels as a raw HTTP header value.
+            caption: Optional message text to send alongside the file. An
+                empty caption is replaced with a default -- the platform
+                requires non-empty message content even on an attachment-only
+                post.
             mentions: Participant handles to @mention, same format as
                 band_send_message.
 
@@ -2752,6 +2828,18 @@ class AgentTools(AgentToolsProtocol):
             Dict with the created attachment's metadata and the posted
             message id.
         """
+        caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
+        if not FILENAME_HEADER_SAFE_PATTERN.fullmatch(filename):
+            # Fail clearly before uploading, rather than deep inside the
+            # upload call with a raw UnicodeEncodeError (accents/CJK/emoji)
+            # or h11 LocalProtocolError (a stray \r or \n) -- see
+            # FILENAME_HEADER_SAFE_PATTERN for why both are illegal here.
+            raise BandToolError(
+                f"Filename {filename!r} must use plain printable ASCII "
+                "characters only -- the upload header cannot carry accents, "
+                "CJK, emoji, line breaks, or other control characters. "
+                "Rename the file and try again."
+            )
         body = content.encode("utf-8")
         if len(body) > MAX_SEND_CONTENT_BYTES:
             raise BandToolError(
@@ -2781,6 +2869,7 @@ class AgentTools(AgentToolsProtocol):
         except NotFoundError as error:
             raise BandToolError(FILE_UNAVAILABLE_MESSAGE) from error
         attachment = upload_response.data
+        self._sent_attachments[attachment.id] = attachment
 
         message = await self.send_message(
             content=caption,
