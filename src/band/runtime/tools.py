@@ -1873,21 +1873,7 @@ class AgentTools(AgentToolsProtocol):
                 stacklevel=2,
             )
 
-        resolved_mentions = self._resolve_mentions(mentions or [])
-
-        # Validate mentions are not empty — API requires ≥1 mention.
-        # Return a helpful error so the LLM can retry with proper mentions.
-        if not resolved_mentions:
-            # Build the error through the shared hint so it carries the canonical
-            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
-            # SDK) re-run the same hint on this error and rely on its idempotency
-            # to avoid listing the handles twice.
-            raise BandToolError(
-                append_mention_handles_hint(
-                    "At least one mention is required",
-                    self.available_mention_handles(),
-                )
-            )
+        resolved_mentions = self._resolve_required_mentions(mentions)
 
         logger.debug("Sending message to room %s", self.room_id)
 
@@ -2762,6 +2748,10 @@ class AgentTools(AgentToolsProtocol):
                 f"{MAX_SEND_CONTENT_BYTES}-byte limit for band_send_room_file. "
                 "Send shorter content."
             )
+        # Resolve before uploading: sharing the file is a send_message call,
+        # so a missing/unresolvable mention must fail before the upload,
+        # not after it leaves an orphaned attachment nothing points at.
+        resolved_mentions = self._resolve_required_mentions(mentions)
         sha256 = hashlib.sha256(body).hexdigest()
 
         try:
@@ -2783,7 +2773,7 @@ class AgentTools(AgentToolsProtocol):
 
         message = await self.send_message(
             content=caption,
-            mentions=mentions or [],
+            mentions=resolved_mentions,
             attachment_ids=[attachment.id],
         )
         return {"attachment": attachment.model_dump(), "message_id": message.id}
@@ -2853,6 +2843,30 @@ class AgentTools(AgentToolsProtocol):
                 {"id": participant["id"], "handle": participant.get("handle", "")}
             )
 
+        return resolved
+
+    def _resolve_required_mentions(
+        self, mentions: list[str] | list[dict[str, str]] | None
+    ) -> list[dict[str, str]]:
+        """Resolve ``mentions``, raising if the resolved list is empty.
+
+        Shared by ``send_message`` and ``send_room_file`` so a missing/empty
+        mention list is caught before either does its side effect (posting
+        the message, uploading the file) — API requires >=1 mention per
+        message, and this is the single place that enforces it.
+        """
+        resolved = self._resolve_mentions(mentions or [])
+        if not resolved:
+            # Build the error through the shared hint so it carries the canonical
+            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
+            # SDK) re-run the same hint on this error and rely on its idempotency
+            # to avoid listing the handles twice.
+            raise BandToolError(
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    self.available_mention_handles(),
+                )
+            )
         return resolved
 
     async def _lookup_peer(self, identifier: str) -> Any | None:

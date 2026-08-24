@@ -530,6 +530,20 @@ class TestFileTools:
         with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
             await tools.send_room_file("hi", "f.txt", mentions=["User One"])
 
+    @pytest.mark.asyncio
+    async def test_send_room_file_empty_mentions_raises_before_upload(
+        self, mock_rest_client, participants
+    ):
+        """Sharing a file is a send_message call under the hood, so a missing
+        mention must fail before the upload -- not after, which would leave
+        an orphaned attachment nothing points at."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        with pytest.raises(BandToolError, match="At least one mention is required"):
+            await tools.send_room_file("hi", "f.txt", mentions=[])
+
+        mock_rest_client.agent_api_files.upload_agent_chat_file.assert_not_called()
+
 
 class TestAgentToolsConstruction:
     """Test AgentTools initialization."""
