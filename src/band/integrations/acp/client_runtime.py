@@ -855,6 +855,18 @@ class ACPRuntime:
             return []
         return self._client.get_collected_chunks(session_id)
 
+    @property
+    def client(self) -> ACPCollectingClient | None:
+        """The active collecting client, once started.
+
+        ``ACPRuntime`` only forwards the handful of client methods a real turn
+        needs (``get_collected_chunks``, ``reset_session``, ...); this is the
+        read-only escape hatch for callers that need something else off the
+        buffer directly (e.g. ``get_collected_text``) rather than growing
+        ``ACPRuntime`` a passthrough per client method.
+        """
+        return self._client
+
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None
         async with self._stop_lock:
