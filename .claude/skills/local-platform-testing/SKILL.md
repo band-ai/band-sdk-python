@@ -40,11 +40,8 @@ command -v mise >/dev/null 2>&1 && echo "mise found" || echo "no mise -- see fal
   below:
   ```bash
   PLATFORM_DIR="${THENVOI_PLATFORM_DIR:-}"
-  if [ -z "$PLATFORM_DIR" ]; then
-    for candidate in "$SDK_DIR/../thenvoi-platform" ~/repo/thenvoi-platform; do
-      [ -d "$candidate/.git" ] && PLATFORM_DIR="$(cd "$candidate" && pwd)" && break
-    done
-  fi
+  [ -z "$PLATFORM_DIR" ] && [ -d "$SDK_DIR/../thenvoi-platform/.git" ] \
+    && PLATFORM_DIR="$(cd "$SDK_DIR/../thenvoi-platform" && pwd)"
   echo "PLATFORM_DIR=${PLATFORM_DIR:-<not found>}"
   ```
   Not found? Clone it (sibling to this SDK checkout is the convention, but
