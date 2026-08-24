@@ -10,13 +10,27 @@ tool that 404s on first call.
 from __future__ import annotations
 
 import dataclasses
+from enum import StrEnum
 
 from band.core.types import AdapterFeatures, Capability
 
+
+class FeatureFlag(StrEnum):
+    """Keys the platform's ``AgentMe.feature_flags`` dict is known to use.
+
+    A member is a plain ``str``, so it works directly as a dict key
+    (``feature_flags.get(FeatureFlag.FILE_TRANSFER)``) against the
+    Fern-generated ``dict[str, bool]`` -- this just names the keys this SDK
+    actually reads, so the name can't drift between here and call sites.
+    """
+
+    FILE_TRANSFER = "ff_file_transfer"
+
+
 # Capability -> the platform's `AgentMe.feature_flags` key that gates it.
 # Extend here as more capabilities gain a platform-side deployment flag.
-CAPABILITY_FEATURE_FLAGS: dict[Capability, str] = {
-    Capability.FILES: "ff_file_transfer",
+CAPABILITY_FEATURE_FLAGS: dict[Capability, FeatureFlag] = {
+    Capability.FILES: FeatureFlag.FILE_TRANSFER,
 }
 
 

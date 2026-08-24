@@ -93,6 +93,9 @@ class Capability(_FlagEnum):
     FILES = "files"
 
 
+ALL_CAPABILITIES: frozenset[Capability] = frozenset(Capability)
+
+
 class Emit(_FlagEnum):
     """Event types an adapter can emit to the platform."""
 

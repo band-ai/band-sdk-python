@@ -23,6 +23,9 @@ from band_rest import (
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import Capability
+from band.runtime.capabilities import FeatureFlag
 from band.runtime.formatters import build_participants_message
 from band.runtime.oneshot import (
     OneShotEnvelopeError,
@@ -32,6 +35,15 @@ from band.runtime.oneshot import (
     _parse_inserted_at,
 )
 from tests.runtime.conftest import ctx_item, make_link_mock, platform_msg
+
+
+class FilesAdapter(SimpleAdapter):
+    """Bare SimpleAdapter declaring only Capability.FILES support."""
+
+    SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
+
+    async def on_message(self, *args: Any, **kwargs: Any) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -202,16 +214,7 @@ class TestStartup:
         adapter.on_started.assert_awaited_once_with("Weather", "forecasts")
 
     async def test_prunes_files_capability_when_flag_off(self) -> None:
-        from band.core.simple_adapter import SimpleAdapter
-        from band.core.types import Capability
-
-        class FilesAdapter(SimpleAdapter):
-            SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
-
-            async def on_message(self, *args: Any, **kwargs: Any) -> None:
-                pass
-
-        link = make_link_mock(feature_flags={"ff_file_transfer": False})
+        link = make_link_mock(feature_flags={FeatureFlag.FILE_TRANSFER: False})
         adapter = FilesAdapter(capabilities=Capability.FILES)
         invoker = OneShotInvoker(link=link, adapter=adapter, agent_id="agent-1")
 
@@ -220,16 +223,7 @@ class TestStartup:
         assert Capability.FILES not in adapter.features.capabilities
 
     async def test_keeps_files_capability_when_flag_on(self) -> None:
-        from band.core.simple_adapter import SimpleAdapter
-        from band.core.types import Capability
-
-        class FilesAdapter(SimpleAdapter):
-            SUPPORTED_CAPABILITIES = frozenset({Capability.FILES})
-
-            async def on_message(self, *args: Any, **kwargs: Any) -> None:
-                pass
-
-        link = make_link_mock(feature_flags={"ff_file_transfer": True})
+        link = make_link_mock(feature_flags={FeatureFlag.FILE_TRANSFER: True})
         adapter = FilesAdapter(capabilities=Capability.FILES)
         invoker = OneShotInvoker(link=link, adapter=adapter, agent_id="agent-1")
 

@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from band.core.types import Capability
+from band.core.types import ALL_CAPABILITIES, Capability
 from band.integrations.mcp.engine import (
     build_band_mcp_tool_registrations,
     build_resolved_band_mcp_tool_registrations,
@@ -283,7 +283,7 @@ class TestMethodNameResolution:
 
     def test_every_agent_method_name_resolves_on_agenttools(self) -> None:
         for definition in iter_tool_definitions(
-            surface="agent", capabilities=frozenset(Capability)
+            surface="agent", capabilities=ALL_CAPABILITIES
         ):
             assert hasattr(AgentTools, definition.method_name), (
                 f"AgentTools has no method {definition.method_name} "
@@ -292,7 +292,7 @@ class TestMethodNameResolution:
 
     def test_every_human_method_name_resolves_on_humantools(self) -> None:
         for definition in iter_tool_definitions(
-            surface="human", capabilities=frozenset(Capability)
+            surface="human", capabilities=ALL_CAPABILITIES
         ):
             assert hasattr(HumanTools, definition.method_name), (
                 f"HumanTools has no method {definition.method_name} "

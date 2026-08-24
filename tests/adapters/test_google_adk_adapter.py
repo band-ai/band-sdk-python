@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
-from band.core.types import Emit, PlatformMessage
+from band.core.types import ALL_CAPABILITIES, Emit, PlatformMessage
+from band.runtime.tools import AgentTools
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
@@ -496,13 +497,10 @@ class TestToolBridge:
         asserts the cached declaration carries no leftover ``$ref``/``$defs`` — the
         gap that only surfaced at E2E when memory tools were enabled.
         """
-        from band.core.types import Capability
-        from band.runtime.tools import AgentTools
-
         # Real platform schemas, link-free (schema building reads TOOL_DEFINITIONS,
         # not the REST client), with every optional tool category included.
         schemas = AgentTools("room-1", MagicMock()).get_openai_tool_schemas(
-            capabilities=frozenset(Capability)
+            capabilities=ALL_CAPABILITIES
         )
         names = {s["function"]["name"] for s in schemas}
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from band.core.exceptions import BandConfigError
+from band.runtime.capabilities import FeatureFlag
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import AgentConfig, SessionConfig
 
@@ -199,7 +200,7 @@ class TestStart:
     async def test_captures_feature_flags(self, mock_link, mock_runtime):
         """The /me response's feature_flags is retained for capability negotiation."""
         mock_link.rest.agent_api_identity.get_agent_me.return_value.data.feature_flags = {
-            "ff_file_transfer": True
+            FeatureFlag.FILE_TRANSFER: True
         }
         with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
@@ -213,7 +214,7 @@ class TestStart:
 
                 await runtime.start(on_execute=AsyncMock())
 
-                assert runtime.feature_flags == {"ff_file_transfer": True}
+                assert runtime.feature_flags == {FeatureFlag.FILE_TRANSFER: True}
 
     @pytest.mark.asyncio
     async def test_creates_agent_runtime(self, mock_link, mock_runtime):

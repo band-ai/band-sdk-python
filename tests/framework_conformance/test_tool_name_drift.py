@@ -22,7 +22,7 @@ import re
 
 import pytest
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from band.core.types import Capability
+from band.core.types import ALL_CAPABILITIES
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -94,7 +94,7 @@ class TestClaudeSDKAdapterToolDrift:
     def test_shared_builder_covers_all_tools(self):
         """Every Band tool should be buildable for the Claude SDK adapter."""
         sdk_tools = build_band_sdk_tools(
-            tool_definitions=iter_tool_definitions(capabilities=frozenset(Capability)),
+            tool_definitions=iter_tool_definitions(capabilities=ALL_CAPABILITIES),
             get_tools=lambda _room_id: None,
         )
         found = {tool.name for tool in sdk_tools}

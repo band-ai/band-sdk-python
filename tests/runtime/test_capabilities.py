@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from band.core.types import AdapterFeatures, Capability
-from band.runtime.capabilities import prune_unsupported
+from band.runtime.capabilities import FeatureFlag, prune_unsupported
 
 
 class TestPruneUnsupported:
@@ -20,14 +20,14 @@ class TestPruneUnsupported:
     def test_flag_true_keeps_capability(self) -> None:
         features = AdapterFeatures(capabilities={Capability.FILES})
 
-        result = prune_unsupported(features, {"ff_file_transfer": True})
+        result = prune_unsupported(features, {FeatureFlag.FILE_TRANSFER: True})
 
         assert result.capabilities == frozenset({Capability.FILES})
 
     def test_flag_false_prunes_capability(self) -> None:
         features = AdapterFeatures(capabilities={Capability.FILES, Capability.MEMORY})
 
-        result = prune_unsupported(features, {"ff_file_transfer": False})
+        result = prune_unsupported(features, {FeatureFlag.FILE_TRANSFER: False})
 
         assert result.capabilities == frozenset({Capability.MEMORY})
 

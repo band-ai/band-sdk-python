@@ -2697,12 +2697,13 @@ class AgentTools(AgentToolsProtocol):
                 ]
             }
 
-        if is_text:
-            reason = f"exceeds the {MAX_INLINE_TEXT_BYTES}-byte inline text limit"
-        elif is_previewable_image:
-            reason = f"exceeds the {MAX_INLINE_IMAGE_BYTES}-byte inline image limit"
-        else:
-            reason = "is not a previewable text or image type"
+        match attachment.content_type:
+            case ct if ct.startswith("text/"):
+                reason = f"exceeds the {MAX_INLINE_TEXT_BYTES}-byte inline text limit"
+            case ct if ct in PREVIEWABLE_IMAGE_CONTENT_TYPES:
+                reason = f"exceeds the {MAX_INLINE_IMAGE_BYTES}-byte inline image limit"
+            case _:
+                reason = "is not a previewable text or image type"
         return {
             "name": attachment.name,
             "content_type": attachment.content_type,

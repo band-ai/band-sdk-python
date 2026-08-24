@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.exceptions import BandToolError
-from band.core.types import AdapterFeatures, Capability
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
 from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
 from band.runtime.tools import get_band_tool_category, iter_tool_definitions
 
@@ -89,7 +89,7 @@ class TestLangGraphToolFilters:
     def test_every_agent_tool_has_shared_category(self) -> None:
         missing = [
             definition.name
-            for definition in iter_tool_definitions(capabilities=frozenset(Capability))
+            for definition in iter_tool_definitions(capabilities=ALL_CAPABILITIES)
             if get_band_tool_category(definition.name) is None
         ]
 
