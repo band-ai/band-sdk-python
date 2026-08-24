@@ -1883,13 +1883,18 @@ class AgentTools(AgentToolsProtocol):
             for m in resolved_mentions
         ]
 
+        # ChatMessageRequest serializes with exclude_unset=True, so an explicit
+        # attachment_ids=None (the common case -- only send_room_file supplies
+        # a value) would still mark the field "set" and send a literal JSON
+        # null, which the platform rejects (expects an array or an absent
+        # key). Omit the kwarg entirely rather than pass None.
+        message_kwargs: dict[str, Any] = {"content": content, "mentions": mention_items}
+        if attachment_ids is not None:
+            message_kwargs["attachment_ids"] = attachment_ids
+
         response = await self.rest.agent_api_messages.create_agent_chat_message(
             chat_id=self.room_id,
-            message=ChatMessageRequest(
-                content=content,
-                mentions=mention_items,
-                attachment_ids=attachment_ids,
-            ),
+            message=ChatMessageRequest(**message_kwargs),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:

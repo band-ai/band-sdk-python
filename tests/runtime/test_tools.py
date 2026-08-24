@@ -794,6 +794,26 @@ class TestAgentToolsSendMessage:
         assert message.mentions[0].id == "user-1"
         assert message.mentions[0].handle == "@user-one"
 
+    async def test_send_message_omits_attachment_ids_when_not_given(
+        self, mock_rest_client, participants
+    ):
+        """Without attachment_ids, the field must be unset, not explicitly None.
+
+        ChatMessageRequest serializes with exclude_unset=True; passing
+        attachment_ids=None would still mark the field "set" and send a
+        literal JSON null, which the platform rejects (expects an array or
+        an absent key) -- reproduced live against a real deployment.
+        """
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        await tools.send_message("Hello!", mentions=["User One"])
+
+        call_args = (
+            mock_rest_client.agent_api_messages.create_agent_chat_message.call_args
+        )
+        message = call_args.kwargs["message"]
+        assert "attachment_ids" not in message.model_fields_set
+
     async def test_send_message_empty_mentions_excludes_self(
         self, mock_rest_client, participants
     ):
