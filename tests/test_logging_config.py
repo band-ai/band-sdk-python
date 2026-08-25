@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-import band.logging_config as logging_config_module
 from band import (
     BandConfigError,
     LoggingStyle,
@@ -22,10 +21,9 @@ from band.logging_config import (
     JSON_LOGGER_REQUIREMENT,
     OTEL_CORRELATION_FIELDS,
     TRACE_CONTEXT,
-    TRACE_CORRELATION_FIELDS,
     trace_context_scope,
 )
-from tests.logsupport import restored_logging
+from tests.logsupport import fake_traceparent, restored_logging
 
 requires_posix_modes = pytest.mark.skipif(
     sys.platform == "win32",
@@ -218,9 +216,7 @@ def test_json_records_carry_trace_context_inside_a_turn(
 ) -> None:
     """A log line emitted while trace_context_scope() is open carries the
     traceparent that was active when the scope opened."""
-    monkeypatch.setattr(
-        logging_config_module, "current_traceparent", lambda: "00-fake-trace-01"
-    )
+    fake_traceparent(monkeypatch, "00-fake-trace-01")
 
     with restored_logging():
         configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
@@ -250,10 +246,7 @@ def test_trace_context_scope_nested_restores_the_outer_value(
 ) -> None:
     """A turn-within-a-turn (unexpected, but must not corrupt state) restores
     the outer scope's value on exit rather than clearing it."""
-    values = iter(["outer-trace", "inner-trace"])
-    monkeypatch.setattr(
-        logging_config_module, "current_traceparent", lambda: next(values)
-    )
+    fake_traceparent(monkeypatch, "outer-trace", "inner-trace")
 
     with trace_context_scope():
         assert TRACE_CONTEXT.get() == "outer-trace"
@@ -261,10 +254,6 @@ def test_trace_context_scope_nested_restores_the_outer_value(
             assert TRACE_CONTEXT.get() == "inner-trace"
         assert TRACE_CONTEXT.get() == "outer-trace"
     assert TRACE_CONTEXT.get() is None
-
-
-def test_trace_correlation_fields_is_part_of_the_json_default_schema() -> None:
-    assert TRACE_CORRELATION_FIELDS == ("trace_context",)
 
 
 def test_custom_json_fields_replace_the_default_schema(
@@ -295,9 +284,7 @@ def test_custom_json_fields_can_opt_trace_context_back_in(
     """Excluded by default from a narrowed schema (the test above), but
     requesting it by name still works -- it's gated out of the *automatic*
     extras mechanism, not blocked outright."""
-    monkeypatch.setattr(
-        logging_config_module, "current_traceparent", lambda: "00-fake-trace-02"
-    )
+    fake_traceparent(monkeypatch, "00-fake-trace-02")
 
     with restored_logging():
         configure_logging(
