@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+import band.logging_config as logging_config_module
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
@@ -142,8 +143,6 @@ class TestOnEventTraceContext:
     async def test_trace_context_is_set_during_on_message(self, monkeypatch):
         """A log line emitted anywhere inside on_message can read the turn's
         trace context via the same ContextVar the logging filter reads."""
-        import band.logging_config as logging_config_module
-
         monkeypatch.setattr(
             logging_config_module, "current_traceparent", lambda: "00-turn-trace"
         )

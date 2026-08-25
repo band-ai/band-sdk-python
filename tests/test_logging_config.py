@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import band.logging_config as logging_config_module
 from band import (
     BandConfigError,
     LoggingStyle,
@@ -217,8 +218,6 @@ def test_json_records_carry_trace_context_inside_a_turn(
 ) -> None:
     """A log line emitted while trace_context_scope() is open carries the
     traceparent that was active when the scope opened."""
-    import band.logging_config as logging_config_module
-
     monkeypatch.setattr(
         logging_config_module, "current_traceparent", lambda: "00-fake-trace-01"
     )
@@ -251,8 +250,6 @@ def test_trace_context_scope_nested_restores_the_outer_value(
 ) -> None:
     """A turn-within-a-turn (unexpected, but must not corrupt state) restores
     the outer scope's value on exit rather than clearing it."""
-    import band.logging_config as logging_config_module
-
     values = iter(["outer-trace", "inner-trace"])
     monkeypatch.setattr(
         logging_config_module, "current_traceparent", lambda: next(values)
@@ -298,8 +295,6 @@ def test_custom_json_fields_can_opt_trace_context_back_in(
     """Excluded by default from a narrowed schema (the test above), but
     requesting it by name still works -- it's gated out of the *automatic*
     extras mechanism, not blocked outright."""
-    import band.logging_config as logging_config_module
-
     monkeypatch.setattr(
         logging_config_module, "current_traceparent", lambda: "00-fake-trace-02"
     )
