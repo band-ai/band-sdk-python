@@ -23,12 +23,14 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 from band.credentials import PROXY_MANAGED_API_KEY
+import band.client.streaming.wire as wire_module
 from band.client.streaming import (
     DeliveryStatus,
     MessageCreatedPayload,
     SupersedePayload,
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
+    WireEvent,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     RoomAddedPayload,
@@ -873,6 +875,40 @@ async def test_validation_error_count_stays_zero_on_valid_payload():
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
     await dispatch(client, "message_created", VALID_MESSAGE_CREATED_PAYLOAD)
     assert client.validation_error_count == 0
+
+
+async def test_hydration_shape_mismatch_is_dropped_and_counted_not_raised(
+    monkeypatch, caplog
+):
+    """A payload band-sdk-core accepts but whose shape can't be hydrated must be
+    dropped and counted like any other invalid event, never escape the seam.
+
+    band-sdk-core 0.7.1 already rejects a malformed `metadata.mentions` item
+    outright (see the vendored corpus's `mention_item_not_an_object` case), so
+    this fault-injects a hydration-time shape mismatch band-sdk-core's current
+    rules don't happen to catch, to prove the seam's widened
+    `except (ValueError, TypeError, AttributeError)` is a real safety net at
+    this trust boundary -- not dead code tied to one already-fixed gap. Without
+    it, `_hydrate` raises `TypeError` walking a non-dict mention item, which
+    is not a `ValueError` and would escape `_handle_events` uncaught.
+    """
+
+    def fake_validate(event_type, raw, trace_context=None):
+        return {**raw, "metadata": {"mentions": [1]}}
+
+    monkeypatch.setattr(
+        wire_module.band_sdk_core, "validate_event_payload", fake_validate
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    with caplog.at_level(logging.ERROR):
+        received = await dispatch(
+            client, WireEvent.MESSAGE_CREATED, VALID_MESSAGE_CREATED_PAYLOAD
+        )
+
+    assert received is None
+    assert client.validation_error_count == 1
+    assert "Invalid message_created payload" in caplog.text
 
 
 async def test_reset_validation_error_count_returns_previous_value():

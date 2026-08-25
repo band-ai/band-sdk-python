@@ -17,6 +17,7 @@ from band.client.streaming import (
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     MessageMetadata,
+    WireEvent,
 )
 
 
@@ -221,7 +222,7 @@ class TestParticipantEvents:
         plain constructor no longer syncs.
         """
         payload = ParticipantAddedPayload.from_wire(
-            "participant_added",
+            WireEvent.PARTICIPANT_ADDED,
             {
                 "id": "user-123",
                 "name": "Test User",

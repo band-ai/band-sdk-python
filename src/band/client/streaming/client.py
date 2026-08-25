@@ -240,30 +240,55 @@ class SupersedePayload(WirePayload):
         )
 
 
-_PAYLOAD_MODELS: dict[str, type[WirePayload]] = {
-    "message_created": MessageCreatedPayload,
-    # `message_updated` shares the message_created shape; the delivery-state
-    # transitions live in ``metadata.delivery_status``.
-    "message_updated": MessageCreatedPayload,
-    "room_added": RoomAddedPayload,
-    "room_removed": RoomRemovedPayload,
-    "room_deleted": RoomDeletedPayload,
-    "participant_added": ParticipantAddedPayload,
-    "participant_removed": ParticipantRemovedPayload,
-    "contact_request_received": ContactRequestReceivedPayload,
-    "contact_request_updated": ContactRequestUpdatedPayload,
-    "contact_added": ContactAddedPayload,
-    "contact_removed": ContactRemovedPayload,
-    "supersede": SupersedePayload,
-    "agent.control": AgentControlPayload,
+class WireEvent(StrEnum):
+    """Every wire event name this SDK recognizes -- the single source of
+    truth `_PAYLOAD_MODELS` and `KNOWN_UNHANDLED_EVENTS` are keyed from,
+    instead of each repeating the string literal. Mirrors the wire-name
+    vocabulary `band_sdk_core.EventType` validates (a member is still a
+    plain ``str``, so it passes straight through to `from_wire` and any
+    `band_sdk_core` call unchanged).
+    """
+
+    MESSAGE_CREATED = "message_created"
+    # Shares message_created's shape; the delivery-state transitions live in
+    # ``metadata.delivery_status``.
+    MESSAGE_UPDATED = "message_updated"
+    ROOM_ADDED = "room_added"
+    ROOM_REMOVED = "room_removed"
+    ROOM_DELETED = "room_deleted"
+    PARTICIPANT_ADDED = "participant_added"
+    PARTICIPANT_REMOVED = "participant_removed"
+    CONTACT_REQUEST_RECEIVED = "contact_request_received"
+    CONTACT_REQUEST_UPDATED = "contact_request_updated"
+    CONTACT_ADDED = "contact_added"
+    CONTACT_REMOVED = "contact_removed"
+    SUPERSEDE = "supersede"
+    AGENT_CONTROL = "agent.control"
+    # No PlatformEvent/payload model anywhere in the codebase -- event rows
+    # (thought/error/task/tool_call/tool_result) are read back over REST
+    # instead (see tests/e2e/baseline/toolkit/observations/tool_calls.py), so
+    # this is expected, not a bug. Any other unregistered event name still warns.
+    EVENT_CREATED = "event_created"
+
+
+_PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
+    WireEvent.MESSAGE_CREATED: MessageCreatedPayload,
+    WireEvent.MESSAGE_UPDATED: MessageCreatedPayload,
+    WireEvent.ROOM_ADDED: RoomAddedPayload,
+    WireEvent.ROOM_REMOVED: RoomRemovedPayload,
+    WireEvent.ROOM_DELETED: RoomDeletedPayload,
+    WireEvent.PARTICIPANT_ADDED: ParticipantAddedPayload,
+    WireEvent.PARTICIPANT_REMOVED: ParticipantRemovedPayload,
+    WireEvent.CONTACT_REQUEST_RECEIVED: ContactRequestReceivedPayload,
+    WireEvent.CONTACT_REQUEST_UPDATED: ContactRequestUpdatedPayload,
+    WireEvent.CONTACT_ADDED: ContactAddedPayload,
+    WireEvent.CONTACT_REMOVED: ContactRemovedPayload,
+    WireEvent.SUPERSEDE: SupersedePayload,
+    WireEvent.AGENT_CONTROL: AgentControlPayload,
 }
 
 
-# event_created has no PlatformEvent/payload model anywhere in the codebase --
-# event rows (thought/error/task/tool_call/tool_result) are read back over REST
-# instead (see tests/e2e/baseline/toolkit/observations/tool_calls.py), so this
-# is expected, not a bug. Any other unregistered event name still warns.
-KNOWN_UNHANDLED_EVENTS = frozenset({"event_created"})
+KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 
 def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:

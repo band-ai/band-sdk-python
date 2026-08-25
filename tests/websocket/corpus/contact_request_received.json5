@@ -1,0 +1,223 @@
+{
+  "event_type": "contact_request_received",
+  "cases": [
+    {
+      "name": "full_valid_with_handle_and_name",
+      "raw": {
+        "id": "creq-01",
+        "from_handle": "acme/scout",
+        "from_name": "Scout",
+        "message": "Let's connect",
+        "status": "pending",
+        "inserted_at": "2026-07-10T08:00:00Z"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "creq-01",
+          "from_handle": "acme/scout",
+          "from_name": "Scout",
+          "message": "Let's connect",
+          "status": "pending",
+          "inserted_at": "2026-07-10T08:00:00Z"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-01",
+            "from_handle": "acme/scout",
+            "from_name": "Scout",
+            "message": "Let's connect",
+            "status": "pending",
+            "inserted_at": "2026-07-10T08:00:00Z"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-01",
+            "from_handle": "acme/scout",
+            "from_name": "Scout",
+            "message": "Let's connect",
+            "status": "pending",
+            "inserted_at": "2026-07-10T08:00:00Z"
+          },
+          "errors": null
+        }
+      }
+    },
+
+    // DIVERGENCE case: the platform's Agent.ContactsJSON.compact/1 drops
+    // from_handle/from_name entirely when the requester entity can't be resolved
+    // -- a real, reachable shape. Both SDKs currently declare these fields
+    // REQUIRED (band-sdk-python: str, not Optional; band-sdk-typescript: non-nullish
+    // string), so both reject this live payload today (see sdk
+    // below). Canonical makes them optional.
+    {
+      "name": "from_handle_and_from_name_absent",
+      "raw": {
+        "id": "creq-02",
+        "message": "Let's connect",
+        "status": "pending",
+        "inserted_at": "2026-07-11T08:00:00Z"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "creq-02",
+          "message": "Let's connect",
+          "status": "pending",
+          "inserted_at": "2026-07-11T08:00:00Z"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "reject",
+          "normalized": null,
+          "errors": [
+            {
+              "loc": [
+                "from_handle"
+              ],
+              "type": "missing",
+              "msg": "Field required"
+            },
+            {
+              "loc": [
+                "from_name"
+              ],
+              "type": "missing",
+              "msg": "Field required"
+            }
+          ]
+        },
+        "typescript": {
+          "decision": "reject",
+          "normalized": null,
+          "errors": [
+            {
+              "path": [
+                "from_handle"
+              ],
+              "code": "invalid_type",
+              "message": "Required"
+            },
+            {
+              "path": [
+                "from_name"
+              ],
+              "code": "invalid_type",
+              "message": "Required"
+            }
+          ]
+        }
+      }
+    },
+
+    // compact/1 drops nil-valued optional keys platform-side -- absent, never
+    // null, is the observed wire shape for the optional fields.
+    {
+      "name": "message_absent",
+      "raw": {
+        "id": "creq-03",
+        "from_handle": "acme/nova",
+        "from_name": "Nova",
+        "status": "pending",
+        "inserted_at": "2026-07-12T08:00:00Z"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "creq-03",
+          "from_handle": "acme/nova",
+          "from_name": "Nova",
+          "status": "pending",
+          "inserted_at": "2026-07-12T08:00:00Z"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-03",
+            "from_handle": "acme/nova",
+            "from_name": "Nova",
+            "message": null,
+            "status": "pending",
+            "inserted_at": "2026-07-12T08:00:00Z"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-03",
+            "from_handle": "acme/nova",
+            "from_name": "Nova",
+            "status": "pending",
+            "inserted_at": "2026-07-12T08:00:00Z"
+          },
+          "errors": null
+        }
+      }
+    },
+
+    // Unknown keys pass through unchanged.
+    {
+      "name": "unknown_passthrough_field",
+      "raw": {
+        "id": "creq-04",
+        "from_handle": "acme/echo",
+        "from_name": "Echo",
+        "status": "pending",
+        "inserted_at": "2026-07-13T08:00:00Z",
+        "x_custom": "keep-me"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "creq-04",
+          "from_handle": "acme/echo",
+          "from_name": "Echo",
+          "status": "pending",
+          "inserted_at": "2026-07-13T08:00:00Z",
+          "x_custom": "keep-me"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-04",
+            "from_handle": "acme/echo",
+            "from_name": "Echo",
+            "message": null,
+            "status": "pending",
+            "inserted_at": "2026-07-13T08:00:00Z",
+            "x_custom": "keep-me"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-04",
+            "from_handle": "acme/echo",
+            "from_name": "Echo",
+            "status": "pending",
+            "inserted_at": "2026-07-13T08:00:00Z",
+            "x_custom": "keep-me"
+          },
+          "errors": null
+        }
+      }
+    },
+  ],
+}

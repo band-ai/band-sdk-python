@@ -1,0 +1,125 @@
+{
+  "event_type": "contact_request_updated",
+  "cases": [
+    {
+      "name": "valid",
+      "raw": {
+        "id": "creq-10",
+        "status": "approved"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "creq-10",
+          "status": "approved"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-10",
+            "status": "approved"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-10",
+            "status": "approved"
+          },
+          "errors": null
+        }
+      }
+    },
+
+    // Unknown keys pass through unchanged.
+    {
+      "name": "unknown_passthrough_field",
+      "raw": {
+        "id": "creq-11",
+        "status": "rejected",
+        "x_custom": "keep-me"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "creq-11",
+          "status": "rejected",
+          "x_custom": "keep-me"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-11",
+            "status": "rejected",
+            "x_custom": "keep-me"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "creq-11",
+            "status": "rejected",
+            "x_custom": "keep-me"
+          },
+          "errors": null
+        }
+      }
+    },
+
+    // Synthetic malformed input (not observed live) exercising the required-field
+    // rejection path.
+    {
+      "name": "missing_status",
+      "raw": {
+        "id": "creq-12"
+      },
+      "canonical": {
+        "decision": "reject",
+        "issues": [
+          {
+            "path": "status",
+            "code": "missing",
+            "message": "required field `status` is missing"
+          }
+        ],
+        "normalized": null
+      },
+      "sdk": {
+        "python": {
+          "decision": "reject",
+          "normalized": null,
+          "errors": [
+            {
+              "loc": [
+                "status"
+              ],
+              "type": "missing",
+              "msg": "Field required"
+            }
+          ]
+        },
+        "typescript": {
+          "decision": "reject",
+          "normalized": null,
+          "errors": [
+            {
+              "path": [
+                "status"
+              ],
+              "code": "invalid_type",
+              "message": "Required"
+            }
+          ]
+        }
+      }
+    },
+  ],
+}

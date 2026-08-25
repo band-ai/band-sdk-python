@@ -5,6 +5,7 @@ from band.client.streaming import (
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    WireEvent,
 )
 from band.platform.event import (
     ContactRequestReceivedEvent,
@@ -125,7 +126,7 @@ class TestContactAddedEvent:
         plain constructor no longer syncs.
         """
         payload = ContactAddedPayload.from_wire(
-            "contact_added",
+            WireEvent.CONTACT_ADDED,
             {
                 "id": "contact-legacy",
                 "handle": "weather-bot",

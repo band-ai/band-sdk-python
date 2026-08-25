@@ -1,0 +1,259 @@
+{
+  "event_type": "contact_added",
+  "cases": [
+    // is_external mirrors into is_remote in the normalized output -- the alias
+    // sync canonical owns for participant and contact events.
+    {
+      "name": "full_valid_agent_contact",
+      "raw": {
+        "id": "contact-01",
+        "handle": "acme/sage",
+        "name": "Sage",
+        "type": "Agent",
+        "inserted_at": "2026-07-20T08:00:00Z",
+        "description": "Research assistant",
+        "is_external": true,
+        "listed_in_directory": true,
+        "tags": [
+          "research",
+          "internal"
+        ]
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "contact-01",
+          "handle": "acme/sage",
+          "name": "Sage",
+          "type": "Agent",
+          "inserted_at": "2026-07-20T08:00:00Z",
+          "description": "Research assistant",
+          "is_external": true,
+          "is_remote": true,
+          "listed_in_directory": true,
+          "tags": [
+            "research",
+            "internal"
+          ]
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "contact-01",
+            "handle": "acme/sage",
+            "name": "Sage",
+            "type": "Agent",
+            "description": "Research assistant",
+            "is_remote": true,
+            "is_external": true,
+            "inserted_at": "2026-07-20T08:00:00Z",
+            "listed_in_directory": true,
+            "tags": [
+              "research",
+              "internal"
+            ]
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "contact-01",
+            "handle": "acme/sage",
+            "name": "Sage",
+            "type": "Agent",
+            "description": "Research assistant",
+            "is_external": true,
+            "inserted_at": "2026-07-20T08:00:00Z",
+            "listed_in_directory": true,
+            "tags": [
+              "research",
+              "internal"
+            ]
+          },
+          "errors": null
+        }
+      }
+    },
+
+    // DIVERGENCE case: Agent.ContactsJSON.format_contact/1 never runs `compact`
+    // on its base map, so `handle`/`name` can be an explicit JSON null (when
+    // contact.contact_entity is nil) rather than merely absent. Both SDKs
+    // currently require handle/name as non-nullable strings (band-sdk-python:
+    // str; band-sdk-typescript: non-nullish z.string()), so both reject this
+    // live payload today. Canonical keeps the keys required but makes their
+    // values nullable.
+    {
+      "name": "handle_and_name_explicit_null",
+      "raw": {
+        "id": "contact-02",
+        "handle": null,
+        "name": null,
+        "type": "User",
+        "inserted_at": "2026-07-21T08:00:00Z"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "contact-02",
+          "handle": null,
+          "name": null,
+          "type": "User",
+          "inserted_at": "2026-07-21T08:00:00Z"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "reject",
+          "normalized": null,
+          "errors": [
+            {
+              "loc": [
+                "handle"
+              ],
+              "type": "string_type",
+              "msg": "Input should be a valid string"
+            },
+            {
+              "loc": [
+                "name"
+              ],
+              "type": "string_type",
+              "msg": "Input should be a valid string"
+            }
+          ]
+        },
+        "typescript": {
+          "decision": "reject",
+          "normalized": null,
+          "errors": [
+            {
+              "path": [
+                "handle"
+              ],
+              "code": "invalid_type",
+              "message": "Expected string, received null"
+            },
+            {
+              "path": [
+                "name"
+              ],
+              "code": "invalid_type",
+              "message": "Expected string, received null"
+            }
+          ]
+        }
+      }
+    },
+
+    // format_contact's maybe_add helpers omit
+    // description/is_external/listed_in_directory/tags entirely when absent --
+    // never null.
+    {
+      "name": "minimal_no_optional_fields",
+      "raw": {
+        "id": "contact-03",
+        "handle": "acme/nova",
+        "name": "Nova",
+        "type": "User",
+        "inserted_at": "2026-07-22T08:00:00Z"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "contact-03",
+          "handle": "acme/nova",
+          "name": "Nova",
+          "type": "User",
+          "inserted_at": "2026-07-22T08:00:00Z"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "contact-03",
+            "handle": "acme/nova",
+            "name": "Nova",
+            "type": "User",
+            "description": null,
+            "is_remote": null,
+            "is_external": null,
+            "inserted_at": "2026-07-22T08:00:00Z"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "contact-03",
+            "handle": "acme/nova",
+            "name": "Nova",
+            "type": "User",
+            "inserted_at": "2026-07-22T08:00:00Z"
+          },
+          "errors": null
+        }
+      }
+    },
+
+    // Unknown keys pass through unchanged.
+    {
+      "name": "unknown_passthrough_field",
+      "raw": {
+        "id": "contact-04",
+        "handle": "acme/echo",
+        "name": "Echo",
+        "type": "Agent",
+        "inserted_at": "2026-07-23T08:00:00Z",
+        "x_custom": "keep-me"
+      },
+      "canonical": {
+        "decision": "accept",
+        "issues": [],
+        "normalized": {
+          "id": "contact-04",
+          "handle": "acme/echo",
+          "name": "Echo",
+          "type": "Agent",
+          "inserted_at": "2026-07-23T08:00:00Z",
+          "x_custom": "keep-me"
+        }
+      },
+      "sdk": {
+        "python": {
+          "decision": "accept",
+          "normalized": {
+            "id": "contact-04",
+            "handle": "acme/echo",
+            "name": "Echo",
+            "type": "Agent",
+            "description": null,
+            "is_remote": null,
+            "is_external": null,
+            "inserted_at": "2026-07-23T08:00:00Z",
+            "x_custom": "keep-me"
+          },
+          "errors": null
+        },
+        "typescript": {
+          "decision": "accept",
+          "normalized": {
+            "id": "contact-04",
+            "handle": "acme/echo",
+            "name": "Echo",
+            "type": "Agent",
+            "inserted_at": "2026-07-23T08:00:00Z",
+            "x_custom": "keep-me"
+          },
+          "errors": null
+        }
+      }
+    },
+  ],
+}

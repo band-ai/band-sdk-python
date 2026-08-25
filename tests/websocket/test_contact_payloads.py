@@ -8,6 +8,7 @@ from band.client.streaming import (
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    WireEvent,
 )
 
 
@@ -130,7 +131,7 @@ class TestContactAddedPayload:
         which only runs on the wire path -- the plain constructor no longer syncs.
         """
         payload = ContactAddedPayload.from_wire(
-            "contact_added",
+            WireEvent.CONTACT_ADDED,
             {
                 "id": "contact-legacy",
                 "handle": "legacy-agent",
@@ -146,7 +147,7 @@ class TestContactAddedPayload:
     def test_is_remote_populates_legacy_alias(self):
         """New wire payloads should keep the legacy alias populated too."""
         payload = ContactAddedPayload.from_wire(
-            "contact_added",
+            WireEvent.CONTACT_ADDED,
             {
                 "id": "contact-new",
                 "handle": "new-agent",

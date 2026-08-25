@@ -51,34 +51,39 @@ def _hydrate(model_cls: type[ModelT], data: dict[str, Any]) -> ModelT:
     field annotations to construct those too. Nothing here re-validates:
     band-sdk-core has already decided the shape is valid.
     """
-    consumed_keys = {
-        field.alias or name for name, field in model_cls.model_fields.items()
-    }
-    values = {
+    fields = model_cls.model_fields
+    known_keys = {field.alias or name for name, field in fields.items()}
+    known_values = {
         name: _hydrate_value(field.annotation, data[field.alias or name])
-        for name, field in model_cls.model_fields.items()
+        for name, field in fields.items()
         if (field.alias or name) in data
     }
-    extra = {key: value for key, value in data.items() if key not in consumed_keys}
-    return model_cls.model_construct(**values, **extra)
+    extra_values = {k: v for k, v in data.items() if k not in known_keys}
+    return model_cls.model_construct(**known_values, **extra_values)
+
+
+def _unwrap_optional(annotation: Any) -> Any:
+    """The ``X`` in an ``X | None`` annotation, unchanged otherwise."""
+    if get_origin(annotation) not in (Union, UnionType):
+        return annotation
+    members = [arg for arg in get_args(annotation) if arg is not NoneType]
+    return members[0] if len(members) == 1 else annotation
 
 
 def _hydrate_value(annotation: Any, value: Any) -> Any:
+    """Hydrate one field's value per its declared type: a list constructs
+    each element, a nested model constructs recursively, anything else
+    (scalars, dicts with no model behind them) passes through untouched.
+    """
     if value is None:
         return None
 
-    origin = get_origin(annotation)
-    if origin in (Union, UnionType):
-        members = [arg for arg in get_args(annotation) if arg is not NoneType]
-        if len(members) == 1:
-            return _hydrate_value(members[0], value)
-        return value
-
-    if origin is list:
-        (item_type,) = get_args(annotation)
-        return [_hydrate_value(item_type, item) for item in value]
-
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return _hydrate(annotation, value)
-
-    return value
+    annotation = _unwrap_optional(annotation)
+    match get_origin(annotation):
+        case origin if origin is list:
+            (item_type,) = get_args(annotation)
+            return [_hydrate_value(item_type, item) for item in value]
+        case None if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return _hydrate(annotation, value)
+        case _:
+            return value
