@@ -15,9 +15,8 @@ from phoenix_channels_python_client.client import (
 from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
-
 from band.client.streaming.errors import classify_initial_upgrade_error
+from band.client.streaming.wire import WirePayload
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +37,8 @@ class WebSocketDisconnectReason:
 # Using Pydantic for runtime validation
 
 
-class Mention(BaseModel):
+class Mention(WirePayload):
     """Mention object within message metadata."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     username: str | None = None
@@ -66,10 +63,8 @@ class DeliveryStatus(StrEnum):
     FAILED = "failed"
 
 
-class MessageMetadata(BaseModel):
+class MessageMetadata(WirePayload):
     """Metadata within message_created / message_updated payloads."""
-
-    model_config = ConfigDict(extra="allow")
 
     mentions: list[Mention] = []
     status: str | None = None
@@ -81,12 +76,8 @@ class MessageMetadata(BaseModel):
     delivery_status: dict[str, Any] | None = None
 
 
-class MessageCreatedPayload(BaseModel):
+class MessageCreatedPayload(WirePayload):
     """Payload for message_created events (observed from real WebSocket)."""
-
-    model_config = ConfigDict(
-        extra="allow"
-    )  # Allow extra fields backend might add later
 
     id: str
     content: str
@@ -101,15 +92,13 @@ class MessageCreatedPayload(BaseModel):
     updated_at: str
 
 
-class RoomAddedPayload(BaseModel):
+class RoomAddedPayload(WirePayload):
     """Payload for room_added events.
 
     Required/optional fields aligned with the Fern-generated ChatRoom model
     (band_rest.types.chat_room.ChatRoom). The WebSocket may include
     additional fields which are captured by ``extra="allow"``.
     """
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     inserted_at: str
@@ -118,26 +107,25 @@ class RoomAddedPayload(BaseModel):
     task_id: str | None = None
 
 
-class RoomRemovedPayload(BaseModel):
+class RoomRemovedPayload(WirePayload):
     """Payload for room_removed events.
 
-    WebSocket-only event with no Fern-generated model; all fields except
-    ``id`` are kept optional as a defensive default.
+    band-sdk-core's canonical rule pushes ``room_removed`` through the same
+    5-field wire shape as ``room_added`` (``ChatJSON.format_room_event/1``),
+    sharing one validator on the Rust side -- so this mirrors
+    ``RoomAddedPayload`` field-for-field rather than the room's own separate,
+    pre-band-sdk-core shape.
     """
 
-    model_config = ConfigDict(extra="allow")
-
     id: str
-    status: str | None = None
-    type: str | None = None
+    inserted_at: str
+    updated_at: str
     title: str | None = None
-    removed_at: str | None = None
+    task_id: str | None = None
 
 
-class RoomDeletedPayload(BaseModel):
+class RoomDeletedPayload(WirePayload):
     """Payload for room_deleted events on room_participants channels."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
 
@@ -146,10 +134,8 @@ async def _noop_room_deleted(_: RoomDeletedPayload) -> None:
     return None
 
 
-class ParticipantAddedPayload(BaseModel):
+class ParticipantAddedPayload(WirePayload):
     """Payload for participant_added events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     name: str
@@ -159,19 +145,9 @@ class ParticipantAddedPayload(BaseModel):
     is_remote: bool | None = None
     is_external: bool | None = None  # Legacy alias for is_remote
 
-    @model_validator(mode="after")
-    def _sync_remote_aliases(self) -> "ParticipantAddedPayload":
-        if self.is_remote is None and self.is_external is not None:
-            self.is_remote = self.is_external
-        if self.is_external is None and self.is_remote is not None:
-            self.is_external = self.is_remote
-        return self
 
-
-class ParticipantRemovedPayload(BaseModel):
+class ParticipantRemovedPayload(WirePayload):
     """Payload for participant_removed events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
 
@@ -179,60 +155,52 @@ class ParticipantRemovedPayload(BaseModel):
 # Contact event payloads
 
 
-class ContactRequestReceivedPayload(BaseModel):
+class ContactRequestReceivedPayload(WirePayload):
     """Payload for contact_request_received events."""
 
-    model_config = ConfigDict(extra="allow")
-
     id: str
-    from_handle: str
-    from_name: str
+    # band-sdk-core's canonical rule accepts these two absent (compact/1 drops
+    # them on the wire; see the canonical policy doc's contact_request_received
+    # section) -- Optional so from_wire's non-validating hydration never leaves
+    # a required field unset (model_construct would, and accessing it raises
+    # AttributeError).
+    from_handle: str | None = None
+    from_name: str | None = None
     message: str | None = None
     status: str
     inserted_at: str
 
 
-class ContactRequestUpdatedPayload(BaseModel):
+class ContactRequestUpdatedPayload(WirePayload):
     """Payload for contact_request_updated events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     status: str
 
 
-class ContactAddedPayload(BaseModel):
+class ContactAddedPayload(WirePayload):
     """Payload for contact_added events."""
 
-    model_config = ConfigDict(extra="allow")
-
     id: str
-    handle: str
-    name: str
+    # band-sdk-core's canonical rule allows an explicit wire `null` for both
+    # (the key itself is always present -- see the canonical policy doc's
+    # contact_added section), so hydration can deliver a real None here.
+    handle: str | None = None
+    name: str | None = None
     type: str
     description: str | None = None
     is_remote: bool | None = None
     is_external: bool | None = None  # Legacy alias for is_remote
     inserted_at: str
 
-    @model_validator(mode="after")
-    def _sync_remote_aliases(self) -> "ContactAddedPayload":
-        if self.is_remote is None and self.is_external is not None:
-            self.is_remote = self.is_external
-        if self.is_external is None and self.is_remote is not None:
-            self.is_external = self.is_remote
-        return self
 
-
-class ContactRemovedPayload(BaseModel):
+class ContactRemovedPayload(WirePayload):
     """Payload for contact_removed events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
 
 
-class AgentControlPayload(BaseModel):
+class AgentControlPayload(WirePayload):
     """Payload for ``agent.control`` events on the agent_control channel.
 
     Pushed by the platform to interrupt, stop, or resume (play) an agent.
@@ -240,8 +208,6 @@ class AgentControlPayload(BaseModel):
     set for a single (agent, room) target. The server does not deduplicate, so
     consumers should dedup on ``correlation_id``.
     """
-
-    model_config = ConfigDict(extra="allow")
 
     mode: Literal["interrupt", "stop", "play"]
     scope: Literal["agent", "room"]
@@ -253,10 +219,8 @@ class AgentControlPayload(BaseModel):
     correlation_id: str | None = None
 
 
-class SupersedePayload(BaseModel):
+class SupersedePayload(WirePayload):
     """Payload for terminal agent_control supersede events."""
-
-    model_config = ConfigDict(extra="allow")
 
     reason: str
     message: str
@@ -276,7 +240,7 @@ class SupersedePayload(BaseModel):
         )
 
 
-_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
+_PAYLOAD_MODELS: dict[str, type[WirePayload]] = {
     "message_created": MessageCreatedPayload,
     # `message_updated` shares the message_created shape; the delivery-state
     # transitions live in ``metadata.delivery_status``.
@@ -424,15 +388,27 @@ class WebSocketClient:
             )
             return
 
-        # Validate and parse payload into Pydantic models for known types
+        # Validate (band-sdk-core) and hydrate into typed payload models for
+        # known event types.
         model = _PAYLOAD_MODELS.get(message.event)
         if model is not None:
             try:
-                validated = model(**message.payload)
-            except ValidationError as e:
-                errors = "; ".join(
-                    f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
-                    for err in e.errors()
+                validated = model.from_wire(message.event, message.payload)
+            except (ValueError, TypeError, AttributeError) as e:
+                # ValueError: band-sdk-core rejected the payload -- `.issues`
+                # carries every violation. TypeError/AttributeError: the
+                # payload passed band-sdk-core but hydration itself couldn't
+                # build a well-shaped model from it (e.g. a list element
+                # band-sdk-core validates only as "an array", not per-element
+                # shape) -- the callback below already treats a downstream
+                # exception this broadly for the same reason (protect the
+                # event loop), so this seam does too rather than letting a
+                # hydration failure escape uncaught.
+                issues = getattr(e, "issues", None)
+                errors = (
+                    "; ".join(f"{path}: {msg}" for path, _code, msg in issues)
+                    if issues
+                    else str(e)
                 )
                 logger.error(
                     "[WebSocket] Invalid %s payload: %s",

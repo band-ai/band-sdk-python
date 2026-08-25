@@ -130,10 +130,9 @@ class TestRoomRemovedEvent:
         """Construct a RoomRemovedEvent with typed payload."""
         payload = RoomRemovedPayload(
             id="room-123",
-            status="removed",
-            type="direct",
             title="Test Room",
-            removed_at="2024-01-01T00:00:00Z",
+            inserted_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
         )
 
         event = RoomRemovedEvent(
@@ -143,16 +142,15 @@ class TestRoomRemovedEvent:
 
         assert event.type == "room_removed"
         assert event.room_id == "room-123"
-        assert event.payload.status == "removed"
+        assert event.payload.title == "Test Room"
 
     def test_room_removed_event_isinstance(self):
         """Test isinstance check for RoomRemovedEvent."""
         payload = RoomRemovedPayload(
             id="room-1",
-            status="removed",
-            type="direct",
             title="Room",
-            removed_at="2024-01-01T00:00:00Z",
+            inserted_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
         )
 
         event = RoomRemovedEvent(room_id="room-1", payload=payload)
@@ -216,12 +214,20 @@ class TestParticipantEvents:
         assert event.payload.is_external is True
 
     def test_construct_participant_added_event_from_legacy_alias(self):
-        """Legacy participant payloads should still expose is_remote."""
-        payload = ParticipantAddedPayload(
-            id="user-123",
-            name="Test User",
-            type="User",
-            is_external=False,
+        """Legacy participant payloads should still expose is_remote.
+
+        The alias sync is band-sdk-core's normalization now
+        (``normalize_remote_alias``), which only runs on the wire path -- the
+        plain constructor no longer syncs.
+        """
+        payload = ParticipantAddedPayload.from_wire(
+            "participant_added",
+            {
+                "id": "user-123",
+                "name": "Test User",
+                "type": "User",
+                "is_external": False,
+            },
         )
 
         event = ParticipantAddedEvent(

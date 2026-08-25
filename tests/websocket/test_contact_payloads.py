@@ -124,27 +124,37 @@ class TestContactAddedPayload:
         assert payload.is_external is True
 
     def test_legacy_is_external_populates_is_remote(self):
-        """Legacy payloads should still expose the new primary field."""
-        payload = ContactAddedPayload(
-            id="contact-legacy",
-            handle="legacy-agent",
-            name="Legacy Agent",
-            type="Agent",
-            is_external=True,
-            inserted_at="2026-02-09T10:35:00Z",
+        """Legacy wire payloads should still expose the new primary field.
+
+        The alias sync is band-sdk-core's normalization now (``normalize_remote_alias``),
+        which only runs on the wire path -- the plain constructor no longer syncs.
+        """
+        payload = ContactAddedPayload.from_wire(
+            "contact_added",
+            {
+                "id": "contact-legacy",
+                "handle": "legacy-agent",
+                "name": "Legacy Agent",
+                "type": "Agent",
+                "is_external": True,
+                "inserted_at": "2026-02-09T10:35:00Z",
+            },
         )
         assert payload.is_remote is True
         assert payload.is_external is True
 
     def test_is_remote_populates_legacy_alias(self):
-        """New payloads should keep the legacy alias populated too."""
-        payload = ContactAddedPayload(
-            id="contact-new",
-            handle="new-agent",
-            name="New Agent",
-            type="Agent",
-            is_remote=False,
-            inserted_at="2026-02-09T10:35:00Z",
+        """New wire payloads should keep the legacy alias populated too."""
+        payload = ContactAddedPayload.from_wire(
+            "contact_added",
+            {
+                "id": "contact-new",
+                "handle": "new-agent",
+                "name": "New Agent",
+                "type": "Agent",
+                "is_remote": False,
+                "inserted_at": "2026-02-09T10:35:00Z",
+            },
         )
         assert payload.is_remote is False
         assert payload.is_external is False

@@ -525,9 +525,11 @@ version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "band-client-rest" },
+    { name = "band-sdk-core" },
     { name = "cryptography" },
     { name = "filelock" },
     { name = "phoenix-channels-python-client" },
+    { name = "pydantic" },
     { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "pydantic-settings", version = "2.14.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "python-dotenv" },
@@ -615,6 +617,7 @@ dev = [
     { name = "google-adk" },
     { name = "google-genai" },
     { name = "httpx" },
+    { name = "json5" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
     { name = "langchain-community" },
@@ -760,6 +763,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0" },
     { name = "band-client-rest", specifier = "==0.0.27" },
+    { name = "band-sdk-core", specifier = "==0.7.1" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-parlant'", specifier = "==0.1.4" },
@@ -789,6 +793,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev-crewai'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev-parlant'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'opencode'", specifier = ">=0.24.0" },
+    { name = "json5", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "langchain", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "langchain", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "langchain-anthropic", marker = "extra == 'dev'", specifier = ">=0.3.0" },
@@ -831,6 +836,7 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai-slim", marker = "extra == 'dev'", specifier = ">=2.18.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'pydantic-ai'", specifier = ">=2.18.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -898,6 +904,21 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
 provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "copilot-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "strands", "dev", "dev-crewai", "dev-parlant"]
+
+[[package]]
+name = "band-sdk-core"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/02/5095245e52ded2b4bcdbf26c656c23a95a9b705c3a3da4e28d62ade701a1/band_sdk_core-0.7.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:960159353042ba9c2b44cb2c47fa3eb49df552f127308223c28cb258b46dc8dd", size = 445701, upload-time = "2026-08-25T16:41:37.141Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/6f/c6d565d241a587e44f6454e09defeefb8315824de7954bac1b901b4c61c5/band_sdk_core-0.7.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:f55f744f25b24504acfefeb41e57cf90f44158e932cbbb6deca220a62e545b54", size = 447769, upload-time = "2026-08-25T16:41:38.731Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/00/88580689996655948c0eb84936198459015c2414679619763eb7b5c20cff/band_sdk_core-0.7.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:b9df30848cfac4b0ebd7d134122174d6b20b5f6975a66da5670c70dc6f26a81e", size = 495232, upload-time = "2026-08-25T16:41:40.005Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/63/015c156b0048b793121e9159805ecaea3d2bc7aff893a4955288fce889a7/band_sdk_core-0.7.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:947f8e0b5eed4c41a6ee8ce0d0411ee7e36b5a90c4bea622c6b4d156cdeebc9a", size = 497045, upload-time = "2026-08-25T16:41:41.332Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/c1/fd42271154f7adb5899f5f04e27f5f86bc523c343952294eb1e400abcdbd/band_sdk_core-0.7.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:d1ccc94e33fbf8da1f29b98d66bef14f8cec08de8a0ed7cb3c255f6b6cb2b53d", size = 673760, upload-time = "2026-08-25T16:41:42.578Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/42/c31cd3c11fee1db664ed334c8326be345d5e44150fbba2dd780589dcf163/band_sdk_core-0.7.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a3bc50a2322028d5fa01f03d6177b8649528572397e5494e416df84f6af23203", size = 708176, upload-time = "2026-08-25T16:41:43.978Z" },
+    { url = "https://files.pythonhosted.org/packages/09/84/10f920a9a11062810be75747b7753c6c21c395c1f29d31d8f3dfd1e2a445/band_sdk_core-0.7.1-cp311-abi3-win_amd64.whl", hash = "sha256:8894f06d54251a9e99f784057e7185be0537a23e3e90fd7213339f2c3473ebaf", size = 320429, upload-time = "2026-08-25T16:41:45.528Z" },
+    { url = "https://files.pythonhosted.org/packages/19/15/940d8846152687b5856fd2f3a73de7501eea261c2dec98db3d7fed3a9021/band_sdk_core-0.7.1-cp311-abi3-win_arm64.whl", hash = "sha256:09b361f84cdf725254d34e5ad57d0c02c6d86e36d55e5243d6725d490fdad47b", size = 305430, upload-time = "2026-08-25T16:41:46.829Z" },
+]
 
 [[package]]
 name = "band-testing-python"

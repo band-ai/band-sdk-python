@@ -599,10 +599,10 @@ async def test_accepts_valid_room_removed_payload():
         "room_removed",
         {
             "id": "room-123",
-            "status": "active",
-            "type": "direct",
             "title": "Test Room",
-            "removed_at": "2025-11-17T11:26:59.925707",
+            "task_id": "task-1",
+            "inserted_at": "2025-11-17T09:05:35Z",
+            "updated_at": "2025-11-17T11:26:59Z",
         },
     )
     assert isinstance(received, RoomRemovedPayload)
@@ -610,15 +610,21 @@ async def test_accepts_valid_room_removed_payload():
 
 
 async def test_accepts_minimal_room_removed_payload():
-    """Should accept room_removed with only required `id` field (all others optional)."""
+    """Should accept room_removed with only its required fields (title/task_id optional)."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received = await dispatch(client, "room_removed", {"id": "room-456"})
+    received = await dispatch(
+        client,
+        "room_removed",
+        {
+            "id": "room-456",
+            "inserted_at": "2025-11-17T09:05:35Z",
+            "updated_at": "2025-11-17T09:05:35Z",
+        },
+    )
     assert isinstance(received, RoomRemovedPayload)
     assert received.id == "room-456"
-    assert received.status is None
-    assert received.type is None
     assert received.title is None
-    assert received.removed_at is None
+    assert received.task_id is None
 
 
 async def test_accepts_minimal_room_deleted_payload():
@@ -653,7 +659,11 @@ async def test_accepts_valid_participant_added_payload():
 async def test_accepts_valid_participant_removed_payload():
     """Should accept valid participant_removed payload and pass typed model to callback."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received = await dispatch(client, "participant_removed", {"id": "p-123"})
+    received = await dispatch(
+        client,
+        "participant_removed",
+        {"id": "p-123", "name": "Test Agent", "type": "Agent"},
+    )
     assert isinstance(received, ParticipantRemovedPayload)
     assert received.id == "p-123"
 
@@ -761,10 +771,9 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
             "room_removed",
             {
                 "id": "room-123",
-                "status": "active",
-                "type": "direct",
                 "title": "Room",
-                "removed_at": "2025-11-17T11:26:59Z",
+                "inserted_at": "2025-11-17T09:05:35Z",
+                "updated_at": "2025-11-17T11:26:59Z",
             },
             RoomRemovedPayload,
             id="room_removed",
@@ -783,7 +792,7 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
         ),
         pytest.param(
             "participant_removed",
-            {"id": "p-123"},
+            {"id": "p-123", "name": "Agent", "type": "Agent"},
             ParticipantRemovedPayload,
             id="participant_removed",
         ),

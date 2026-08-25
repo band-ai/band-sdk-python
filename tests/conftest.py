@@ -344,10 +344,9 @@ def make_room_removed_event(
     """Create a RoomRemovedEvent using SDK-native types."""
     payload = RoomRemovedPayload(
         id=room_id,
-        status=kwargs.get("status", "removed"),
-        type=kwargs.get("type", "direct"),
         title=title,
-        removed_at=kwargs.get("removed_at", "2024-01-01T00:00:00Z"),
+        inserted_at=kwargs.get("inserted_at", "2024-01-01T00:00:00Z"),
+        updated_at=kwargs.get("updated_at", "2024-01-01T00:00:00Z"),
     )
     return RoomRemovedEvent(room_id=room_id, payload=payload)
 

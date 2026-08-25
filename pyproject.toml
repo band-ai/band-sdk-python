@@ -23,8 +23,10 @@ classifiers = [
 
 dependencies = [
     "band-client-rest==0.0.27",
+    "band-sdk-core==0.7.1",
     "phoenix-channels-python-client>=0.2.2",
     "python-dotenv>=1.2.2",
+    "pydantic>=2.0",
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
@@ -185,6 +187,7 @@ dev = [
     "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
     "band-testing-python==0.1.4",
+    "json5>=0.9.0",  # Reads the vendored band-sdk-core corpus fixtures (tests/websocket/corpus/)
     "httpx>=0.24.0",  # Already in main deps, for mocking
     "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
     # Include pydantic-ai for testing
