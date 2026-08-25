@@ -1,36 +1,20 @@
 """Proves `WirePayload.from_wire` against the vendored band-sdk-core corpus.
 
-See `corpus/README.md` for provenance. Each case's `canonical.normalized`
-(accept) or `canonical.issues` (reject) is the source of truth -- not the
-`sdk.python`/`sdk.typescript` contrast columns, which record each SDK's own
-*prior*, now-superseded rules.
+See `corpus.py`'s module docstring for provenance. Each case's
+`canonical.normalized` (accept) or `canonical.issues` (reject) is the source
+of truth.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import json5
 import pytest
 from band_sdk_core import EventType
 from pydantic import BaseModel
 
 from band.client.streaming.client import _PAYLOAD_MODELS
-
-CORPUS_DIR = Path(__file__).parent / "corpus"
-
-
-def _load_corpus() -> list[tuple[str, dict[str, Any]]]:
-    cases = []
-    for path in sorted(CORPUS_DIR.glob("*.json5")):
-        event_type = path.stem
-        for case in json5.loads(path.read_text())["cases"]:
-            cases.append((event_type, case))
-    return cases
-
-
-CORPUS_CASES = _load_corpus()
+from tests.websocket.corpus import CORPUS_CASES
 
 
 def assert_hydrated_matches(actual: Any, expected: Any) -> None:
@@ -78,9 +62,12 @@ def test_corpus_case(event_type: str, case: dict[str, Any]) -> None:
         assert actual_issues == expected_issues
 
 
-def test_every_corpus_stem_resolves_to_a_registered_payload_model() -> None:
-    for path in CORPUS_DIR.glob("*.json5"):
-        assert path.stem in _PAYLOAD_MODELS, f"{path.stem} has no _PAYLOAD_MODELS entry"
+def test_every_corpus_event_type_resolves_to_a_registered_payload_model() -> None:
+    event_types = {event_type for event_type, _case in CORPUS_CASES}
+    for event_type in event_types:
+        assert event_type in _PAYLOAD_MODELS, (
+            f"{event_type} has no _PAYLOAD_MODELS entry"
+        )
 
 
 def test_every_registered_event_name_is_known_to_band_sdk_core() -> None:
