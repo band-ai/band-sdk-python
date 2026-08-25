@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
@@ -103,8 +104,6 @@ async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(caplog
     ``trace.set_tracer_provider``), so this doesn't touch the process-global
     provider other tests may depend on.
     """
-    from opentelemetry.sdk.trace import TracerProvider
-
     tracer = TracerProvider().get_tracer("test")
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
