@@ -432,7 +432,11 @@ class WebSocketClient:
                 validated = model.from_wire(message.event, message.payload)
             except ValueError as e:
                 # band-sdk-core rejected the payload; `.issues` carries every
-                # violation.
+                # violation. `.trace_context` is the traceparent from_wire
+                # passed in -- this log line is not inside any
+                # trace_context_scope() (validation runs in the transport
+                # layer, before a turn exists), so it's the only place this
+                # specific rejection's trace correlates without it.
                 issues = getattr(e, "issues", None)
                 errors = (
                     "; ".join(f"{path}: {msg}" for path, _code, msg in issues)
@@ -440,8 +444,9 @@ class WebSocketClient:
                     else str(e)
                 )
                 logger.error(
-                    "[WebSocket] Invalid %s payload: %s",
+                    "[WebSocket] Invalid %s payload (trace_context=%s): %s",
                     message.event,
+                    getattr(e, "trace_context", None),
                     errors,
                 )
                 logger.debug(
