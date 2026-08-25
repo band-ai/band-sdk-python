@@ -6,21 +6,9 @@ from typing import Any, Self, TypeVar, Union, get_args, get_origin
 import band_sdk_core
 from pydantic import BaseModel, ConfigDict
 
-try:
-    from opentelemetry import propagate
-except ImportError:
-    propagate = None
+from band.logging_config import current_traceparent
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
-
-
-def current_traceparent() -> str | None:
-    """The active W3C traceparent, or ``None`` when OpenTelemetry isn't installed."""
-    if propagate is None:
-        return None
-    carrier: dict[str, str] = {}
-    propagate.inject(carrier)
-    return carrier.get("traceparent")
 
 
 class WirePayload(BaseModel):

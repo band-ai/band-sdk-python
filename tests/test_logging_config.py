@@ -17,7 +17,13 @@ from band import (
     build_logging_config,
     configure_logging,
 )
-from band.logging_config import JSON_LOGGER_REQUIREMENT, OTEL_CORRELATION_FIELDS
+from band.logging_config import (
+    JSON_LOGGER_REQUIREMENT,
+    OTEL_CORRELATION_FIELDS,
+    TRACE_CONTEXT,
+    TRACE_CORRELATION_FIELDS,
+    trace_context_scope,
+)
 from tests.logsupport import restored_logging
 
 requires_posix_modes = pytest.mark.skipif(
@@ -188,6 +194,82 @@ def test_json_records_keep_injected_trace_context(
     assert {field: record[field] for field in OTEL_CORRELATION_FIELDS} == injected
 
 
+def test_json_records_carry_null_trace_context_outside_a_turn(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No turn in progress -- the field is still there, just null.
+
+    Mirrors test_json_records_carry_null_trace_context_without_instrumentation
+    for OTEL_CORRELATION_FIELDS: the schema must not change shape depending on
+    whether a turn happens to be active when the line is logged.
+    """
+    with restored_logging():
+        configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+        logging.getLogger("band.runtime").info("no turn")
+        record = _json_line(capsys)
+
+    assert record["trace_context"] is None
+
+
+def test_json_records_carry_trace_context_inside_a_turn(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A log line emitted while trace_context_scope() is open carries the
+    traceparent that was active when the scope opened."""
+    import band.logging_config as logging_config_module
+
+    monkeypatch.setattr(
+        logging_config_module, "current_traceparent", lambda: "00-fake-trace-01"
+    )
+
+    with restored_logging():
+        configure_logging(style=LoggingStyle.JSON, stream=LogStream.STDOUT)
+        with trace_context_scope():
+            logging.getLogger("band.runtime").info("mid turn")
+        record = _json_line(capsys)
+
+    assert record["trace_context"] == "00-fake-trace-01"
+
+
+def test_trace_context_scope_resets_after_normal_exit() -> None:
+    assert TRACE_CONTEXT.get() is None
+    with trace_context_scope():
+        pass
+    assert TRACE_CONTEXT.get() is None
+
+
+def test_trace_context_scope_resets_after_the_wrapped_code_raises() -> None:
+    with pytest.raises(RuntimeError, match="boom"):
+        with trace_context_scope():
+            raise RuntimeError("boom")
+    assert TRACE_CONTEXT.get() is None
+
+
+def test_trace_context_scope_nested_restores_the_outer_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn-within-a-turn (unexpected, but must not corrupt state) restores
+    the outer scope's value on exit rather than clearing it."""
+    import band.logging_config as logging_config_module
+
+    values = iter(["outer-trace", "inner-trace"])
+    monkeypatch.setattr(
+        logging_config_module, "current_traceparent", lambda: next(values)
+    )
+
+    with trace_context_scope():
+        assert TRACE_CONTEXT.get() == "outer-trace"
+        with trace_context_scope():
+            assert TRACE_CONTEXT.get() == "inner-trace"
+        assert TRACE_CONTEXT.get() == "outer-trace"
+    assert TRACE_CONTEXT.get() is None
+
+
+def test_trace_correlation_fields_is_part_of_the_json_default_schema() -> None:
+    assert TRACE_CORRELATION_FIELDS == ("trace_context",)
+
+
 def test_custom_json_fields_replace_the_default_schema(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -207,6 +289,36 @@ def test_custom_json_fields_replace_the_default_schema(
         record = _json_line(capsys)
 
     assert record == {"level": "INFO", "message": "terse"}
+
+
+def test_custom_json_fields_can_opt_trace_context_back_in(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Excluded by default from a narrowed schema (the test above), but
+    requesting it by name still works -- it's gated out of the *automatic*
+    extras mechanism, not blocked outright."""
+    import band.logging_config as logging_config_module
+
+    monkeypatch.setattr(
+        logging_config_module, "current_traceparent", lambda: "00-fake-trace-02"
+    )
+
+    with restored_logging():
+        configure_logging(
+            style=LoggingStyle.JSON,
+            stream=LogStream.STDOUT,
+            json_fields=("levelname", "message", "trace_context"),
+        )
+        with trace_context_scope():
+            logging.getLogger("band.runtime").info("terse but correlated")
+        record = _json_line(capsys)
+
+    assert record == {
+        "level": "INFO",
+        "message": "terse but correlated",
+        "trace_context": "00-fake-trace-02",
+    }
 
 
 def test_configure_logging_rich_honors_stdout(

@@ -3,9 +3,12 @@
 from datetime import datetime, timezone
 from typing import Any
 
+import pytest
+
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.logging_config import TRACE_CONTEXT
 from band.testing import FakeAgentTools
 
 
@@ -131,6 +134,55 @@ class TestOnEvent:
         assert call["participants_msg"] == "Alice joined"
         assert call["is_session_bootstrap"] is True
         assert isinstance(call["tools"], FakeAgentTools)
+
+
+class TestOnEventTraceContext:
+    """on_event() opens the turn's trace-context correlation window."""
+
+    async def test_trace_context_is_set_during_on_message(self, monkeypatch):
+        """A log line emitted anywhere inside on_message can read the turn's
+        trace context via the same ContextVar the logging filter reads."""
+        import band.logging_config as logging_config_module
+
+        monkeypatch.setattr(
+            logging_config_module, "current_traceparent", lambda: "00-turn-trace"
+        )
+
+        seen: list[str | None] = []
+
+        class TracingAdapter(SimpleAdapter[str]):
+            async def on_message(
+                self,
+                msg,
+                tools,
+                history,
+                participants_msg,
+                contacts_msg,
+                *,
+                is_session_bootstrap,
+                room_id,
+            ):
+                seen.append(TRACE_CONTEXT.get())
+
+        adapter = TracingAdapter()
+        assert TRACE_CONTEXT.get() is None
+
+        await adapter.on_event(make_agent_input())
+
+        assert seen == ["00-turn-trace"]
+        assert TRACE_CONTEXT.get() is None  # reset after the turn
+
+    async def test_trace_context_resets_even_when_on_message_raises(self):
+        class RaisingAdapter(SimpleAdapter[str]):
+            async def on_message(self, *args, **kwargs):
+                raise RuntimeError("turn failed")
+
+        adapter = RaisingAdapter()
+
+        with pytest.raises(RuntimeError, match="turn failed"):
+            await adapter.on_event(make_agent_input())
+
+        assert TRACE_CONTEXT.get() is None
 
 
 class TestHistoryConversion:
