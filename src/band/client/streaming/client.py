@@ -17,6 +17,7 @@ from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from band.client.streaming.errors import classify_initial_upgrade_error
 from band.client.streaming.wire import WirePayload
+from band.logging_config import trace_context_extra
 
 logger = logging.getLogger(__name__)
 
@@ -432,11 +433,12 @@ class WebSocketClient:
                 validated = model.from_wire(message.event, message.payload)
             except ValueError as e:
                 # band-sdk-core rejected the payload; `.issues` carries every
-                # violation. `.trace_context` is the traceparent from_wire
-                # passed in -- this log line is not inside any
-                # trace_context_scope() (validation runs in the transport
-                # layer, before a turn exists), so it's the only place this
-                # specific rejection's trace correlates without it.
+                # violation. This log line runs outside any
+                # trace_context_scope() (validation happens in the transport
+                # layer, before a turn exists), so the ambient TRACE_CONTEXT
+                # would be None here -- extra=trace_context_extra(e) reports
+                # `e`'s own traceparent instead, via the same record attribute
+                # _TraceContextFilter would otherwise fill in.
                 issues = getattr(e, "issues", None)
                 errors = (
                     "; ".join(f"{path}: {msg}" for path, _code, msg in issues)
@@ -444,10 +446,10 @@ class WebSocketClient:
                     else str(e)
                 )
                 logger.error(
-                    "[WebSocket] Invalid %s payload (trace_context=%s): %s",
+                    "[WebSocket] Invalid %s payload: %s",
                     message.event,
-                    getattr(e, "trace_context", None),
                     errors,
+                    extra=trace_context_extra(e),
                 )
                 logger.debug(
                     "[WebSocket] Raw payload for invalid %s: %s",
