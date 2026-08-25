@@ -886,11 +886,11 @@ async def test_hydration_shape_mismatch_is_dropped_and_counted_not_raised(
     band-sdk-core 0.7.1 already rejects a malformed `metadata.mentions` item
     outright (see the vendored corpus's `mention_item_not_an_object` case), so
     this fault-injects a hydration-time shape mismatch band-sdk-core's current
-    rules don't happen to catch, to prove the seam's widened
-    `except (ValueError, TypeError, AttributeError)` is a real safety net at
-    this trust boundary -- not dead code tied to one already-fixed gap. Without
-    it, `_hydrate` raises `TypeError` walking a non-dict mention item, which
-    is not a `ValueError` and would escape `_handle_events` uncaught.
+    rules don't happen to catch, to prove the seam's `except (TypeError,
+    AttributeError)` branch is a real safety net at this trust boundary -- not
+    dead code tied to one already-fixed gap. Without it, `_hydrate` raises
+    `TypeError` walking a non-dict mention item, which escapes `_handle_events`
+    uncaught.
     """
 
     def fake_validate(event_type, raw, trace_context=None):
@@ -908,7 +908,9 @@ async def test_hydration_shape_mismatch_is_dropped_and_counted_not_raised(
 
     assert received is None
     assert client.validation_error_count == 1
-    assert "Invalid message_created payload" in caplog.text
+    assert "message_created payload passed band-sdk-core but failed to hydrate" in (
+        caplog.text
+    )
 
 
 async def test_reset_validation_error_count_returns_previous_value():

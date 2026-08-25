@@ -51,14 +51,20 @@ def _hydrate(model_cls: type[ModelT], data: dict[str, Any]) -> ModelT:
     field annotations to construct those too. Nothing here re-validates:
     band-sdk-core has already decided the shape is valid.
     """
-    fields = model_cls.model_fields
-    known_keys = {field.alias or name for name, field in fields.items()}
-    known_values = {
-        name: _hydrate_value(field.annotation, data[field.alias or name])
-        for name, field in fields.items()
-        if (field.alias or name) in data
+    fields_by_wire_key = {
+        (field.alias or name): (name, field)
+        for name, field in model_cls.model_fields.items()
     }
-    extra_values = {k: v for k, v in data.items() if k not in known_keys}
+
+    known_values: dict[str, Any] = {}
+    extra_values: dict[str, Any] = {}
+    for key, value in data.items():
+        if key in fields_by_wire_key:
+            name, field = fields_by_wire_key[key]
+            known_values[name] = _hydrate_value(field.annotation, value)
+        else:
+            extra_values[key] = value
+
     return model_cls.model_construct(**known_values, **extra_values)
 
 

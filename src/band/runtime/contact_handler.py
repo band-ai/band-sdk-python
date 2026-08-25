@@ -388,10 +388,14 @@ class ContactEventHandler:
             case ContactRequestReceivedEvent(payload=payload):
                 if payload is None:
                     return "[Contact Request] Unknown sender"
-                from_handle = normalize_handle(payload.from_handle)
+                # band-sdk-core accepts from_name/from_handle absent (the
+                # platform's compact/1 drops them) -- fall back rather than
+                # rendering the literal string "None".
+                sender_name = payload.from_name or "Unknown sender"
+                sender_handle = normalize_handle(payload.from_handle) or "no handle"
                 msg_part = f'\nMessage: "{payload.message}"' if payload.message else ""
                 return (
-                    f"[Contact Request] {payload.from_name} ({from_handle}) "
+                    f"[Contact Request] {sender_name} ({sender_handle}) "
                     f"wants to connect.{msg_part}\n"
                     f"Request ID: {payload.id}"
                 )
@@ -421,9 +425,12 @@ class ContactEventHandler:
             case ContactAddedEvent(payload=payload):
                 if payload is None:
                     return "[Contact Added] Unknown contact"
-                handle = normalize_handle(payload.handle)
+                # band-sdk-core accepts handle/name as an explicit wire null --
+                # fall back rather than rendering the literal string "None".
+                contact_name = payload.name or "Unknown contact"
+                contact_handle = normalize_handle(payload.handle) or "no handle"
                 return (
-                    f"[Contact Added] {payload.name} ({handle}) "
+                    f"[Contact Added] {contact_name} ({contact_handle}) "
                     f"is now a contact.\n"
                     f"Type: {payload.type}, ID: {payload.id}"
                 )
@@ -470,8 +477,9 @@ class ContactEventHandler:
         match event:
             case ContactAddedEvent(payload=payload):
                 if payload is not None:
-                    handle = normalize_handle(payload.handle)
-                    msg = f"{handle} ({payload.name}) is now a contact"
+                    handle = normalize_handle(payload.handle) or "no handle"
+                    name = payload.name or "Unknown contact"
+                    msg = f"{handle} ({name}) is now a contact"
                     self._on_broadcast(msg)
                     logger.debug("Queued broadcast: %s", msg)
 

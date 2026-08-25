@@ -523,9 +523,11 @@ def make_participant_added_event(
 def make_participant_removed_event(
     room_id: str = "room-123",
     participant_id: str = "user-456",
+    name: str = "Test User",
+    type: str = "User",
 ) -> ParticipantRemovedEvent:
     """Create a ParticipantRemovedEvent using SDK-native types."""
-    payload = ParticipantRemovedPayload(id=participant_id)
+    payload = ParticipantRemovedPayload(id=participant_id, name=name, type=type)
     return ParticipantRemovedEvent(room_id=room_id, payload=payload)
 
 

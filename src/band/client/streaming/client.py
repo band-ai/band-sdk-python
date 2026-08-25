@@ -113,8 +113,7 @@ class RoomRemovedPayload(WirePayload):
     band-sdk-core's canonical rule pushes ``room_removed`` through the same
     5-field wire shape as ``room_added`` (``ChatJSON.format_room_event/1``),
     sharing one validator on the Rust side -- so this mirrors
-    ``RoomAddedPayload`` field-for-field rather than the room's own separate,
-    pre-band-sdk-core shape.
+    ``RoomAddedPayload`` field-for-field.
     """
 
     id: str
@@ -147,9 +146,16 @@ class ParticipantAddedPayload(WirePayload):
 
 
 class ParticipantRemovedPayload(WirePayload):
-    """Payload for participant_removed events."""
+    """Payload for participant_removed events.
+
+    band-sdk-core's canonical rule requires ``name``/``type`` present on the
+    wire -- typed here to match what's actually guaranteed post-validation,
+    not left to ``extra="allow"`` passthrough.
+    """
 
     id: str
+    name: str
+    type: str
 
 
 # Contact event payloads
@@ -242,11 +248,13 @@ class SupersedePayload(WirePayload):
 
 class WireEvent(StrEnum):
     """Every wire event name this SDK recognizes -- the single source of
-    truth `_PAYLOAD_MODELS` and `KNOWN_UNHANDLED_EVENTS` are keyed from,
-    instead of each repeating the string literal. Mirrors the wire-name
-    vocabulary `band_sdk_core.EventType` validates (a member is still a
-    plain ``str``, so it passes straight through to `from_wire` and any
-    `band_sdk_core` call unchanged).
+    truth `_PAYLOAD_MODELS`, `KNOWN_UNHANDLED_EVENTS`, and each `join_*`
+    method's handler-dict keys are keyed from, instead of each repeating the
+    string literal. A member is still a plain ``str``, so it passes straight
+    through to `from_wire`/`band_sdk_core` unchanged. Members through
+    `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary;
+    `TASK_CREATED`/`TASK_UPDATED` are outside it entirely (the `tasks:*`
+    channel's raw-dict passthrough never calls `validate_event_payload`).
     """
 
     MESSAGE_CREATED = "message_created"
@@ -269,6 +277,9 @@ class WireEvent(StrEnum):
     # instead (see tests/e2e/baseline/toolkit/observations/tool_calls.py), so
     # this is expected, not a bug. Any other unregistered event name still warns.
     EVENT_CREATED = "event_created"
+    # `tasks:*` channel only -- no payload model, raw dict passthrough.
+    TASK_CREATED = "task_created"
+    TASK_UPDATED = "task_updated"
 
 
 _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
@@ -419,16 +430,9 @@ class WebSocketClient:
         if model is not None:
             try:
                 validated = model.from_wire(message.event, message.payload)
-            except (ValueError, TypeError, AttributeError) as e:
-                # ValueError: band-sdk-core rejected the payload -- `.issues`
-                # carries every violation. TypeError/AttributeError: the
-                # payload passed band-sdk-core but hydration itself couldn't
-                # build a well-shaped model from it (e.g. a list element
-                # band-sdk-core validates only as "an array", not per-element
-                # shape) -- the callback below already treats a downstream
-                # exception this broadly for the same reason (protect the
-                # event loop), so this seam does too rather than letting a
-                # hydration failure escape uncaught.
+            except ValueError as e:
+                # band-sdk-core rejected the payload; `.issues` carries every
+                # violation.
                 issues = getattr(e, "issues", None)
                 errors = (
                     "; ".join(f"{path}: {msg}" for path, _code, msg in issues)
@@ -442,6 +446,32 @@ class WebSocketClient:
                 )
                 logger.debug(
                     "[WebSocket] Raw payload for invalid %s: %s",
+                    message.event,
+                    message.payload,
+                )
+                self._validation_error_count += 1
+                return
+            except (TypeError, AttributeError):
+                # The payload passed band-sdk-core but hydration itself
+                # couldn't build a well-shaped model from it (e.g. a list
+                # element band-sdk-core validates only as "an array", not
+                # per-element shape) -- a real gap between what band-sdk-core
+                # accepts and what this SDK's typed projection needs, not
+                # routine bad wire data, so it's logged distinctly (with a
+                # traceback) rather than blended into the ValueError case
+                # above. Still counted and dropped, same as any other invalid
+                # event: the callback below already treats a downstream
+                # exception this broadly for the same reason (protect the
+                # event loop), so this seam does too rather than letting a
+                # hydration failure escape uncaught.
+                logger.exception(
+                    "[WebSocket] %s payload passed band-sdk-core but failed to "
+                    "hydrate -- likely a gap between band-sdk-core's rules and "
+                    "this SDK's typed model",
+                    message.event,
+                )
+                logger.debug(
+                    "[WebSocket] Raw payload for unhydratable %s: %s",
                     message.event,
                     message.payload,
                 )
@@ -487,10 +517,10 @@ class WebSocketClient:
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[..., Awaitable[None]]] = {
-            "supersede": on_supersede
+            WireEvent.SUPERSEDE: on_supersede
         }
         if on_control is not None:
-            handlers["agent.control"] = on_control
+            handlers[WireEvent.AGENT_CONTROL] = on_control
 
         async def message_handler(message):
             await self._handle_events(message, handlers)
@@ -511,7 +541,11 @@ class WebSocketClient:
 
         async def message_handler(message):
             await self._handle_events(
-                message, {"room_added": on_room_added, "room_removed": on_room_removed}
+                message,
+                {
+                    WireEvent.ROOM_ADDED: on_room_added,
+                    WireEvent.ROOM_REMOVED: on_room_removed,
+                },
             )
 
         result = await self._require_client().subscribe_to_topic(topic, message_handler)
@@ -535,10 +569,10 @@ class WebSocketClient:
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[[MessageCreatedPayload], Awaitable[None]]] = {
-            "message_created": on_message_created
+            WireEvent.MESSAGE_CREATED: on_message_created
         }
         if on_message_updated is not None:
-            handlers["message_updated"] = on_message_updated
+            handlers[WireEvent.MESSAGE_UPDATED] = on_message_updated
 
         async def message_handler(message):
             await self._handle_events(message, handlers)
@@ -556,7 +590,11 @@ class WebSocketClient:
 
         async def message_handler(message):
             await self._handle_events(
-                message, {"room_added": on_room_added, "room_removed": on_room_removed}
+                message,
+                {
+                    WireEvent.ROOM_ADDED: on_room_added,
+                    WireEvent.ROOM_REMOVED: on_room_removed,
+                },
             )
 
         return await self._require_client().subscribe_to_topic(topic, message_handler)
@@ -578,9 +616,9 @@ class WebSocketClient:
             await self._handle_events(
                 message,
                 {
-                    "participant_added": on_participant_added,
-                    "participant_removed": on_participant_removed,
-                    "room_deleted": on_room_deleted,
+                    WireEvent.PARTICIPANT_ADDED: on_participant_added,
+                    WireEvent.PARTICIPANT_REMOVED: on_participant_removed,
+                    WireEvent.ROOM_DELETED: on_room_deleted,
                 },
             )
 
@@ -598,7 +636,10 @@ class WebSocketClient:
         async def message_handler(message):
             await self._handle_events(
                 message,
-                {"task_created": on_task_created, "task_updated": on_task_updated},
+                {
+                    WireEvent.TASK_CREATED: on_task_created,
+                    WireEvent.TASK_UPDATED: on_task_updated,
+                },
             )
 
         return await self._require_client().subscribe_to_topic(topic, message_handler)
@@ -657,10 +698,10 @@ class WebSocketClient:
             await self._handle_events(
                 message,
                 {
-                    "contact_request_received": on_contact_request_received,
-                    "contact_request_updated": on_contact_request_updated,
-                    "contact_added": on_contact_added,
-                    "contact_removed": on_contact_removed,
+                    WireEvent.CONTACT_REQUEST_RECEIVED: on_contact_request_received,
+                    WireEvent.CONTACT_REQUEST_UPDATED: on_contact_request_updated,
+                    WireEvent.CONTACT_ADDED: on_contact_added,
+                    WireEvent.CONTACT_REMOVED: on_contact_removed,
                 },
             )
 

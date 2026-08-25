@@ -529,7 +529,9 @@ class TestBandLinkEventHandlers:
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
-        payload = ParticipantRemovedPayload(id="user-123")
+        payload = ParticipantRemovedPayload(
+            id="user-123", name="Test User", type="User"
+        )
 
         await link._on_participant_removed("room-123", payload)
 

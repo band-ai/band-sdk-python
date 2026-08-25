@@ -121,9 +121,8 @@ class TestContactAddedEvent:
     def test_legacy_contact_alias_still_populates_primary_field(self):
         """Legacy contact payloads should hydrate is_remote for consumers.
 
-        The alias sync is band-sdk-core's normalization now
-        (``normalize_remote_alias``), which only runs on the wire path -- the
-        plain constructor no longer syncs.
+        Alias sync (``normalize_remote_alias``) is band-sdk-core's normalization,
+        applied on the wire path only -- the plain constructor never syncs it.
         """
         payload = ContactAddedPayload.from_wire(
             WireEvent.CONTACT_ADDED,

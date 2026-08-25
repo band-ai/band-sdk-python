@@ -217,9 +217,8 @@ class TestParticipantEvents:
     def test_construct_participant_added_event_from_legacy_alias(self):
         """Legacy participant payloads should still expose is_remote.
 
-        The alias sync is band-sdk-core's normalization now
-        (``normalize_remote_alias``), which only runs on the wire path -- the
-        plain constructor no longer syncs.
+        Alias sync (``normalize_remote_alias``) is band-sdk-core's normalization,
+        applied on the wire path only -- the plain constructor never syncs it.
         """
         payload = ParticipantAddedPayload.from_wire(
             WireEvent.PARTICIPANT_ADDED,
@@ -241,7 +240,9 @@ class TestParticipantEvents:
 
     def test_construct_participant_removed_event(self):
         """Construct a ParticipantRemovedEvent with typed payload."""
-        payload = ParticipantRemovedPayload(id="user-123")
+        payload = ParticipantRemovedPayload(
+            id="user-123", name="Test User", type="User"
+        )
 
         event = ParticipantRemovedEvent(
             room_id="room-123",
@@ -260,7 +261,7 @@ class TestParticipantEvents:
         )
         removed = ParticipantRemovedEvent(
             room_id="room-1",
-            payload=ParticipantRemovedPayload(id="user-1"),
+            payload=ParticipantRemovedPayload(id="user-1", name="User", type="User"),
         )
 
         assert isinstance(added, ParticipantAddedEvent)

@@ -127,8 +127,8 @@ class TestContactAddedPayload:
     def test_legacy_is_external_populates_is_remote(self):
         """Legacy wire payloads should still expose the new primary field.
 
-        The alias sync is band-sdk-core's normalization now (``normalize_remote_alias``),
-        which only runs on the wire path -- the plain constructor no longer syncs.
+        Alias sync (``normalize_remote_alias``) is band-sdk-core's normalization,
+        applied on the wire path only -- the plain constructor never syncs it.
         """
         payload = ContactAddedPayload.from_wire(
             WireEvent.CONTACT_ADDED,
