@@ -150,3 +150,22 @@ class UserOps:
         async with httpx.AsyncClient(timeout=30.0) as http:
             response = await http.delete(url, headers=wrapper.get_headers())
             response.raise_for_status()
+
+    async def stop_agent(self, room_id: str) -> None:
+        """Stop agents in a user-owned room through the control endpoint.
+
+        The generated Human API has not exposed control operations yet, so this
+        follows the same authenticated raw-REST boundary as :meth:`delete_room`.
+        """
+        await self._post_control(f"/api/v1/me/chats/{room_id}/agents/stop")
+
+    async def play_agent(self, room_id: str) -> None:
+        """Resume agents in a user-owned room through the control endpoint."""
+        await self._post_control(f"/api/v1/me/chats/{room_id}/agents/play")
+
+    async def _post_control(self, path: str) -> None:
+        wrapper = self._client._client_wrapper
+        url = f"{wrapper.get_base_url().rstrip('/')}{path}"
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            response = await http.post(url, headers=wrapper.get_headers())
+            response.raise_for_status()
