@@ -141,6 +141,9 @@ class TestToolModelsRegistry:
             "band_get_memory",
             "band_supersede_memory",
             "band_archive_memory",
+            "band_list_room_files",
+            "band_read_room_file",
+            "band_send_room_file",
         }
         assert set(TOOL_MODELS.keys()) == expected
 

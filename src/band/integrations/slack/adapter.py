@@ -221,15 +221,10 @@ class SlackTeeingTools(AgentTools):
         self,
         format: str,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]] | list[Any]:
         """Return the base schemas plus our ``slack_send_message`` entry."""
-        base = super().get_tool_schemas(
-            format,
-            include_memory=include_memory,
-            include_contacts=include_contacts,
-        )
+        base = super().get_tool_schemas(format, capabilities=capabilities)
         if format == "openai":
             slack_schema: dict[str, Any] = {
                 "type": "function",
@@ -532,6 +527,17 @@ class SlackAdapter(SimpleAdapter[Any]):
         )
         self._inner.features = resolved
         return resolved
+
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Mirror post-negotiation features onto the wrapped inner adapter too.
+
+        ``_resolve_features`` mirrors into ``self._inner.features`` only once,
+        at construction, so this keeps it in sync afterward. Delegates to the
+        inner's own hook (not a direct assignment) so an inner adapter that
+        overrides it for its own caching still runs.
+        """
+        super().apply_effective_features(features)
+        self._inner.apply_effective_features(features)
 
     @property
     def inner(self) -> SimpleAdapter[Any]:

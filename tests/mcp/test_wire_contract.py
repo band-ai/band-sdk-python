@@ -41,6 +41,7 @@ from band.integrations.mcp.engine import WideEventMessageType, build_engine
 from band.runtime.tools import (
     AGENT_ROOM_BOUND_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,
+    FILE_TOOL_NAMES,
     AddParticipantInput,
     ListContactRequestsInput,
     ListSentContactRequestsInput,
@@ -106,6 +107,13 @@ _PROFILES: dict[str, Config] = {
     "full": Config(scope=["agent", "human"], tools=["contacts", "memory"]),
     "pinned": Config(scope=["agent"], tools=[], room_id="r_pinned_snapshot"),
 }
+
+# band-mcp's `--tools` vocabulary has no `files` group yet (Capability.FILES
+# has no platform-negotiation moment in this CLI's synchronous startup), so
+# these room-bound tools are never reachable through it even on the "full"
+# profile -- excluded from both room-binding checks below rather than
+# asserted unreachable.
+_ROOM_BOUND_TOOL_NAMES_IN_BAND_MCP = AGENT_ROOM_BOUND_TOOL_NAMES - FILE_TOOL_NAMES
 
 
 def _build_mcp(config: Config) -> FastMCP:
@@ -307,12 +315,12 @@ async def test_full_profile_matches_contract() -> None:
     """Every curated tool, plus every room-bound tool, advertises the shape
     its real Pydantic model/StrEnum sources define."""
     live = await _current_schemas("full")
-    for name in sorted(AGENT_ROOM_BOUND_TOOL_NAMES | CONTRACTS.keys()):
+    for name in sorted(_ROOM_BOUND_TOOL_NAMES_IN_BAND_MCP | CONTRACTS.keys()):
         _assert_tool_matches(
             name,
             live[name],
             CONTRACTS.get(name, ToolContract()),
-            chat_id_expected=name in AGENT_ROOM_BOUND_TOOL_NAMES,
+            chat_id_expected=name in _ROOM_BOUND_TOOL_NAMES_IN_BAND_MCP,
         )
 
 
@@ -320,7 +328,7 @@ async def test_pinned_profile_hides_chat_id_and_matches_contract() -> None:
     """Pinned mode hides chat_id from every room-bound tool it advertises,
     without disturbing any other declared field."""
     live = await _current_schemas("pinned")
-    for name in sorted(AGENT_ROOM_BOUND_TOOL_NAMES):
+    for name in sorted(_ROOM_BOUND_TOOL_NAMES_IN_BAND_MCP):
         _assert_tool_matches(
             name,
             live[name],

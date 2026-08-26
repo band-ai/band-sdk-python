@@ -422,8 +422,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         definitions = filter_tool_schemas(
             list(
                 iter_tool_definitions(
-                    include_memory=Capability.MEMORY in self.features.capabilities,
-                    include_contacts=Capability.CONTACTS in self.features.capabilities,
+                    capabilities=self.features.capabilities,
                 )
             ),
             self.features,

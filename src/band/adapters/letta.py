@@ -142,8 +142,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self._mcp = LettaMCPBridge(
             self.config.mcp,
             tool_definitions=iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
+                capabilities=self.features.capabilities,
             ),
             get_tools=self._get_room_tools,
             teardown_timeout_s=self.config.teardown_timeout_s,

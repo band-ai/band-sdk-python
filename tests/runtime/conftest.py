@@ -94,6 +94,7 @@ def make_link_mock(
     agent_name: str = "TestBot",
     agent_description: str = "a test agent",
     history_pages: list[list[ChatMessage]] | None = None,
+    feature_flags: dict[str, bool] | None = None,
 ) -> MagicMock:
     """Build a fake BandLink.
 
@@ -135,7 +136,7 @@ def make_link_mock(
             description=agent_description,
             owner_uuid="owner-1",
             updated_at=datetime.now(timezone.utc),
-            feature_flags={},
+            feature_flags=feature_flags or {},
         )
     )
     link.rest.agent_api_identity.get_agent_me = AsyncMock(

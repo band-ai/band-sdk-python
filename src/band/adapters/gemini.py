@@ -416,8 +416,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         declarations: list[types.FunctionDeclaration] = []
 
         openai_schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
         for schema in openai_schemas:
             function = schema.get("function", {})

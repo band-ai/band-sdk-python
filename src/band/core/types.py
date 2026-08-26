@@ -90,6 +90,10 @@ class Capability(_FlagEnum):
 
     MEMORY = "memory"
     CONTACTS = "contacts"
+    FILES = "files"
+
+
+ALL_CAPABILITIES: frozenset[Capability] = frozenset(Capability)
 
 
 class Emit(_FlagEnum):

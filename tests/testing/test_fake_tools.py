@@ -8,7 +8,7 @@ import pytest
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.runtime.tools import serialize_tool_result
+from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools
 
 
@@ -315,6 +315,84 @@ class TestCreateChatroom:
         result = await tools.create_chatroom()
 
         assert result.startswith("room-")
+
+
+class TestFileTools:
+    """Tests for list_room_files / read_room_file / send_room_file."""
+
+    async def test_seeded_files_are_listed(self) -> None:
+        seeded = {
+            "id": "file-1",
+            "name": "notes.txt",
+            "content_type": "text/plain",
+            "bytes": 12,
+            "sha256": "a" * 64,
+            "has_thumb": False,
+        }
+        tools = FakeAgentTools(files=[seeded])
+
+        listing = await tools.list_room_files()
+
+        assert [f["id"] for f in listing["data"]] == ["file-1"]
+
+    async def test_read_room_file_describes_a_seeded_file(self) -> None:
+        seeded = {
+            "id": "file-1",
+            "name": "notes.txt",
+            "content_type": "text/plain",
+            "bytes": 12,
+            "sha256": "a" * 64,
+            "has_thumb": False,
+        }
+        tools = FakeAgentTools(files=[seeded])
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["name"] == "notes.txt"
+
+    async def test_read_room_file_unknown_id_raises(self) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(BandToolError):
+            await tools.read_room_file("nope")
+
+    async def test_send_room_file_stores_and_sends_message(self) -> None:
+        tools = FakeAgentTools()
+
+        result = await tools.send_room_file(
+            "hello world", "report.txt", caption="here", mentions=["user-1"]
+        )
+
+        assert [f["name"] for f in tools.files] == ["report.txt"]
+        assert result["attachment"]["name"] == "report.txt"
+        assert tools.messages_sent[0]["content"] == "here"
+
+    async def test_send_room_file_defaults_caption_when_omitted(self) -> None:
+        """Mirrors AgentTools.send_room_file's real fix: the platform
+        rejects blank message content, so the fake must not let a
+        captionless call pass a unit test that the real API would reject."""
+        tools = FakeAgentTools()
+
+        await tools.send_room_file("hello world", "report.txt", mentions=["user-1"])
+
+        assert tools.messages_sent[0]["content"] == DEFAULT_FILE_CAPTION.format(
+            filename="report.txt"
+        )
+
+    async def test_send_room_file_rejects_a_message_with_no_mentions(self) -> None:
+        """Reuses send_message's mention requirement, matching the real tool.
+
+        Same order as the real tool: mentions are validated via send_message
+        before the file is recorded, so a rejected call leaves no orphaned
+        upload behind.
+        """
+        tools = FakeAgentTools()
+
+        with pytest.raises(BandToolError, match="At least one mention is required"):
+            await tools.send_room_file("hello world", "report.txt")
+
+        assert tools.messages_sent == []
+        assert tools.files == []
 
 
 class TestToolSchemas:
