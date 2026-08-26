@@ -33,7 +33,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.runtime.capabilities import with_hub_room_contacts
-from band.runtime.participants import apply_roster_change, participant_snapshot
+from band.runtime.participants import log_roster_errors, participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -2136,17 +2136,16 @@ class AgentTools(AgentToolsProtocol):
         )
         self._participants.append(new_participant)
         # Sync back to ExecutionContext so future turns see the update. The
-        # REST add above already succeeded server-side, so a local roster
-        # failure (a new failure surface as of this migration) must not fail
-        # this tool call out from under a real, already-applied change.
+        # REST add already succeeded server-side, so a local roster failure
+        # must not fail this tool call after that change was applied.
         if self._ctx is not None:
             ctx = self._ctx
-            apply_roster_change(
+            with log_roster_errors(
                 logger,
                 room_id=self.room_id,
                 action="add participant to context",
-                fn=lambda: ctx.add_participant(new_participant),
-            )
+            ):
+                ctx.add_participant(new_participant)
         logger.debug(
             "Updated participant cache: added %s, total=%s",
             participant_name,
@@ -2284,19 +2283,17 @@ class AgentTools(AgentToolsProtocol):
         # boundaries. Without this, a new AgentTools built via from_context()
         # on the next turn would revert to the old participant snapshot.
         # set_participants treats the REST list as authoritative membership
-        # (stale entries drop out, even ones this AgentTools never saw) while
-        # merging fields per id, so a field the list endpoint omits (e.g.
-        # description) is never erased once learned. A new failure surface as
-        # of this migration: it can raise ValueError on a duplicate id: log
-        # and keep the previous ctx roster rather than crash this tool call.
+        # while retaining known fields omitted by this endpoint. Duplicate
+        # ids leave the previous context roster intact and must not fail the
+        # tool call.
         if self._ctx is not None:
             ctx = self._ctx
-            apply_roster_change(
+            with log_roster_errors(
                 logger,
                 room_id=self.room_id,
                 action="sync participants to context",
-                fn=lambda: ctx.set_participants(refreshed),
-            )
+            ):
+                ctx.set_participants(refreshed)
 
         self._participants = refreshed
         return response.data

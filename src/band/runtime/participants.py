@@ -4,7 +4,8 @@ error logging for band_sdk_core.ParticipantRoster's failure surfaces."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
 from band.logging_config import core_issues, trace_context_extra
@@ -41,17 +42,12 @@ def log_roster_error(
     )
 
 
-def apply_roster_change(
-    logger_: logging.Logger, *, room_id: str, action: str, fn: Callable[[], object]
-) -> None:
-    """Run a single ``ParticipantRoster`` mutation, logging via
-    :func:`log_roster_error` on its two new failure surfaces instead of
-    raising. Every one of this migration's roster-mutation call sites keeps
-    the previous roster state rather than propagating -- see
-    :func:`log_roster_error` for why -- so they share this one try/except
-    shape.
-    """
+@contextmanager
+def log_roster_errors(
+    logger_: logging.Logger, *, room_id: str, action: str
+) -> Iterator[None]:
+    """Log and suppress roster validation failures within the block."""
     try:
-        fn()
+        yield
     except (ValueError, TypeError) as err:
         log_roster_error(logger_, room_id=room_id, action=action, err=err)
