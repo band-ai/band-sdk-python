@@ -20,8 +20,14 @@ from __future__ import annotations
 import pytest
 
 
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    AgentMemoryCreateRequest,
+    UnprocessableEntityError,
+)
 from band.core.memory_types import (
     MemoryListScope,
+    MemorySegment,
     MemoryStatus,
     MemoryStoreScope,
     MemorySystem,
@@ -29,6 +35,7 @@ from band.core.memory_types import (
 )
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
     MEMORY_SECRETARY_AGENT,
@@ -42,7 +49,11 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.observations import MemoryTool
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
+    ResourceManager,
+    agent_rest_client,
+)
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -55,7 +66,7 @@ async def test_memory_stored(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """The store tool fired (call layer) and an org-scoped memory landed in the
+    """The store tool fired (call layer) and an agent-scoped memory landed in the
     store (store layer), both carrying our marker."""
     marker = unique_marker("mem")
     room_id = await resource_manager.provision_room(
@@ -72,18 +83,18 @@ async def test_memory_stored(
         # One read, both layers (call layer from room events, store layer from
         # the agent's own memories filtered to our marker).
         mem = await capture.memory(
-            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     mem.calls.assert_store_called(
         content=marker,
-        scope=MemoryStoreScope.ORGANIZATION,
+        scope=MemoryStoreScope.AGENT,
         system=MemorySystem.LONG_TERM,
         type=WorkingLongTermMemoryType.SEMANTIC,
     )
     mem.stored.assert_stored(
         content=marker,
-        scope=MemoryStoreScope.ORGANIZATION,
+        scope=MemoryStoreScope.AGENT,
         system=MemorySystem.LONG_TERM,
         type=WorkingLongTermMemoryType.SEMANTIC,
     )
@@ -208,7 +219,7 @@ async def test_memory_excluded_from_general_tool_view(
         general = await capture.tool_calls(sender_id=agent.id)
         with_memory = await capture.tool_calls(sender_id=agent.id, include_memory=True)
         mem = await capture.memory(
-            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     # Excluded from the general view by default...
@@ -246,7 +257,7 @@ async def test_memory_lifecycle_supersede(
         # status=ALL so the now-superseded record is still returned.
         mem = await capture.memory(
             agent,
-            scope=MemoryListScope.ORGANIZATION,
+            scope=MemoryListScope.AGENT,
             content_query=marker,
             status=MemoryStatus.ALL,
         )
@@ -282,7 +293,7 @@ async def test_memory_lifecycle_archive(
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
             agent,
-            scope=MemoryListScope.ORGANIZATION,
+            scope=MemoryListScope.AGENT,
             content_query=marker,
             status=MemoryStatus.ALL,
         )
@@ -315,7 +326,7 @@ async def test_memory_recall(
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
-            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     mem.calls.assert_store_called(content=marker)
@@ -347,7 +358,7 @@ async def test_memory_store_layer_filtering(
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
-            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     # Both landed; slice the single collection by dimension.
@@ -362,19 +373,23 @@ async def test_memory_store_layer_filtering(
 
 @with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
-async def test_memory_visible_cross_agent_cross_room(
+async def test_memory_agent_scope_isolated_across_agents(
     agents: list[ProvisionedAgent],
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """An organization-scoped memory stored by one agent in one room is visible to
-    a different agent reading from a different room -- memory is org-scoped, not
-    room-scoped, and org memories are shared across agents in the same org."""
+    """An agent-scoped memory is private to the agent that stored it -- a
+    different agent's own agent-scoped read never returns it, even filtered to
+    the same marker. This is the isolation boundary PLT-1396 hardened
+    (organization-scoped reads used to leak cross-tenant when the reading
+    agent's owner had no organization); agent scope has no organization_id to
+    go missing, so nothing but the identity filter keeps this true -- worth
+    locking down directly."""
     agent_w, agent_r = agents
-    marker = unique_marker("xorg")
+    marker = unique_marker("xagent")
     room_w = await resource_manager.provision_room(
-        title="e2e-memory-xroom-writer", participants=[agent_w.id]
+        title="e2e-memory-xagent-writer", participants=[agent_w.id]
     )
     async with reply_capture(room_w) as cap_w:
         mid = await user_ops.send_message(
@@ -385,23 +400,75 @@ async def test_memory_visible_cross_agent_cross_room(
         )
         await cap_w.wait_for_processed(mid, agent_w.id)
         mem_w = await cap_w.memory(
-            agent_w, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent_w, scope=MemoryListScope.AGENT, content_query=marker
         )
 
-    # Different agent, different room: read the store through the reader's own
-    # client. No turn is needed -- the writer's store is already durable.
+    # Different agent, different room: read through the reader's own client. No
+    # turn is needed -- the writer's store is already durable.
     room_r = await resource_manager.provision_room(
-        title="e2e-memory-xroom-reader", participants=[agent_r.id]
+        title="e2e-memory-xagent-reader", participants=[agent_r.id]
     )
     async with reply_capture(room_r) as cap_r:
         mem_r = await cap_r.memory(
-            agent_r, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent_r, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     # Writer stored it (both layers).
     mem_w.calls.assert_store_called(content=marker)
     mem_w.stored.assert_stored(content=marker)
-    # Reader, in a different room, sees the same org memory without having written
-    # anything itself.
-    mem_r.stored.assert_stored(content=marker)
+    # Reader, a different agent in a different room, sees none of the writer's
+    # agent-scoped memory.
+    mem_r.stored.assert_none()
     assert not mem_r.calls, "reader should not have called any memory tool"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_memory_organization_scope_rejected_on_list(
+    resource_manager: ResourceManager,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """A read explicitly asking for organization scope gets a real 422 from the
+    live platform, not a silent empty 200, when the agent's owner belongs to no
+    organization -- true of every agent this baseline provisions (see
+    INT-1307). This is the exact contract PLT-1396 shipped: before it, a caller
+    in this state could read every organization-scoped memory in the database,
+    because the tenancy filter silently dropped when organization_id was nil.
+    A direct REST call against a provisioned-but-never-run identity -- no LLM
+    turn needed, deterministic, and it exercises the live platform on every run."""
+    agent = await resource_manager.provision_agent("org-scope-list-rejected")
+    client = agent_rest_client(agent, baseline_settings)
+
+    with pytest.raises(UnprocessableEntityError) as exc_info:
+        await client.agent_api_memories.list_agent_memories(
+            scope=MemoryListScope.ORGANIZATION.value,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    assert exc_info.value.body["error"]["code"] == "org_scope_requires_organization"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_memory_organization_scope_rejected_on_store(
+    resource_manager: ResourceManager,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """The write-side twin of the read rejection above: storing with an
+    explicit organization scope 422s for an agent whose owner has no
+    organization, rather than silently minting an unreadable orphan row."""
+    agent = await resource_manager.provision_agent("org-scope-store-rejected")
+    client = agent_rest_client(agent, baseline_settings)
+
+    with pytest.raises(UnprocessableEntityError) as exc_info:
+        await client.agent_api_memories.create_agent_memory(
+            memory=AgentMemoryCreateRequest(
+                content=unique_marker("orgreject"),
+                system=MemorySystem.LONG_TERM.value,
+                type=WorkingLongTermMemoryType.SEMANTIC.value,
+                segment=MemorySegment.USER.value,
+                thought="probing the organization-scope guard",
+                scope=MemoryStoreScope.ORGANIZATION.value,
+            ),
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    assert "organization_id" in exc_info.value.body["error"]["details"]

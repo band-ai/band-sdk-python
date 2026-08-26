@@ -376,14 +376,21 @@ class RespondContactRequestInput(BaseModel):
 class ListMemoriesInput(BaseModel):
     """List memories accessible to the agent.
 
-    Returns memories about the specified subject (cross-agent sharing)
-    and organization-wide shared memories.
+    Returns this agent's own private memories, memories about the specified
+    subject (cross-agent sharing), and organization-wide shared memories.
     """
 
     subject_id: str | None = Field(
         None, description="Filter by subject UUID (required for subject-scoped queries)"
     )
-    scope: MemoryListScope | None = Field(None, description="Filter by scope")
+    scope: MemoryListScope | None = Field(
+        None,
+        description=(
+            'Filter by scope. "organization" requires the agent\'s owner to '
+            'belong to an organization; "agent" (private to this agent) works '
+            "regardless."
+        ),
+    )
     system: MemorySystem | None = Field(None, description="Filter by memory system")
     type: MemoryType | None = Field(None, description="Filter by memory type")
     segment: MemorySegment | None = Field(None, description="Filter by segment")
@@ -396,8 +403,10 @@ class StoreMemoryInput(BaseModel):
     """Store a new memory entry.
 
     The memory will be associated with the authenticated agent as the source.
+    For agent-scoped memories (private to this agent), omit subject_id.
     For subject-scoped memories, provide a subject_id.
-    For organization-scoped memories, omit subject_id.
+    For organization-scoped memories, omit subject_id; this requires the
+    agent's owner to belong to an organization.
     """
 
     content: str = Field(..., description="The memory content")
@@ -405,7 +414,14 @@ class StoreMemoryInput(BaseModel):
     type: MemoryType = Field(..., description=memory_type_field_description())
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: MemoryStoreScope = Field(..., description="Visibility scope")
+    scope: MemoryStoreScope = Field(
+        ...,
+        description=(
+            'Visibility scope. "organization" requires the agent\'s owner to '
+            'belong to an organization; "agent" (private to this agent) works '
+            "regardless."
+        ),
+    )
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",
@@ -2438,7 +2454,9 @@ class AgentTools(AgentToolsProtocol):
 
         Args:
             subject_id: Filter by subject UUID
-            scope: Filter by scope (subject, organization, all)
+            scope: Filter by scope (agent, subject, organization, all). "organization"
+                requires the agent's owner to belong to an organization; "agent"
+                (private to this agent) works regardless.
             system: Filter by memory system (sensory, working, long_term)
             type: Filter by memory type
             segment: Filter by segment (user, agent, tool, guideline)
@@ -2496,7 +2514,9 @@ class AgentTools(AgentToolsProtocol):
             type: Memory type (iconic, echoic, haptic, episodic, semantic, procedural)
             segment: Logical segment (user, agent, tool, guideline)
             thought: Agent's reasoning for storing this memory
-            scope: Visibility scope (subject, organization)
+            scope: Visibility scope (agent, subject, organization). "organization"
+                requires the agent's owner to belong to an organization; "agent"
+                (private to this agent, no subject_id) works regardless.
             subject_id: UUID of the subject (required for subject scope)
             metadata: Additional metadata (tags, references)
 

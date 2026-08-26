@@ -50,6 +50,10 @@ class TestValidateSubjectScope:
         """Organization-scoped memories do not need a subject ID."""
         validate_subject_scope(MemoryStoreScope.ORGANIZATION, None)
 
+    def test_allows_agent_scope_without_subject_id(self) -> None:
+        """Agent-scoped memories do not need a subject ID."""
+        validate_subject_scope(MemoryStoreScope.AGENT, None)
+
     def test_allows_subject_scope_with_subject_id(self) -> None:
         """Subject-scoped memories are valid when a subject ID is present."""
         validate_subject_scope(
@@ -60,4 +64,12 @@ class TestValidateSubjectScope:
     def test_rejects_subject_scope_without_subject_id(self) -> None:
         """Subject-scoped memories require a concrete subject ID."""
         with pytest.raises(ValueError, match="requires a subject_id"):
+            validate_subject_scope(MemoryStoreScope.SUBJECT, None)
+
+    def test_no_subject_id_error_recommends_agent_scope(self) -> None:
+        """The fallback the error message recommends must be `scope="agent"`,
+        not `scope="organization"` -- organization scope 422s for the common
+        case (an agent whose owner has no organization; see INT-1307), so
+        pointing an LLM there on retry just guarantees the next call fails too."""
+        with pytest.raises(ValueError, match='scope="agent"'):
             validate_subject_scope(MemoryStoreScope.SUBJECT, None)

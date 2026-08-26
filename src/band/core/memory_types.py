@@ -47,16 +47,18 @@ class MemorySegment(StrEnum):
 class MemoryStoreScope(StrEnum):
     """Visibility scope for ``band_store_memory``."""
 
+    AGENT = "agent"  # Private to this agent; no subject_id
     SUBJECT = "subject"  # About one person/agent; requires subject_id
-    ORGANIZATION = "organization"  # Shared org-wide
+    ORGANIZATION = "organization"  # Shared org-wide; requires the agent's owner to belong to an organization
 
 
 class MemoryListScope(StrEnum):
     """Scope filter for ``band_list_memories``."""
 
+    AGENT = "agent"  # Agent-private memories only
     SUBJECT = "subject"  # Subject-scoped memories only
     ORGANIZATION = "organization"  # Organization-scoped memories only
-    ALL = "all"  # Both scopes (no scope filter)
+    ALL = "all"  # Every scope (no scope filter)
 
 
 class MemoryStatus(StrEnum):
@@ -89,8 +91,8 @@ def validate_subject_scope(
         raise ValueError(
             'scope="subject" requires a subject_id (the UUID of the person or '
             "agent the memory is about). You did not provide one. If you do not "
-            'have a concrete subject UUID, retry with scope="organization" and '
-            "omit subject_id. Do not invent a UUID."
+            'have a concrete subject UUID, retry with scope="agent" and omit '
+            "subject_id. Do not invent a UUID."
         )
 
 

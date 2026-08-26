@@ -96,7 +96,7 @@ async def main() -> None:
     store_reply = await run_turn(
         options,
         "Store this fact as a durable memory using band_store_memory with "
-        f'system="long_term", type="semantic", segment="agent", scope="organization": '
+        f'system="long_term", type="semantic", segment="agent", scope="agent": '
         f'"{fact}" Then tell me the memory id you got back.',
     )
     logger.info("Claude (session 1): %s", store_reply)
@@ -106,7 +106,7 @@ async def main() -> None:
     )
     recall_reply = await run_turn(
         options,
-        "Use band_list_memories to search your organization-scoped semantic memories "
+        "Use band_list_memories to search your agent-scoped semantic memories "
         f'for content containing "stdio-{nonce}", then tell me the passphrase you found.',
     )
     logger.info("Claude (session 2): %s", recall_reply)

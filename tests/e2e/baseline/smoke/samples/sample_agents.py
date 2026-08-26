@@ -183,7 +183,7 @@ def emit_thoughts_instruction(markers: list[str]) -> str:
 
 
 def store_memory_instruction(marker: str) -> str:
-    """User message forcing one organization-scoped ``band_store_memory`` whose
+    """User message forcing one agent-scoped ``band_store_memory`` whose
     content carries ``marker`` verbatim, with an exact valid system/type combo."""
     return (
         "Call band_store_memory exactly once with these exact arguments: "
@@ -191,7 +191,7 @@ def store_memory_instruction(marker: str) -> str:
         f"system = {MemorySystem.LONG_TERM.value}; "
         f"type = {WorkingLongTermMemoryType.SEMANTIC.value}; "
         f"segment = {MemorySegment.USER.value}; "
-        f"scope = {MemoryStoreScope.ORGANIZATION.value}; "
+        f"scope = {MemoryStoreScope.AGENT.value}; "
         "thought = a brief reason. Do not include subject_id. Do not call any "
         "other tool."
     )
@@ -240,14 +240,14 @@ def store_subject_memory_inferred_instruction(marker: str) -> str:
 
 def supersede_memory_instruction(marker: str) -> str:
     """User message forcing a store-then-supersede lifecycle in one turn: store an
-    org-scoped memory carrying ``marker``, then supersede it by the id the store
+    agent-scoped memory carrying ``marker``, then supersede it by the id the store
     call returns."""
     return (
         f"First call {MemoryTool.STORE.value} with content including the exact "
         f"token {marker}, system={MemorySystem.LONG_TERM.value}, "
         f"type={WorkingLongTermMemoryType.SEMANTIC.value}, "
         f"segment={MemorySegment.USER.value}, "
-        f"scope={MemoryStoreScope.ORGANIZATION.value}, and a brief thought. "
+        f"scope={MemoryStoreScope.AGENT.value}, and a brief thought. "
         f"Then call {MemoryTool.SUPERSEDE.value} with memory_id set to the id "
         "returned by the store call. Do not call any other tool."
     )
@@ -255,14 +255,14 @@ def supersede_memory_instruction(marker: str) -> str:
 
 def archive_memory_instruction(marker: str) -> str:
     """User message forcing a store-then-archive lifecycle in one turn: store an
-    org-scoped memory carrying ``marker``, then archive it by the id the store
+    agent-scoped memory carrying ``marker``, then archive it by the id the store
     call returns."""
     return (
         f"First call {MemoryTool.STORE.value} with content including the exact "
         f"token {marker}, system={MemorySystem.LONG_TERM.value}, "
         f"type={WorkingLongTermMemoryType.SEMANTIC.value}, "
         f"segment={MemorySegment.USER.value}, "
-        f"scope={MemoryStoreScope.ORGANIZATION.value}, and a brief thought. "
+        f"scope={MemoryStoreScope.AGENT.value}, and a brief thought. "
         f"Then call {MemoryTool.ARCHIVE.value} with memory_id set to the id "
         "returned by the store call. Do not call any other tool."
     )
@@ -270,14 +270,14 @@ def archive_memory_instruction(marker: str) -> str:
 
 def recall_memory_instruction(marker: str) -> str:
     """User message forcing a store-then-recall flow in one turn: store an
-    org-scoped memory carrying ``marker``, then look it back up with the list and
+    agent-scoped memory carrying ``marker``, then look it back up with the list and
     get tools (exercises the read-side memory tools)."""
     return (
         f"First call {MemoryTool.STORE.value} with content including the exact "
         f"token {marker}, system={MemorySystem.LONG_TERM.value}, "
         f"type={WorkingLongTermMemoryType.SEMANTIC.value}, "
         f"segment={MemorySegment.USER.value}, "
-        f"scope={MemoryStoreScope.ORGANIZATION.value}, and a brief thought. "
+        f"scope={MemoryStoreScope.AGENT.value}, and a brief thought. "
         f"Then call {MemoryTool.LIST.value} with content_query={marker} to find "
         f"it. Then call {MemoryTool.GET.value} with memory_id set to the id of a "
         "memory the list returned. Do not call any other tool."
@@ -285,7 +285,7 @@ def recall_memory_instruction(marker: str) -> str:
 
 
 def retrieve_memory_instruction(marker: str) -> str:
-    """User message forcing retrieval of an already-stored org memory, then a
+    """User message forcing retrieval of an already-stored agent memory, then a
     chat reply naming what was found -- the rehydration smoke asserts on that
     reply's text, so the instruction must explicitly ask for it rather than
     leaving the agent to infer it against a system prompt that otherwise tells
@@ -299,14 +299,14 @@ def retrieve_memory_instruction(marker: str) -> str:
 
 
 def store_two_memories_instruction(marker: str) -> str:
-    """User message forcing two org-scoped stores that both carry ``marker`` but
+    """User message forcing two agent-scoped stores that both carry ``marker`` but
     differ in system/type, so one ``content_query=marker`` read returns both and
     the store-layer view can be sliced by dimension."""
     return (
         f"Call {MemoryTool.STORE.value} twice, both with content including the "
         f"exact token {marker} and a brief thought, both "
         f"segment={MemorySegment.USER.value} "
-        f"scope={MemoryStoreScope.ORGANIZATION.value}. First store: "
+        f"scope={MemoryStoreScope.AGENT.value}. First store: "
         f"system={MemorySystem.LONG_TERM.value}, "
         f"type={WorkingLongTermMemoryType.SEMANTIC.value}. Second store: "
         f"system={MemorySystem.WORKING.value}, "
