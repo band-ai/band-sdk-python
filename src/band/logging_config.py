@@ -8,6 +8,7 @@ import logging.config
 import logging.handlers
 import os
 import sys
+import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -99,13 +100,11 @@ OTEL_CORRELATION_FIELDS: tuple[str, ...] = (
     "otelServiceName",
 )
 
-# The active W3C traceparent for the turn currently being processed --
+# The correlation id for the turn currently being processed --
 # ``trace_context_scope()`` sets it for the duration of one
 # ``SimpleAdapter.on_event()`` call; ``_TraceContextFilter`` reads it onto
-# every LogRecord. Same value band-sdk-core attaches to a rejected event's
-# ``ValueError.trace_context`` (``client/streaming/wire.py``'s
-# ``current_traceparent()`` calls this module's copy), so a dropped-event log
-# line and every other log line in that turn correlate on the same id.
+# every LogRecord, so every log line in a turn shares one id whether or not
+# OpenTelemetry is installed.
 TRACE_CONTEXT: ContextVar[str | None] = ContextVar("band_trace_context", default=None)
 
 
@@ -120,14 +119,16 @@ def current_traceparent() -> str | None:
 
 @contextmanager
 def trace_context_scope() -> Iterator[None]:
-    """Set :data:`TRACE_CONTEXT` to the active traceparent for one turn.
+    """Set :data:`TRACE_CONTEXT` for one turn: the active W3C traceparent when
+    a span is active, otherwise a generated id -- every turn gets one either
+    way, not just OTel-instrumented ones.
 
     Read fresh at scope entry (not passed in) so nested/sequential turns each
-    pick up whatever span is active when *they* start, not a stale value from
-    an earlier turn. Always resets on exit, including when the wrapped code
+    pick up whatever's active when *they* start, not a stale value from an
+    earlier turn. Always resets on exit, including when the wrapped code
     raises.
     """
-    token = TRACE_CONTEXT.set(current_traceparent())
+    token = TRACE_CONTEXT.set(current_traceparent() or uuid.uuid4().hex)
     try:
         yield
     finally:

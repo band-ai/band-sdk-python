@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import band.logging_config as logging_config_module
 from band import (
     BandConfigError,
     LoggingStyle,
@@ -239,6 +240,26 @@ def test_trace_context_scope_resets_after_the_wrapped_code_raises() -> None:
         with trace_context_scope():
             raise RuntimeError("boom")
     assert TRACE_CONTEXT.get() is None
+
+
+def test_trace_context_scope_generates_an_id_without_opentelemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No active span -- the turn still gets a correlation id, not None.
+
+    Turn correlation must not be gated on OpenTelemetry being installed;
+    each turn's generated id is also distinct from the last.
+    """
+    monkeypatch.setattr(logging_config_module, "current_traceparent", lambda: None)
+
+    with trace_context_scope():
+        first = TRACE_CONTEXT.get()
+    with trace_context_scope():
+        second = TRACE_CONTEXT.get()
+
+    assert first is not None
+    assert second is not None
+    assert first != second
 
 
 def test_trace_context_scope_nested_restores_the_outer_value(
