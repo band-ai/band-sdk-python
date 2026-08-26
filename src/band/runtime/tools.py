@@ -13,7 +13,7 @@ import re
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
@@ -1511,6 +1511,18 @@ CAPABILITY_TOOL_NAMES: dict[Capability, frozenset[str]] = {
 DEFAULT_CAPABILITIES: frozenset[Capability] = frozenset({Capability.CONTACTS})
 
 
+def resolve_capabilities(
+    capabilities: frozenset[Capability] | None,
+) -> frozenset[Capability]:
+    """Apply the ``capabilities=None`` -> ``DEFAULT_CAPABILITIES`` default.
+
+    Single source of truth for that resolution, shared by every call site
+    that accepts an optional capability set (``iter_tool_definitions``,
+    ``AgentTools.get_tool_schemas``).
+    """
+    return DEFAULT_CAPABILITIES if capabilities is None else capabilities
+
+
 def get_band_tool_category(name: str) -> str | None:
     """Return the AdapterFeatures category ("chat"/"contacts"/"memory") for a tool."""
     return _TOOL_CATEGORIES.get(name)
@@ -1676,7 +1688,7 @@ def iter_tool_definitions(
         capabilities: Optional tool categories to include. ``None`` (default)
             means contacts only, for backward compatibility.
     """
-    resolved = DEFAULT_CAPABILITIES if capabilities is None else capabilities
+    resolved = resolve_capabilities(capabilities)
     excluded: set[str] = set()
     for capability, names in CAPABILITY_TOOL_NAMES.items():
         if capability not in resolved:
@@ -2625,13 +2637,18 @@ class AgentTools(AgentToolsProtocol):
         response = await self._list_message_page(cursor)
         seen: set[str] = set()
         attachments: list[dict[str, Any]] = []
-        for message in response.data:
-            for attachment in message.attachments or []:
-                if attachment.id in seen:
-                    continue
-                seen.add(attachment.id)
-                attachments.append(attachment.model_dump())
+        for attachment in self._attachments_in(response.data):
+            if attachment.id in seen:
+                continue
+            seen.add(attachment.id)
+            attachments.append(attachment.model_dump())
         return {"data": attachments, "next_cursor": response.metadata.next_cursor}
+
+    @staticmethod
+    def _attachments_in(messages: Collection[Any]) -> Iterator[Attachment]:
+        """Yield every attachment across a page's messages, in message order."""
+        for message in messages:
+            yield from message.attachments or []
 
     async def _iter_message_pages(self) -> AsyncIterator[Any]:
         """Walk every page of the room's message history, oldest cursor first.
@@ -2657,10 +2674,9 @@ class AgentTools(AgentToolsProtocol):
         attachment by id" endpoint to reach it directly.
         """
         async for response in self._iter_message_pages():
-            for message in response.data:
-                for attachment in message.attachments or []:
-                    if attachment.id == file_id:
-                        return attachment
+            for attachment in self._attachments_in(response.data):
+                if attachment.id == file_id:
+                    return attachment
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
 
     async def _download_file(self, file_id: str) -> bytes:
@@ -2725,13 +2741,13 @@ class AgentTools(AgentToolsProtocol):
                 "content_type": attachment.content_type,
                 "bytes": attachment.bytes,
             }
-            try:
-                result["text"] = body.decode("utf-8")
-            except UnicodeDecodeError:
-                # content_type has no charset (derived from magic bytes
-                # alone), so a non-UTF-8 file can't be decoded correctly.
-                # Say so rather than silently handing back replaced bytes.
-                result["text"] = body.decode("utf-8", errors="replace")
+            # content_type has no charset (derived from magic bytes alone), so
+            # a non-UTF-8 file can't be decoded correctly. Decode once with
+            # replacement and detect corruption from the result rather than
+            # a second strict-then-lenient decode pass over the same bytes.
+            text = body.decode("utf-8", errors="replace")
+            result["text"] = text
+            if "�" in text:
                 result["description"] = (
                     "This file is not valid UTF-8; non-UTF-8 bytes were "
                     "replaced with �, so the text above may not exactly "
@@ -2992,7 +3008,7 @@ class AgentTools(AgentToolsProtocol):
                 f"Invalid format: {format}. Must be 'openai' or 'anthropic'"
             )
 
-        resolved = DEFAULT_CAPABILITIES if capabilities is None else capabilities
+        resolved = resolve_capabilities(capabilities)
         effective_capabilities = with_hub_room_contacts(
             resolved, is_hub_room=self.is_hub_room
         )
