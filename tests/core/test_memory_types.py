@@ -67,9 +67,8 @@ class TestValidateSubjectScope:
             validate_subject_scope(MemoryStoreScope.SUBJECT, None)
 
     def test_no_subject_id_error_recommends_agent_scope(self) -> None:
-        """The fallback the error message recommends must be `scope="agent"`,
-        not `scope="organization"` -- organization scope 422s for the common
-        case (an agent whose owner has no organization; see INT-1307), so
-        pointing an LLM there on retry just guarantees the next call fails too."""
+        """The fallback must be `scope="agent"`, not `scope="organization"` --
+        organization scope fails for an agent whose owner has no organization,
+        so pointing an LLM there on retry just guarantees the next call fails too."""
         with pytest.raises(ValueError, match='scope="agent"'):
             validate_subject_scope(MemoryStoreScope.SUBJECT, None)

@@ -156,11 +156,10 @@ class TestCapabilityGatedSections:
         assert "band_store_memory" in prompt
 
     def test_memory_section_guides_toward_agent_scope(self):
-        """Every agent's live guidance must offer `scope="agent"`, not just
-        `subject`/`organization` -- an agent whose owner has no organization
-        (the common case; see INT-1307) can only express private memory
-        through agent scope. Losing this line silently steers every real
-        agent back toward organization scope, which 422s for them."""
+        """Guidance must offer `scope="agent"`, not just `subject`/`organization`
+        -- an agent whose owner has no organization can only express private
+        memory through agent scope; losing this line steers every agent back
+        toward organization scope, which fails for them."""
         features = AdapterFeatures(capabilities={Capability.MEMORY})
         prompt = render_system_prompt(
             agent_name="Bot",
