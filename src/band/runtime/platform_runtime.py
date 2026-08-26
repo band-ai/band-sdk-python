@@ -72,6 +72,7 @@ class PlatformRuntime:
         self._instance_guard: SingleInstanceGuard | None = None
         self._agent_name: str = ""
         self._agent_description: str = ""
+        self._feature_flags: dict[str, bool] | None = None
         self._contact_handler: ContactEventHandler | None = None
         self._pending_broadcasts: list[str] = []
         self._contacts_subscribed: bool = False
@@ -106,6 +107,11 @@ class PlatformRuntime:
     @property
     def agent_description(self) -> str:
         return self._agent_description
+
+    @property
+    def feature_flags(self) -> dict[str, bool] | None:
+        """The deployment's ``/me`` feature flags, or ``None`` before fetch."""
+        return self._feature_flags
 
     @property
     def link(self) -> BandLink:
@@ -306,6 +312,7 @@ class PlatformRuntime:
 
         self._agent_name = agent.name
         self._agent_description = agent.description
+        self._feature_flags = agent.feature_flags
         logger.debug("Fetched metadata for agent: %s", self._agent_name)
 
     @staticmethod

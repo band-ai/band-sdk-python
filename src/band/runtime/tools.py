@@ -6,11 +6,14 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import re
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
@@ -23,7 +26,8 @@ from pydantic import (
     model_validator,
 )
 
-from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
+from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS, NotFoundError
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
@@ -39,13 +43,14 @@ from band.core.memory_types import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.types import ContactRequestSentStatus, EventMessageType
+from band.core.types import Capability, ContactRequestSentStatus, EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
     from band.client.rest import (
         AsyncRestClient,
+        Attachment,
         ListAgentContactRequestsResponse,
         ListAgentContactsResponse,
         ListAgentMemoriesResponse,
@@ -444,6 +449,68 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
+class ListRoomFilesInput(BaseModel):
+    """List files that have been shared in the current room.
+
+    Returns attachment metadata for every file attached to a message you
+    sent or were mentioned in, including ones sent before you joined. Use
+    band_read_room_file with a returned id to fetch its contents.
+    """
+
+    cursor: str | None = Field(
+        None, description="Pagination cursor from a previous call's response"
+    )
+
+
+class ReadRoomFileInput(BaseModel):
+    """Read a file shared in the current room.
+
+    Returns the decoded text for a small text file, an image for a small
+    previewable image, or a name/type/size description when the file is too
+    large or not previewable to show inline.
+    """
+
+    file_id: str = Field(
+        ...,
+        description=(
+            "File ID, from a message's attachments or band_list_room_files. "
+            "Use the id from the most recent band_list_room_files call, not one "
+            "remembered from earlier in the conversation -- files can expire or "
+            "be replaced."
+        ),
+    )
+
+
+class SendRoomFileInput(BaseModel):
+    """Upload text content as a file and share it in the current room.
+
+    Use this to hand participants a file you composed (e.g. a report, a code
+    snippet, generated data) rather than pasting it into the message body.
+    """
+
+    content: str = Field(..., description="Text content to upload as a file")
+    filename: str = Field(
+        ...,
+        description=(
+            "Name for the uploaded file, including extension. Plain ASCII "
+            "only (e.g. 'report.txt') -- accents, CJK, emoji, and other "
+            "non-ASCII characters are rejected."
+        ),
+    )
+    caption: str = Field(
+        "", description="Optional message text to send alongside the file"
+    )
+    mentions: list[str] = Field(
+        ...,
+        description=(
+            "List of participant handles to @mention. At least one required -- "
+            "sharing a file still posts a message, and the platform requires "
+            "every message to mention at least one recipient. Same format as "
+            "band_send_message."
+        ),
+    )
+
+
 # --- Human-tool input models ---
 #
 # These models mirror band-mcp's human tool handler signatures field-for-field
@@ -773,9 +840,10 @@ SEND_MESSAGE_TOOL_NAME = "band_send_message"
 # ``band_send_message`` (its registrar reuses these SDK tool definitions), which
 # the ``<server>-`` prefix match already covers; ``create_agent_chat_message``
 # is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
-# still match.
+# still match. ``band_send_room_file`` also posts a message (the file's
+# attaching message), same reply-once reasoning.
 ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {SEND_MESSAGE_TOOL_NAME, "create_agent_chat_message"}
+    {SEND_MESSAGE_TOOL_NAME, "create_agent_chat_message", "band_send_room_file"}
 )
 
 
@@ -845,6 +913,9 @@ AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
         "band_remove_participant",
         "band_get_participants",
         "band_lookup_peers",
+        "band_list_room_files",
+        "band_read_room_file",
+        "band_send_room_file",
     }
 )
 
@@ -976,6 +1047,21 @@ _TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
         name="band_archive_memory",
         input_model=ArchiveMemoryInput,
         method_name="archive_memory",
+    ),
+    ToolDefinition(
+        name="band_list_room_files",
+        input_model=ListRoomFilesInput,
+        method_name="list_room_files",
+    ),
+    ToolDefinition(
+        name="band_read_room_file",
+        input_model=ReadRoomFileInput,
+        method_name="read_room_file",
+    ),
+    ToolDefinition(
+        name="band_send_room_file",
+        input_model=SendRoomFileInput,
+        method_name="send_room_file",
     ),
     # --- Human tools (surface="human") ---
     # One entry per method in the Phase 1 human-tool mapping table.
@@ -1188,6 +1274,58 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# File tools - gated behind Capability.FILES, itself negotiated against the
+# platform's `ff_file_transfer` deployment flag (see runtime/capabilities.py).
+# Explicitly listed for the same reason as MEMORY_TOOL_NAMES/CONTACT_TOOL_NAMES
+# above.
+FILE_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_list_room_files",
+        "band_read_room_file",
+        "band_send_room_file",
+    }
+)
+
+# band_send_room_file: the largest LLM-authored text file this tool accepts,
+# encoded as UTF-8 bytes. Independent of the platform's 100MB upload cap --
+# this bounds what an LLM composes in one tool call, not what the platform
+# can store.
+MAX_SEND_CONTENT_BYTES = 1_000_000
+
+# band_read_room_file: the largest text-ish file returned inline as decoded
+# text, and the largest previewable image returned inline as a base64 MCP
+# image content block. Base64 inflates by ~4/3, so the image cap bounds the
+# actual text the tool result carries to the model, not the file's stored
+# size. Anything over its cap (or not previewable at all) gets a
+# description-only result instead of bytes.
+MAX_INLINE_TEXT_BYTES = 16 * 1024
+MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+# Image content types band_read_room_file will inline -- mirrors the
+# platform's own preview allowlist (`Files.@previewable_types`).
+PREVIEWABLE_IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"image/jpeg", "image/png", "image/gif", "image/webp"}
+)
+
+# The platform answers an identical 404 for "file transfer is off in this
+# deployment" and "wrong id / wrong room / file doesn't exist" -- there is no
+# truthful way to tell those apart from the response, so one message covers
+# both rather than claiming a specific cause. Shared by read_room_file's and
+# send_room_file's error translation, and by the not-found case of the
+# room-scan lookup below.
+FILE_UNAVAILABLE_MESSAGE = (
+    "File not found, or file transfer is unavailable in this room."
+)
+
+# The platform rejects blank message content even on an attachment-only
+# post, so an omitted caption can't stay "".
+DEFAULT_FILE_CAPTION = "Shared a file: {filename}"
+
+# band_send_room_file's filename becomes a raw "x-file-name" HTTP header
+# value: printable ASCII only. CR/LF pass a plain "is it ASCII" check but
+# still break the header, so this excludes them too.
+FILENAME_HEADER_SAFE_PATTERN = re.compile(r"[\x20-\x7e]+")
+
 # Read-only / informational agent tools - explicitly listed (not derived by a
 # name heuristic) because misclassifying a write tool as read-only would weaken
 # the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
@@ -1202,6 +1340,8 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
         "band_list_contact_requests",
         "band_list_memories",
         "band_get_memory",
+        "band_list_room_files",
+        "band_read_room_file",
     }
 )
 
@@ -1213,8 +1353,8 @@ EVENT_TOOL_NAMES: frozenset[str] = frozenset({"band_send_event"})
 
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
 # ``surface="human"`` side of the registry. Used by iter_tool_definitions()
-# to apply the ``include_memory`` filter uniformly across both surfaces.
-HUMAN_MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
+# to apply the ``Capability.MEMORY`` filter uniformly across both surfaces.
+HUMAN_SURFACE_MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_list_user_memories",
         "band_get_user_memory",
@@ -1226,7 +1366,7 @@ HUMAN_MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 # Human-surface contact tools - parallel to CONTACT_TOOL_NAMES.
-HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
+HUMAN_SURFACE_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_list_my_contacts",
         "band_create_contact_request",
@@ -1320,33 +1460,67 @@ if READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(
         f"Unknown read-only tools: {READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES}"
     )
+if FILE_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(f"Unknown file tools: {FILE_TOOL_NAMES - ALL_TOOL_NAMES}")
 if EVENT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown event tools: {EVENT_TOOL_NAMES - ALL_TOOL_NAMES}")
 
 # Human-surface registry membership is validated against TOOL_DEFINITIONS
 # (not TOOL_MODELS, which stays agent-only for back-compat).
 _ALL_DEFINITION_NAMES: frozenset[str] = frozenset(TOOL_DEFINITIONS.keys())
-if HUMAN_MEMORY_TOOL_NAMES - _ALL_DEFINITION_NAMES:
+if HUMAN_SURFACE_MEMORY_TOOL_NAMES - _ALL_DEFINITION_NAMES:
     raise ValueError(
-        f"Unknown human memory tools: {HUMAN_MEMORY_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
+        "Unknown human memory tools: "
+        f"{HUMAN_SURFACE_MEMORY_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
     )
-if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
+if HUMAN_SURFACE_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
     raise ValueError(
         "Unknown human contact tools: "
-        f"{HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
+        f"{HUMAN_SURFACE_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
     )
 
-BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
+BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES - FILE_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
 MCP_TOOL_PREFIX: str = "mcp__band__"
 
 # AdapterFeatures category for each platform tool name. Shared across adapters
-# so include_categories filtering is consistent (chat/contacts/memory).
+# so include_categories filtering is consistent (chat/contacts/memory/files).
 _TOOL_CATEGORIES: dict[str, str] = {
     **{name: "chat" for name in CHAT_TOOL_NAMES},
     **{name: "contacts" for name in CONTACT_TOOL_NAMES},
     **{name: "memory" for name in MEMORY_TOOL_NAMES},
+    **{name: "files" for name in FILE_TOOL_NAMES},
 }
+
+# Capability -> the built-in agent+human tool names it gates. Single source
+# of truth for iter_tool_definitions()/AgentTools schema methods, replacing
+# what used to be two independent per-capability boolean parameters.
+CAPABILITY_TOOL_NAMES: dict[Capability, frozenset[str]] = {
+    Capability.MEMORY: MEMORY_TOOL_NAMES | HUMAN_SURFACE_MEMORY_TOOL_NAMES,
+    Capability.CONTACTS: CONTACT_TOOL_NAMES | HUMAN_SURFACE_CONTACT_TOOL_NAMES,
+    Capability.FILES: FILE_TOOL_NAMES,
+}
+
+
+# The capability set assumed when a caller passes capabilities=None to
+# iter_tool_definitions()/AgentTools' schema methods. Pre-existing, unrelated
+# legacy default of iter_tool_definitions itself (contact tools were never
+# capability-gated before this mechanism existed) — named explicitly so it is
+# never mistaken for AdapterFeatures' separately-documented opt-in-empty
+# default.
+DEFAULT_CAPABILITIES: frozenset[Capability] = frozenset({Capability.CONTACTS})
+
+
+def resolve_capabilities(
+    capabilities: frozenset[Capability] | None,
+) -> frozenset[Capability]:
+    """Apply the ``capabilities=None`` -> ``DEFAULT_CAPABILITIES`` default.
+
+    Single source of truth for that resolution, shared by every call site
+    that accepts an optional capability set (``iter_tool_definitions``,
+    ``AgentTools.get_tool_schemas``).
+    """
+    return DEFAULT_CAPABILITIES if capabilities is None else capabilities
 
 
 def get_band_tool_category(name: str) -> str | None:
@@ -1483,12 +1657,11 @@ def platform_args_schema(
 def iter_tool_definitions(
     *,
     surface: Surface | None = Surface.AGENT,
-    include_memory: bool = False,
-    include_contacts: bool = True,
+    capabilities: frozenset[Capability] | None = None,
 ) -> list[ToolDefinition]:
-    """Return built-in tool definitions with optional category filtering.
+    """Return built-in tool definitions with optional capability filtering.
 
-    The three filters compose as independent predicates:
+    The two filters compose as independent predicates:
 
     - ``surface``: when not ``None``, restrict to definitions whose
       ``ToolDefinition.surface`` equals the given value. ``"agent"``
@@ -1497,31 +1670,29 @@ def iter_tool_definitions(
       ``"agent"`` so existing callers (``claude_sdk``, ``opencode``,
       ``acp``) that pipe the result straight into ``AgentTools``-shaped
       backends don't silently gain ``HumanTools``-bound entries.
-    - ``include_memory``: if ``False`` (default), drop memory tools. This
-      applies to both the agent ``MEMORY_TOOL_NAMES`` set and the human
-      memory tools (``band_list_user_memories``, etc.).
-    - ``include_contacts``: if ``False``, drop contact tools. This applies
-      to both the agent ``CONTACT_TOOL_NAMES`` set and the human contact
-      tools (``band_list_my_contacts``, etc.).
+    - ``capabilities``: which optional tool categories to include (see
+      ``CAPABILITY_TOOL_NAMES``). A capability not in the set excludes its
+      agent-surface tool names, plus its human-surface tool names for the
+      capabilities that have any (memory, contacts -- files does not).
+      ``None`` resolves to
+      ``DEFAULT_CAPABILITIES`` -- today, contacts only, preserving this
+      function's pre-existing default. The hub-room
+      execution path always unions ``Capability.CONTACTS`` in regardless of
+      what's passed here (see ``AgentTools.get_tool_schemas`` HUB_ROOM
+      auto-enable rule).
 
     Args:
         surface: Optional surface filter (``"agent"`` or ``"human"``).
             Default ``"agent"``. Pass ``None`` explicitly to opt in to a
             union view across both surfaces.
-        include_memory: Include memory tools (enterprise). Default False.
-        include_contacts: Include contact-management tools. Default True for
-            backward compatibility. Pass False to gate contact tools behind
-            ``Capability.CONTACTS``. The hub-room execution path always
-            forces this to True regardless of adapter preference (see
-            ``AgentTools.get_tool_schemas`` HUB_ROOM auto-enable rule).
+        capabilities: Optional tool categories to include. ``None`` (default)
+            means contacts only, for backward compatibility.
     """
+    resolved = resolve_capabilities(capabilities)
     excluded: set[str] = set()
-    if not include_memory:
-        excluded |= MEMORY_TOOL_NAMES
-        excluded |= HUMAN_MEMORY_TOOL_NAMES
-    if not include_contacts:
-        excluded |= CONTACT_TOOL_NAMES
-        excluded |= HUMAN_CONTACT_TOOL_NAMES
+    for capability, names in CAPABILITY_TOOL_NAMES.items():
+        if capability not in resolved:
+            excluded |= names
 
     results: list[ToolDefinition] = []
     for definition in TOOL_DEFINITIONS.values():
@@ -1640,7 +1811,7 @@ class AgentTools(AgentToolsProtocol):
             hub_room_id: Optional hub-room ID. When this AgentTools instance
                 is bound to the hub room (room_id == hub_room_id), the
                 contact-management tool schemas are force-included regardless
-                of the ``include_contacts`` argument to schema methods. The
+                of the ``capabilities`` argument to schema methods. The
                 hub-room system prompt instructs the LLM to call contact
                 tools, so they must be exposed even if the adapter would
                 otherwise gate them.
@@ -1692,7 +1863,11 @@ class AgentTools(AgentToolsProtocol):
     # --- Tool methods ---
 
     async def send_message(
-        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+        self,
+        content: str,
+        mentions: list[str] | list[dict[str, str]] | None = None,
+        *,
+        attachment_ids: list[str] | None = None,
     ) -> Any:
         """
         Send a message to the current room.
@@ -1702,6 +1877,10 @@ class AgentTools(AgentToolsProtocol):
             mentions: List of participant handles (strings). SDK resolves handles to IDs.
                       Format: @<username> for users, @<username>/<agent-name> for agents.
                       Passing list[dict[str, str]] is deprecated; use list[str] instead.
+            attachment_ids: File ids to show with this message. Not part of the
+                      ``band_send_message`` tool schema -- only a Python caller
+                      (e.g. ``send_room_file``) can pass this; a tool-dispatched
+                      call never supplies it.
 
         Returns:
             Fern ChatMessage model (Pydantic). Serialized to dict by
@@ -1728,21 +1907,7 @@ class AgentTools(AgentToolsProtocol):
                 stacklevel=2,
             )
 
-        resolved_mentions = self._resolve_mentions(mentions or [])
-
-        # Validate mentions are not empty — API requires ≥1 mention.
-        # Return a helpful error so the LLM can retry with proper mentions.
-        if not resolved_mentions:
-            # Build the error through the shared hint so it carries the canonical
-            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
-            # SDK) re-run the same hint on this error and rely on its idempotency
-            # to avoid listing the handles twice.
-            raise BandToolError(
-                append_mention_handles_hint(
-                    "At least one mention is required",
-                    self.available_mention_handles(),
-                )
-            )
+        resolved_mentions = self._resolve_required_mentions(mentions)
 
         logger.debug("Sending message to room %s", self.room_id)
 
@@ -1752,9 +1917,18 @@ class AgentTools(AgentToolsProtocol):
             for m in resolved_mentions
         ]
 
+        # ChatMessageRequest serializes with exclude_unset=True, so an explicit
+        # attachment_ids=None (the common case -- only send_room_file supplies
+        # a value) would still mark the field "set" and send a literal JSON
+        # null, which the platform rejects (expects an array or an absent
+        # key). Omit the kwarg entirely rather than pass None.
+        message_kwargs: dict[str, Any] = {"content": content, "mentions": mention_items}
+        if attachment_ids is not None:
+            message_kwargs["attachment_ids"] = attachment_ids
+
         response = await self.rest.agent_api_messages.create_agent_chat_message(
             chat_id=self.room_id,
-            message=ChatMessageRequest(content=content, mentions=mention_items),
+            message=ChatMessageRequest(**message_kwargs),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
@@ -2423,6 +2597,255 @@ class AgentTools(AgentToolsProtocol):
             raise RuntimeError("Failed to archive memory - no response data")
         return response.data
 
+    # --- File tools ---
+
+    async def _list_message_page(self, cursor: str | None) -> Any:
+        """Fetch one page of the room's message history, attachments included.
+
+        Uses the context/rehydration endpoint, not the plain agent messages
+        one: that one only ever returns messages that mention this agent,
+        excluding ones it authored -- which would make a file this agent
+        just sent via ``send_room_file`` undiscoverable by itself, forever.
+        The context endpoint's server-side query is explicitly ``sender_id
+        == agent_id OR mentions agent_id``, with no delivery-status concept
+        to filter on.
+        """
+        kwargs: dict[str, Any] = {}
+        if cursor is not None:
+            kwargs["cursor"] = cursor
+        return await self.rest.agent_api_context.get_agent_chat_context(
+            chat_id=self.room_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+            **kwargs,
+        )
+
+    async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
+        """
+        List files shared in the current room.
+
+        There is no dedicated "list files" endpoint -- attachment metadata
+        only exists on the messages that carry it, so this derives one bounded
+        page from the room's message history (see ``_list_message_page``).
+
+        Args:
+            cursor: Pagination cursor from a previous call's response.
+
+        Returns:
+            Dict with "data" (attachment dicts, deduplicated by id -- a file
+            can be attached to more than one message) and "next_cursor".
+        """
+        response = await self._list_message_page(cursor)
+        seen: set[str] = set()
+        attachments: list[dict[str, Any]] = []
+        for attachment in self._attachments_in(response.data):
+            if attachment.id in seen:
+                continue
+            seen.add(attachment.id)
+            attachments.append(attachment.model_dump())
+        return {"data": attachments, "next_cursor": response.metadata.next_cursor}
+
+    @staticmethod
+    def _attachments_in(messages: Collection[Any]) -> Iterator[Attachment]:
+        """Yield every attachment across a page's messages, in message order."""
+        for message in messages:
+            yield from message.attachments or []
+
+    async def _iter_message_pages(self) -> AsyncIterator[Any]:
+        """Walk every page of the room's message history, oldest cursor first.
+
+        Termination is data-driven -- the platform's own ``has_more``/
+        ``next_cursor`` on the page just fetched, not knowable in advance --
+        so this is where that walk lives, once, as a plain page-at-a-time
+        generator. Callers that only need a match (``_find_attachment``)
+        drive it with a plain ``async for`` and no loop-control of their own.
+        """
+        cursor: str | None = None
+        more_pages = True
+        while more_pages:
+            response = await self._list_message_page(cursor)
+            yield response
+            cursor = response.metadata.next_cursor
+            more_pages = bool(response.metadata.has_more and cursor)
+
+    async def _find_attachment(self, file_id: str) -> "Attachment":
+        """Locate an attachment by id, exhausting pagination (like
+        ``_lookup_peer``) instead of returning one page: the target file may
+        be older than the first page, and there is no dedicated "get
+        attachment by id" endpoint to reach it directly.
+        """
+        async for response in self._iter_message_pages():
+            for attachment in self._attachments_in(response.data):
+                if attachment.id == file_id:
+                    return attachment
+        raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+
+    async def _download_file(self, file_id: str) -> bytes:
+        """Download an attachment's raw bytes, translating a 404 for the LLM."""
+        try:
+            chunks = [
+                chunk
+                async for chunk in self.rest.agent_api_files.download_agent_chat_file(
+                    chat_id=self.room_id,
+                    id=file_id,
+                    request_options=DEFAULT_REQUEST_OPTIONS,
+                )
+            ]
+        except NotFoundError as error:
+            raise BandToolError(FILE_UNAVAILABLE_MESSAGE) from error
+        return b"".join(chunks)
+
+    async def read_room_file(self, file_id: str) -> dict[str, Any]:
+        """
+        Read a file shared in the current room.
+
+        Branches on the attachment's known content type and size *before*
+        downloading anything: a small text file is inlined as decoded text, a
+        small previewable image is inlined as an MCP image content block, and
+        everything else (too large, or not previewable) gets a
+        description-only result instead of bytes.
+
+        Args:
+            file_id: File ID, from a message's attachments or
+                band_list_room_files.
+
+        Returns:
+            Dict with inline "text", an MCP-shaped image "content" block, or
+            a "description" summarizing why the file wasn't shown inline.
+        """
+        attachment = await self._find_attachment(file_id)
+
+        match attachment.content_type:
+            case ct if ct.startswith("text/"):
+                kind, cap, reason = (
+                    "text",
+                    MAX_INLINE_TEXT_BYTES,
+                    f"exceeds the {MAX_INLINE_TEXT_BYTES}-byte inline text limit",
+                )
+            case ct if ct in PREVIEWABLE_IMAGE_CONTENT_TYPES:
+                kind, cap, reason = (
+                    "image",
+                    MAX_INLINE_IMAGE_BYTES,
+                    f"exceeds the {MAX_INLINE_IMAGE_BYTES}-byte inline image limit",
+                )
+            case _:
+                kind, cap, reason = (
+                    None,
+                    None,
+                    "is not a previewable text or image type",
+                )
+
+        if kind == "text" and cap is not None and attachment.bytes <= cap:
+            body = await self._download_file(file_id)
+            result: dict[str, Any] = {
+                "name": attachment.name,
+                "content_type": attachment.content_type,
+                "bytes": attachment.bytes,
+            }
+            # content_type has no charset (derived from magic bytes alone), so
+            # a non-UTF-8 file can't be decoded correctly. Decode once with
+            # replacement and detect corruption from the result rather than
+            # a second strict-then-lenient decode pass over the same bytes.
+            text = body.decode("utf-8", errors="replace")
+            result["text"] = text
+            if "�" in text:
+                result["description"] = (
+                    "This file is not valid UTF-8; non-UTF-8 bytes were "
+                    "replaced with �, so the text above may not exactly "
+                    "match the original."
+                )
+            return result
+
+        if kind == "image" and cap is not None and attachment.bytes <= cap:
+            body = await self._download_file(file_id)
+            return {
+                "content": [
+                    {
+                        "type": "image",
+                        "data": base64.b64encode(body).decode("ascii"),
+                        "mimeType": attachment.content_type,
+                    }
+                ]
+            }
+
+        return {
+            "name": attachment.name,
+            "content_type": attachment.content_type,
+            "bytes": attachment.bytes,
+            "description": (
+                f"File not shown inline: {reason}. Its contents were not fetched."
+            ),
+        }
+
+    async def send_room_file(
+        self,
+        content: str,
+        filename: str,
+        caption: str = "",
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Upload text content as a file and share it in the current room.
+
+        Args:
+            content: Text content to upload as a file.
+            filename: Name for the uploaded file, including extension. Plain
+                ASCII only -- it travels as a raw HTTP header value.
+            caption: Optional message text to send alongside the file. An
+                empty caption is replaced with a default -- the platform
+                requires non-empty message content even on an attachment-only
+                post.
+            mentions: Participant handles to @mention, same format as
+                band_send_message.
+
+        Returns:
+            Dict with the created attachment's metadata and the posted
+            message id.
+        """
+        caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
+        if not FILENAME_HEADER_SAFE_PATTERN.fullmatch(filename):
+            raise BandToolError(
+                f"Filename {filename!r} must use plain printable ASCII "
+                "characters only -- the upload header cannot carry accents, "
+                "CJK, emoji, line breaks, or other control characters. "
+                "Rename the file and try again."
+            )
+        body = content.encode("utf-8")
+        if len(body) > MAX_SEND_CONTENT_BYTES:
+            raise BandToolError(
+                f"File content is {len(body)} bytes, which exceeds the "
+                f"{MAX_SEND_CONTENT_BYTES}-byte limit for band_send_room_file. "
+                "Send shorter content."
+            )
+        # Resolve before uploading: sharing the file is a send_message call,
+        # so a missing/unresolvable mention must fail before the upload,
+        # not after it leaves an orphaned attachment nothing points at.
+        resolved_mentions = self._resolve_required_mentions(mentions)
+        sha256 = hashlib.sha256(body).hexdigest()
+
+        try:
+            upload_response = await self.rest.agent_api_files.upload_agent_chat_file(
+                chat_id=self.room_id,
+                request=body,
+                request_options={
+                    **DEFAULT_REQUEST_OPTIONS,
+                    "additional_headers": {
+                        "x-file-name": filename,
+                        "x-file-sha256": sha256,
+                        "content-type": "text/plain",
+                    },
+                },
+            )
+        except NotFoundError as error:
+            raise BandToolError(FILE_UNAVAILABLE_MESSAGE) from error
+        attachment = upload_response.data
+
+        message = await self.send_message(
+            content=caption,
+            mentions=resolved_mentions,
+            attachment_ids=[attachment.id],
+        )
+        return {"attachment": attachment.model_dump(), "message_id": message.id}
+
     # --- Mention resolution ---
 
     def _resolve_mentions(
@@ -2490,6 +2913,30 @@ class AgentTools(AgentToolsProtocol):
 
         return resolved
 
+    def _resolve_required_mentions(
+        self, mentions: list[str] | list[dict[str, str]] | None
+    ) -> list[dict[str, str]]:
+        """Resolve ``mentions``, raising if the resolved list is empty.
+
+        Shared by ``send_message`` and ``send_room_file`` so a missing/empty
+        mention list is caught before either does its side effect (posting
+        the message, uploading the file) — API requires >=1 mention per
+        message, and this is the single place that enforces it.
+        """
+        resolved = self._resolve_mentions(mentions or [])
+        if not resolved:
+            # Build the error through the shared hint so it carries the canonical
+            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
+            # SDK) re-run the same hint on this error and rely on its idempotency
+            # to avoid listing the handles twice.
+            raise BandToolError(
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    self.available_mention_handles(),
+                )
+            )
+        return resolved
+
     async def _lookup_peer(self, identifier: str) -> Any | None:
         """
         Find a peer by identifier (handle, name, or ID), paginating through all results.
@@ -2529,8 +2976,7 @@ class AgentTools(AgentToolsProtocol):
         """True if this AgentTools is bound to the contact hub room.
 
         When True, contact-management tool schemas are force-included by
-        the schema methods regardless of the caller's include_contacts
-        argument.
+        the schema methods regardless of the caller's requested capabilities.
         """
         return self._hub_room_id is not None and self.room_id == self._hub_room_id
 
@@ -2538,21 +2984,18 @@ class AgentTools(AgentToolsProtocol):
         self,
         format: str,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]] | list["ToolParam"]:
         """
         Get tool schemas in provider-specific format.
 
         Args:
             format: Target format - "openai" or "anthropic"
-            include_memory: If True, include memory tools (enterprise only)
-            include_contacts: If True (default), include contact management
-                tools. Adapters that gate contacts behind ``Capability.CONTACTS``
-                should pass ``False`` when CONTACTS is not in features.
-                When this AgentTools is bound to the hub room
-                (``self.is_hub_room``), this argument is ignored and contact
-                tools are always included.
+            capabilities: Which optional tool categories to include (memory,
+                contacts, files). ``None`` (default) means contacts only, for
+                backward compatibility. When this AgentTools is bound to the
+                hub room (``self.is_hub_room``), contact tools are always
+                included regardless of this argument.
 
         Returns:
             List of tool definitions in the requested format
@@ -2565,17 +3008,13 @@ class AgentTools(AgentToolsProtocol):
                 f"Invalid format: {format}. Must be 'openai' or 'anthropic'"
             )
 
-        # HUB_ROOM auto-enable: force contact tools on for the hub-room
-        # execution path. The hub-room prompt instructs the LLM to call
-        # contact tools, so they must be exposed regardless of adapter
-        # preference.
-        effective_include_contacts = include_contacts or self.is_hub_room
+        resolved = resolve_capabilities(capabilities)
+        effective_capabilities = with_hub_room_contacts(
+            resolved, is_hub_room=self.is_hub_room
+        )
 
         tools: list[Any] = []
-        for definition in iter_tool_definitions(
-            include_memory=include_memory,
-            include_contacts=effective_include_contacts,
-        ):
+        for definition in iter_tool_definitions(capabilities=effective_capabilities):
             schema = definition.input_model.model_json_schema()
             # Remove Pydantic-specific keys
             schema.pop("title", None)
@@ -2610,33 +3049,23 @@ class AgentTools(AgentToolsProtocol):
     def get_anthropic_tool_schemas(
         self,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list["ToolParam"]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         return cast(
             list["ToolParam"],
-            self.get_tool_schemas(
-                "anthropic",
-                include_memory=include_memory,
-                include_contacts=include_contacts,
-            ),
+            self.get_tool_schemas("anthropic", capabilities=capabilities),
         )
 
     def get_openai_tool_schemas(
         self,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]]:
         """Get tool schemas in OpenAI format (strongly typed)."""
         return cast(
             list[dict[str, Any]],
-            self.get_tool_schemas(
-                "openai",
-                include_memory=include_memory,
-                include_contacts=include_contacts,
-            ),
+            self.get_tool_schemas("openai", capabilities=capabilities),
         )
 
     async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:

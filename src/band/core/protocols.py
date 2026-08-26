@@ -13,7 +13,7 @@ if TYPE_CHECKING:
         ListAgentMemoriesResponse,
         ListAgentPeersResponse,
     )
-    from band.core.types import AgentInput
+    from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
     from band.runtime.tools import ToolCallOutcome
@@ -85,6 +85,11 @@ class AgentToolsProtocol(Protocol):
         """Read-only snapshot of cached room participants."""
         ...
 
+    @property
+    def is_hub_room(self) -> bool:
+        """True if this instance is bound to the contact hub room."""
+        ...
+
     async def get_participants(self) -> Any:
         """Get participants in the current room."""
         ...
@@ -116,24 +121,41 @@ class AgentToolsProtocol(Protocol):
         """
         ...
 
+    async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
+        """List files shared in the current room, paginated."""
+        ...
+
+    async def read_room_file(self, file_id: str) -> dict[str, Any]:
+        """Read a file shared in the current room by id."""
+        ...
+
+    async def send_room_file(
+        self,
+        content: str,
+        filename: str,
+        caption: str = "",
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Upload text content as a file and share it in the current room."""
+        ...
+
     def get_tool_schemas(
         self,
         format: str,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]] | list["ToolParam"]:
         """Get tool schemas in provider-specific format (openai/anthropic)."""
         ...
 
     def get_anthropic_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list["ToolParam"]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         ...
 
     def get_openai_tool_schemas(
-        self, *, include_memory: bool = False, include_contacts: bool = True
+        self, *, capabilities: frozenset[Capability] | None = None
     ) -> list[dict[str, Any]]:
         """Get tool schemas in OpenAI format (strongly typed)."""
         ...

@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
+    _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
     PendingApproval,
@@ -31,7 +32,12 @@ from band.adapters.claude_sdk import (
     BAND_MEMORY_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.runtime.tools import ALL_TOOL_NAMES, missing_reply_error
+from band.runtime.tools import (
+    ALL_TOOL_NAMES,
+    FILE_TOOL_NAMES,
+    MAX_INLINE_IMAGE_BYTES,
+    missing_reply_error,
+)
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 
 pytestmark = pytest.mark.skipif(
@@ -240,6 +246,38 @@ class TestOnStarted:
             sdk_options = mock_manager_class.call_args[0][0]
             assert sdk_options.model == _DEFAULT_MODEL
             assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_max_buffer_size_exceeds_claude_agent_sdks_default(self):
+        """Reproduced live: band_read_room_file inlined a 737.8 KB JPEG as
+        base64 (~4/3 size increase) inside one JSON-per-line message from the
+        Claude CLI subprocess -- comfortably clearing claude_agent_sdk's
+        stdio transport's default max_buffer_size of 1 MiB
+        (claude_agent_sdk._internal.transport.subprocess_cli.
+        _DEFAULT_MAX_BUFFER_SIZE) -- and that fatally dropped the whole CLI
+        connection, not just the one tool call. The configured buffer must
+        clear both the library's real default and the base64-inflated size
+        of the largest image band_read_room_file advertises inlining
+        (MAX_INLINE_IMAGE_BYTES); anything less reopens the same crash.
+        """
+        adapter = ClaudeSDKAdapter()
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            claude_agent_sdk_default_buffer_bytes = 1024 * 1024
+            largest_inline_image_base64_bytes = MAX_INLINE_IMAGE_BYTES * 4 // 3
+
+            assert sdk_options.max_buffer_size == _CLAUDE_SDK_MAX_BUFFER_BYTES
+            assert sdk_options.max_buffer_size > claude_agent_sdk_default_buffer_bytes
+            assert sdk_options.max_buffer_size > largest_inline_image_base64_bytes
 
     @pytest.mark.asyncio
     async def test_explicit_model_is_forwarded(self):
@@ -720,10 +758,15 @@ class TestBandTools:
         )
 
     def test_band_all_tools_combines_base_and_memory(self):
-        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
+        """BAND_ALL_TOOLS should combine base, memory, and file tools without
+        duplicates."""
         from band.runtime.tools import mcp_tool_names
 
-        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert set(BAND_ALL_TOOLS) == (
+            set(BAND_BASE_TOOLS)
+            | set(BAND_MEMORY_TOOLS)
+            | set(mcp_tool_names(FILE_TOOL_NAMES))
+        )
         assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
         assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
             "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "

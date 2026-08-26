@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.types import Capability
 from band.runtime.tools import (
     AgentTools,
     CONTACT_TOOL_NAMES,
@@ -32,12 +33,12 @@ class TestIterToolDefinitionsContactsFlag:
         assert CONTACT_TOOL_NAMES.issubset(names)
 
     def test_contacts_excluded_when_flag_false(self) -> None:
-        defs = iter_tool_definitions(include_contacts=False)
+        defs = iter_tool_definitions(capabilities=frozenset())
         names = {d.name for d in defs}
         assert names.isdisjoint(CONTACT_TOOL_NAMES)
 
     def test_memory_and_contacts_independent(self) -> None:
-        defs = iter_tool_definitions(include_memory=True, include_contacts=False)
+        defs = iter_tool_definitions(capabilities=frozenset({Capability.MEMORY}))
         names = {d.name for d in defs}
         assert names.isdisjoint(CONTACT_TOOL_NAMES)
         # Memory tools present
@@ -62,25 +63,25 @@ class TestAgentToolsHubRoomAutoEnable:
     def test_non_hub_room_respects_include_contacts_false(self, mock_rest) -> None:
         """Adapters that gate contacts get them excluded in non-hub rooms."""
         tools = AgentTools("room-A", mock_rest, hub_room_id="hub-room-id")
-        schemas = tools.get_anthropic_tool_schemas(include_contacts=False)
+        schemas = tools.get_anthropic_tool_schemas(capabilities=frozenset())
         names = {s["name"] for s in schemas}
         assert names.isdisjoint(CONTACT_TOOL_NAMES)
 
     def test_hub_room_force_includes_contacts_even_when_disabled(
         self, mock_rest
     ) -> None:
-        """Hub room ignores include_contacts=False and exposes contact tools anyway."""
+        """Hub room ignores an empty capability set and exposes contact tools anyway."""
         tools = AgentTools("hub-room-id", mock_rest, hub_room_id="hub-room-id")
-        schemas = tools.get_anthropic_tool_schemas(include_contacts=False)
+        schemas = tools.get_anthropic_tool_schemas(capabilities=frozenset())
         names = {s["name"] for s in schemas}
         assert CONTACT_TOOL_NAMES.issubset(names), (
-            "Hub room must auto-enable contact tools even when adapter "
-            "passes include_contacts=False"
+            "Hub room must auto-enable contact tools even when the adapter "
+            "requests an empty capability set"
         )
 
     def test_hub_room_includes_contacts_in_openai_format(self, mock_rest) -> None:
         tools = AgentTools("hub-room-id", mock_rest, hub_room_id="hub-room-id")
-        schemas = tools.get_openai_tool_schemas(include_contacts=False)
+        schemas = tools.get_openai_tool_schemas(capabilities=frozenset())
         names = {s["function"]["name"] for s in schemas}
         assert CONTACT_TOOL_NAMES.issubset(names)
 

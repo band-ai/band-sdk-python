@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from band.core.protocols import FrameworkAdapter, Preprocessor
 from band.core.simple_adapter import SimpleAdapter
+from band.runtime.capabilities import prune_unsupported
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import (
     AgentConfig,
@@ -247,6 +248,15 @@ class Agent:
             # setattr rather than assignment: FrameworkAdapter is a Protocol, so
             # a duck-typed adapter may not declare the attribute.
             setattr(self._adapter, "platform", self._runtime.connection)
+            if isinstance(self._adapter, SimpleAdapter):
+                # A bare FrameworkAdapter has no SUPPORTED_CAPABILITIES, so it
+                # cannot request a gated capability in the first place and
+                # takes no part in negotiation.
+                self._adapter.apply_effective_features(
+                    prune_unsupported(
+                        self._adapter.features, self._runtime.feature_flags
+                    )
+                )
             await self._adapter.on_started(
                 self._runtime.agent_name,
                 self._runtime.agent_description,

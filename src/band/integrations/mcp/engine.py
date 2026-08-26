@@ -40,7 +40,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import EventMessageType, MessageType
+from band.core.types import Capability, EventMessageType, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -541,20 +541,18 @@ def _filter_to_agent_surface(
 
 def _resolve_agent_definitions(
     *,
-    include_memory: bool,
+    capabilities: frozenset[Capability] | None,
     tool_definitions: Sequence[ToolDefinition] | None,
 ) -> list[ToolDefinition]:
     if tool_definitions is not None:
         return _filter_to_agent_surface(list(tool_definitions))
-    return list(
-        iter_tool_definitions(surface=Surface.AGENT, include_memory=include_memory)
-    )
+    return list(iter_tool_definitions(surface=Surface.AGENT, capabilities=capabilities))
 
 
 def build_band_mcp_tool_registrations(
     agent_tools: AgentToolsProtocol,
     *,
-    include_memory: bool = False,
+    capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
 ) -> list[MCPToolRegistration]:
@@ -566,7 +564,7 @@ def build_band_mcp_tool_registrations(
     """
     return build_resolved_band_mcp_tool_registrations(
         get_tools=lambda _chat_id: agent_tools,
-        include_memory=include_memory,
+        capabilities=capabilities,
         additional_tools=additional_tools,
         tool_definitions=tool_definitions,
     )
@@ -575,7 +573,7 @@ def build_band_mcp_tool_registrations(
 def build_resolved_band_mcp_tool_registrations(
     *,
     get_tools: RoomToolResolver,
-    include_memory: bool = False,
+    capabilities: frozenset[Capability] | None = None,
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
 ) -> list[MCPToolRegistration]:
@@ -588,7 +586,7 @@ def build_resolved_band_mcp_tool_registrations(
     so even a CLI-room-less tool like ``band_create_chatroom`` needs one here.
     """
     definitions = _resolve_agent_definitions(
-        include_memory=include_memory, tool_definitions=tool_definitions
+        capabilities=capabilities, tool_definitions=tool_definitions
     )
     resolver = EmbeddedResolver(get_tools=get_tools)
     registrations = [

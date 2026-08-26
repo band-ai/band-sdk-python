@@ -1193,8 +1193,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         seen: set[str] = set()
 
         for schema in tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         ):
             if not isinstance(schema, dict):
                 continue

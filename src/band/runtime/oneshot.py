@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.capabilities import prune_unsupported
 from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
@@ -126,6 +127,7 @@ class OneShotInvoker:
         self._history_page_cap = history_page_cap
         self._agent_name: str = ""
         self._agent_description: str = ""
+        self._feature_flags: dict[str, bool] | None = None
         self._started = False
 
     @property
@@ -152,7 +154,11 @@ class OneShotInvoker:
         if self._started:
             return
 
-        self._agent_name, self._agent_description = await self._fetch_agent_metadata()
+        (
+            self._agent_name,
+            self._agent_description,
+            self._feature_flags,
+        ) = await self._fetch_agent_metadata()
         # Parity with Agent.start(): adapters read their identity and platform
         # coordinates from the injected connection.
         setattr(
@@ -160,6 +166,13 @@ class OneShotInvoker:
             "platform",
             self._link.to_platform_connection(self._agent_id),
         )
+        if isinstance(self._adapter, SimpleAdapter):
+            # A bare FrameworkAdapter has no SUPPORTED_CAPABILITIES, so it
+            # cannot request a gated capability in the first place and takes
+            # no part in negotiation.
+            self._adapter.apply_effective_features(
+                prune_unsupported(self._adapter.features, self._feature_flags)
+            )
         await self._adapter.on_started(self._agent_name, self._agent_description)
         self._started = True
         logger.info(
@@ -419,14 +432,14 @@ class OneShotInvoker:
 
     # --- REST helpers ---
 
-    async def _fetch_agent_metadata(self) -> tuple[str, str]:
+    async def _fetch_agent_metadata(self) -> tuple[str, str, dict[str, bool]]:
         response = await self._link.rest.agent_api_identity.get_agent_me(
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
             raise RuntimeError("Failed to fetch agent metadata from Band")
         agent = response.data
-        return agent.name, agent.description or ""
+        return agent.name, agent.description or "", agent.feature_flags
 
     async def _fetch_participants(self, room_id: str) -> list[dict[str, Any]]:
         try:

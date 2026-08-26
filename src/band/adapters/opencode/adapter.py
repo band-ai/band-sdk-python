@@ -253,8 +253,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # timing, so a second room's first turn can't race an empty set.
         self._tool_definitions: list[ToolDefinition] = list(
             iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
+                capabilities=self.features.capabilities,
             )
         )
         self._own_tool_names: frozenset[str] = frozenset(

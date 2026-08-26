@@ -17,7 +17,7 @@ class TestBandMcpBackends:
         reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     async def test_create_sdk_backend(self) -> None:
-        tool_definitions = list(iter_tool_definitions(include_memory=False))[:1]
+        tool_definitions = list(iter_tool_definitions())[:1]
 
         backend = await create_band_mcp_backend(
             kind="sdk",
@@ -33,7 +33,7 @@ class TestBandMcpBackends:
 
     @pytest.mark.asyncio
     async def test_create_http_backend(self) -> None:
-        tool_definitions = list(iter_tool_definitions(include_memory=False))[:1]
+        tool_definitions = list(iter_tool_definitions())[:1]
         tools = FakeAgentTools()
 
         backend = await create_band_mcp_backend(

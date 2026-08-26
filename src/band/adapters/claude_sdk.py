@@ -86,6 +86,7 @@ from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,
+    MAX_INLINE_IMAGE_BYTES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     band_tool_errored,
@@ -102,8 +103,8 @@ logger = logging.getLogger(__name__)
 # Derived from TOOL_MODELS — single source of truth
 BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
 BAND_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
-# All tools: chat + contacts + memory (17 total). For chat-only tools (7),
-# see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
+# All tools: chat + contacts + memory + files (20 total). For chat-only
+# tools (7), see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
 BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
@@ -115,6 +116,15 @@ _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 # thinking.type.adaptive"), so the run returns an error result with no output.
 # Pinning a known-good model avoids that path; callers can override via `model=`.
 _DEFAULT_MODEL = "claude-sonnet-4-6"
+
+# claude_agent_sdk's stdio transport defaults max_buffer_size to 1 MiB and
+# fatally drops the whole CLI connection (not just the one tool call) if a
+# single JSON-per-line message from the CLI exceeds it. band_read_room_file
+# inlines images up to MAX_INLINE_IMAGE_BYTES as base64 (~4/3 size increase)
+# inside that message, so an image well under our own advertised cap can
+# already exceed the library's unrelated default. Size the buffer off the
+# same constant instead of a second, driftable number.
+_CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -141,6 +151,26 @@ _REDACT_RE = re.compile(
     """,
     re.IGNORECASE,
 )
+
+
+def _redact_image_data(content: str | list[dict[str, Any]] | None) -> Any:
+    """Replace an image content block's base64 payload before narration.
+
+    ``band_read_room_file``'s image branch hands the model a real MCP image
+    block (``{"type": "image", "data": <base64>, ...}``) round-tripped back
+    unchanged in ``ToolResultBlock.content`` -- exactly what the vision fix
+    intends. But this narration event is a room-visible log, not the model
+    input: dumping the raw base64 into it would bloat the room's stored
+    history with megabytes of text nobody reads. Only the size survives.
+    """
+    if not isinstance(content, list):
+        return content
+    return [
+        {**block, "data": f"<{len(block['data'])} base64 chars omitted>"}
+        if isinstance(block, dict) and isinstance(block.get("data"), str)
+        else block
+        for block in content
+    ]
 
 
 async def _pre_tool_use_continue_hook(
@@ -172,7 +202,7 @@ def __getattr__(name: str) -> Any:
     if name == "BAND_TOOLS":
         warnings.warn(
             "BAND_TOOLS is deprecated, use BAND_ALL_TOOLS instead. "
-            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory). "
+            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory + files). "
             "For chat-only tools, use "
             "band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.",
             DeprecationWarning,
@@ -207,7 +237,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -396,6 +426,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             mcp_servers={"band": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
             permission_mode=self.permission_mode,
+            max_buffer_size=_CLAUDE_SDK_MAX_BUFFER_BYTES,
             # Isolate the bridged agent from ambient Claude Code config (default []).
             # Left at the SDK default, setting_sources loads the host's user + project
             # settings (~/.claude and ./.claude): filesystem skills and subagents then
@@ -451,13 +482,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
     async def _create_mcp_backend(self) -> BandMCPBackend:
         """Create shared MCP backend that uses stored room tools."""
-        include_memory = Capability.MEMORY in self.features.capabilities
-        include_contacts = Capability.CONTACTS in self.features.capabilities
         tool_definitions = list(
-            iter_tool_definitions(
-                include_memory=include_memory,
-                include_contacts=include_contacts,
-            )
+            iter_tool_definitions(capabilities=self.features.capabilities)
         )
         backend = await create_band_mcp_backend(
             kind="sdk",
@@ -1020,7 +1046,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             content=lambda: json.dumps(
                 {
                     ToolEventKey.NAME: result_tool_name,
-                    ToolEventKey.OUTPUT: block.content,
+                    ToolEventKey.OUTPUT: _redact_image_data(block.content),
                     ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
                     ToolEventKey.IS_ERROR: block.is_error,
                 }

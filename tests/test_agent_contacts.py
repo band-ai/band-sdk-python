@@ -6,6 +6,7 @@ import pytest
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures
 from band.runtime.platform_runtime import PlatformRuntime
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -17,6 +18,10 @@ def mock_adapter():
     adapter.on_started = AsyncMock()
     adapter.on_cleanup = AsyncMock()
     adapter.on_event = AsyncMock()
+    # A real SimpleAdapter sets `.features` in __init__; spec=SimpleAdapter
+    # doesn't know about instance attributes, so Agent.start()'s capability
+    # negotiation needs it configured explicitly.
+    adapter.features = AdapterFeatures()
     return adapter
 
 

@@ -637,8 +637,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     ) -> list[Tool]:
         """Bridge Band platform tools + developer custom tools as Copilot tools."""
         schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
         schemas = filter_tool_schemas(
             schemas,
