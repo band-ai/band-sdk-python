@@ -467,12 +467,8 @@ class ExecutionContext:
     def _claim_message(self, message_id: str) -> Iterator[bool]:
         """Yield whether an in-flight claim was acquired; release iff acquired.
 
-        The sole SDK ergonomic adapter over ``ClaimRegistry.try_claim``/
-        ``.release`` (band_sdk_core has no context-manager equivalent by
-        design). Contains no I/O, logging, or delivery policy — every
-        exception, including cancellation, propagates to the caller's own
-        error handling; this only guarantees the claim is released on any
-        exit.
+        ``band_sdk_core`` has no context-manager equivalent by design, so
+        this is the sole SDK adapter over ``try_claim``/``.release``.
         """
         acquired = self.claims.try_claim(self.room_id, message_id)
         try:
@@ -1925,12 +1921,8 @@ class ExecutionContext:
             # history only if enable_context_hydration is True)
             await self._ensure_fresh_context()
 
-            # Handle participant events internally. A new failure surface as
-            # of this migration: ParticipantRoster.add can raise TypeError for
-            # a malformed field, where the old Python merge never raised.
-            # Never let it crash the delivery cycle -- log and keep the
-            # previous roster state; the callback still fires either way
-            # since it reports the platform event, not local roster state.
+            # Handle participant events internally; the callback below still
+            # fires either way since it reports the platform event, not roster state.
             if isinstance(event, ParticipantAddedEvent) and event.payload:
                 payload = event.payload
                 apply_roster_change(

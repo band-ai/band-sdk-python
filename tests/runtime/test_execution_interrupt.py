@@ -9,6 +9,9 @@ mid-cycle deterministically.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator, Coroutine
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -538,26 +541,42 @@ class TestPendingAckCancellationGap:
 
         return AsyncMock(side_effect=_gate)
 
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _running(coro: Coroutine[Any, Any, Any]) -> AsyncIterator[asyncio.Task]:
+        """Run `coro` as a task, guaranteeing it's cancelled and drained on
+        exit. `_gate` above parks on `release`, which nothing sets on this
+        path -- an assertion failing before the test's own explicit cancel
+        would otherwise leak a task that can never finish on its own.
+        """
+        task = asyncio.create_task(coro)
+        try:
+            yield task
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
     async def test_websocket_path_cancellation_during_mark_processed(self, mock_link):
         entered, release = asyncio.Event(), asyncio.Event()
         mock_link.mark_processed = self._gated_mark_processed(entered, release)
         handler = BlockingHandler(block=False)
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
-        proc = asyncio.create_task(
+        async with self._running(
             ctx._process_event(make_message_event(msg_id="ws-cancel-ack"))
-        )
-        await entered.wait()
+        ) as proc:
+            await entered.wait()
 
-        # The handler already ran to completion; remember_ack_pending runs
-        # synchronously before this awaited mark_processed call.
-        assert handler.completed == ["ws-cancel-ack"]
-        assert ctx.claims.is_ack_pending("room-123", "ws-cancel-ack")
-        assert not ctx.claims.is_completed("room-123", "ws-cancel-ack")
+            # The handler already ran to completion; remember_ack_pending runs
+            # synchronously before this awaited mark_processed call.
+            assert handler.completed == ["ws-cancel-ack"]
+            assert ctx.claims.is_ack_pending("room-123", "ws-cancel-ack")
+            assert not ctx.claims.is_completed("room-123", "ws-cancel-ack")
 
-        proc.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await proc
+            proc.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await proc
 
         # Cancellation must not have undone the ack-pending marker -- never
         # completed, never neither.
@@ -581,16 +600,16 @@ class TestPendingAckCancellationGap:
         ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         msg = _backlog_message("bk-cancel-ack")
 
-        proc = asyncio.create_task(ctx._process_backlog_message(msg))
-        await entered.wait()
+        async with self._running(ctx._process_backlog_message(msg)) as proc:
+            await entered.wait()
 
-        assert handler.completed == ["bk-cancel-ack"]
-        assert ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
-        assert not ctx.claims.is_completed("room-123", "bk-cancel-ack")
+            assert handler.completed == ["bk-cancel-ack"]
+            assert ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
+            assert not ctx.claims.is_completed("room-123", "bk-cancel-ack")
 
-        proc.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await proc
+            proc.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await proc
 
         assert ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
         assert not ctx.claims.is_completed("room-123", "bk-cancel-ack")

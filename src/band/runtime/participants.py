@@ -28,17 +28,9 @@ def participant_snapshot(participant: Mapping[str, Any]) -> dict[str, Any]:
 def log_roster_error(
     logger_: logging.Logger, *, room_id: str, action: str, err: Exception
 ) -> None:
-    """Log a ``band_sdk_core.ParticipantRoster`` failure with its structured fields.
-
-    ``ParticipantRoster.add``/``set_all`` are real, new failure surfaces at
-    call sites that never raised before this migration (a plain ``TypeError``
-    for a malformed field, or a ``ValueError`` with ``.issues``/
-    ``.trace_context`` for a duplicate id in ``set_all``). Every caller keeps
-    the previous roster/participant state rather than propagating; this
-    helper is only the shared log line, so ``.issues``/``.trace_context``
-    reach the log as distinct fields instead of being flattened into
-    ``str(err)`` (harmless ``None``s for a plain REST exception, which has
-    neither).
+    """Log a ``ParticipantRoster`` failure with ``.issues``/``.trace_context``
+    as distinct fields rather than flattened into ``str(err)``. Callers keep
+    the previous roster state rather than propagating.
     """
     logger_.warning(
         "Failed to %s for room %s: %s",
