@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.0.1...band-mcp-v3.0.0) (2026-08-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* AgentTools.get_tool_schemas/get_anthropic_tool_schemas/ get_openai_tool_schemas, iter_tool_definitions, and the MCP engine's registration builders replace their separate include_memory/include_contacts booleans with a single capabilities: frozenset[Capability] | None parameter.
+
+### Features
+
+* add file transfer capability to the Python SDK (INT-1261) ([#573](https://github.com/band-ai/band-sdk-python/issues/573)) ([eb2a404](https://github.com/band-ai/band-sdk-python/commit/eb2a404c3220ab52f2cbd7c300e405f6f3d1149a))
+
 ## [2.0.1](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.0.0...band-mcp-v2.0.1) (2026-08-23)
 
 
