@@ -6,11 +6,14 @@ import pytest
 
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
+    ORGANIZATION_SCOPE_REJECTED_CODE,
     MemoryStoreScope,
     MemorySystem,
     SensoryMemoryType,
     WorkingLongTermMemoryType,
     enum_values,
+    is_organization_scope_rejection,
+    organization_scope_rejected_message,
     validate_subject_scope,
 )
 
@@ -72,3 +75,35 @@ class TestValidateSubjectScope:
         so pointing an LLM there on retry just guarantees the next call fails too."""
         with pytest.raises(ValueError, match='scope="agent"'):
             validate_subject_scope(MemoryStoreScope.SUBJECT, None)
+
+
+class TestIsOrganizationScopeRejection:
+    def test_true_for_the_platform_error_shape(self) -> None:
+        """The exact shape the platform sends for a 422 org-scope rejection."""
+        body = {
+            "error": {
+                "code": ORGANIZATION_SCOPE_REJECTED_CODE,
+                "details": {"organization_id": "must be present"},
+            }
+        }
+        assert is_organization_scope_rejection(body) is True
+
+    def test_false_for_a_different_error_code(self) -> None:
+        """A 422 for an unrelated reason must not be misreported as scope rejection."""
+        body = {"error": {"code": "some_other_validation_failure"}}
+        assert is_organization_scope_rejection(body) is False
+
+    def test_false_for_non_dict_bodies(self) -> None:
+        """A REST error body isn't guaranteed to be a dict; must not raise."""
+        assert is_organization_scope_rejection(None) is False
+        assert is_organization_scope_rejection("plain text error") is False
+        assert is_organization_scope_rejection({"error": "not a dict"}) is False
+
+
+class TestOrganizationScopeRejectedMessage:
+    def test_recommends_the_given_agent_value(self) -> None:
+        """Message must name the caller's own agent-scope value (store vs.
+        list use different enums that happen to share the same value)."""
+        message = organization_scope_rejected_message(MemoryStoreScope.AGENT.value)
+        assert 'scope="agent"' in message
+        assert 'scope="organization"' in message

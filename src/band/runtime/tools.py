@@ -26,7 +26,12 @@ from pydantic import (
     model_validator,
 )
 
-from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS, NotFoundError
+from band.client.rest import (
+    ChatRoomRequest,
+    DEFAULT_REQUEST_OPTIONS,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import participant_snapshot
 from band.core.exceptions import BandToolError
@@ -37,9 +42,11 @@ from band.core.memory_types import (
     MemoryStoreScope,
     MemorySystem,
     MemoryType,
+    is_organization_scope_rejection,
     memory_list_scope_field_description,
     memory_store_scope_field_description,
     memory_type_field_description,
+    organization_scope_rejected_message,
     validate_memory_type_for_system,
     validate_subject_scope,
 )
@@ -2479,10 +2486,17 @@ class AgentTools(AgentToolsProtocol):
         kwargs.update(
             {key: value for key, value in optional_filters.items() if value is not None}
         )
-        response = await self.rest.agent_api_memories.list_agent_memories(
-            **kwargs,
-            request_options=DEFAULT_REQUEST_OPTIONS,
-        )
+        try:
+            response = await self.rest.agent_api_memories.list_agent_memories(
+                **kwargs,
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            )
+        except UnprocessableEntityError as error:
+            if is_organization_scope_rejection(error.body):
+                raise BandToolError(
+                    organization_scope_rejected_message(MemoryListScope.AGENT.value)
+                ) from error
+            raise
 
         return response
 
@@ -2541,10 +2555,17 @@ class AgentTools(AgentToolsProtocol):
             memory_kwargs["subject_id"] = subject_id
         if metadata is not None:
             memory_kwargs["metadata"] = metadata
-        response = await self.rest.agent_api_memories.create_agent_memory(
-            memory=AgentMemoryCreateRequest(**memory_kwargs),
-            request_options=DEFAULT_REQUEST_OPTIONS,
-        )
+        try:
+            response = await self.rest.agent_api_memories.create_agent_memory(
+                memory=AgentMemoryCreateRequest(**memory_kwargs),
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            )
+        except UnprocessableEntityError as error:
+            if is_organization_scope_rejection(error.body):
+                raise BandToolError(
+                    organization_scope_rejected_message(MemoryStoreScope.AGENT.value)
+                ) from error
+            raise
         if not response.data:
             raise RuntimeError("Failed to store memory - no response data")
         return response.data

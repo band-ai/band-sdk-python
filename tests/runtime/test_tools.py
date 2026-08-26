@@ -19,8 +19,10 @@ from band.client.rest import (
     Attachment,
     ChatMessageRequest,
     NotFoundError,
+    UnprocessableEntityError,
 )
 from band.core.exceptions import BandToolError
+from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from tests.conftest import make_participant_mock
 from band.runtime.tools import (
@@ -149,6 +151,73 @@ class TestMemoryTools:
             scope="agent",
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
+
+    @pytest.mark.asyncio
+    async def test_store_memory_organization_scope_rejection_becomes_actionable(
+        self, mock_rest_client
+    ) -> None:
+        """The platform's 422 for an orgless agent's `scope="organization"`
+        write must reach the caller as guidance to retry with `scope="agent"`,
+        not as the raw `headers: ..., status_code: 422, body: ...` dump the
+        generic exception handler would otherwise produce."""
+        rejection_body = {
+            "error": {
+                "code": ORGANIZATION_SCOPE_REJECTED_CODE,
+                "details": {"organization_id": "must be present"},
+            }
+        }
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock(
+            side_effect=UnprocessableEntityError(body=rejection_body)
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match='scope="agent"'):
+            await tools.store_memory(
+                content="remember this",
+                system="working",
+                type="semantic",
+                segment="user",
+                thought="useful later",
+                scope="organization",
+            )
+
+    @pytest.mark.asyncio
+    async def test_store_memory_unrelated_422_is_not_mistaken_for_scope_rejection(
+        self, mock_rest_client
+    ) -> None:
+        """A 422 for any other reason must propagate as-is -- rewriting it to
+        the scope-retry message would mislead the caller about the actual
+        failure."""
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock(
+            side_effect=UnprocessableEntityError(
+                body={"error": {"code": "some_other_validation_failure"}}
+            )
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(UnprocessableEntityError):
+            await tools.store_memory(
+                content="remember this",
+                system="working",
+                type="semantic",
+                segment="user",
+                thought="useful later",
+                scope="organization",
+            )
+
+    @pytest.mark.asyncio
+    async def test_list_memories_organization_scope_rejection_becomes_actionable(
+        self, mock_rest_client
+    ) -> None:
+        """The read-side twin of the store-side test above."""
+        rejection_body = {"error": {"code": ORGANIZATION_SCOPE_REJECTED_CODE}}
+        mock_rest_client.agent_api_memories.list_agent_memories = AsyncMock(
+            side_effect=UnprocessableEntityError(body=rejection_body)
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match='scope="agent"'):
+            await tools.list_memories(scope="organization")
 
     @pytest.mark.asyncio
     async def test_store_memory_rejects_subject_scope_without_subject_id(

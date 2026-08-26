@@ -150,3 +150,26 @@ def memory_list_scope_field_description() -> str:
     return "Filter by scope. " + _organization_scope_caveat(
         MemoryListScope.AGENT.value, MemoryListScope.ORGANIZATION.value
     )
+
+
+# Platform error code for a 422 on scope="organization" when the agent's
+# owner belongs to no organization.
+ORGANIZATION_SCOPE_REJECTED_CODE = "org_scope_requires_organization"
+
+
+def is_organization_scope_rejection(error_body: object) -> bool:
+    """True if a REST 422 body is the platform's org-scope-requires-organization rejection."""
+    return (
+        isinstance(error_body, dict)
+        and isinstance(error_body.get("error"), dict)
+        and error_body["error"].get("code") == ORGANIZATION_SCOPE_REJECTED_CODE
+    )
+
+
+def organization_scope_rejected_message(agent_value: str) -> str:
+    """Actionable retry guidance for a 422 org-scope rejection."""
+    return (
+        f'scope="{MemoryStoreScope.ORGANIZATION.value}" was rejected: the '
+        f"agent's owner does not belong to an organization. Retry with "
+        f'scope="{agent_value}" instead.'
+    )
