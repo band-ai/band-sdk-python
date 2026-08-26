@@ -495,25 +495,22 @@ class TestControlModeValidation:
     string still coerces, but an invalid or wrong-for-this-method value must
     be rejected at the typed boundary rather than silently misbehaving."""
 
-    async def test_bogus_kind_raises_value_error(self, mock_link):
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            pytest.param("bogus", id="not-a-control-mode-member"),
+            pytest.param(
+                ControlMode.PLAY,
+                id="play-is-a-valid-member-but-wrong-for-interrupt",
+            ),
+            pytest.param("play", id="play-as-a-plain-string"),
+        ],
+    )
+    async def test_rejects_invalid_or_wrong_kind(self, mock_link, kind):
         ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
 
         with pytest.raises(ValueError):
-            ctx.interrupt(kind="bogus")
-
-    async def test_play_kind_raises_value_error(self, mock_link):
-        """interrupt() only ever implements INTERRUPT/STOP; PLAY is a valid
-        ControlMode member but the wrong one for this method."""
-        ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
-
-        with pytest.raises(ValueError):
-            ctx.interrupt(kind=ControlMode.PLAY)
-
-    async def test_play_kind_as_string_raises_value_error(self, mock_link):
-        ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
-
-        with pytest.raises(ValueError):
-            ctx.interrupt(kind="play")
+            ctx.interrupt(kind=kind)
 
 
 class TestPendingAckCancellationGap:

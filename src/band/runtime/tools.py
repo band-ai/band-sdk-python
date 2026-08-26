@@ -33,7 +33,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.runtime.capabilities import with_hub_room_contacts
-from band.runtime.participants import log_roster_error, participant_snapshot
+from band.runtime.participants import apply_roster_change, participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -2140,15 +2140,13 @@ class AgentTools(AgentToolsProtocol):
         # failure (a new failure surface as of this migration) must not fail
         # this tool call out from under a real, already-applied change.
         if self._ctx is not None:
-            try:
-                self._ctx.add_participant(new_participant)
-            except (ValueError, TypeError) as err:
-                log_roster_error(
-                    logger,
-                    room_id=self.room_id,
-                    action="add participant to context",
-                    err=err,
-                )
+            ctx = self._ctx
+            apply_roster_change(
+                logger,
+                room_id=self.room_id,
+                action="add participant to context",
+                fn=lambda: ctx.add_participant(new_participant),
+            )
         logger.debug(
             "Updated participant cache: added %s, total=%s",
             participant_name,
@@ -2292,15 +2290,13 @@ class AgentTools(AgentToolsProtocol):
         # of this migration: it can raise ValueError on a duplicate id: log
         # and keep the previous ctx roster rather than crash this tool call.
         if self._ctx is not None:
-            try:
-                self._ctx.set_participants(refreshed)
-            except (ValueError, TypeError) as err:
-                log_roster_error(
-                    logger,
-                    room_id=self.room_id,
-                    action="sync participants to context",
-                    err=err,
-                )
+            ctx = self._ctx
+            apply_roster_change(
+                logger,
+                room_id=self.room_id,
+                action="sync participants to context",
+                fn=lambda: ctx.set_participants(refreshed),
+            )
 
         self._participants = refreshed
         return response.data

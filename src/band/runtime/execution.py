@@ -51,7 +51,7 @@ from band.runtime.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
 from band.runtime.context_serialization import context_item_to_dict
-from band.runtime.participants import log_roster_error
+from band.runtime.participants import apply_roster_change, log_roster_error
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
@@ -857,15 +857,17 @@ class ExecutionContext:
             return
 
         # Always load participants (lightweight, universally needed)
-        await self.load_participants()
+        participants = await self.load_participants()
 
         # Skip history hydration if disabled
         if not self.config.enable_context_hydration:
             logger.debug("History hydration disabled for room: %s", self.room_id)
+            # Reuses load_participants()'s own snapshot -- nothing awaited since
+            # that call returned, so the roster cannot have changed underneath it.
             self._context_cache = ConversationContext(
                 room_id=self.room_id,
                 messages=[],
-                participants=self._roster.list(),
+                participants=participants,
                 hydrated_at=datetime.now(timezone.utc),
             )
             self._context_hydrated = True
@@ -1930,23 +1932,22 @@ class ExecutionContext:
             # previous roster state; the callback still fires either way
             # since it reports the platform event, not local roster state.
             if isinstance(event, ParticipantAddedEvent) and event.payload:
-                try:
-                    self.add_participant(event.payload.model_dump())
-                except (ValueError, TypeError) as err:
-                    log_roster_error(
-                        logger, room_id=self.room_id, action="add participant", err=err
-                    )
+                payload = event.payload
+                apply_roster_change(
+                    logger,
+                    room_id=self.room_id,
+                    action="add participant",
+                    fn=lambda: self.add_participant(payload.model_dump()),
+                )
                 await self._notify_participant_added(event)
             elif isinstance(event, ParticipantRemovedEvent) and event.payload:
-                try:
-                    self.remove_participant(event.payload.id)
-                except (ValueError, TypeError) as err:
-                    log_roster_error(
-                        logger,
-                        room_id=self.room_id,
-                        action="remove participant",
-                        err=err,
-                    )
+                payload = event.payload
+                apply_roster_change(
+                    logger,
+                    room_id=self.room_id,
+                    action="remove participant",
+                    fn=lambda: self.remove_participant(payload.id),
+                )
                 await self._notify_participant_removed(event)
 
             # Call execution handler as a cancellable cycle. A control signal

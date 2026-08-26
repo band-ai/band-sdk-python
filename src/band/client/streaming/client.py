@@ -17,7 +17,7 @@ from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from band.client.streaming.errors import classify_initial_upgrade_error
 from band.client.streaming.wire import WirePayload
-from band.logging_config import trace_context_extra
+from band.logging_config import core_issues, trace_context_extra
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +453,7 @@ class WebSocketClient:
                 # would be None here -- extra=trace_context_extra(e) reports
                 # `e`'s own traceparent instead, via the same record attribute
                 # _TraceContextFilter would otherwise fill in.
-                issues = getattr(e, "issues", None)
+                issues = core_issues(e)
                 errors = (
                     "; ".join(f"{path}: {msg}" for path, _code, msg in issues)
                     if issues

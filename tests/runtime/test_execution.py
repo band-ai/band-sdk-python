@@ -2353,18 +2353,24 @@ class TestBandSdkCoreConstructorValidation:
     OverflowError. Runs against the actual installed band_sdk_core artifact,
     not a mock -- ExecutionContext constructs both types directly from it."""
 
-    def test_claim_registry_rejects_zero_capacity(self):
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            pytest.param(
+                lambda: ClaimRegistry(max_completed=0), id="claim-zero-capacity"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_tracked=0), id="retry-zero-max-tracked"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_retries=-1), id="retry-negative-max-retries"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_retries=4294967296),  # u32::MAX + 1
+                id="retry-max-retries-overflows-u32",
+            ),
+        ],
+    )
+    def test_rejects_invalid_constructor_args(self, factory):
         with pytest.raises(ValueError):
-            ClaimRegistry(max_completed=0)
-
-    def test_retry_tracker_rejects_zero_max_tracked(self):
-        with pytest.raises(ValueError):
-            RetryTracker(max_tracked=0)
-
-    def test_retry_tracker_rejects_negative_max_retries(self):
-        with pytest.raises(ValueError):
-            RetryTracker(max_retries=-1)
-
-    def test_retry_tracker_rejects_max_retries_overflowing_u32(self):
-        with pytest.raises(ValueError):
-            RetryTracker(max_retries=4294967296)  # u32::MAX + 1
+            factory()

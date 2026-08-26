@@ -4,10 +4,10 @@ error logging for band_sdk_core.ParticipantRoster's failure surfaces."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from band.logging_config import trace_context_extra
+from band.logging_config import core_issues, trace_context_extra
 
 # Fields retained for the always-injected passive roster (and the WS/REST cache
 # that feeds it). One definition so every cache path projects the same shape.
@@ -45,5 +45,21 @@ def log_roster_error(
         action,
         room_id,
         err,
-        extra={"issues": getattr(err, "issues", None), **trace_context_extra(err)},
+        extra={"issues": core_issues(err), **trace_context_extra(err)},
     )
+
+
+def apply_roster_change(
+    logger_: logging.Logger, *, room_id: str, action: str, fn: Callable[[], object]
+) -> None:
+    """Run a single ``ParticipantRoster`` mutation, logging via
+    :func:`log_roster_error` on its two new failure surfaces instead of
+    raising. Every one of this migration's roster-mutation call sites keeps
+    the previous roster state rather than propagating -- see
+    :func:`log_roster_error` for why -- so they share this one try/except
+    shape.
+    """
+    try:
+        fn()
+    except (ValueError, TypeError) as err:
+        log_roster_error(logger_, room_id=room_id, action=action, err=err)
