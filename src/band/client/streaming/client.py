@@ -459,18 +459,13 @@ class WebSocketClient:
                 self._validation_error_count += 1
                 return
             except (TypeError, AttributeError):
-                # The payload passed band-sdk-core but hydration itself
-                # couldn't build a well-shaped model from it (e.g. a list
-                # element band-sdk-core validates only as "an array", not
-                # per-element shape) -- a real gap between what band-sdk-core
-                # accepts and what this SDK's typed projection needs, not
-                # routine bad wire data, so it's logged distinctly (with a
-                # traceback) rather than blended into the ValueError case
-                # above. Still counted and dropped, same as any other invalid
-                # event: the callback below already treats a downstream
-                # exception this broadly for the same reason (protect the
-                # event loop), so this seam does too rather than letting a
-                # hydration failure escape uncaught.
+                # Payload passed band-sdk-core but hydration couldn't build a
+                # well-shaped model from it -- a gap between what band-sdk-core
+                # accepts and this SDK's typed projection, not routine bad wire
+                # data, so it's logged distinctly (with a traceback) rather
+                # than blended into the ValueError case above. Still counted
+                # and dropped, protecting the event loop the same way the
+                # callback invocation below does.
                 logger.exception(
                     "[WebSocket] %s payload passed band-sdk-core but failed to "
                     "hydrate -- likely a gap between band-sdk-core's rules and "

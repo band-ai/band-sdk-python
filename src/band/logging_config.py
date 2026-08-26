@@ -138,14 +138,11 @@ class _TraceContextFilter(logging.Filter):
     """Stamps :data:`TRACE_CONTEXT`'s current value onto every LogRecord that
     doesn't already carry one.
 
-    A filter (not a formatter default) so the attribute exists on every
-    record regardless of style -- only the JSON formatter's default field
-    list surfaces it by default, matching how OpenTelemetry's own
-    ``otelTraceID`` et al. behave here. Checking ``hasattr`` first means a
-    caller logging an exception that carries its own, more precise
-    ``trace_context`` (via ``extra=trace_context_extra(exc)``) is not
-    clobbered by the turn's ambient value -- exactly the case a wire-event
-    rejection needs, since that log line runs before any turn exists.
+    A filter, not a formatter default, so the attribute exists on every
+    record regardless of style; only JSON's default field list surfaces it.
+    The ``hasattr`` check lets ``extra=trace_context_extra(exc)`` report a
+    more precise, exception-specific value without being clobbered by the
+    ambient one.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -155,13 +152,10 @@ class _TraceContextFilter(logging.Filter):
 
 
 def trace_context_extra(exc: BaseException) -> dict[str, str]:
-    """``extra=`` for a ``logger.x(..., extra=trace_context_extra(exc))`` call
-    that should report ``exc``'s own ``trace_context`` (e.g. a band-sdk-core
-    ``ValueError``) instead of whatever the ambient :data:`TRACE_CONTEXT` is.
-
-    Empty when ``exc`` carries none (including "carries the attribute but
-    it's ``None``") -- callers still fall back to :class:`_TraceContextFilter`'s
-    ambient value instead of shadowing it with an explicit ``None``.
+    """``extra=`` reporting ``exc``'s own ``trace_context`` instead of the
+    ambient :data:`TRACE_CONTEXT`. Empty when ``exc`` carries none, so
+    :class:`_TraceContextFilter` still falls back to the ambient value rather
+    than being shadowed by an explicit ``None``.
     """
     value = getattr(exc, "trace_context", None)
     return {"trace_context": value} if value else {}
@@ -907,12 +901,9 @@ def _build_json_formatter(
         extra="logging",
         package_name=JSON_LOGGER_REQUIREMENT,
     )
-    # _TraceContextFilter always sets record.trace_context, so without this
-    # JsonFormatter's own default (any non-reserved record attribute is a free
-    # "extra") would leak it into output even when a caller's json_fields
-    # deliberately excludes it -- the same "field only appears if requested"
-    # contract OTEL_CORRELATION_FIELDS gets by simply never being set on the
-    # record at all when OpenTelemetry hasn't instrumented the process.
+    # _TraceContextFilter always sets record.trace_context; without this,
+    # JsonFormatter's default (any non-reserved attribute is a free "extra")
+    # would leak it into output even when json_fields excludes it.
     from pythonjsonlogger.core import RESERVED_ATTRS
 
     fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)

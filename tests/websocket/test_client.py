@@ -910,14 +910,10 @@ async def test_hydration_shape_mismatch_is_dropped_and_counted_not_raised(
     """A payload band-sdk-core accepts but whose shape can't be hydrated must be
     dropped and counted like any other invalid event, never escape the seam.
 
-    band-sdk-core 0.7.1 already rejects a malformed `metadata.mentions` item
-    outright (see the vendored corpus's `mention_item_not_an_object` case), so
-    this fault-injects a hydration-time shape mismatch band-sdk-core's current
-    rules don't happen to catch, to prove the seam's `except (TypeError,
-    AttributeError)` branch is a real safety net at this trust boundary -- not
-    dead code tied to one already-fixed gap. Without it, `_hydrate` raises
-    `TypeError` walking a non-dict mention item, which escapes `_handle_events`
-    uncaught.
+    Fault-injects a shape band-sdk-core's own rules don't happen to catch, to
+    exercise the seam's `except (TypeError, AttributeError)` branch: `_hydrate`
+    raises `TypeError` walking a non-dict mention item, which escapes
+    `_handle_events` uncaught without that branch.
     """
 
     def fake_validate(event_type, raw, trace_context=None):
