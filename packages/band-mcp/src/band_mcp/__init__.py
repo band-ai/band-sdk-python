@@ -1,4 +1,8 @@
-"""Band MCP Server - Model Context Protocol integration for Band."""
+"""Band MCP Server - Model Context Protocol integration for Band.
+
+`__version__` is the published band-mcp package version, bumped by
+release-please on each release.
+"""
 
 from __future__ import annotations
 
