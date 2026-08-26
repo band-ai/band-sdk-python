@@ -381,11 +381,9 @@ async def test_memory_agent_scope_isolated_across_agents(
 ) -> None:
     """An agent-scoped memory is private to the agent that stored it -- a
     different agent's own agent-scoped read never returns it, even filtered to
-    the same marker. This is the isolation boundary PLT-1396 hardened
-    (organization-scoped reads used to leak cross-tenant when the reading
-    agent's owner had no organization); agent scope has no organization_id to
-    go missing, so nothing but the identity filter keeps this true -- worth
-    locking down directly."""
+    the same marker. Agent scope has no organization_id to go missing, so
+    nothing but the identity filter keeps this true -- worth locking down
+    directly."""
     agent_w, agent_r = agents
     marker = unique_marker("xagent")
     room_w = await resource_manager.provision_room(
@@ -427,14 +425,10 @@ async def test_memory_organization_scope_rejected_on_list(
     resource_manager: ResourceManager,
     baseline_settings: BaselineSettings,
 ) -> None:
-    """A read explicitly asking for organization scope gets a real 422 from the
-    live platform, not a silent empty 200, when the agent's owner belongs to no
-    organization -- true of every agent this baseline provisions (see
-    INT-1307). This is the exact contract PLT-1396 shipped: before it, a caller
-    in this state could read every organization-scoped memory in the database,
-    because the tenancy filter silently dropped when organization_id was nil.
-    A direct REST call against a provisioned-but-never-run identity -- no LLM
-    turn needed, deterministic, and it exercises the live platform on every run."""
+    """A read explicitly asking for organization scope gets a real 422, not a
+    silent empty 200, when the agent's owner belongs to no organization --
+    true of every agent this baseline provisions. A direct REST call against a
+    provisioned-but-never-run identity: no LLM turn needed, deterministic."""
     agent = await resource_manager.provision_agent("org-scope-list-rejected")
     client = agent_rest_client(agent, baseline_settings)
 

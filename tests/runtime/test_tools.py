@@ -106,7 +106,7 @@ class TestMemoryTools:
     ) -> None:
         """Agent scope round-trips to the REST payload untouched and needs no
         subject_id -- the scope value real agents fall back to when their owner
-        has no organization (see INT-1307)."""
+        has no organization."""
         response = MagicMock()
         response.data = MagicMock()
         mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock(
