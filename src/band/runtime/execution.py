@@ -33,6 +33,7 @@ from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import ControlMode, DeliveryStatus
+from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -764,12 +765,12 @@ class ExecutionContext:
                 (``.issues``/``.trace_context`` attached); the roster is left
                 unchanged.
         """
-        # band-sdk-python has no W3C traceparent concept to pass here (only
-        # correlation_id, a differently-shaped control-signal dedup key, and
-        # OpenTelemetry's separate ambient-span log correlation, a distinct
-        # automatic mechanism) -- pass None explicitly rather than leaving the
-        # omission unexplained.
-        self._roster.set_all(participants, trace_context=None)
+        # TRACE_CONTEXT is set for the duration of the current turn (see
+        # logging_config.trace_context_scope); read fresh here rather than
+        # threaded in as a parameter so this always reflects whichever turn
+        # is actually calling set_participants right now. None outside a
+        # turn (e.g. bootstrap before any event has been processed).
+        self._roster.set_all(participants, trace_context=TRACE_CONTEXT.get())
 
     def participants_changed(self) -> bool:
         """Check if membership or any tracked field changed since the last

@@ -10,6 +10,7 @@ import pytest
 
 from band_sdk_core import ClaimRegistry, RetryTracker
 
+from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
     Execution,
     ExecutionContext,
@@ -410,6 +411,28 @@ class TestExecutionContextParticipants:
         issues = exc_info.value.issues
         assert any("user-2" in issue[2] for issue in issues)
         assert [p["id"] for p in ctx.participants] == ["user-1"]
+
+    def test_set_participants_duplicate_id_error_carries_the_turn_trace_context(
+        self, mock_link, mock_handler
+    ):
+        """set_participants passes the ambient per-turn TRACE_CONTEXT into
+        set_all, not a hardcoded None -- the duplicate-id error must carry
+        whichever turn actually called it."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        duplicates = [
+            {"id": "user-1", "name": "User One", "type": "User"},
+            {"id": "user-1", "name": "User One Dup", "type": "User"},
+        ]
+
+        with trace_context_scope():
+            active = TRACE_CONTEXT.get()
+            with pytest.raises(ValueError) as exc_info:
+                ctx.set_participants(duplicates)
+        assert exc_info.value.trace_context == active
+
+        with pytest.raises(ValueError) as exc_info:
+            ctx.set_participants(duplicates)
+        assert exc_info.value.trace_context is None
 
 
 class TestExecutionContextHydration:
