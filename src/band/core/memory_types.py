@@ -47,16 +47,18 @@ class MemorySegment(StrEnum):
 class MemoryStoreScope(StrEnum):
     """Visibility scope for ``band_store_memory``."""
 
+    AGENT = "agent"  # Private to this agent; no subject_id
     SUBJECT = "subject"  # About one person/agent; requires subject_id
-    ORGANIZATION = "organization"  # Shared org-wide
+    ORGANIZATION = "organization"  # Shared org-wide; requires the agent's owner to belong to an organization
 
 
 class MemoryListScope(StrEnum):
     """Scope filter for ``band_list_memories``."""
 
+    AGENT = "agent"  # Agent-private memories only
     SUBJECT = "subject"  # Subject-scoped memories only
     ORGANIZATION = "organization"  # Organization-scoped memories only
-    ALL = "all"  # Both scopes (no scope filter)
+    ALL = "all"  # Every scope (no scope filter)
 
 
 class MemoryStatus(StrEnum):
@@ -87,10 +89,11 @@ def validate_subject_scope(
     """Require subject_id when storing a subject-scoped memory."""
     if scope == MemoryStoreScope.SUBJECT and subject_id is None:
         raise ValueError(
-            'scope="subject" requires a subject_id (the UUID of the person or '
-            "agent the memory is about). You did not provide one. If you do not "
-            'have a concrete subject UUID, retry with scope="organization" and '
-            "omit subject_id. Do not invent a UUID."
+            f'scope="{MemoryStoreScope.SUBJECT.value}" requires a subject_id (the '
+            "UUID of the person or agent the memory is about). You did not "
+            "provide one. If you do not have a concrete subject UUID, retry "
+            f'with scope="{MemoryStoreScope.AGENT.value}" and omit subject_id. '
+            "Do not invent a UUID."
         )
 
 
@@ -125,3 +128,48 @@ def memory_type_field_description() -> str:
         f"{'|'.join(systems)}={'/'.join(types)}" for types, systems in grouped.items()
     )
     return "Memory type - must match the chosen system: " + ", ".join(pairings)
+
+
+def _organization_scope_caveat(agent_value: str, organization_value: str) -> str:
+    """Shared caveat for the store/list scope field descriptions below."""
+    return (
+        f'"{organization_value}" requires the agent\'s owner to belong to an '
+        f'organization; "{agent_value}" (private to this agent) works regardless.'
+    )
+
+
+def memory_store_scope_field_description() -> str:
+    """Build the store_memory ``scope`` field description from the enum."""
+    return "Visibility scope. " + _organization_scope_caveat(
+        MemoryStoreScope.AGENT.value, MemoryStoreScope.ORGANIZATION.value
+    )
+
+
+def memory_list_scope_field_description() -> str:
+    """Build the list_memories ``scope`` field description from the enum."""
+    return "Filter by scope. " + _organization_scope_caveat(
+        MemoryListScope.AGENT.value, MemoryListScope.ORGANIZATION.value
+    )
+
+
+# Platform error code for a 422 on scope="organization" when the agent's
+# owner belongs to no organization.
+ORGANIZATION_SCOPE_REJECTED_CODE = "org_scope_requires_organization"
+
+
+def is_organization_scope_rejection(error_body: object) -> bool:
+    """True if a REST 422 body is the platform's org-scope-requires-organization rejection."""
+    return (
+        isinstance(error_body, dict)
+        and isinstance(error_body.get("error"), dict)
+        and error_body["error"].get("code") == ORGANIZATION_SCOPE_REJECTED_CODE
+    )
+
+
+def organization_scope_rejected_message(agent_value: str) -> str:
+    """Actionable retry guidance for a 422 org-scope rejection."""
+    return (
+        f'scope="{MemoryStoreScope.ORGANIZATION.value}" was rejected: the '
+        f"agent's owner does not belong to an organization. Retry with "
+        f'scope="{agent_value}" instead.'
+    )

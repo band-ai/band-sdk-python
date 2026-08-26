@@ -46,7 +46,7 @@ async def test_store_memory_across_memory_adapters(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Store an organization-scoped memory through each memory-capable adapter."""
+    """Store an agent-scoped memory through each memory-capable adapter."""
     marker = unique_marker("xmem")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-{agent.adapter_id}", participants=[agent.id]
@@ -60,7 +60,7 @@ async def test_store_memory_across_memory_adapters(
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
-            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     mem.stored.assert_stored(content=marker)
@@ -94,7 +94,7 @@ async def test_recall_memory_across_memory_adapters(
         )
         await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
-            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.AGENT, content_query=marker
         )
 
     mem.stored.assert_stored(content=marker)
@@ -154,7 +154,7 @@ async def test_memory_survives_adapter_rehydration(
             replies = await capture.wait_for_reply(mid, identity.id)
             mem = await capture.memory(
                 identity,
-                scope=MemoryListScope.ORGANIZATION,
+                scope=MemoryListScope.AGENT,
                 content_query=marker,
             )
 

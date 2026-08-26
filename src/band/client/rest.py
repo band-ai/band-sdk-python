@@ -39,6 +39,7 @@ from band_rest import (
     NotFoundError,
     Peer,
     UnauthorizedError,
+    UnprocessableEntityError,
 )
 from band_rest.core import ParsingError
 from band_rest.core.request_options import RequestOptions
@@ -77,6 +78,7 @@ __all__ = [
     "ParsingError",
     "Peer",
     "UnauthorizedError",
+    "UnprocessableEntityError",
     "RequestOptions",
     "DEFAULT_REQUEST_OPTIONS",
 ]

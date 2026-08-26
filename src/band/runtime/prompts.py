@@ -102,8 +102,12 @@ real `subject_id` UUID: for someone in the current room (e.g. the user you are t
 A handle or name is never a valid `subject_id` — always look up the UUID `id` field.
 A memory the sender frames about themselves in the first person ("me", "my", "I") has that sender
 as its subject, so resolve the sender's `id` — not your own.
+Default to `scope="{MemoryStoreScope.AGENT.value}"` for anything private to you that is not about one
+subject and is not meant to be shared org-wide — this always works, whether or not you belong to an
+organization.
 Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization
-and is not about any one subject (e.g. cross-room memories not tied to one subject).
+and is not about any one subject (e.g. cross-room memories not tied to one subject). This requires
+your owner to belong to an organization; it fails otherwise.
 """
 
 
