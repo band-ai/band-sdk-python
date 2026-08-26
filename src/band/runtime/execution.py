@@ -290,7 +290,11 @@ class ExecutionContext:
         # all contexts of one agent coordinate; private otherwise.
         self.claims = claim_registry or ClaimRegistry()
 
-        # Crash recovery: sync point marker and retry tracking
+        # Crash recovery: sync point marker and retry tracking. Attempt and
+        # permanently-failed-id storage is bounded at RetryTracker's default
+        # max_tracked=10_000 (oldest-first eviction) -- an intentional shared
+        # memory-safety policy, not a promise to remember more than 10,000
+        # distinct message ids for the life of this context.
         self._first_ws_msg_id: str | None = None  # First WS message = sync point
         self._retry_tracker = RetryTracker(max_retries=self.config.max_message_retries)
         self._sync_complete = False  # True after sync with /next completes
@@ -766,8 +770,9 @@ class ExecutionContext:
         """
         # band-sdk-python has no W3C traceparent concept to pass here (only
         # correlation_id, a differently-shaped control-signal dedup key, and
-        # OpenTelemetry's separate ambient-span log correlation) -- see
-        # INT-1245's trace-correlation note.
+        # OpenTelemetry's separate ambient-span log correlation, a distinct
+        # automatic mechanism) -- pass None explicitly rather than leaving the
+        # omission unexplained.
         self._roster.set_all(participants, trace_context=None)
 
     def participants_changed(self) -> bool:

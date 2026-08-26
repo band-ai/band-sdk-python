@@ -2135,9 +2135,20 @@ class AgentTools(AgentToolsProtocol):
             {**participant.model_dump(), "name": participant_name}
         )
         self._participants.append(new_participant)
-        # Sync back to ExecutionContext so future turns see the update
+        # Sync back to ExecutionContext so future turns see the update. The
+        # REST add above already succeeded server-side, so a local roster
+        # failure (a new failure surface as of this migration) must not fail
+        # this tool call out from under a real, already-applied change.
         if self._ctx is not None:
-            self._ctx.add_participant(new_participant)
+            try:
+                self._ctx.add_participant(new_participant)
+            except (ValueError, TypeError) as err:
+                log_roster_error(
+                    logger,
+                    room_id=self.room_id,
+                    action="add participant to context",
+                    err=err,
+                )
         logger.debug(
             "Updated participant cache: added %s, total=%s",
             participant_name,

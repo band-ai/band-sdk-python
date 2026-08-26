@@ -2347,8 +2347,8 @@ class TestErrorLabel:
 
 
 class TestBandSdkCoreConstructorValidation:
-    """Regression guard for INT-1315 (band-sdk-core's RetryTracker.max_retries
-    range-validation gap, fixed in 0.7.2): every zero-capacity/out-of-range
+    """Regression guard for band-sdk-core's RetryTracker.max_retries
+    range-validation gap, fixed in 0.7.2: every zero-capacity/out-of-range
     constructor argument must raise a clean ValueError, never a bare
     OverflowError. Runs against the actual installed band_sdk_core artifact,
     not a mock -- ExecutionContext constructs both types directly from it."""

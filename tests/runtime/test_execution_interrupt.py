@@ -517,9 +517,9 @@ class TestControlModeValidation:
 
 
 class TestPendingAckCancellationGap:
-    """Regression coverage for the in-process pending-ACK cancellation gap
-    (INT-1245 step 4): once the handler has run to completion, the message
-    must be marked ack-pending BEFORE the awaited mark_processed call, so a
+    """Regression coverage for the in-process pending-ACK cancellation gap:
+    once the handler has run to completion, the message must be marked
+    ack-pending BEFORE the awaited mark_processed call, so a
     genuine cancellation of the enclosing task landing inside that await
     still routes redelivery through the ack-retry path instead of replaying
     the handler. Scoped to in-process cancellation with the same live

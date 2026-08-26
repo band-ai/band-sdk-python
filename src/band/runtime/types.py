@@ -93,7 +93,12 @@ class SessionConfig:
     enable_context_cache: bool = True
     context_cache_ttl_seconds: int = 300
     max_context_messages: int = 100
-    max_message_retries: int = 1  # Max attempts per message before permanently failing
+    # Max attempts per message before permanently failing. Passed straight into
+    # band_sdk_core.RetryTracker's constructor with no second Python-side range
+    # check -- an out-of-range value (negative, or > u32::MAX) fails fast with
+    # a clean ValueError from ExecutionContext.__init__ rather than being
+    # silently accepted.
+    max_message_retries: int = 1
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
     # Phase 2 idle timeout (seconds) before re-polling /next as a safety net.
     # Lower values recover faster from missed WS pushes but generate more REST traffic.
