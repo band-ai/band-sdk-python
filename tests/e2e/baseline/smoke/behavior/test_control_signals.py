@@ -58,3 +58,40 @@ async def test_stop_cancels_then_play_replays(
     assert mid in control.completed_message_ids, (
         "PLAY did not replay the stopped message"
     )
+
+
+@lane(Lane.CORE)
+async def test_interrupt_cancels_and_consumes(
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """INTERRUPT cancels an active cycle and consumes its message."""
+    agent = await resource_manager.provision_agent("interrupt")
+    room_id = await resource_manager.provision_room(participants=[agent.id])
+
+    async with running_control_runtime(
+        agent, room_id, baseline_settings, user_ops
+    ) as control:
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(
+                room_id,
+                "Run until interrupted.",
+                mention_id=agent.id,
+                mention_name=agent.name,
+            )
+            await capture.wait_for_delivery(
+                mid, agent.id, until={DeliveryStatus.PROCESSING}
+            )
+            await control.wait_for_start(deadline_s=baseline_settings.e2e_timeout)
+
+            await user_ops.interrupt_active_agent_execution(agent.id)
+            await control.wait_for_cancellation(
+                deadline_s=baseline_settings.e2e_timeout
+            )
+            await capture.wait_for_processed(mid, agent.id)
+
+    assert mid not in control.completed_message_ids, (
+        "INTERRUPT replayed or completed the cancelled message"
+    )
