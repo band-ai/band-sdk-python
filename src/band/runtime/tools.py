@@ -33,7 +33,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.runtime.capabilities import with_hub_room_contacts
-from band.runtime.participants import participant_snapshot
+from band.runtime.participants import log_roster_error, participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -2277,9 +2277,19 @@ class AgentTools(AgentToolsProtocol):
         # set_participants treats the REST list as authoritative membership
         # (stale entries drop out, even ones this AgentTools never saw) while
         # merging fields per id, so a field the list endpoint omits (e.g.
-        # description) is never erased once learned.
+        # description) is never erased once learned. A new failure surface as
+        # of this migration: it can raise ValueError on a duplicate id: log
+        # and keep the previous ctx roster rather than crash this tool call.
         if self._ctx is not None:
-            self._ctx.set_participants(refreshed)
+            try:
+                self._ctx.set_participants(refreshed)
+            except (ValueError, TypeError) as err:
+                log_roster_error(
+                    logger,
+                    room_id=self.room_id,
+                    action="sync participants to context",
+                    err=err,
+                )
 
         self._participants = refreshed
         return response.data

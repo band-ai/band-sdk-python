@@ -1,9 +1,13 @@
-"""Participant field-set projection and merge for the passive roster."""
+"""Participant field-set projection for the passive roster, and shared
+error logging for band_sdk_core.ParticipantRoster's failure surfaces."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
+
+from band.logging_config import trace_context_extra
 
 # Fields retained for the always-injected passive roster (and the WS/REST cache
 # that feeds it). One definition so every cache path projects the same shape.
@@ -14,25 +18,32 @@ def participant_snapshot(participant: Mapping[str, Any]) -> dict[str, Any]:
     """Project a participant mapping to the passive-roster field set.
 
     Callers pass a plain dict — REST models are ``model_dump()``-ed at the
-    call site, same as WebSocket event payloads.
+    call site, same as WebSocket event payloads. Used independently of
+    ``ExecutionContext``'s core-backed roster by ``AgentTools``/
+    ``OneShotInvoker``, which keep their own participant cache.
     """
     return {name: participant.get(name) for name in _PARTICIPANT_FIELDS}
 
 
-def merge_participant(
-    existing: Mapping[str, Any], snapshot: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Merge a fresh snapshot over an existing record, field by field.
+def log_roster_error(
+    logger_: logging.Logger, *, room_id: str, action: str, err: Exception
+) -> None:
+    """Log a ``band_sdk_core.ParticipantRoster`` failure with its structured fields.
 
-    Participant data arrives from sources of unequal fidelity (Peer lookup,
-    participant list, WebSocket events, integration hooks), so a source that
-    does not know a field must never erase one learned elsewhere. Absence is
-    checked by truthiness, not ``is not None`` — matching the consumer
-    (``build_participants_message``, which itself gates on truthiness), since
-    a source can serialize an unknown field as ``""`` rather than omitting
-    the key (plausible for the participants-list endpoint, precisely the
-    sparse source this merge exists to defend against).
+    ``ParticipantRoster.add``/``set_all`` are real, new failure surfaces at
+    call sites that never raised before this migration (a plain ``TypeError``
+    for a malformed field, or a ``ValueError`` with ``.issues``/
+    ``.trace_context`` for a duplicate id in ``set_all``). Every caller keeps
+    the previous roster/participant state rather than propagating; this
+    helper is only the shared log line, so ``.issues``/``.trace_context``
+    reach the log as distinct fields instead of being flattened into
+    ``str(err)`` (harmless ``None``s for a plain REST exception, which has
+    neither).
     """
-    return {
-        name: snapshot.get(name) or existing.get(name) for name in _PARTICIPANT_FIELDS
-    }
+    logger_.warning(
+        "Failed to %s for room %s: %s",
+        action,
+        room_id,
+        err,
+        extra={"issues": getattr(err, "issues", None), **trace_context_extra(err)},
+    )

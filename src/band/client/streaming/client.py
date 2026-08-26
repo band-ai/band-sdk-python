@@ -64,6 +64,20 @@ class DeliveryStatus(StrEnum):
     FAILED = "failed"
 
 
+class ControlMode(StrEnum):
+    """Shared vocabulary for the ``agent.control`` wire signal.
+
+    One typed vocabulary for both sides: ``AgentControlPayload.mode`` (the
+    platform's wire field) and ``ExecutionContext.interrupt()``'s ``kind``
+    argument. Prevents the two from drifting into separate, disconnected
+    enums for the same concept.
+    """
+
+    INTERRUPT = "interrupt"
+    STOP = "stop"
+    PLAY = "play"
+
+
 class MessageMetadata(WirePayload):
     """Metadata within message_created / message_updated payloads."""
 
@@ -216,7 +230,7 @@ class AgentControlPayload(WirePayload):
     consumers should dedup on ``correlation_id``.
     """
 
-    mode: Literal["interrupt", "stop", "play"]
+    mode: ControlMode
     scope: Literal["agent", "room"]
     agent_id: str
     type: str | None = None
