@@ -37,6 +37,8 @@ from band.core.memory_types import (
     MemoryStoreScope,
     MemorySystem,
     MemoryType,
+    memory_list_scope_field_description,
+    memory_store_scope_field_description,
     memory_type_field_description,
     validate_memory_type_for_system,
     validate_subject_scope,
@@ -384,12 +386,7 @@ class ListMemoriesInput(BaseModel):
         None, description="Filter by subject UUID (required for subject-scoped queries)"
     )
     scope: MemoryListScope | None = Field(
-        None,
-        description=(
-            'Filter by scope. "organization" requires the agent\'s owner to '
-            'belong to an organization; "agent" (private to this agent) works '
-            "regardless."
-        ),
+        None, description=memory_list_scope_field_description()
     )
     system: MemorySystem | None = Field(None, description="Filter by memory system")
     type: MemoryType | None = Field(None, description="Filter by memory type")
@@ -415,12 +412,7 @@ class StoreMemoryInput(BaseModel):
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
     scope: MemoryStoreScope = Field(
-        ...,
-        description=(
-            'Visibility scope. "organization" requires the agent\'s owner to '
-            'belong to an organization; "agent" (private to this agent) works '
-            "regardless."
-        ),
+        ..., description=memory_store_scope_field_description()
     )
     subject_id: str | None = Field(
         None,
@@ -2454,9 +2446,9 @@ class AgentTools(AgentToolsProtocol):
 
         Args:
             subject_id: Filter by subject UUID
-            scope: Filter by scope (agent, subject, organization, all). "organization"
-                requires the agent's owner to belong to an organization; "agent"
-                (private to this agent) works regardless.
+            scope: Filter by scope (see MemoryListScope for valid values).
+                Organization scope requires the agent's owner to belong to an
+                organization; agent scope works regardless.
             system: Filter by memory system (sensory, working, long_term)
             type: Filter by memory type
             segment: Filter by segment (user, agent, tool, guideline)
@@ -2514,9 +2506,9 @@ class AgentTools(AgentToolsProtocol):
             type: Memory type (iconic, echoic, haptic, episodic, semantic, procedural)
             segment: Logical segment (user, agent, tool, guideline)
             thought: Agent's reasoning for storing this memory
-            scope: Visibility scope (agent, subject, organization). "organization"
-                requires the agent's owner to belong to an organization; "agent"
-                (private to this agent, no subject_id) works regardless.
+            scope: Visibility scope (see MemoryStoreScope for valid values).
+                Organization scope requires the agent's owner to belong to an
+                organization; agent scope (no subject_id) works regardless.
             subject_id: UUID of the subject (required for subject scope)
             metadata: Additional metadata (tags, references)
 

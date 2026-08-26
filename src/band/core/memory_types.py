@@ -127,3 +127,25 @@ def memory_type_field_description() -> str:
         f"{'|'.join(systems)}={'/'.join(types)}" for types, systems in grouped.items()
     )
     return "Memory type - must match the chosen system: " + ", ".join(pairings)
+
+
+def _organization_scope_caveat(agent_value: str, organization_value: str) -> str:
+    """Shared caveat for the store/list scope field descriptions below."""
+    return (
+        f'"{organization_value}" requires the agent\'s owner to belong to an '
+        f'organization; "{agent_value}" (private to this agent) works regardless.'
+    )
+
+
+def memory_store_scope_field_description() -> str:
+    """Build the store_memory ``scope`` field description from the enum."""
+    return "Visibility scope. " + _organization_scope_caveat(
+        MemoryStoreScope.AGENT.value, MemoryStoreScope.ORGANIZATION.value
+    )
+
+
+def memory_list_scope_field_description() -> str:
+    """Build the list_memories ``scope`` field description from the enum."""
+    return "Filter by scope. " + _organization_scope_caveat(
+        MemoryListScope.AGENT.value, MemoryListScope.ORGANIZATION.value
+    )
