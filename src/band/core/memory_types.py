@@ -89,10 +89,11 @@ def validate_subject_scope(
     """Require subject_id when storing a subject-scoped memory."""
     if scope == MemoryStoreScope.SUBJECT and subject_id is None:
         raise ValueError(
-            'scope="subject" requires a subject_id (the UUID of the person or '
-            "agent the memory is about). You did not provide one. If you do not "
-            'have a concrete subject UUID, retry with scope="agent" and omit '
-            "subject_id. Do not invent a UUID."
+            f'scope="{MemoryStoreScope.SUBJECT.value}" requires a subject_id (the '
+            "UUID of the person or agent the memory is about). You did not "
+            "provide one. If you do not have a concrete subject UUID, retry "
+            f'with scope="{MemoryStoreScope.AGENT.value}" and omit subject_id. '
+            "Do not invent a UUID."
         )
 
 
