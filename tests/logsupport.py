@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 
+import band.logging_config as logging_config_module
+
 
 class RecordingHandler(logging.Handler):
     """Stand-in for a host-owned handler (an OTEL ``LoggingHandler``, a shipper).
@@ -85,3 +87,16 @@ def band_log_env(
             else:
                 scoped.setenv(env_name, value)
         yield
+
+
+def fake_traceparent(monkeypatch: pytest.MonkeyPatch, *values: str) -> None:
+    """Fake ``current_traceparent()`` for the rest of the test.
+
+    One value fakes a fixed traceparent; more than one cycles through them on
+    successive calls -- e.g. nested ``trace_context_scope()`` opens, each of
+    which reads a fresh value at entry.
+    """
+    calls = iter(values)
+    monkeypatch.setattr(
+        logging_config_module, "current_traceparent", lambda: next(calls)
+    )

@@ -15,6 +15,7 @@ from band.client.streaming import (
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    WireEvent,
 )
 
 
@@ -140,6 +141,41 @@ class TestContactEventHandlers:
         assert isinstance(event, ContactRequestReceivedEvent)
         assert event.payload.id == "req-123"
         assert event.room_id is None
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_on_contact_request_received_with_absent_sender_still_queues(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """A wire payload with from_handle/from_name absent -- which
+        band-sdk-core accepts (contact_request_received's `compact/1` drops
+        the keys, it does not send `null`) -- must still reach the queue.
+
+        `_on_contact_request_received` unconditionally logs `payload.from_name`
+        and `payload.from_handle`; before these fields were made Optional, a
+        `from_wire`-hydrated payload missing them left the attributes unset via
+        `model_construct`, so that log line raised `AttributeError` and this
+        real event was silently dropped instead of queued.
+        """
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        payload = ContactRequestReceivedPayload.from_wire(
+            WireEvent.CONTACT_REQUEST_RECEIVED,
+            {
+                "id": "req-456",
+                "status": "pending",
+                "inserted_at": "2026-02-09T10:30:00Z",
+            },
+        )
+        await link._on_contact_request_received(payload)
+
+        event = await link._event_queue.get()
+        assert isinstance(event, ContactRequestReceivedEvent)
+        assert event.payload.id == "req-456"
+        assert event.payload.from_handle is None
+        assert event.payload.from_name is None
 
     @patch("band.platform.link.WebSocketClient")
     async def test_on_contact_request_updated_queues_event(

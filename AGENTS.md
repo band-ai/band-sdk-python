@@ -185,7 +185,12 @@ await link.rest.agent_api_participants.list_agent_chat_participants(...)
 
 ### Payload Models (Pydantic)
 
-All models use `ConfigDict(extra="allow")` to accept additional fields from the backend.
+Field rules and normalization (alias sync, defaulting, coercion) live in
+`band-sdk-core` (`band_sdk_core.validate_event_payload`), not in these
+models — they are rule-free typed projections, hydrated without
+re-validating by `WirePayload.from_wire` (`src/band/client/streaming/wire.py`).
+Every model inherits `WirePayload`, which sets `ConfigDict(extra="allow")`
+once for all of them.
 
 ```python notest
 MessageCreatedPayload:
@@ -200,13 +205,15 @@ RoomAddedPayload:
   id, inserted_at, updated_at, title?, task_id?
 
 RoomRemovedPayload:
-  id, status?, type?, title?, removed_at?
+  # Same 5-field wire shape as RoomAddedPayload -- band-sdk-core validates
+  # both through one rule (ChatJSON.format_room_event/1).
+  id, inserted_at, updated_at, title?, task_id?
 
 ParticipantAddedPayload:
   id, name, type, handle?, description?, is_remote?, is_external? (legacy alias)
 
 ParticipantRemovedPayload:
-  id
+  id, name, type
 
 Mention:
   id, username?, handle?, name?

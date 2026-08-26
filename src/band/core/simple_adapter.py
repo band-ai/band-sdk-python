@@ -25,6 +25,7 @@ from band.core.types import (
     PlatformMessage,
     TurnUsage,
 )
+from band.logging_config import trace_context_scope
 
 logger = logging.getLogger(__name__)
 
@@ -301,21 +302,30 @@ class SimpleAdapter(Generic[H], ABC):
     # --- FrameworkAdapter protocol implementation ---
 
     async def on_event(self, inp: AgentInput) -> None:
-        """Implements FrameworkAdapter.on_event()."""
-        # Convert history if converter is set
-        if self.history_converter:
-            converted_history: Any = inp.history.convert(self.history_converter)
-        else:
-            # No converter: pass raw HistoryProvider as H
-            # Adapters without converters should type as SimpleAdapter[HistoryProvider]
-            converted_history = inp.history
+        """Implements FrameworkAdapter.on_event().
 
-        await self.on_message(
-            msg=inp.msg,
-            tools=inp.tools,
-            history=cast("H", converted_history),
-            participants_msg=inp.participants_msg,
-            contacts_msg=inp.contacts_msg,
-            is_session_bootstrap=inp.is_session_bootstrap,
-            room_id=inp.room_id,
-        )
+        Every framework adapter's turn passes through here (the one place
+        that calls the per-adapter ``on_message`` override), so this is where
+        the turn's trace-context correlation window opens -- every log line
+        emitted anywhere during this turn's processing picks it up via
+        ``band.logging_config``'s log filter. (``runtime/oneshot.py`` is a
+        separate, non-adapter delivery path and does not go through here.)
+        """
+        with trace_context_scope():
+            # Convert history if converter is set
+            if self.history_converter:
+                converted_history: Any = inp.history.convert(self.history_converter)
+            else:
+                # No converter: pass raw HistoryProvider as H
+                # Adapters without converters should type as SimpleAdapter[HistoryProvider]
+                converted_history = inp.history
+
+            await self.on_message(
+                msg=inp.msg,
+                tools=inp.tools,
+                history=cast("H", converted_history),
+                participants_msg=inp.participants_msg,
+                contacts_msg=inp.contacts_msg,
+                is_session_bootstrap=inp.is_session_bootstrap,
+                room_id=inp.room_id,
+            )

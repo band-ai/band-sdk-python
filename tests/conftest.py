@@ -344,10 +344,9 @@ def make_room_removed_event(
     """Create a RoomRemovedEvent using SDK-native types."""
     payload = RoomRemovedPayload(
         id=room_id,
-        status=kwargs.get("status", "removed"),
-        type=kwargs.get("type", "direct"),
         title=title,
-        removed_at=kwargs.get("removed_at", "2024-01-01T00:00:00Z"),
+        inserted_at=kwargs.get("inserted_at", "2024-01-01T00:00:00Z"),
+        updated_at=kwargs.get("updated_at", "2024-01-01T00:00:00Z"),
     )
     return RoomRemovedEvent(room_id=room_id, payload=payload)
 
@@ -524,9 +523,11 @@ def make_participant_added_event(
 def make_participant_removed_event(
     room_id: str = "room-123",
     participant_id: str = "user-456",
+    name: str = "Test User",
+    type: str = "User",
 ) -> ParticipantRemovedEvent:
     """Create a ParticipantRemovedEvent using SDK-native types."""
-    payload = ParticipantRemovedPayload(id=participant_id)
+    payload = ParticipantRemovedPayload(id=participant_id, name=name, type=type)
     return ParticipantRemovedEvent(room_id=room_id, payload=payload)
 
 

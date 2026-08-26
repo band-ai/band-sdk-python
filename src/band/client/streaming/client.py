@@ -15,9 +15,9 @@ from phoenix_channels_python_client.client import (
 from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
-
 from band.client.streaming.errors import classify_initial_upgrade_error
+from band.client.streaming.wire import WirePayload
+from band.logging_config import trace_context_extra
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,8 @@ class WebSocketDisconnectReason:
 # Using Pydantic for runtime validation
 
 
-class Mention(BaseModel):
+class Mention(WirePayload):
     """Mention object within message metadata."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     username: str | None = None
@@ -66,10 +64,8 @@ class DeliveryStatus(StrEnum):
     FAILED = "failed"
 
 
-class MessageMetadata(BaseModel):
+class MessageMetadata(WirePayload):
     """Metadata within message_created / message_updated payloads."""
-
-    model_config = ConfigDict(extra="allow")
 
     mentions: list[Mention] = []
     status: str | None = None
@@ -81,12 +77,8 @@ class MessageMetadata(BaseModel):
     delivery_status: dict[str, Any] | None = None
 
 
-class MessageCreatedPayload(BaseModel):
+class MessageCreatedPayload(WirePayload):
     """Payload for message_created events (observed from real WebSocket)."""
-
-    model_config = ConfigDict(
-        extra="allow"
-    )  # Allow extra fields backend might add later
 
     id: str
     content: str
@@ -101,15 +93,13 @@ class MessageCreatedPayload(BaseModel):
     updated_at: str
 
 
-class RoomAddedPayload(BaseModel):
+class RoomAddedPayload(WirePayload):
     """Payload for room_added events.
 
     Required/optional fields aligned with the Fern-generated ChatRoom model
     (band_rest.types.chat_room.ChatRoom). The WebSocket may include
     additional fields which are captured by ``extra="allow"``.
     """
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     inserted_at: str
@@ -118,26 +108,24 @@ class RoomAddedPayload(BaseModel):
     task_id: str | None = None
 
 
-class RoomRemovedPayload(BaseModel):
+class RoomRemovedPayload(WirePayload):
     """Payload for room_removed events.
 
-    WebSocket-only event with no Fern-generated model; all fields except
-    ``id`` are kept optional as a defensive default.
+    band-sdk-core's canonical rule pushes ``room_removed`` through the same
+    5-field wire shape as ``room_added`` (``ChatJSON.format_room_event/1``),
+    sharing one validator on the Rust side -- so this mirrors
+    ``RoomAddedPayload`` field-for-field.
     """
 
-    model_config = ConfigDict(extra="allow")
-
     id: str
-    status: str | None = None
-    type: str | None = None
+    inserted_at: str
+    updated_at: str
     title: str | None = None
-    removed_at: str | None = None
+    task_id: str | None = None
 
 
-class RoomDeletedPayload(BaseModel):
+class RoomDeletedPayload(WirePayload):
     """Payload for room_deleted events on room_participants channels."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
 
@@ -146,10 +134,8 @@ async def _noop_room_deleted(_: RoomDeletedPayload) -> None:
     return None
 
 
-class ParticipantAddedPayload(BaseModel):
+class ParticipantAddedPayload(WirePayload):
     """Payload for participant_added events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     name: str
@@ -159,80 +145,69 @@ class ParticipantAddedPayload(BaseModel):
     is_remote: bool | None = None
     is_external: bool | None = None  # Legacy alias for is_remote
 
-    @model_validator(mode="after")
-    def _sync_remote_aliases(self) -> "ParticipantAddedPayload":
-        if self.is_remote is None and self.is_external is not None:
-            self.is_remote = self.is_external
-        if self.is_external is None and self.is_remote is not None:
-            self.is_external = self.is_remote
-        return self
 
+class ParticipantRemovedPayload(WirePayload):
+    """Payload for participant_removed events.
 
-class ParticipantRemovedPayload(BaseModel):
-    """Payload for participant_removed events."""
-
-    model_config = ConfigDict(extra="allow")
+    band-sdk-core's canonical rule requires ``name``/``type`` present on the
+    wire -- typed here to match what's actually guaranteed post-validation,
+    not left to ``extra="allow"`` passthrough.
+    """
 
     id: str
+    name: str
+    type: str
 
 
 # Contact event payloads
 
 
-class ContactRequestReceivedPayload(BaseModel):
+class ContactRequestReceivedPayload(WirePayload):
     """Payload for contact_request_received events."""
 
-    model_config = ConfigDict(extra="allow")
-
     id: str
-    from_handle: str
-    from_name: str
+    # band-sdk-core's canonical rule accepts these two absent (compact/1 drops
+    # them on the wire; see the canonical policy doc's contact_request_received
+    # section) -- Optional so from_wire's non-validating hydration never leaves
+    # a required field unset (model_construct would, and accessing it raises
+    # AttributeError).
+    from_handle: str | None = None
+    from_name: str | None = None
     message: str | None = None
     status: str
     inserted_at: str
 
 
-class ContactRequestUpdatedPayload(BaseModel):
+class ContactRequestUpdatedPayload(WirePayload):
     """Payload for contact_request_updated events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
     status: str
 
 
-class ContactAddedPayload(BaseModel):
+class ContactAddedPayload(WirePayload):
     """Payload for contact_added events."""
 
-    model_config = ConfigDict(extra="allow")
-
     id: str
-    handle: str
-    name: str
+    # band-sdk-core's canonical rule allows an explicit wire `null` for both
+    # (the key itself is always present -- see the canonical policy doc's
+    # contact_added section), so hydration can deliver a real None here.
+    handle: str | None = None
+    name: str | None = None
     type: str
     description: str | None = None
     is_remote: bool | None = None
     is_external: bool | None = None  # Legacy alias for is_remote
     inserted_at: str
 
-    @model_validator(mode="after")
-    def _sync_remote_aliases(self) -> "ContactAddedPayload":
-        if self.is_remote is None and self.is_external is not None:
-            self.is_remote = self.is_external
-        if self.is_external is None and self.is_remote is not None:
-            self.is_external = self.is_remote
-        return self
 
-
-class ContactRemovedPayload(BaseModel):
+class ContactRemovedPayload(WirePayload):
     """Payload for contact_removed events."""
-
-    model_config = ConfigDict(extra="allow")
 
     id: str
 
 
-class AgentControlPayload(BaseModel):
+class AgentControlPayload(WirePayload):
     """Payload for ``agent.control`` events on the agent_control channel.
 
     Pushed by the platform to interrupt, stop, or resume (play) an agent.
@@ -240,8 +215,6 @@ class AgentControlPayload(BaseModel):
     set for a single (agent, room) target. The server does not deduplicate, so
     consumers should dedup on ``correlation_id``.
     """
-
-    model_config = ConfigDict(extra="allow")
 
     mode: Literal["interrupt", "stop", "play"]
     scope: Literal["agent", "room"]
@@ -253,10 +226,8 @@ class AgentControlPayload(BaseModel):
     correlation_id: str | None = None
 
 
-class SupersedePayload(BaseModel):
+class SupersedePayload(WirePayload):
     """Payload for terminal agent_control supersede events."""
-
-    model_config = ConfigDict(extra="allow")
 
     reason: str
     message: str
@@ -276,30 +247,60 @@ class SupersedePayload(BaseModel):
         )
 
 
-_PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
-    "message_created": MessageCreatedPayload,
-    # `message_updated` shares the message_created shape; the delivery-state
-    # transitions live in ``metadata.delivery_status``.
-    "message_updated": MessageCreatedPayload,
-    "room_added": RoomAddedPayload,
-    "room_removed": RoomRemovedPayload,
-    "room_deleted": RoomDeletedPayload,
-    "participant_added": ParticipantAddedPayload,
-    "participant_removed": ParticipantRemovedPayload,
-    "contact_request_received": ContactRequestReceivedPayload,
-    "contact_request_updated": ContactRequestUpdatedPayload,
-    "contact_added": ContactAddedPayload,
-    "contact_removed": ContactRemovedPayload,
-    "supersede": SupersedePayload,
-    "agent.control": AgentControlPayload,
+class WireEvent(StrEnum):
+    """Every wire event name this SDK recognizes -- the single source of
+    truth `_PAYLOAD_MODELS`, `KNOWN_UNHANDLED_EVENTS`, and each `join_*`
+    method's handler-dict keys are keyed from, instead of each repeating the
+    string literal. A member is still a plain ``str``, so it passes straight
+    through to `from_wire`/`band_sdk_core` unchanged. Members through
+    `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary;
+    `TASK_CREATED`/`TASK_UPDATED` are outside it entirely (the `tasks:*`
+    channel's raw-dict passthrough never calls `validate_event_payload`).
+    """
+
+    MESSAGE_CREATED = "message_created"
+    # Shares message_created's shape; the delivery-state transitions live in
+    # ``metadata.delivery_status``.
+    MESSAGE_UPDATED = "message_updated"
+    ROOM_ADDED = "room_added"
+    ROOM_REMOVED = "room_removed"
+    ROOM_DELETED = "room_deleted"
+    PARTICIPANT_ADDED = "participant_added"
+    PARTICIPANT_REMOVED = "participant_removed"
+    CONTACT_REQUEST_RECEIVED = "contact_request_received"
+    CONTACT_REQUEST_UPDATED = "contact_request_updated"
+    CONTACT_ADDED = "contact_added"
+    CONTACT_REMOVED = "contact_removed"
+    SUPERSEDE = "supersede"
+    AGENT_CONTROL = "agent.control"
+    # No PlatformEvent/payload model anywhere in the codebase -- event rows
+    # (thought/error/task/tool_call/tool_result) are read back over REST
+    # instead (see tests/e2e/baseline/toolkit/observations/tool_calls.py), so
+    # this is expected, not a bug. Any other unregistered event name still warns.
+    EVENT_CREATED = "event_created"
+    # `tasks:*` channel only -- no payload model, raw dict passthrough.
+    TASK_CREATED = "task_created"
+    TASK_UPDATED = "task_updated"
+
+
+_PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
+    WireEvent.MESSAGE_CREATED: MessageCreatedPayload,
+    WireEvent.MESSAGE_UPDATED: MessageCreatedPayload,
+    WireEvent.ROOM_ADDED: RoomAddedPayload,
+    WireEvent.ROOM_REMOVED: RoomRemovedPayload,
+    WireEvent.ROOM_DELETED: RoomDeletedPayload,
+    WireEvent.PARTICIPANT_ADDED: ParticipantAddedPayload,
+    WireEvent.PARTICIPANT_REMOVED: ParticipantRemovedPayload,
+    WireEvent.CONTACT_REQUEST_RECEIVED: ContactRequestReceivedPayload,
+    WireEvent.CONTACT_REQUEST_UPDATED: ContactRequestUpdatedPayload,
+    WireEvent.CONTACT_ADDED: ContactAddedPayload,
+    WireEvent.CONTACT_REMOVED: ContactRemovedPayload,
+    WireEvent.SUPERSEDE: SupersedePayload,
+    WireEvent.AGENT_CONTROL: AgentControlPayload,
 }
 
 
-# event_created has no PlatformEvent/payload model anywhere in the codebase --
-# event rows (thought/error/task/tool_call/tool_result) are read back over REST
-# instead (see tests/e2e/baseline/toolkit/observations/tool_calls.py), so this
-# is expected, not a bug. Any other unregistered event name still warns.
-KNOWN_UNHANDLED_EVENTS = frozenset({"event_created"})
+KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 
 def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
@@ -424,23 +425,55 @@ class WebSocketClient:
             )
             return
 
-        # Validate and parse payload into Pydantic models for known types
+        # Validate (band-sdk-core) and hydrate into typed payload models for
+        # known event types.
         model = _PAYLOAD_MODELS.get(message.event)
         if model is not None:
             try:
-                validated = model(**message.payload)
-            except ValidationError as e:
-                errors = "; ".join(
-                    f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
-                    for err in e.errors()
+                validated = model.from_wire(message.event, message.payload)
+            except ValueError as e:
+                # band-sdk-core rejected the payload; `.issues` carries every
+                # violation. This log line runs outside any
+                # trace_context_scope() (validation happens in the transport
+                # layer, before a turn exists), so the ambient TRACE_CONTEXT
+                # would be None here -- extra=trace_context_extra(e) reports
+                # `e`'s own traceparent instead, via the same record attribute
+                # _TraceContextFilter would otherwise fill in.
+                issues = getattr(e, "issues", None)
+                errors = (
+                    "; ".join(f"{path}: {msg}" for path, _code, msg in issues)
+                    if issues
+                    else str(e)
                 )
                 logger.error(
                     "[WebSocket] Invalid %s payload: %s",
                     message.event,
                     errors,
+                    extra=trace_context_extra(e),
                 )
                 logger.debug(
                     "[WebSocket] Raw payload for invalid %s: %s",
+                    message.event,
+                    message.payload,
+                )
+                self._validation_error_count += 1
+                return
+            except (TypeError, AttributeError):
+                # Payload passed band-sdk-core but hydration couldn't build a
+                # well-shaped model from it -- a gap between what band-sdk-core
+                # accepts and this SDK's typed projection, not routine bad wire
+                # data, so it's logged distinctly (with a traceback) rather
+                # than blended into the ValueError case above. Still counted
+                # and dropped, protecting the event loop the same way the
+                # callback invocation below does.
+                logger.exception(
+                    "[WebSocket] %s payload passed band-sdk-core but failed to "
+                    "hydrate -- likely a gap between band-sdk-core's rules and "
+                    "this SDK's typed model",
+                    message.event,
+                )
+                logger.debug(
+                    "[WebSocket] Raw payload for unhydratable %s: %s",
                     message.event,
                     message.payload,
                 )
@@ -486,10 +519,10 @@ class WebSocketClient:
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[..., Awaitable[None]]] = {
-            "supersede": on_supersede
+            WireEvent.SUPERSEDE: on_supersede
         }
         if on_control is not None:
-            handlers["agent.control"] = on_control
+            handlers[WireEvent.AGENT_CONTROL] = on_control
 
         async def message_handler(message):
             await self._handle_events(message, handlers)
@@ -510,7 +543,11 @@ class WebSocketClient:
 
         async def message_handler(message):
             await self._handle_events(
-                message, {"room_added": on_room_added, "room_removed": on_room_removed}
+                message,
+                {
+                    WireEvent.ROOM_ADDED: on_room_added,
+                    WireEvent.ROOM_REMOVED: on_room_removed,
+                },
             )
 
         result = await self._require_client().subscribe_to_topic(topic, message_handler)
@@ -534,10 +571,10 @@ class WebSocketClient:
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[[MessageCreatedPayload], Awaitable[None]]] = {
-            "message_created": on_message_created
+            WireEvent.MESSAGE_CREATED: on_message_created
         }
         if on_message_updated is not None:
-            handlers["message_updated"] = on_message_updated
+            handlers[WireEvent.MESSAGE_UPDATED] = on_message_updated
 
         async def message_handler(message):
             await self._handle_events(message, handlers)
@@ -555,7 +592,11 @@ class WebSocketClient:
 
         async def message_handler(message):
             await self._handle_events(
-                message, {"room_added": on_room_added, "room_removed": on_room_removed}
+                message,
+                {
+                    WireEvent.ROOM_ADDED: on_room_added,
+                    WireEvent.ROOM_REMOVED: on_room_removed,
+                },
             )
 
         return await self._require_client().subscribe_to_topic(topic, message_handler)
@@ -577,9 +618,9 @@ class WebSocketClient:
             await self._handle_events(
                 message,
                 {
-                    "participant_added": on_participant_added,
-                    "participant_removed": on_participant_removed,
-                    "room_deleted": on_room_deleted,
+                    WireEvent.PARTICIPANT_ADDED: on_participant_added,
+                    WireEvent.PARTICIPANT_REMOVED: on_participant_removed,
+                    WireEvent.ROOM_DELETED: on_room_deleted,
                 },
             )
 
@@ -597,7 +638,10 @@ class WebSocketClient:
         async def message_handler(message):
             await self._handle_events(
                 message,
-                {"task_created": on_task_created, "task_updated": on_task_updated},
+                {
+                    WireEvent.TASK_CREATED: on_task_created,
+                    WireEvent.TASK_UPDATED: on_task_updated,
+                },
             )
 
         return await self._require_client().subscribe_to_topic(topic, message_handler)
@@ -656,10 +700,10 @@ class WebSocketClient:
             await self._handle_events(
                 message,
                 {
-                    "contact_request_received": on_contact_request_received,
-                    "contact_request_updated": on_contact_request_updated,
-                    "contact_added": on_contact_added,
-                    "contact_removed": on_contact_removed,
+                    WireEvent.CONTACT_REQUEST_RECEIVED: on_contact_request_received,
+                    WireEvent.CONTACT_REQUEST_UPDATED: on_contact_request_updated,
+                    WireEvent.CONTACT_ADDED: on_contact_added,
+                    WireEvent.CONTACT_REMOVED: on_contact_removed,
                 },
             )
 

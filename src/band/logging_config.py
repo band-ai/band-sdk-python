@@ -8,7 +8,10 @@ import logging.config
 import logging.handlers
 import os
 import sys
-from collections.abc import Mapping, Sequence
+import uuid
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Annotated, Any, Literal, TypeAlias
@@ -24,6 +27,11 @@ from pydantic import (
 )
 
 from band.core.exceptions import BandConfigError
+
+try:
+    from opentelemetry import propagate
+except ImportError:
+    propagate = None
 
 
 class LoggingStyle(StrEnum):
@@ -91,12 +99,81 @@ OTEL_CORRELATION_FIELDS: tuple[str, ...] = (
     "otelTraceSampled",
     "otelServiceName",
 )
+
+# The correlation id for the turn currently being processed --
+# ``trace_context_scope()`` sets it for the duration of one
+# ``SimpleAdapter.on_event()`` call; ``_TraceContextFilter`` reads it onto
+# every LogRecord, so every log line in a turn shares one id whether or not
+# OpenTelemetry is installed.
+TRACE_CONTEXT: ContextVar[str | None] = ContextVar("band_trace_context", default=None)
+
+
+def current_traceparent() -> str | None:
+    """The active W3C traceparent, or ``None`` when OpenTelemetry isn't installed."""
+    if propagate is None:
+        return None
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    return carrier.get("traceparent")
+
+
+@contextmanager
+def trace_context_scope() -> Iterator[None]:
+    """Set :data:`TRACE_CONTEXT` for one turn: the active W3C traceparent when
+    a span is active, otherwise a generated id -- every turn gets one either
+    way, not just OTel-instrumented ones.
+
+    Read fresh at scope entry (not passed in) so nested/sequential turns each
+    pick up whatever's active when *they* start, not a stale value from an
+    earlier turn. Always resets on exit, including when the wrapped code
+    raises.
+    """
+    token = TRACE_CONTEXT.set(current_traceparent() or uuid.uuid4().hex)
+    try:
+        yield
+    finally:
+        TRACE_CONTEXT.reset(token)
+
+
+class _TraceContextFilter(logging.Filter):
+    """Stamps :data:`TRACE_CONTEXT`'s current value onto every LogRecord that
+    doesn't already carry one.
+
+    A filter, not a formatter default, so the attribute exists on every
+    record regardless of style; only JSON's default field list surfaces it.
+    The ``hasattr`` check lets ``extra=trace_context_extra(exc)`` report a
+    more precise, exception-specific value without being clobbered by the
+    ambient one.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "trace_context"):
+            record.trace_context = TRACE_CONTEXT.get()
+        return True
+
+
+def trace_context_extra(exc: BaseException) -> dict[str, str]:
+    """``extra=`` reporting ``exc``'s own ``trace_context`` instead of the
+    ambient :data:`TRACE_CONTEXT`. Empty when ``exc`` carries none, so
+    :class:`_TraceContextFilter` still falls back to the ambient value rather
+    than being shadowed by an explicit ``None``.
+    """
+    value = getattr(exc, "trace_context", None)
+    return {"trace_context": value} if value else {}
+
+
+# Mirrors OTEL_CORRELATION_FIELDS's role: part of the *default* JSON schema,
+# populated by _TraceContextFilter above rather than OpenTelemetry -- absent a
+# call to trace_context_scope() it serializes as null, same shape either way.
+TRACE_CORRELATION_FIELDS: tuple[str, ...] = ("trace_context",)
+
 _JSON_DEFAULT_FIELDS = (
     "asctime",
     "levelname",
     "name",
     "message",
     *OTEL_CORRELATION_FIELDS,
+    *TRACE_CORRELATION_FIELDS,
 )
 _JSON_RENAME_FIELDS = {
     "asctime": "timestamp",
@@ -582,11 +659,20 @@ def _build_from_request(request: LoggingRequest) -> LoggingConfig:
             handlers["console"]["level"] = request.level
             handlers["file"]["level"] = file_level
 
+    # Every handler gets the trace-context filter, regardless of style --
+    # applied once here rather than in each _build_*_handler variant so a new
+    # style can't forget it.
+    for handler_config in handlers.values():
+        handler_config["filters"] = ["trace_context"]
+
     # Keep existing application loggers alive; SDK helpers should not silently
     # disable logging configured by the host process.
     return {
         "version": 1,
         "disable_existing_loggers": False,
+        "filters": {
+            "trace_context": {"()": "band.logging_config._TraceContextFilter"},
+        },
         "formatters": formatters,
         "handlers": handlers,
         "root": {
@@ -816,11 +902,17 @@ def _build_json_formatter(
         extra="logging",
         package_name=JSON_LOGGER_REQUIREMENT,
     )
+    # _TraceContextFilter always sets record.trace_context; without this,
+    # JsonFormatter's default (any non-reserved attribute is a free "extra")
+    # would leak it into output even when json_fields excludes it.
+    from pythonjsonlogger.core import RESERVED_ATTRS
+
     fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
     json_formatter: LoggingConfig = {
         "()": "pythonjsonlogger.json.JsonFormatter",
         "format": " ".join(f"%({field})s" for field in fields),
         "datefmt": datefmt,
+        "reserved_attrs": (*RESERVED_ATTRS, *TRACE_CORRELATION_FIELDS),
         "rename_fields": {
             field: renamed
             for field, renamed in _JSON_RENAME_FIELDS.items()

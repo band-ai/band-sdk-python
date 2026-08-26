@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
@@ -23,12 +24,14 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 from band.credentials import PROXY_MANAGED_API_KEY
+import band.client.streaming.wire as wire_module
 from band.client.streaming import (
     DeliveryStatus,
     MessageCreatedPayload,
     SupersedePayload,
     WebSocketDisconnectReason,
     WebSocketUpgradeError,
+    WireEvent,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     RoomAddedPayload,
@@ -91,6 +94,32 @@ async def test_skips_invalid_message_created_payload(caplog):
 
     assert received is None, "Callback should not be called for invalid payload"
     assert "Invalid message_created payload" in caplog.text
+
+
+async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(caplog):
+    """A real OpenTelemetry span's traceparent reaches the real band_sdk_core
+    call, comes back on the raised ValueError, and lands on the seam's own
+    log record -- through the actual OTel propagation and band_sdk_core
+    binding, neither faked. Uses a standalone TracerProvider instance (never
+    ``trace.set_tracer_provider``), so this doesn't touch the process-global
+    provider other tests may depend on.
+    """
+    tracer = TracerProvider().get_tracer("test")
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with caplog.at_level(logging.ERROR):
+        with tracer.start_as_current_span("probe") as span:
+            span_context = span.get_span_context()
+            # Missing required fields -- a genuine band_sdk_core rejection.
+            received = await dispatch(client, "message_created", {"id": "msg-123"})
+
+    assert received is None
+    record = next(
+        r for r in caplog.records if "Invalid message_created" in r.getMessage()
+    )
+    assert record.trace_context is not None
+    assert format(span_context.trace_id, "032x") in record.trace_context
+    assert format(span_context.span_id, "016x") in record.trace_context
 
 
 async def test_skips_invalid_room_added_payload(caplog):
@@ -599,10 +628,10 @@ async def test_accepts_valid_room_removed_payload():
         "room_removed",
         {
             "id": "room-123",
-            "status": "active",
-            "type": "direct",
             "title": "Test Room",
-            "removed_at": "2025-11-17T11:26:59.925707",
+            "task_id": "task-1",
+            "inserted_at": "2025-11-17T09:05:35Z",
+            "updated_at": "2025-11-17T11:26:59Z",
         },
     )
     assert isinstance(received, RoomRemovedPayload)
@@ -610,15 +639,21 @@ async def test_accepts_valid_room_removed_payload():
 
 
 async def test_accepts_minimal_room_removed_payload():
-    """Should accept room_removed with only required `id` field (all others optional)."""
+    """Should accept room_removed with only its required fields (title/task_id optional)."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received = await dispatch(client, "room_removed", {"id": "room-456"})
+    received = await dispatch(
+        client,
+        "room_removed",
+        {
+            "id": "room-456",
+            "inserted_at": "2025-11-17T09:05:35Z",
+            "updated_at": "2025-11-17T09:05:35Z",
+        },
+    )
     assert isinstance(received, RoomRemovedPayload)
     assert received.id == "room-456"
-    assert received.status is None
-    assert received.type is None
     assert received.title is None
-    assert received.removed_at is None
+    assert received.task_id is None
 
 
 async def test_accepts_minimal_room_deleted_payload():
@@ -653,7 +688,11 @@ async def test_accepts_valid_participant_added_payload():
 async def test_accepts_valid_participant_removed_payload():
     """Should accept valid participant_removed payload and pass typed model to callback."""
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
-    received = await dispatch(client, "participant_removed", {"id": "p-123"})
+    received = await dispatch(
+        client,
+        "participant_removed",
+        {"id": "p-123", "name": "Test Agent", "type": "Agent"},
+    )
     assert isinstance(received, ParticipantRemovedPayload)
     assert received.id == "p-123"
 
@@ -761,10 +800,9 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
             "room_removed",
             {
                 "id": "room-123",
-                "status": "active",
-                "type": "direct",
                 "title": "Room",
-                "removed_at": "2025-11-17T11:26:59Z",
+                "inserted_at": "2025-11-17T09:05:35Z",
+                "updated_at": "2025-11-17T11:26:59Z",
             },
             RoomRemovedPayload,
             id="room_removed",
@@ -783,7 +821,7 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
         ),
         pytest.param(
             "participant_removed",
-            {"id": "p-123"},
+            {"id": "p-123", "name": "Agent", "type": "Agent"},
             ParticipantRemovedPayload,
             id="participant_removed",
         ),
@@ -864,6 +902,38 @@ async def test_validation_error_count_stays_zero_on_valid_payload():
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
     await dispatch(client, "message_created", VALID_MESSAGE_CREATED_PAYLOAD)
     assert client.validation_error_count == 0
+
+
+async def test_hydration_shape_mismatch_is_dropped_and_counted_not_raised(
+    monkeypatch, caplog
+):
+    """A payload band-sdk-core accepts but whose shape can't be hydrated must be
+    dropped and counted like any other invalid event, never escape the seam.
+
+    Fault-injects a shape band-sdk-core's own rules don't happen to catch, to
+    exercise the seam's `except (TypeError, AttributeError)` branch: `_hydrate`
+    raises `TypeError` walking a non-dict mention item, which escapes
+    `_handle_events` uncaught without that branch.
+    """
+
+    def fake_validate(event_type, raw, trace_context=None):
+        return {**raw, "metadata": {"mentions": [1]}}
+
+    monkeypatch.setattr(
+        wire_module.band_sdk_core, "validate_event_payload", fake_validate
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    with caplog.at_level(logging.ERROR):
+        received = await dispatch(
+            client, WireEvent.MESSAGE_CREATED, VALID_MESSAGE_CREATED_PAYLOAD
+        )
+
+    assert received is None
+    assert client.validation_error_count == 1
+    assert "message_created payload passed band-sdk-core but failed to hydrate" in (
+        caplog.text
+    )
 
 
 async def test_reset_validation_error_count_returns_previous_value():
