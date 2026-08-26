@@ -5,29 +5,11 @@
     ".": {
       "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
-      "include-component-in-tag": true,
-      "exclude-paths": ["packages/band-mcp"],
-      "extra-files": [
-        "src/band/__init__.py",
-        {
-          "type": "generic",
-          "path": "pyproject.toml",
-          "glob": false
-        }
-      ]
+      "exclude-paths": ["packages"]
     },
     "packages/band-mcp": {
       "package-name": "band-mcp",
-      "changelog-path": "CHANGELOG.md",
-      "include-component-in-tag": true,
-      "extra-files": [
-        "src/band_mcp/__init__.py",
-        {
-          "type": "generic",
-          "path": "pyproject.toml",
-          "glob": false
-        }
-      ]
+      "changelog-path": "CHANGELOG.md"
     }
   },
   "changelog-sections": [
