@@ -33,7 +33,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.runtime.capabilities import with_hub_room_contacts
-from band.runtime.participants import log_roster_errors, participant_snapshot
+from band.runtime.participants import log_roster_call, participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -2140,12 +2140,12 @@ class AgentTools(AgentToolsProtocol):
         # must not fail this tool call after that change was applied.
         if self._ctx is not None:
             ctx = self._ctx
-            with log_roster_errors(
+            log_roster_call(
                 logger,
+                call=ctx.add_participant,
+                arg=new_participant,
                 room_id=self.room_id,
-                action="add participant to context",
-            ):
-                ctx.add_participant(new_participant)
+            )
         logger.debug(
             "Updated participant cache: added %s, total=%s",
             participant_name,
@@ -2288,12 +2288,9 @@ class AgentTools(AgentToolsProtocol):
         # tool call.
         if self._ctx is not None:
             ctx = self._ctx
-            with log_roster_errors(
-                logger,
-                room_id=self.room_id,
-                action="sync participants to context",
-            ):
-                ctx.set_participants(refreshed)
+            log_roster_call(
+                logger, call=ctx.set_participants, arg=refreshed, room_id=self.room_id
+            )
 
         self._participants = refreshed
         return response.data

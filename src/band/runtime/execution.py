@@ -52,7 +52,7 @@ from band.runtime.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
 from band.runtime.context_serialization import context_item_to_dict
-from band.runtime.participants import log_roster_error, log_roster_errors
+from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
@@ -1926,21 +1926,21 @@ class ExecutionContext:
             # fires either way since it reports the platform event, not roster state.
             if isinstance(event, ParticipantAddedEvent) and event.payload:
                 payload = event.payload
-                with log_roster_errors(
+                log_roster_call(
                     logger,
+                    call=self.add_participant,
+                    arg=payload.model_dump(),
                     room_id=self.room_id,
-                    action="add participant",
-                ):
-                    self.add_participant(payload.model_dump())
+                )
                 await self._notify_participant_added(event)
             elif isinstance(event, ParticipantRemovedEvent) and event.payload:
                 payload = event.payload
-                with log_roster_errors(
+                log_roster_call(
                     logger,
+                    call=self.remove_participant,
+                    arg=payload.id,
                     room_id=self.room_id,
-                    action="remove participant",
-                ):
-                    self.remove_participant(payload.id)
+                )
                 await self._notify_participant_removed(event)
 
             # Call execution handler as a cancellable cycle. A control signal
