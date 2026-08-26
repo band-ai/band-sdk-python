@@ -941,8 +941,8 @@ class TestAgentToolsContextSyncBack:
         tools1 = AgentTools.from_context(ctx)
         await tools1.add_participant("Agent Two")
 
-        assert len(ctx._participants) == 1
-        assert ctx._participants[0]["id"] == "agent-2"
+        assert len(ctx.participants) == 1
+        assert ctx.participants[0]["id"] == "agent-2"
 
         # Turn 2: recreate tools — participant must still be there
         tools2 = AgentTools.from_context(ctx)
@@ -972,9 +972,9 @@ class TestAgentToolsContextSyncBack:
             link=MagicMock(rest=mock_rest_client),
             on_execute=AsyncMock(),
         )
-        ctx._participants = [participant]
+        ctx.set_participants([participant])
 
-        # REST snapshot must match ctx._participants
+        # REST snapshot must match ctx.participants
         p_mock = make_participant_mock("user-1", "User One", "User", handle="user-one")
         mock_rest_client.agent_api_participants.list_agent_chat_participants = (
             AsyncMock(return_value=MagicMock(data=[p_mock]))
@@ -984,7 +984,7 @@ class TestAgentToolsContextSyncBack:
         tools1 = AgentTools.from_context(ctx)
         await tools1.remove_participant("User One")
 
-        assert len(ctx._participants) == 0
+        assert len(ctx.participants) == 0
 
         # Turn 2: recreate tools — participant must stay removed
         tools2 = AgentTools.from_context(ctx)

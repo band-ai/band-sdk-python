@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.client.streaming import ControlMode
 from band.runtime.execution import ExecutionContext, BacklogProcessResult
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
@@ -487,3 +488,120 @@ class TestControlSignalInClaimWindow:
         result = await ctx._process_event(make_message_event(msg_id="n1"))
         assert result is True
         assert handler.completed == ["n1"]
+
+
+class TestControlModeValidation:
+    """interrupt()'s kind argument is typed ControlMode | str -- a plain
+    string still coerces, but an invalid or wrong-for-this-method value must
+    be rejected at the typed boundary rather than silently misbehaving."""
+
+    async def test_bogus_kind_raises_value_error(self, mock_link):
+        ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
+
+        with pytest.raises(ValueError):
+            ctx.interrupt(kind="bogus")
+
+    async def test_play_kind_raises_value_error(self, mock_link):
+        """interrupt() only ever implements INTERRUPT/STOP; PLAY is a valid
+        ControlMode member but the wrong one for this method."""
+        ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
+
+        with pytest.raises(ValueError):
+            ctx.interrupt(kind=ControlMode.PLAY)
+
+    async def test_play_kind_as_string_raises_value_error(self, mock_link):
+        ctx = ExecutionContext("room-123", mock_link, AsyncMock(), agent_id="agent-123")
+
+        with pytest.raises(ValueError):
+            ctx.interrupt(kind="play")
+
+
+class TestPendingAckCancellationGap:
+    """Regression coverage for the in-process pending-ACK cancellation gap
+    (INT-1245 step 4): once the handler has run to completion, the message
+    must be marked ack-pending BEFORE the awaited mark_processed call, so a
+    genuine cancellation of the enclosing task landing inside that await
+    still routes redelivery through the ack-retry path instead of replaying
+    the handler. Scoped to in-process cancellation with the same live
+    ClaimRegistry still reachable -- not a process-restart durability
+    guarantee (see execution.py's ``_abort_cycle``/step-4 docs).
+    """
+
+    @staticmethod
+    def _gated_mark_processed(
+        entered: asyncio.Event, release: asyncio.Event
+    ) -> AsyncMock:
+        """mark_processed that parks so a test can cancel the caller while
+        this exact await is in flight."""
+
+        async def _gate(room_id: str, msg_id: str) -> bool:
+            entered.set()
+            await release.wait()
+            return True
+
+        return AsyncMock(side_effect=_gate)
+
+    async def test_websocket_path_cancellation_during_mark_processed(self, mock_link):
+        entered, release = asyncio.Event(), asyncio.Event()
+        mock_link.mark_processed = self._gated_mark_processed(entered, release)
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        proc = asyncio.create_task(
+            ctx._process_event(make_message_event(msg_id="ws-cancel-ack"))
+        )
+        await entered.wait()
+
+        # The handler already ran to completion; remember_ack_pending runs
+        # synchronously before this awaited mark_processed call.
+        assert handler.completed == ["ws-cancel-ack"]
+        assert ctx.claims.is_ack_pending("room-123", "ws-cancel-ack")
+        assert not ctx.claims.is_completed("room-123", "ws-cancel-ack")
+
+        proc.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await proc
+
+        # Cancellation must not have undone the ack-pending marker -- never
+        # completed, never neither.
+        assert ctx.claims.is_ack_pending("room-123", "ws-cancel-ack")
+        assert not ctx.claims.is_completed("room-123", "ws-cancel-ack")
+
+        # A subsequent delivery against the same live registry retries only
+        # the ack -- the handler is never re-invoked.
+        mock_link.mark_processed = AsyncMock(return_value=True)
+        result = await ctx._process_event(make_message_event(msg_id="ws-cancel-ack"))
+
+        assert result is True
+        assert handler.invocations == 1
+        assert ctx.claims.is_completed("room-123", "ws-cancel-ack")
+        assert not ctx.claims.is_ack_pending("room-123", "ws-cancel-ack")
+
+    async def test_backlog_path_cancellation_during_mark_processed(self, mock_link):
+        entered, release = asyncio.Event(), asyncio.Event()
+        mock_link.mark_processed = self._gated_mark_processed(entered, release)
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+        msg = _backlog_message("bk-cancel-ack")
+
+        proc = asyncio.create_task(ctx._process_backlog_message(msg))
+        await entered.wait()
+
+        assert handler.completed == ["bk-cancel-ack"]
+        assert ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
+        assert not ctx.claims.is_completed("room-123", "bk-cancel-ack")
+
+        proc.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await proc
+
+        assert ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
+        assert not ctx.claims.is_completed("room-123", "bk-cancel-ack")
+
+        mock_link.mark_processed = AsyncMock(return_value=True)
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == BacklogProcessResult.ADVANCED
+        assert handler.invocations == 1
+        assert ctx.claims.is_completed("room-123", "bk-cancel-ack")
+        assert not ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
