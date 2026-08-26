@@ -1,12 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "python",
+  "separate-pull-requests": true,
   "packages": {
     ".": {
       "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": true,
-      "exclude-paths": ["packages/band-mcp"],
+      "exclude-paths": ["packages"],
       "extra-files": [
         "src/band/__init__.py",
         {
