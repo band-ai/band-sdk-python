@@ -180,14 +180,7 @@ class RoomPresence:
 
         admitted_room_ids = self.roster.tracked_room_ids()
         self.roster.clear()
-        for room_id in admitted_room_ids:
-            try:
-                await self.link.unsubscribe_room(room_id)
-            except Exception as e:
-                logger.warning(
-                    "Failed to unsubscribe room %s during stop: %s", room_id, e
-                )
-            await self._notify(self.on_room_left, room_id, label="on_room_left")
+        await self._leave_and_notify(admitted_room_ids, context="stop")
         logger.info("RoomPresence stopped")
 
     async def _on_platform_event(self, event: PlatformEvent) -> None:
@@ -324,14 +317,28 @@ class RoomPresence:
         """Unsubscribe and notify for every room reconcile() found gone.
         These were Admitted by construction (reconcile partitions
         admitted_rooms), so no was_admitted gating is needed here."""
-        for room_id in room_ids:
-            try:
-                await self.link.unsubscribe_room(room_id)
-            except Exception as e:
-                logger.warning(
-                    "Failed to unsubscribe room %s during reconnect: %s", room_id, e
-                )
-            await self._notify(self.on_room_left, room_id, label="on_room_left")
+        await self._leave_and_notify(room_ids, context="reconnect")
+
+    async def _leave_and_notify(self, room_ids: list[str], *, context: str) -> None:
+        """Unsubscribe and fire on_room_left for each room, in parallel —
+        mirrors the admit side's fan-out (unsubscribe_room is keyed entirely
+        by room_id, so concurrent calls for different rooms touch no shared
+        state). Shared by stop() and _leave_removed_rooms, which differ only
+        in why the rooms are going away."""
+        if not room_ids:
+            return
+        await asyncio.gather(
+            *[self._leave_one_room(room_id, context=context) for room_id in room_ids]
+        )
+
+    async def _leave_one_room(self, room_id: str, *, context: str) -> None:
+        try:
+            await self.link.unsubscribe_room(room_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to unsubscribe room %s during %s: %s", room_id, context, e
+            )
+        await self._notify(self.on_room_left, room_id, label="on_room_left")
 
     async def _admit_reconciled_rooms(
         self,
@@ -342,7 +349,7 @@ class RoomPresence:
         room, in parallel — mirrors _subscribe_rooms's old fan-out."""
         if not admitting:
             return
-        await asyncio.gather(
+        results = await asyncio.gather(
             *[
                 self._complete_room_admission(
                     room_id, ticket, rooms_from_api[room_id], context="reconnect"
@@ -350,6 +357,7 @@ class RoomPresence:
                 for room_id, ticket in admitting
             ]
         )
+        self._log_admission_results(results, context="reconnect")
 
     async def _notify_resync(self, room_ids: list[str]) -> None:
         """Tell surviving rooms to resync. reconcile() already sorts these."""
@@ -517,6 +525,12 @@ class RoomPresence:
                 for room_id, payload in rooms_to_join.items()
             ],
         )
+        self._log_admission_results(results, context=context)
+
+    def _log_admission_results(self, results: list[bool], *, context: str) -> None:
+        """Aggregate succeeded/failed summary for one batch of parallel
+        room admissions — shared by _subscribe_rooms and
+        _admit_reconciled_rooms."""
         succeeded = sum(results)
         failed = len(results) - succeeded
 

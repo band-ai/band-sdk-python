@@ -21,6 +21,8 @@ from band.platform.link import BandLink
 from band.runtime.presence import RoomPresence
 from band.testing import fake_phoenix_server
 
+from tests.runtime.conftest import chat_row
+
 
 def make_link(server_url: str) -> BandLink:
     return BandLink(
@@ -29,14 +31,6 @@ def make_link(server_url: str) -> BandLink:
         ws_url=server_url,
         rest_url="https://test.invalid",
     )
-
-
-def chat_row(room_id: str) -> MagicMock:
-    """One room as the chats listing returns it."""
-    room = MagicMock()
-    room.id = room_id
-    room.model_dump.return_value = {"id": room_id}
-    return room
 
 
 def listing(*room_ids: str) -> AsyncMock:

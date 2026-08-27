@@ -21,7 +21,7 @@ from tests.conftest import (
     make_room_removed_event,
 )
 from tests.platform.conftest import cancelled_mid_await
-from tests.runtime.conftest import admit_room
+from tests.runtime.conftest import admit_room, chat_row
 
 
 @pytest.fixture
@@ -235,14 +235,6 @@ class TestRoomPresenceRoomAdded:
 
         assert presence.roster.room_membership("room-123") is RoomMembership.Unadmitted
         mock_link.subscribe_room.assert_not_called()
-
-
-def chat_row(room_id):
-    """One room as the chats listing returns it."""
-    room = MagicMock()
-    room.id = room_id
-    room.model_dump.return_value = {"id": room_id}
-    return room
 
 
 def listing(*pages):
@@ -473,13 +465,12 @@ class TestRoomPresenceRoomRemoved:
         return exists specifically to gate this."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        on_left = AsyncMock()
-        presence.on_room_left = on_left
+        presence.on_room_left = AsyncMock()
 
         event = make_room_removed_event(room_id="room-never-joined")
         await presence._handle_room_removed(event)
 
-        on_left.assert_not_called()
+        presence.on_room_left.assert_not_called()
         mock_link.unsubscribe_room.assert_called_once_with("room-never-joined")
 
 
@@ -592,12 +583,8 @@ class TestRoomPresenceReconnect:
         self, mock_link, presences
     ):
         """A room_added delivered after reconcile() already admitted the
-        same room via its own admitting list must be a harmless no-op — not
-        a second subscribe or announce. Proves the TOCTOU self-healing the
-        design doc calls out for reconnect's atomic admission claim; the
-        single event-consumer task invariant is what makes this the only
-        reachable interleaving (a room-scoped event can't be dequeued
-        mid-admission of that same room)."""
+        same room must be a no-op, not a second subscribe or announce —
+        proves the ticket-dedup self-healing the design doc describes."""
         mock_link.rest.agent_api_chats.list_agent_chats = listing([])
         joined = []
         presence = presences(auto_subscribe_existing=True)

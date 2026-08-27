@@ -45,6 +45,14 @@ def admit_room(presence: RoomPresence, room_id: str) -> None:
     presence.roster.record_room_admission(room_id, ticket, True)
 
 
+def chat_row(room_id: str) -> MagicMock:
+    """One room as the chats listing returns it."""
+    room = MagicMock()
+    room.id = room_id
+    room.model_dump.return_value = {"id": room_id}
+    return room
+
+
 def make_participant(p: dict[str, Any]) -> ChatParticipant:
     return ChatParticipant(
         id=p["id"],
