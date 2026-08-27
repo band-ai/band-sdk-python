@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from band_rest.core.api_error import ApiError
 
+from band.docker.launcher.errors import LaunchError
 from band.docker.provision import (
     NO_RETRY_REQUEST_OPTIONS,
     PLACEHOLDER_AGENT_ID,
@@ -235,11 +236,11 @@ class TestDescribeRegisterError:
         err = ApiError(status_code=403, body=None)
         assert "cap reached" in _describe_register_error(err)
 
-    def test_422_names_plt_1066(self):
+    def test_422_names_reregistration_undecided(self):
         err = ApiError(status_code=422, body=None)
         message = _describe_register_error(err)
         assert "already exists" in message
-        assert "PLT-1066" in message
+        assert "not decided yet" in message
 
     def test_falls_back_to_body_message(self):
         body = SimpleNamespace(error=SimpleNamespace(message="server exploded"))
@@ -312,6 +313,12 @@ class TestAgentIdRoundTrip:
     def test_read_missing_file_raises(self, tmp_path: Path):
         with pytest.raises(ValueError, match="no band.yaml"):
             read_agent_id(tmp_path)
+
+    def test_write_on_empty_file_raises_clear_error(self, tmp_path: Path):
+        (tmp_path / "band.yaml").write_text("", encoding="utf-8")
+
+        with pytest.raises(LaunchError, match="invalid"):
+            write_agent_id(tmp_path, "agent-abc-123")
 
 
 # --- sbx secret ls table parsing ---
@@ -680,7 +687,7 @@ class TestRun:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "status_code, expected_match",
-        [(403, "cap reached"), (422, "PLT-1066")],
+        [(403, "cap reached"), (422, "not decided yet")],
         ids=["403-plan-cap", "422-duplicate-name"],
     )
     async def test_register_error_writes_nothing(

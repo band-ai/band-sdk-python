@@ -2,7 +2,7 @@
 the host — no pre-provisioned identity — and wires its key into a
 proxy-managed sandbox it also creates, extending
 test_kit_proxy_managed_live.py's never-in-VM proof with a registration
-prefix. INT-982's headline acceptance: "with only a user key, a fresh agent
+prefix. Headline acceptance: "with only a user key, a fresh agent
 registers and starts; re-provisioning never duplicates it."
 
 `band.docker.provision.run()` is called in-process (not the packaged
@@ -147,12 +147,12 @@ async def test_self_registered_agent_round_trips_with_no_duplicate_on_reprovisio
     the sandbox it was also injected into; a repeat `provision.run()` call
     for the same sandbox then registers no second agent.
 
-    The restart leg of INT-982's acceptance ("stop/restart does not
+    The restart leg of that acceptance ("stop/restart does not
     duplicate registration") is `sbx`'s own host-secret and `band.yaml`
-    persistence guarantee, not code this ticket owns, so it isn't
+    persistence guarantee, not code this module owns, so it isn't
     re-exercised here (see the kit README's Self-registration section); what
     this proves live is provision.py's own idempotency guard — the part
-    this ticket is actually responsible for.
+    this module is actually responsible for.
     """
     agent_id, room_id, args = self_registered_sandbox
 

@@ -2,12 +2,12 @@
 
 Lets a customer stand up a brand-new sandboxed Band agent from one user key and
 one command, with no pre-provisioned identity, while keeping the real agent key
-out of the sandbox VM (the custody model INT-981 established).
+out of the sandbox VM (the existing proxy-managed custody model).
 
 Registration mints the agent key in the HTTP response body, so the only way the
 VM never sees it is to register outside the VM: this runs on the host, then
 hands the minted key to `sbx secret set-custom` (the same proxy-managed
-injection slot INT-981 wired up) and writes the non-secret agent id into the
+injection slot the pre-provisioned flow already uses) and writes the non-secret agent id into the
 workspace's `band.yaml`, which `resolve_agent_id` already reads
 (`band.docker.launcher.config`). Idempotency is host-side and split across two
 independent checks: registration is skipped when the workspace already has
@@ -189,8 +189,8 @@ def _describe_register_error(err: ApiError) -> str:
         return (
             "An agent with this name already exists. Re-registration semantics "
             "for a re-created sandbox (new identity vs. adopt-existing) are not "
-            "decided yet — see PLT-1066 (stale-agent lifecycle). Pick a new "
-            "--agent-name or --name to register a distinct agent."
+            "decided yet. Pick a new --agent-name or --name to register a "
+            "distinct agent."
         )
     body = getattr(err, "body", None)
     error_obj = getattr(body, "error", None)
@@ -217,7 +217,7 @@ def write_agent_id(workspace: Path, agent_id: str) -> None:
     """Write `agent.id` into `band.yaml`, preserving every comment and the rest
     of the file (a round-trip load/dump, not a regenerate-from-scratch)."""
     path = _band_yaml_path(workspace)
-    data = _YAML.load(path.read_text(encoding="utf-8"))
+    data = _YAML.load(path.read_text(encoding="utf-8")) or {}
     data.setdefault("agent", {})["id"] = agent_id
     with path.open("w", encoding="utf-8") as fh:
         _YAML.dump(data, fh)
@@ -427,7 +427,8 @@ def _describe_registration_timeout(
                 f"{base}, but agent {agent_name!r} (id={agent_id}) was registered "
                 "anyway before the response arrived. Its key was shown exactly once "
                 "and cannot be retrieved -- delete the orphaned agent and retry with "
-                "a new --agent-name, or see PLT-1066 for adopt-existing semantics."
+                "a new --agent-name (adopt-existing semantics for a re-created "
+                "sandbox are not decided yet)."
             )
         case RegistrationTimeoutOutcome.UNKNOWN:
             return (

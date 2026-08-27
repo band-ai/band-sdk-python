@@ -1,6 +1,6 @@
 """Self-registration demo: `band-kit provision`, end to end.
 
-Demonstrates INT-982's self-registration flow with no pre-provisioned Band
+Demonstrates the self-registration flow with no pre-provisioned Band
 agent: registers a fresh agent on the host with only a user key, boots it
 into a real Docker Sandbox, sends it a message, checks the echo reply, then
 tears every provisioned resource back down.
@@ -224,7 +224,7 @@ async def run(kit: str) -> None:
             workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
             hosts = _deployment_hosts(settings.endpoints)
 
-            with allow_network_for_hosts(hosts, kit=KIT_DIR):
+            with allow_network_for_hosts(hosts, kit=kit):
                 logger.info("Step 1/4: band-kit provision --create (registers + boots)")
                 agent_id = _band_kit_provision(
                     name=name,

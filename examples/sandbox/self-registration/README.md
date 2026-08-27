@@ -1,6 +1,6 @@
 # Self-registration demo
 
-Runs INT-982's self-registration flow end to end against a real Band
+Runs the self-registration flow end to end against a real Band
 deployment: no pre-provisioned agent, no manually copied id/key. One script
 proves the whole chain — `band-kit provision` registers a fresh agent on the
 host, boots it into a real Docker Sandbox, a room message round-trips through
