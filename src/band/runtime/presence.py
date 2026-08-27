@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable, Set
+from typing import Any, Awaitable, Callable
+
+from band_sdk_core import RoomMembership, RoomRoster
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.platform.event import (
@@ -87,7 +89,7 @@ class RoomPresence:
         self.auto_subscribe_existing = auto_subscribe_existing
 
         # Track rooms we're present in
-        self.rooms: Set[str] = set()
+        self.roster = RoomRoster()
 
         # Callbacks (set by user or AgentRuntime)
         self.on_room_joined: Callable[[str, dict], Awaitable[None]] | None = None
@@ -102,6 +104,23 @@ class RoomPresence:
         # Internal task for consuming events from link
         self._event_task: asyncio.Task | None = None
 
+    async def _notify(
+        self,
+        callback: Callable[..., Awaitable[None]] | None,
+        *args: Any,
+        label: str,
+        level: int = logging.WARNING,
+        exc_info: bool = False,
+    ) -> None:
+        """Invoke an optional user callback; a raise there is the caller's
+        problem, never ours to propagate."""
+        if callback is None:
+            return
+        try:
+            await callback(*args)
+        except Exception as e:
+            logger.log(level, "%s callback error: %s", label, e, exc_info=exc_info)
+
     async def start(self) -> None:
         """
         Start presence management.
@@ -111,6 +130,12 @@ class RoomPresence:
         3. Subscribe to existing rooms (if configured)
         4. Spawn task to consume events from link
         """
+        if self._event_task is not None and not self._event_task.done():
+            raise RuntimeError(
+                f"RoomPresence for agent {self.link.agent_id} is already running; "
+                "call stop() before starting again"
+            )
+
         # Connect if needed
         if not self.link.is_connected:
             await self.link.connect()
@@ -153,15 +178,16 @@ class RoomPresence:
                 pass
             self._event_task = None
 
-        # Notify left for all rooms
-        for room_id in list(self.rooms):
-            if self.on_room_left:
-                try:
-                    await self.on_room_left(room_id)
-                except Exception as e:
-                    logger.warning("on_room_left error for %s: %s", room_id, e)
-
-        self.rooms.clear()
+        admitted_room_ids = self.roster.tracked_room_ids()
+        self.roster.clear()
+        for room_id in admitted_room_ids:
+            try:
+                await self.link.unsubscribe_room(room_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to unsubscribe room %s during stop: %s", room_id, e
+                )
+            await self._notify(self.on_room_left, room_id, label="on_room_left")
         logger.info("RoomPresence stopped")
 
     async def _on_platform_event(self, event: PlatformEvent) -> None:
@@ -235,19 +261,21 @@ class RoomPresence:
             logger.warning("%s event without room_id", event.type)
             return
 
-        # Unsubscribe from room channels
+        # Unconditional, harmless no-op if never subscribed.
         await self.link.unsubscribe_room(room_id)
+        if not self.roster.record_room_removed(room_id):
+            logger.debug(
+                "%s event for untracked room %s, ignoring", event.type, room_id
+            )
+            return
 
-        # Untrack room
-        self.rooms.discard(room_id)
-
-        # Notify callback
-        if self.on_room_left:
-            try:
-                await self.on_room_left(room_id)
-            except Exception as e:
-                logger.error("on_room_left error for %s: %s", room_id, e, exc_info=True)
-
+        await self._notify(
+            self.on_room_left,
+            room_id,
+            label="on_room_left",
+            level=logging.ERROR,
+            exc_info=True,
+        )
         logger.info("Agent left room via %s: %s", event.type, room_id)
 
     async def _handle_reconnect(self) -> None:
@@ -264,8 +292,6 @@ class RoomPresence:
         transient API failure.
         """
         logger.info("Handling reconnection — syncing rooms from API")
-        old_rooms = self.rooms.copy()
-
         try:
             try:
                 rooms_from_api = await self._list_existing_rooms()
@@ -273,59 +299,67 @@ class RoomPresence:
                 logger.warning("Failed to sync rooms after reconnect: %s", e)
                 return
 
-            current_room_ids = set(rooms_from_api)
-            self.rooms = old_rooms & current_room_ids
-
-            gone_rooms = old_rooms - current_room_ids
-            for room_id in gone_rooms:
-                try:
-                    await self.link.unsubscribe_room(room_id)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to unsubscribe room %s during reconnect: %s",
-                        room_id,
-                        e,
-                    )
-                self.rooms.discard(room_id)
-                if self.on_room_left:
-                    try:
-                        await self.on_room_left(room_id)
-                    except Exception as e:
-                        logger.warning(
-                            "on_room_left error for %s during reconnect: %s",
-                            room_id,
-                            e,
-                        )
-
-            surviving_room_ids = sorted(self.rooms)
-
-            if self.auto_subscribe_existing:
-                # Surviving rooms are already in self.rooms, so this joins
-                # exactly the ones that appeared while the socket was down.
-                await self._subscribe_rooms(rooms_from_api, context="reconnect")
-
-            if self.on_room_event:
-                reconnect_event = ReconnectedEvent()
-                for room_id in surviving_room_ids:
-                    try:
-                        await self.on_room_event(room_id, reconnect_event)
-                    except Exception as e:
-                        logger.warning(
-                            "on_room_event error for %s during reconnect: %s",
-                            room_id,
-                            e,
-                        )
-
+            reconciliation = self.roster.reconcile(
+                self._reconcile_target_room_ids(rooms_from_api)
+            )
+            await self._leave_removed_rooms(reconciliation.removed)
+            await self._admit_reconciled_rooms(reconciliation.admitting, rooms_from_api)
+            await self._notify_resync(reconciliation.resync)
         finally:
             # Notify callers so they can resync /next for messages missed during downtime
-            if self.on_reconnected:
-                try:
-                    await self.on_reconnected()
-                except asyncio.CancelledError:
-                    # Preserve structured concurrency: never swallow cancellation.
-                    raise
-                except Exception as e:
-                    logger.warning("on_reconnected callback error: %s", e)
+            await self._notify(self.on_reconnected, label="on_reconnected")
+
+    def _reconcile_target_room_ids(
+        self, rooms_from_api: dict[str, dict[str, Any]]
+    ) -> list[str]:
+        """The snapshot to diff against: every current room when auto-subscribing
+        new ones, otherwise only rooms already admitted — so a room we were never
+        asked to join can't enter reconcile()'s atomic admission-claim at all."""
+        if self.auto_subscribe_existing:
+            return list(rooms_from_api.keys())
+        tracked = set(self.roster.tracked_room_ids())
+        return [room_id for room_id in rooms_from_api if room_id in tracked]
+
+    async def _leave_removed_rooms(self, room_ids: list[str]) -> None:
+        """Unsubscribe and notify for every room reconcile() found gone.
+        These were Admitted by construction (reconcile partitions
+        admitted_rooms), so no was_admitted gating is needed here."""
+        for room_id in room_ids:
+            try:
+                await self.link.unsubscribe_room(room_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to unsubscribe room %s during reconnect: %s", room_id, e
+                )
+            await self._notify(self.on_room_left, room_id, label="on_room_left")
+
+    async def _admit_reconciled_rooms(
+        self,
+        admitting: list[tuple[str, int]],
+        rooms_from_api: dict[str, dict[str, Any]],
+    ) -> None:
+        """Resolve every ticket reconcile() pre-claimed for a newly discovered
+        room, in parallel — mirrors _subscribe_rooms's old fan-out."""
+        if not admitting:
+            return
+        await asyncio.gather(
+            *[
+                self._complete_room_admission(
+                    room_id, ticket, rooms_from_api[room_id], context="reconnect"
+                )
+                for room_id, ticket in admitting
+            ]
+        )
+
+    async def _notify_resync(self, room_ids: list[str]) -> None:
+        """Tell surviving rooms to resync. reconcile() already sorts these."""
+        if not self.on_room_event:
+            return
+        reconnect_event = ReconnectedEvent()
+        for room_id in room_ids:
+            await self._notify(
+                self.on_room_event, room_id, reconnect_event, label="on_room_event"
+            )
 
     async def _handle_room_event(self, event: PlatformEvent) -> None:
         """
@@ -338,7 +372,7 @@ class RoomPresence:
             return
 
         # Only forward events for rooms we're tracking
-        if room_id not in self.rooms:
+        if self.roster.room_membership(room_id) is not RoomMembership.Admitted:
             logger.debug("Event for untracked room %s, ignoring", room_id)
             return
 
@@ -399,48 +433,70 @@ class RoomPresence:
         *,
         context: str,
     ) -> bool:
-        """Track, subscribe to and announce one room, at most once.
+        """Claim admission for one room, at most once, and resolve it.
 
         The startup snapshot and a ``room_added`` event can name the same room,
         because the agent's room channel is live before the snapshot is read.
-        Claiming the room in ``self.rooms`` before the first await is what makes
-        the second caller a no-op instead of a second channel join and a second
-        ``on_room_joined``.
+        Claiming the room via ``begin_room_admission`` before the first await is
+        what makes the second caller a no-op instead of a second channel join
+        and a second ``on_room_joined``.
         """
-        if room_id in self.rooms:
+        ticket = self.roster.begin_room_admission(room_id, passes_filter=True)
+        if ticket is None:
             logger.debug("Already joined room %s, ignoring %s", room_id, context)
             return False
-        self.rooms.add(room_id)
+        return await self._complete_room_admission(
+            room_id, ticket, payload, context=context
+        )
 
+    async def _complete_room_admission(
+        self,
+        room_id: str,
+        ticket: int,
+        payload: dict[str, Any],
+        *,
+        context: str,
+    ) -> bool:
+        """Subscribe to a claimed room and resolve its ticket, whatever happens.
+
+        ``record_room_admission`` is a safe no-op on an already-resolved/stale
+        ticket, so a bare ``finally`` is enough to roll a cancelled or failed
+        subscribe back to ``Unadmitted`` — no extra "settled" bookkeeping needed.
+        """
+        succeeded = False
         try:
-            await self.link.subscribe_room(room_id)
-        except Exception as e:
-            logger.warning(
-                "Failed to subscribe to room %s during %s: %s", room_id, context, e
-            )
-            self.rooms.discard(room_id)
-            return False
+            try:
+                await self.link.subscribe_room(room_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to subscribe to room %s during %s: %s", room_id, context, e
+                )
+                return False
 
-        if not self.link.is_room_subscribed(room_id):
-            # subscribe_room() is best-effort and non-raising by design (a
-            # single room failure must not crash the whole subscription
-            # sequence), so an internal join/rollback failure never reaches
-            # this except block above — check the real outcome instead of
-            # assuming "no exception" means "subscribed".
-            logger.warning("Room %s did not subscribe during %s", room_id, context)
-            self.rooms.discard(room_id)
-            return False
+            if not self.link.is_room_subscribed(room_id):
+                # subscribe_room() is best-effort and non-raising by design (a
+                # single room failure must not crash the whole subscription
+                # sequence), so an internal join/rollback failure never reaches
+                # this except block above — check the real outcome instead of
+                # assuming "no exception" means "subscribed".
+                logger.warning("Room %s did not subscribe during %s", room_id, context)
+                return False
+
+            succeeded = True
+        finally:
+            self.roster.record_room_admission(room_id, ticket, succeeded)
 
         # A callback that raises is the caller's problem, not a failed join:
         # the room is subscribed either way, and untracking it here would drop
         # every event it goes on to deliver.
-        if self.on_room_joined:
-            try:
-                await self.on_room_joined(room_id, payload)
-            except Exception as e:
-                logger.error(
-                    "on_room_joined error for %s: %s", room_id, e, exc_info=True
-                )
+        await self._notify(
+            self.on_room_joined,
+            room_id,
+            payload,
+            label="on_room_joined",
+            level=logging.ERROR,
+            exc_info=True,
+        )
 
         logger.info("Agent joined room: %s", room_id)
         return True
@@ -451,19 +507,14 @@ class RoomPresence:
         *,
         context: str,
     ) -> None:
-        """Join every room not already joined, in parallel."""
-        pending = {
-            room_id: payload
-            for room_id, payload in rooms_to_join.items()
-            if room_id not in self.rooms
-        }
-        if not pending:
+        """Join every room in parallel."""
+        if not rooms_to_join:
             return
 
         results = await asyncio.gather(
             *[
                 self._join_room(room_id, payload, context=context)
-                for room_id, payload in pending.items()
+                for room_id, payload in rooms_to_join.items()
             ],
         )
         succeeded = sum(results)
