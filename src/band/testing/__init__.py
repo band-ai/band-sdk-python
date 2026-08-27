@@ -24,6 +24,9 @@ if TYPE_CHECKING:
         TextTurn as TextTurn,
         ToolTurn as ToolTurn,
     )
+    from band.testing.transport import (
+        force_transport_disconnect as force_transport_disconnect,
+    )
 
 __all__, __getattr__ = lazy_exports(
     __name__,
@@ -37,4 +40,5 @@ __all__, __getattr__ = lazy_exports(
         "TextTurn",
         "ToolTurn",
     ],
+    transport=["force_transport_disconnect"],
 )
