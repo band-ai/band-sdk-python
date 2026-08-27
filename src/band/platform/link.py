@@ -180,8 +180,8 @@ class BandLink:
 
         Extracted from BandAgent.start() lines 158-164.
         """
-        if self._is_connected:
-            logger.warning("Already connected")
+        if self._ws is not None:
+            logger.warning("Already connected or connecting")
             return
 
         self._last_disconnect_reason = None
@@ -256,6 +256,18 @@ class BandLink:
         )
         return True
 
+    def _mark_needing_reconciliation(
+        self, key: str, pending: set[str], ws: WebSocketClient
+    ) -> None:
+        """Block ``key`` from resubscribe until reconciled — but only within
+        the connection session (``ws``) that produced the ambiguity. A
+        session that has since been torn down or replaced (``self._ws`` no
+        longer ``ws``) has already cleared, or will never drain, this entry
+        on its own; adding it here would instead wrongly carry the block
+        into a session that never touched this room/topic."""
+        if self._ws is ws:
+            pending.add(key)
+
     async def _leave_channel(
         self,
         leave: Callable[[], Awaitable[None]],
@@ -291,6 +303,7 @@ class BandLink:
                 on_room_added=self._on_room_added,
                 on_room_removed=self._on_room_removed,
             ),
+            ws,
         )
 
     async def subscribe_room(self, room_id: str) -> None:
@@ -371,7 +384,9 @@ class BandLink:
                         "failure; needs reconciliation on next reconnect",
                         room_id,
                     )
-                    self._rooms_needing_reconciliation.add(room_id)
+                    self._mark_needing_reconciliation(
+                        room_id, self._rooms_needing_reconciliation, ws
+                    )
                 return
 
             self._subscriptions.record_both_room_topics_joined(
@@ -388,7 +403,9 @@ class BandLink:
                 self._subscriptions.record_room_participants_join_failed(
                     room_id=room_id, ticket=ticket, chat_room_left=False
                 )
-                self._rooms_needing_reconciliation.add(room_id)
+                self._mark_needing_reconciliation(
+                    room_id, self._rooms_needing_reconciliation, ws
+                )
 
     async def subscribe_agent_contacts(self, agent_id: str) -> None:
         """
@@ -410,10 +427,11 @@ class BandLink:
                 on_contact_added=self._on_contact_added,
                 on_contact_removed=self._on_contact_removed,
             ),
+            ws,
         )
 
     async def _subscribe_agent_topic(
-        self, topic: str, join: Callable[[], Awaitable[None]]
+        self, topic: str, join: Callable[[], Awaitable[None]], ws: WebSocketClient
     ) -> None:
         """Shared join/track/rollback shape for the single-topic agent
         channels (``agent_rooms``, ``agent_contacts``) — mirrors
@@ -451,7 +469,9 @@ class BandLink:
                 self._subscriptions.record_agent_topic_join(
                     topic=topic, ticket=ticket, joined=False
                 )
-                self._agent_topics_needing_reconciliation.add(topic)
+                self._mark_needing_reconciliation(
+                    topic, self._agent_topics_needing_reconciliation, ws
+                )
 
     async def unsubscribe_room(self, room_id: str) -> None:
         """
@@ -491,7 +511,9 @@ class BandLink:
                 room_id=room_id, ticket=ticket, outcome=outcome
             )
             if outcome is not LeaveOutcome.Left:
-                self._rooms_needing_reconciliation.add(room_id)
+                self._mark_needing_reconciliation(
+                    room_id, self._rooms_needing_reconciliation, ws
+                )
 
     async def unsubscribe_agent_contacts(self) -> None:
         """Unsubscribe from agent contacts channel.
@@ -507,10 +529,11 @@ class BandLink:
         await self._leave_agent_topic(
             _agent_contacts_topic(self.agent_id),
             lambda: ws.leave_agent_contacts_channel(self.agent_id),
+            ws,
         )
 
     async def _leave_agent_topic(
-        self, topic: str, leave: Callable[[], Awaitable[None]]
+        self, topic: str, leave: Callable[[], Awaitable[None]], ws: WebSocketClient
     ) -> None:
         """Shared leave/track shape for the single-topic agent channels."""
         ticket = self._subscriptions.leave_agent_topic(topic=topic)
@@ -530,7 +553,9 @@ class BandLink:
                 topic=topic, ticket=ticket, outcome=outcome
             )
             if outcome is not LeaveOutcome.Left:
-                self._agent_topics_needing_reconciliation.add(topic)
+                self._mark_needing_reconciliation(
+                    topic, self._agent_topics_needing_reconciliation, ws
+                )
 
     def is_room_subscribed(self, room_id: str) -> bool:
         """Whether ``room_id`` is currently fully subscribed (both topics)."""
@@ -1027,6 +1052,3 @@ class BandLink:
                 e,
             )
             return []
-
-
-BandLink = BandLink

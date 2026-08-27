@@ -124,6 +124,24 @@ class TestBandLinkConnection:
         assert mock_ws_class.call_count == 1
 
     @patch("band.platform.link.WebSocketClient")
+    async def test_concurrent_connect_only_creates_one_websocket(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """Two genuinely concurrent connect() calls must not both build a
+        WebSocketClient: the guard has to be the synchronous `self._ws`
+        assignment itself, not `self._is_connected` (only set true after
+        two awaits) — otherwise the second call races past the flag and
+        leaks the first client."""
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+
+        await asyncio.gather(link.connect(), link.connect())
+
+        assert mock_ws_class.call_count == 1
+        assert link.is_connected is True
+
+    @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_exits_websocket_context(
         self, mock_ws_class, mock_ws_client
     ):
@@ -549,6 +567,42 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         await link._on_reconnected()
 
         await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is True
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_disconnect_during_cancelled_subscribe_does_not_block_next_session(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """A subscribe_room() cancelled after disconnect() already tore
+        down the session must not leave a reconciliation entry that blocks
+        the room on a later, unrelated connection — the block only belongs
+        to the session that produced the ambiguity, never one that outlives
+        it."""
+        mock_ws_class.return_value = mock_ws_client
+        side_effect, started, release = gated_coroutine()
+        mock_ws_client.join_chat_room_channel.side_effect = side_effect
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        task = asyncio.create_task(link.subscribe_room("room-123"))
+        await started.wait()
+
+        await link.disconnect()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # A fresh connection is unrelated to the torn-down session's
+        # ambiguity — subscribing must actually attempt the join, not
+        # silently no-op as if still blocked.
+        mock_ws_client.join_chat_room_channel.side_effect = None
+        mock_ws_client.join_chat_room_channel.reset_mock()
+        await link.connect()
+        await link.subscribe_room("room-123")
+
+        mock_ws_client.join_chat_room_channel.assert_called_once()
         assert link.is_room_subscribed("room-123") is True
 
 
