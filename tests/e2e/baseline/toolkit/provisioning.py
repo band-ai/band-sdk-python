@@ -407,6 +407,30 @@ class ResourceManager:
 
 
 @asynccontextmanager
+async def running_agent_with_handle(
+    provisioned: ProvisionedAgent,
+    adapter: SimpleAdapter[Any],
+    settings: BaselineSettings,
+) -> AsyncGenerator[Agent, None]:
+    """Like ``running_agent``, but yields the live ``Agent`` itself.
+
+    ``running_agent`` only yields the identity because no caller has needed the
+    object itself — reconnect-behavior tests do, to reach the running agent's
+    transport via ``agent.runtime.link`` (both already-public properties).
+    """
+    endpoints = settings.endpoints
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=provisioned.id,
+        api_key=provisioned.api_key,
+        ws_url=endpoints.ws_url,
+        rest_url=endpoints.rest_url,
+    )
+    async with agent:
+        yield agent
+
+
+@asynccontextmanager
 async def running_agent(
     provisioned: ProvisionedAgent,
     adapter: SimpleAdapter[Any],
@@ -424,15 +448,7 @@ async def running_agent(
     platform rehydrating the room's history on bootstrap (``/context``), which is
     exactly what a rejoin scenario asserts.
     """
-    endpoints = settings.endpoints
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=provisioned.id,
-        api_key=provisioned.api_key,
-        ws_url=endpoints.ws_url,
-        rest_url=endpoints.rest_url,
-    )
-    async with agent:
+    async with running_agent_with_handle(provisioned, adapter, settings):
         yield provisioned
 
 
@@ -561,6 +577,28 @@ class AdapterCell:
         with self.resources.track_running(identity.id):
             async with running_agent(identity, adapter, self.settings):
                 yield identity
+
+    @asynccontextmanager
+    async def run_as_with_handle(
+        self,
+        identity: ProvisionedAgent,
+        *,
+        prompt: str | None = None,
+        features: AdapterFeatures | None = None,
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncGenerator[Agent, None]:
+        """Like :meth:`run_as`, but yields the live ``Agent`` itself.
+
+        For tests that need to reach the running agent's transport (e.g.
+        ``band.testing.transport.force_transport_disconnect`` for reconnect
+        coverage) via ``agent.runtime.link``.
+        """
+        adapter = self.build(prompt=prompt, features=features, tools=tools)
+        with self.resources.track_running(identity.id):
+            async with running_agent_with_handle(
+                identity, adapter, self.settings
+            ) as agent:
+                yield agent
 
     @asynccontextmanager
     async def running(

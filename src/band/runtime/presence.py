@@ -421,6 +421,16 @@ class RoomPresence:
             self.rooms.discard(room_id)
             return False
 
+        if not self.link.is_room_subscribed(room_id):
+            # subscribe_room() is best-effort and non-raising by design (a
+            # single room failure must not crash the whole subscription
+            # sequence), so an internal join/rollback failure never reaches
+            # this except block above — check the real outcome instead of
+            # assuming "no exception" means "subscribed".
+            logger.warning("Room %s did not subscribe during %s", room_id, context)
+            self.rooms.discard(room_id)
+            return False
+
         # A callback that raises is the caller's problem, not a failed join:
         # the room is subscribed either way, and untracking it here would drop
         # every event it goes on to deliver.
