@@ -89,6 +89,7 @@ class TestBandSdkCoreParity:
         this ticket's local mirror doesn't know about yet."""
         systems = _core_members(band_sdk_core.MemorySystem)
         types = _core_members(band_sdk_core.MemoryType)
+        mismatches = []
         for system in systems.values():
             for memory_type in types.values():
                 system_value = str(system)
@@ -102,7 +103,10 @@ class TestBandSdkCoreParity:
                 local_says_valid = type_value in MEMORY_SYSTEM_TYPE_MAP.get(
                     system_value, ()
                 )
-                assert core_says_valid == local_says_valid, (system_value, type_value)
+                if core_says_valid != local_says_valid:
+                    mismatches.append((system_value, type_value))
+
+        assert not mismatches
 
 
 class TestValidateMemoryTypeForSystem:
