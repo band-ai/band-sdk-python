@@ -56,12 +56,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Single source of truth for the two single-topic agent-channel kinds: every
+# site that builds a topic string (_agent_*_topic) or parses one back apart
+# (_drain_reconciliation) reads these, so a typo in one can't silently
+# diverge from the other.
+_AGENT_ROOMS_KIND = "agent_rooms"
+_AGENT_CONTACTS_KIND = "agent_contacts"
+
+
 def _agent_rooms_topic(agent_id: str) -> str:
-    return f"agent_rooms:{agent_id}"
+    return f"{_AGENT_ROOMS_KIND}:{agent_id}"
 
 
 def _agent_contacts_topic(agent_id: str) -> str:
-    return f"agent_contacts:{agent_id}"
+    return f"{_AGENT_CONTACTS_KIND}:{agent_id}"
 
 
 class BandLink:
@@ -232,6 +240,40 @@ class BandLink:
 
     # --- Subscription management (from BandAgent) ---
 
+    def _blocked_by_reconciliation(
+        self, key: str, pending: set[str], *, noun: str
+    ) -> bool:
+        """Whether ``key`` is blocked from a fresh subscribe until the next
+        reconnect drains ``pending`` — the single check both subscribe_room
+        and _subscribe_agent_topic gate on (see design doc for why this, not
+        core's own status, is the authoritative block condition)."""
+        if key not in pending:
+            return False
+        logger.warning(
+            "%s %s needs reconciliation, blocking subscribe until next reconnect",
+            noun,
+            key,
+        )
+        return True
+
+    async def _leave_channel(
+        self,
+        leave: Callable[[], Awaitable[None]],
+        *,
+        description: str,
+        level: int = logging.WARNING,
+    ) -> bool:
+        """Attempt one best-effort channel leave: log and swallow any
+        failure, report whether it actually succeeded. Shared by every leave
+        attempt in this module (rollback, unsubscribe, reconciliation drain)
+        so "did we manage to leave this?" has one implementation."""
+        try:
+            await leave()
+            return True
+        except Exception as e:
+            logger.log(level, "Error %s: %s", description, e)
+            return False
+
     async def subscribe_agent_rooms(self, agent_id: str) -> None:
         """
         Subscribe to agent room events (room_added/removed).
@@ -267,12 +309,11 @@ class BandLink:
         """
         if not self._ws:
             raise RuntimeError("Not connected")
+        ws = self._ws
 
-        if room_id in self._rooms_needing_reconciliation:
-            logger.warning(
-                "Room %s needs reconciliation, blocking subscribe until next reconnect",
-                room_id,
-            )
+        if self._blocked_by_reconciliation(
+            room_id, self._rooms_needing_reconciliation, noun="Room"
+        ):
             return
 
         ticket = self._subscriptions.begin_room_subscribe(room_id=room_id)
@@ -283,7 +324,7 @@ class BandLink:
         try:
             try:
                 # Subscribe to messages (from lines 733-736)
-                await self._ws.join_chat_room_channel(
+                await ws.join_chat_room_channel(
                     room_id,
                     on_message_created=lambda msg: self._on_message_created(
                         room_id, msg
@@ -299,7 +340,7 @@ class BandLink:
 
             try:
                 # Subscribe to participant updates (from lines 739-743)
-                await self._ws.join_room_participants_channel(
+                await ws.join_room_participants_channel(
                     room_id,
                     on_participant_added=lambda p: self._on_participant_added(
                         room_id, p
@@ -312,11 +353,10 @@ class BandLink:
             except Exception as e:
                 logger.warning("Failed to join room_participants:%s: %s", room_id, e)
                 # Clean up the chat_room channel we already joined
-                chat_room_left = True
-                try:
-                    await self._ws.leave_chat_room_channel(room_id)
-                except Exception:
-                    chat_room_left = False
+                chat_room_left = await self._leave_channel(
+                    lambda: ws.leave_chat_room_channel(room_id),
+                    description=f"rolling back chat_room:{room_id}",
+                )
                 result = self._subscriptions.record_room_participants_join_failed(
                     room_id=room_id, ticket=ticket, chat_room_left=chat_room_left
                 )
@@ -376,12 +416,9 @@ class BandLink:
         ``subscribe_room``'s two-topic version but with one join, no
         rollback phase.
         """
-        if topic in self._agent_topics_needing_reconciliation:
-            logger.warning(
-                "Agent topic %s needs reconciliation, blocking subscribe "
-                "until next reconnect",
-                topic,
-            )
+        if self._blocked_by_reconciliation(
+            topic, self._agent_topics_needing_reconciliation, noun="Agent topic"
+        ):
             return
 
         ticket = self._subscriptions.begin_agent_topic_join(topic=topic)
@@ -420,6 +457,7 @@ class BandLink:
         """
         if not self._ws:
             return
+        ws = self._ws
 
         ticket = self._subscriptions.unsubscribe_room(room_id=room_id)
         if ticket is None:
@@ -427,21 +465,14 @@ class BandLink:
 
         outcome = LeaveOutcome.Unknown
         try:
-            chat_room_left = True
-            try:
-                await self._ws.leave_chat_room_channel(room_id)
-            except Exception as e:
-                chat_room_left = False
-                logger.warning("Error unsubscribing from chat_room:%s: %s", room_id, e)
-
-            participants_left = True
-            try:
-                await self._ws.leave_room_participants_channel(room_id)
-            except Exception as e:
-                participants_left = False
-                logger.warning(
-                    "Error unsubscribing from room_participants:%s: %s", room_id, e
-                )
+            chat_room_left = await self._leave_channel(
+                lambda: ws.leave_chat_room_channel(room_id),
+                description=f"unsubscribing from chat_room:{room_id}",
+            )
+            participants_left = await self._leave_channel(
+                lambda: ws.leave_room_participants_channel(room_id),
+                description=f"unsubscribing from room_participants:{room_id}",
+            )
 
             outcome = (
                 LeaveOutcome.Left
@@ -484,12 +515,12 @@ class BandLink:
 
         outcome = LeaveOutcome.Unknown
         try:
-            await leave()
-            outcome = LeaveOutcome.Left
-            logger.debug("Left agent topic %s", topic)
-        except Exception as e:
-            outcome = LeaveOutcome.Failed
-            logger.warning("Error leaving agent topic %s: %s", topic, e)
+            left = await self._leave_channel(
+                leave, description=f"leaving agent topic {topic}"
+            )
+            outcome = LeaveOutcome.Left if left else LeaveOutcome.Failed
+            if left:
+                logger.debug("Left agent topic %s", topic)
         finally:
             self._subscriptions.mark_agent_topic_leave_complete(
                 topic=topic, ticket=ticket, outcome=outcome
@@ -526,45 +557,51 @@ class BandLink:
     async def _drain_reconciliation(self) -> None:
         """Force a clean transport + tracker state for every room/topic left
         ambiguous since the last reconnect, then release the local block.
+
+        ``ws`` is captured once and every iteration re-checks it's still
+        ``self._ws``: a concurrent disconnect()/reconnect() can swap or clear
+        the client while this is mid-await, and stopping there avoids both
+        leaving a stale ``ws`` instance (whose channels this session no
+        longer owns) and wasted work — never a correctness issue on its own,
+        since every leave here is already best-effort, just needless.
         """
         assert (
             self._ws is not None
         )  # only called from the ws client's own reconnect hook
+        ws = self._ws
 
         for room_id in list(self._rooms_needing_reconciliation):
-            try:
-                await self._ws.leave_chat_room_channel(room_id)
-            except Exception as e:
-                logger.debug(
-                    "Best-effort leave of chat_room:%s during reconciliation: %s",
-                    room_id,
-                    e,
-                )
-            try:
-                await self._ws.leave_room_participants_channel(room_id)
-            except Exception as e:
-                logger.debug(
-                    "Best-effort leave of room_participants:%s during "
-                    "reconciliation: %s",
-                    room_id,
-                    e,
-                )
+            if self._ws is not ws:
+                return
+            await self._leave_channel(
+                lambda: ws.leave_chat_room_channel(room_id),
+                description=f"best-effort reconciliation leave of chat_room:{room_id}",
+                level=logging.DEBUG,
+            )
+            await self._leave_channel(
+                lambda: ws.leave_room_participants_channel(room_id),
+                description=(
+                    f"best-effort reconciliation leave of room_participants:{room_id}"
+                ),
+                level=logging.DEBUG,
+            )
             self._subscriptions.acknowledge_room_reconciled(room_id=room_id)
             self._rooms_needing_reconciliation.discard(room_id)
 
         for topic in list(self._agent_topics_needing_reconciliation):
+            if self._ws is not ws:
+                return
             kind, _, agent_id = topic.partition(":")
             leave = (
-                self._ws.leave_agent_rooms_channel
-                if kind == "agent_rooms"
-                else self._ws.leave_agent_contacts_channel
+                ws.leave_agent_rooms_channel
+                if kind == _AGENT_ROOMS_KIND
+                else ws.leave_agent_contacts_channel
             )
-            try:
-                await leave(agent_id)
-            except Exception as e:
-                logger.debug(
-                    "Best-effort leave of %s during reconciliation: %s", topic, e
-                )
+            await self._leave_channel(
+                lambda: leave(agent_id),
+                description=f"best-effort reconciliation leave of {topic}",
+                level=logging.DEBUG,
+            )
             self._subscriptions.acknowledge_agent_topic_reconciled(topic=topic)
             self._agent_topics_needing_reconciliation.discard(topic)
 
