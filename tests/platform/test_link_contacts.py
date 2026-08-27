@@ -1,5 +1,7 @@
 """Unit tests for BandLink contact subscription."""
 
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -17,6 +19,8 @@ from band.client.streaming import (
     ContactRemovedPayload,
     WireEvent,
 )
+
+from tests.platform.conftest import gated_coroutine
 
 
 @pytest.fixture
@@ -83,14 +87,31 @@ class TestContactSubscription:
     async def test_unsubscribe_agent_contacts_leaves_channel(
         self, mock_ws_class, mock_ws_client
     ):
-        """unsubscribe_agent_contacts() should leave agent contacts channel."""
+        """unsubscribe_agent_contacts() should leave an actually-joined
+        agent contacts channel."""
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+        await link.subscribe_agent_contacts("agent-123")
+        await link.unsubscribe_agent_contacts()
+
+        mock_ws_client.leave_agent_contacts_channel.assert_called_once_with("agent-123")
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_unsubscribe_agent_contacts_noop_when_never_subscribed(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """unsubscribe_agent_contacts() is a true no-op when the topic was
+        never joined — the tracker's leave_agent_topic() returns None rather
+        than issuing a leave the transport would just reject."""
         mock_ws_class.return_value = mock_ws_client
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
         await link.unsubscribe_agent_contacts()
 
-        mock_ws_client.leave_agent_contacts_channel.assert_called_once_with("agent-123")
+        mock_ws_client.leave_agent_contacts_channel.assert_not_called()
 
     @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_agent_contacts_handles_errors(
@@ -98,21 +119,83 @@ class TestContactSubscription:
     ):
         """unsubscribe_agent_contacts() should handle errors gracefully."""
         mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+        await link.subscribe_agent_contacts("agent-123")
         mock_ws_client.leave_agent_contacts_channel.side_effect = Exception(
             "Leave failed"
         )
 
-        link = BandLink(agent_id="agent-123", api_key="test-key")
-        await link.connect()
-
         # Should not raise
         await link.unsubscribe_agent_contacts()
+
+        mock_ws_client.leave_agent_contacts_channel.assert_called_once_with("agent-123")
 
     async def test_unsubscribe_agent_contacts_noop_when_not_connected(self):
         """unsubscribe_agent_contacts() should be no-op when not connected."""
         link = BandLink(agent_id="agent-123", api_key="test-key")
         # Should not raise
         await link.unsubscribe_agent_contacts()
+
+
+class TestContactTopicRaceAndReconciliation:
+    """SubscriptionTracker-backed dedup, reconciliation blocking, and
+    cancellation safety for the agent-level topics — mirrors
+    TestBandLinkSubscriptionRaceAndReconciliation in test_link.py for the
+    room path, scoped to agent_contacts (agent_rooms shares the same
+    _subscribe_agent_topic/_leave_agent_topic helpers)."""
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_concurrent_subscribe_agent_contacts_only_one_join(
+        self, mock_ws_class, mock_ws_client
+    ):
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        await asyncio.gather(
+            link.subscribe_agent_contacts("agent-123"),
+            link.subscribe_agent_contacts("agent-123"),
+        )
+
+        assert mock_ws_client.join_agent_contacts_channel.call_count == 1
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_cancelled_join_blocks_agent_contacts_until_reconnect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """record_agent_topic_join(joined=False) never reaches core's own
+        NeedsReconciliation (unlike a room's second-phase rollback failure)
+        — the local reconciliation set is what actually blocks the retry
+        here, proven with a gated coroutine so the cancel lands truly
+        mid-flight."""
+        mock_ws_class.return_value = mock_ws_client
+        side_effect, started, _release = gated_coroutine()
+        mock_ws_client.join_agent_contacts_channel.side_effect = side_effect
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        task = asyncio.create_task(link.subscribe_agent_contacts("agent-123"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Blocked: a retry before the next reconnect must not attempt a join.
+        mock_ws_client.join_agent_contacts_channel.side_effect = None
+        mock_ws_client.join_agent_contacts_channel.reset_mock()
+        await link.subscribe_agent_contacts("agent-123")
+        mock_ws_client.join_agent_contacts_channel.assert_not_called()
+
+        # The reconnect boundary force-leaves before acknowledging, unblocking it.
+        await link._on_reconnected()
+        mock_ws_client.leave_agent_contacts_channel.assert_called_once_with("agent-123")
+
+        await link.subscribe_agent_contacts("agent-123")
+        mock_ws_client.join_agent_contacts_channel.assert_called_once()
 
 
 class TestContactEventHandlers:

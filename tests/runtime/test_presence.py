@@ -31,6 +31,7 @@ def mock_link():
     link.subscribe_agent_rooms = AsyncMock()
     link.subscribe_room = AsyncMock()
     link.unsubscribe_room = AsyncMock()
+    link.is_room_subscribed = MagicMock(return_value=True)
 
     # REST client mock
     link.rest = MagicMock()
@@ -272,6 +273,45 @@ class TestJoiningOnce:
         await presence.start()
 
         assert presence.rooms == {"room-1"}
+
+    async def test_a_room_that_never_actually_subscribed_is_untracked(
+        self, mock_link, presences
+    ):
+        """subscribe_room() is best-effort and non-raising by design, so a
+        real join/rollback failure never raises up to _join_room's except
+        block. is_room_subscribed() must be checked instead of assuming
+        "no exception" means "subscribed" — otherwise the room stays
+        (wrongly) in self.rooms forever, treated as surviving on every
+        future reconnect."""
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        mock_link.is_room_subscribed = MagicMock(return_value=False)
+        joined = []
+        presence = presences(auto_subscribe_existing=True)
+        presence.on_room_joined = AsyncMock(side_effect=lambda *a: joined.append(a))
+
+        await presence.start()
+
+        assert presence.rooms == set()
+        assert joined == []
+
+    async def test_a_room_that_never_subscribed_is_rejoined_on_reconnect(
+        self, mock_link, presences
+    ):
+        """A room _join_room discarded (never actually subscribed) must be
+        treated as newly-discovered on the next reconnect, not skipped as
+        "surviving"."""
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        mock_link.is_room_subscribed = MagicMock(return_value=False)
+        presence = presences(auto_subscribe_existing=True)
+        await presence.start()
+        assert presence.rooms == set()
+
+        mock_link.is_room_subscribed = MagicMock(return_value=True)
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        await presence._handle_reconnect()
+
+        assert presence.rooms == {"room-1"}
+        assert mock_link.subscribe_room.call_count == 2  # startup attempt + reconnect
 
 
 class TestRoomPresenceRoomRemoved:
