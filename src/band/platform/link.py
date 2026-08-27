@@ -352,10 +352,14 @@ class BandLink:
                 )
             except Exception as e:
                 logger.warning("Failed to join room_participants:%s: %s", room_id, e)
-                # Clean up the chat_room channel we already joined
+                # Clean up the chat_room channel we already joined. Logged at
+                # DEBUG here (not WARNING) so a rollback failure produces one
+                # WARNING below, not two for the same event — the exception
+                # detail is still available for diagnosis.
                 chat_room_left = await self._leave_channel(
                     lambda: ws.leave_chat_room_channel(room_id),
                     description=f"rolling back chat_room:{room_id}",
+                    level=logging.DEBUG,
                 )
                 result = self._subscriptions.record_room_participants_join_failed(
                     room_id=room_id, ticket=ticket, chat_room_left=chat_room_left
@@ -557,19 +561,24 @@ class BandLink:
     async def _drain_reconciliation(self) -> None:
         """Force a clean transport + tracker state for every room/topic left
         ambiguous since the last reconnect, then release the local block.
-
-        ``ws`` is captured once and every iteration re-checks it's still
-        ``self._ws``: a concurrent disconnect()/reconnect() can swap or clear
-        the client while this is mid-await, and stopping there avoids both
-        leaving a stale ``ws`` instance (whose channels this session no
-        longer owns) and wasted work — never a correctness issue on its own,
-        since every leave here is already best-effort, just needless.
         """
         assert (
             self._ws is not None
         )  # only called from the ws client's own reconnect hook
         ws = self._ws
 
+        await self._drain_room_reconciliation(ws)
+        await self._drain_agent_topic_reconciliation(ws)
+
+    async def _drain_room_reconciliation(self, ws: WebSocketClient) -> None:
+        """``ws`` is the client captured at the start of the drain, not
+        re-read from ``self._ws``: a concurrent disconnect()/reconnect() can
+        swap or clear it while this is mid-await, and bailing out as soon as
+        that's detected avoids both acting through a stale client (whose
+        channels this session no longer owns) and further pointless work —
+        never a correctness issue on its own, since every leave here is
+        already best-effort, just needless.
+        """
         for room_id in list(self._rooms_needing_reconciliation):
             if self._ws is not ws:
                 return
@@ -588,6 +597,8 @@ class BandLink:
             self._subscriptions.acknowledge_room_reconciled(room_id=room_id)
             self._rooms_needing_reconciliation.discard(room_id)
 
+    async def _drain_agent_topic_reconciliation(self, ws: WebSocketClient) -> None:
+        """Same stale-``ws``-detection rationale as ``_drain_room_reconciliation``."""
         for topic in list(self._agent_topics_needing_reconciliation):
             if self._ws is not ws:
                 return
