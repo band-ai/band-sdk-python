@@ -10,7 +10,7 @@ matrix (matches test_isolation.py / test_processing_barrier.py precedent).
 
 from __future__ import annotations
 
-import logging
+from unittest.mock import AsyncMock
 
 import pytest
 from band.testing import force_transport_disconnect
@@ -34,7 +34,6 @@ async def test_room_survives_real_transport_reconnect(
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A real socket drop mid-session must not strand the room: the transport's
     own reconnect plus BandLink._on_reconnected must leave it fully usable.
@@ -43,15 +42,27 @@ async def test_room_survives_real_transport_reconnect(
     the test can reach the running agent's own transport via
     ``agent.runtime.link`` — both already-public properties — to force the
     disconnect.
-    """
-    caplog.set_level(logging.INFO, logger="band.platform.link")
 
+    Proof that ``_on_reconnected`` itself ran comes from a spy wrapping
+    ``link._drain_reconciliation``, not from the message round-trip alone:
+    a room's ``ExecutionContext`` also carries an independent
+    ``idle_resync_seconds`` REST re-poll (default 60s) with no relationship
+    to WebSocket reconnect at all, so a reply arriving after the disconnect
+    does not by itself prove the reconnect path executed — it could equally
+    be explained by that unrelated fallback quietly picking up the slack
+    while the socket stayed dead. The spy is a direct, structural signal
+    instead of an inference through log text or a side effect.
+    """
     identity = await cell.provision(label=f"reconnect-{cell.adapter_id}")
     room_id = await resource_manager.provision_room(
         title=f"e2e-reconnect-{cell.adapter_id}", participants=[identity.id]
     )
 
     async with cell.run_as_with_handle(identity) as agent:
+        link = agent.runtime.link
+        drain_spy = AsyncMock(wraps=link._drain_reconciliation)
+        link._drain_reconciliation = drain_spy
+
         before_marker = unique_marker("before")
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()
@@ -64,7 +75,7 @@ async def test_room_survives_real_transport_reconnect(
             replies = await capture.wait_for_reply(mid, identity.id, since=mark)
             replies.assert_contains_any([before_marker])
 
-        await force_transport_disconnect(agent.runtime.link)
+        await force_transport_disconnect(link)
 
         after_marker = unique_marker("after")
         async with reply_capture(room_id) as capture:
@@ -77,8 +88,9 @@ async def test_room_survives_real_transport_reconnect(
             )
             # No sleep, no separate reconnect wait: reply delivery is only
             # possible once the room's channels are live again, so this
-            # barrier's own bounded wait is the deterministic proof.
+            # barrier's own bounded wait is the deterministic proof the
+            # room itself still works.
             replies = await capture.wait_for_reply(mid, identity.id, since=mark)
             replies.assert_contains_any([after_marker])
 
-    assert "WebSocket reconnected" in caplog.text
+        drain_spy.assert_awaited()

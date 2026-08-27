@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,17 +14,23 @@ def make_link() -> BandLink:
     return BandLink(agent_id="agent-123", api_key="test-key")
 
 
-async def test_closes_the_live_transport_connection() -> None:
-    """The happy path: closes the real connection under a connected link."""
+async def test_aborts_the_live_transport() -> None:
+    """The happy path: aborts the raw transport under a connected link.
+
+    Not ``connection.close()`` — a graceful close (code 1000) is exactly
+    what the reconnect policy treats as intentional and never reconnects
+    from, so the test-only tool has to bypass it and abort the underlying
+    asyncio transport instead, matching a real network drop.
+    """
     link = make_link()
-    connection = AsyncMock()
+    connection = MagicMock()
     ws = MagicMock()
     ws.client = MagicMock(connection=connection)
     link._ws = ws
 
     await force_transport_disconnect(link)
 
-    connection.close.assert_awaited_once()
+    connection.transport.abort.assert_called_once()
 
 
 async def test_raises_when_never_connected() -> None:
