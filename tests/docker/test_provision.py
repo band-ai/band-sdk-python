@@ -131,8 +131,13 @@ def _make_mock_client(register_return=None, register_side_effect=None):
     return mock_client
 
 
-def _agents_response(*agents: SimpleNamespace) -> SimpleNamespace:
-    return SimpleNamespace(data=list(agents))
+def _agents_response(
+    *agents: SimpleNamespace, has_more: bool = False, next_cursor: str | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        data=list(agents),
+        metadata=SimpleNamespace(has_more=has_more, next_cursor=next_cursor),
+    )
 
 
 def _make_args(workspace: Path, **overrides) -> argparse.Namespace:
@@ -320,6 +325,30 @@ class TestAgentIdRoundTrip:
         with pytest.raises(LaunchError, match="invalid"):
             write_agent_id(tmp_path, "agent-abc-123")
 
+    def test_read_non_mapping_top_level_raises_clear_error(self, tmp_path: Path):
+        (tmp_path / "band.yaml").write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="must be a mapping"):
+            read_agent_id(tmp_path)
+
+    def test_write_non_mapping_top_level_raises_clear_error(self, tmp_path: Path):
+        (tmp_path / "band.yaml").write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="must be a mapping"):
+            write_agent_id(tmp_path, "agent-abc-123")
+
+    def test_read_scalar_agent_value_raises_clear_error(self, tmp_path: Path):
+        (tmp_path / "band.yaml").write_text("agent: not-a-mapping\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="'agent' must be a mapping"):
+            read_agent_id(tmp_path)
+
+    def test_write_scalar_agent_value_raises_clear_error(self, tmp_path: Path):
+        (tmp_path / "band.yaml").write_text("agent: not-a-mapping\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="'agent' must be a mapping"):
+            write_agent_id(tmp_path, "agent-abc-123")
+
 
 # --- sbx secret ls table parsing ---
 
@@ -468,6 +497,33 @@ class TestCheckRegistrationAfterTimeout:
 
         assert outcome is RegistrationTimeoutOutcome.CONFIRMED_PRESENT
         assert agent_id == "orphan-agent-1"
+
+    @pytest.mark.asyncio
+    async def test_confirmed_present_when_match_is_on_a_later_page(self):
+        """`name` is a substring filter, so a same-account agent whose name
+        merely contains `agent_name` can fill page one and push the exact
+        match to page two -- the lookup must keep paging, not stop at the
+        first page and misreport CONFIRMED_ABSENT."""
+        mock_client = self._mock_client(
+            side_effect=[
+                _agents_response(
+                    SimpleNamespace(name="my-agent-2", id="unrelated"),
+                    has_more=True,
+                    next_cursor="cursor-1",
+                ),
+                _agents_response(SimpleNamespace(name="my-agent", id="orphan-agent-1")),
+            ]
+        )
+        with patch("band.docker.provision.AsyncRestClient", return_value=mock_client):
+            outcome, agent_id = await _check_registration_after_timeout(
+                api_key="k", rest_url="https://x", agent_name="my-agent"
+            )
+
+        assert outcome is RegistrationTimeoutOutcome.CONFIRMED_PRESENT
+        assert agent_id == "orphan-agent-1"
+        calls = mock_client.human_api_agents.list_my_agents.call_args_list
+        assert calls[0].kwargs["cursor"] is None
+        assert calls[1].kwargs["cursor"] == "cursor-1"
 
     @pytest.mark.asyncio
     async def test_unknown_when_lookup_itself_fails(self):

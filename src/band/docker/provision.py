@@ -39,7 +39,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from band_rest import AgentRegisterRequest, AsyncRestClient
 from band_rest.core.api_error import ApiError
@@ -204,21 +204,41 @@ def _band_yaml_path(workspace: Path) -> Path:
     return workspace / "band.yaml"
 
 
+def _require_mapping(value: Any, *, what: str) -> dict[str, Any]:
+    """`value` as a mapping, defaulting a missing/empty (`None`) value to
+    `{}`. Raises a clear error for anything else (a list, a scalar) instead
+    of a raw `AttributeError`/`TypeError` deep inside a `.get`/`[...] = `
+    on the caller's next line -- band.yaml is user-editable, so a malformed
+    top level or `agent:` value is reachable, not hypothetical."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{what} must be a mapping, got {type(value).__name__}")
+    return value
+
+
 def read_agent_id(workspace: Path) -> str:
     """The current `agent.id` in the workspace's `band.yaml` (`""` if unset)."""
     path = _band_yaml_path(workspace)
     if not path.is_file():
         raise ValueError(f"no band.yaml found in workspace: {path}")
-    data = _YAML.load(path.read_text(encoding="utf-8")) or {}
-    return str((data.get("agent") or {}).get("id") or "")
+    data = _require_mapping(
+        _YAML.load(path.read_text(encoding="utf-8")), what=str(path)
+    )
+    agent = _require_mapping(data.get("agent"), what=f"{path}: 'agent'")
+    return str(agent.get("id") or "")
 
 
 def write_agent_id(workspace: Path, agent_id: str) -> None:
     """Write `agent.id` into `band.yaml`, preserving every comment and the rest
     of the file (a round-trip load/dump, not a regenerate-from-scratch)."""
     path = _band_yaml_path(workspace)
-    data = _YAML.load(path.read_text(encoding="utf-8")) or {}
-    data.setdefault("agent", {})["id"] = agent_id
+    data = _require_mapping(
+        _YAML.load(path.read_text(encoding="utf-8")), what=str(path)
+    )
+    agent = _require_mapping(data.get("agent"), what=f"{path}: 'agent'")
+    agent["id"] = agent_id
+    data["agent"] = agent
     with path.open("w", encoding="utf-8") as fh:
         _YAML.dump(data, fh)
     # Reload through the launcher's own strict model: a malformed write (or an
@@ -372,6 +392,30 @@ class RegistrationTimeoutOutcome(StrEnum):
     UNKNOWN = "unknown"
 
 
+async def _find_registered_agent(
+    client: AsyncRestClient, *, agent_name: str
+) -> str | None:
+    """The id of the agent named exactly `agent_name`, paging until it's
+    found or the account's matches are exhausted.
+
+    `list_my_agents(name=...)` is a case-insensitive *substring* filter, so
+    an account with more than one page of similarly-named agents can push
+    the exact match past the first page -- returning `None` on page one
+    alone would misreport a just-registered agent as absent.
+    """
+    cursor: str | None = None
+    while True:
+        response = await client.human_api_agents.list_my_agents(
+            name=agent_name, cursor=cursor, request_options=NO_RETRY_REQUEST_OPTIONS
+        )
+        match = next((a for a in response.data if a.name == agent_name), None)
+        if match is not None:
+            return match.id
+        if not response.metadata.has_more or response.metadata.next_cursor is None:
+            return None
+        cursor = response.metadata.next_cursor
+
+
 async def _check_registration_after_timeout(
     *, api_key: str, rest_url: str, agent_name: str
 ) -> tuple[RegistrationTimeoutOutcome, str | None]:
@@ -386,10 +430,8 @@ async def _check_registration_after_timeout(
     """
     try:
         async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
-            response = await asyncio.wait_for(
-                client.human_api_agents.list_my_agents(
-                    name=agent_name, request_options=NO_RETRY_REQUEST_OPTIONS
-                ),
+            agent_id = await asyncio.wait_for(
+                _find_registered_agent(client, agent_name=agent_name),
                 timeout=TIMEOUT_RECOVERY_CHECK_S,
             )
     except Exception:
@@ -398,10 +440,9 @@ async def _check_registration_after_timeout(
         )
         return RegistrationTimeoutOutcome.UNKNOWN, None
 
-    match = next((a for a in response.data if a.name == agent_name), None)
-    if match is None:
+    if agent_id is None:
         return RegistrationTimeoutOutcome.CONFIRMED_ABSENT, None
-    return RegistrationTimeoutOutcome.CONFIRMED_PRESENT, match.id
+    return RegistrationTimeoutOutcome.CONFIRMED_PRESENT, agent_id
 
 
 def _describe_registration_timeout(
