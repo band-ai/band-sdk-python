@@ -166,7 +166,17 @@ consumed), and separately skips `sbx create` only when a sandbox by that name
 already exists — so if `sbx create` itself failed on a prior run, re-running
 `provision --create` still creates it without registering a second agent.
 `sbx stop` / restart never re-registers either, since the host secret and
-`band.yaml` both persist.
+`band.yaml` both persist. `--name` reused across unrelated workspaces is
+refused outright rather than silently overwriting the earlier sandbox's key:
+`sbx secret set-custom` is create-or-update, so a secret already present under
+`--name` with no matching local `agent.id` means the name collides with
+somebody else's sandbox, not a resumed run of this one.
+
+If registration itself times out, `provision` looks the agent up by name
+before giving up, so the error tells you whether the platform actually
+committed the write (in which case the minted key — shown exactly once — is
+already unrecoverable) instead of leaving you to guess whether a retry is
+safe.
 
 Two things this does **not** do, by design:
 
@@ -174,11 +184,13 @@ Two things this does **not** do, by design:
   it (422); `provision` surfaces that error rather than guessing whether you
   meant to adopt the existing agent or need a new name. That decision belongs
   to Platform's stale-agent lifecycle work, not this CLI.
-- **Cleaning up after `sbx rm`.** Removing a sandbox has no teardown hook, so
-  its Band agent is left registered (and its host-side key removed with the
-  sandbox's scoped secret) — a known leak, manual until Platform ships
-  cleanup. Deregister the orphaned agent yourself if that matters to your
-  plan's agent cap.
+- **Cleaning up after `sbx rm`.** Removing a sandbox has no teardown hook, and
+  `sbx rm` does **not** remove the scoped secret it was injected with — a
+  removed sandbox's key is still there in `sbx secret ls`. Both are manual
+  until Platform ships cleanup: deregister the orphaned agent yourself if
+  that matters to your plan's agent cap, and remove the leaked key with
+  `sbx secret rm <name> --host <host> -f`, or it sits in the host's secret
+  store indefinitely.
 
 ## Your workspace
 

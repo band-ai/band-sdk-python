@@ -14,7 +14,11 @@ independent checks: registration is skipped when the workspace already has
 both the injected secret and a real `agent.id`; sandbox creation is skipped
 separately, whenever `sbx` already reports a sandbox by that name — so a
 `sbx create` that failed on a prior run (after registration and injection
-already succeeded) still gets retried.
+already succeeded) still gets retried. `sbx secret set-custom` is a
+create-or-update, so a `--name` that already has an injected secret but no
+matching local `agent.id` is refused outright rather than silently
+overwritten — that combination means `--name` collides with somebody else's
+sandbox, not a resumed run of this one.
 
 Exit codes:
     0 — success (prints the agent id to stdout; the agent key is never printed
@@ -59,6 +63,10 @@ NO_RETRY_REQUEST_OPTIONS: Final[RequestOptions] = {"max_retries": 0}
 DEFAULT_TIMEOUT: Final[int] = 120
 SBX_SECRET_TIMEOUT_S: Final[int] = 60
 SBX_CREATE_TIMEOUT_S: Final[int] = 600
+# Bound on the best-effort lookup that disambiguates a registration timeout
+# (see _describe_registration_timeout); independent of --timeout since this
+# is a plain read, not the write whose outcome is in question.
+TIMEOUT_RECOVERY_CHECK_S: Final[int] = 30
 
 # The echo-agent starter's shipped-but-unset marker (docker/band_python_kit/
 # echo-agent/band.yaml); a workspace still carrying it has never been
@@ -357,6 +365,54 @@ async def register_agent(
     return response.data.agent.id, response.data.credentials.api_key
 
 
+async def _describe_registration_timeout(
+    *, api_key: str, rest_url: str, agent_name: str, timeout: int
+) -> str:
+    """A registration call timed out client-side; turn that into an actionable
+    message instead of an ambiguous one.
+
+    `register_my_agent` has no idempotency key, so the timeout alone can't
+    say whether the platform committed the write before the response was
+    lost — and if it did, the minted key (shown exactly once) is gone either
+    way. Best-effort: look the agent up by name with a fresh, short-lived
+    request to turn "maybe orphaned" into a definite answer where possible.
+    """
+    base = f"registration timed out after {timeout}s"
+    client = AsyncRestClient(api_key=api_key, base_url=rest_url.rstrip("/"))
+    try:
+        response = await asyncio.wait_for(
+            client.human_api_agents.list_my_agents(
+                name=agent_name, request_options=NO_RETRY_REQUEST_OPTIONS
+            ),
+            timeout=TIMEOUT_RECOVERY_CHECK_S,
+        )
+    except Exception:
+        logger.warning(
+            "could not confirm registration state after timeout", exc_info=True
+        )
+        return (
+            f"{base} and its outcome could not be confirmed. The platform may "
+            f"have registered {agent_name!r} and minted its key before the "
+            "response was lost -- that key cannot be retrieved again. Check "
+            f"the platform for an agent named {agent_name!r} before retrying."
+        )
+    finally:
+        await client._client_wrapper.httpx_client.httpx_client.aclose()
+
+    match = next((a for a in response.data if a.name == agent_name), None)
+    if match is None:
+        return (
+            f"{base}; confirmed no agent named {agent_name!r} was registered "
+            "-- safe to retry."
+        )
+    return (
+        f"{base}, but agent {agent_name!r} (id={match.id}) was registered "
+        "anyway before the response arrived. Its key was shown exactly once "
+        "and cannot be retrieved -- delete the orphaned agent and retry with "
+        "a new --agent-name, or see PLT-1066 for adopt-existing semantics."
+    )
+
+
 async def run(args: argparse.Namespace) -> str:
     """Execute the provision flow. Returns the agent id on success."""
     settings = ProvisionSettings()
@@ -378,6 +434,20 @@ async def run(args: argparse.Namespace) -> str:
     already_registered = bool(
         existing_id and existing_id != PLACEHOLDER_AGENT_ID and already_has_secret
     )
+    # `sbx secret set-custom` is create-or-update: a secret already sitting at
+    # this name/host with no matching local agent.id isn't a resumed run of
+    # this workspace -- it's somebody else's sandbox. Registering here would
+    # silently overwrite their live credential, so refuse instead of guessing.
+    if already_has_secret and not already_registered:
+        raise RuntimeError(
+            f"a Band secret is already injected for sandbox name {args.name!r} "
+            f"(host {args.host}), but workspace {workspace} has no matching "
+            "registered agent (agent.id is unset or still the placeholder). "
+            "Registering would overwrite that secret via `sbx secret "
+            "set-custom`'s create-or-update semantics. Pick a different "
+            "--name, or if this really is the same sandbox, restore its "
+            "agent.id in band.yaml instead of re-registering."
+        )
 
     if already_registered:
         logger.info(
@@ -413,7 +483,12 @@ async def run(args: argparse.Namespace) -> str:
             )
         except asyncio.TimeoutError:
             raise RuntimeError(
-                f"registration timed out after {args.timeout}s"
+                await _describe_registration_timeout(
+                    api_key=api_key,
+                    rest_url=rest_url,
+                    agent_name=agent_name,
+                    timeout=args.timeout,
+                )
             ) from None
         logger.info("Registered agent: %s", agent_id)
 
