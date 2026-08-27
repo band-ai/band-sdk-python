@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +11,26 @@ import pytest
 from band.client.streaming import SupersedePayload
 from band.platform.event import WebSocketDisconnectedEvent
 from band.platform.link import BandLink
+
+
+def gated_coroutine() -> tuple[
+    Callable[..., Awaitable[None]], asyncio.Event, asyncio.Event
+]:
+    """A mock coroutine that blocks until released, so a caller can cancel
+    it genuinely mid-await instead of before it ever starts.
+
+    Returns ``(side_effect, started, release)`` — set ``side_effect`` as an
+    AsyncMock's ``side_effect``, ``await started.wait()`` to know the call is
+    truly in-flight, then cancel and/or ``release.set()``.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def side_effect(*args, **kwargs):
+        started.set()
+        await release.wait()
+
+    return side_effect, started, release
 
 
 @pytest.fixture
@@ -71,7 +93,7 @@ class TestBandLinkConstruction:
 
         assert link.is_connected is False
         assert link._ws is None
-        assert link._subscribed_rooms == set()
+        assert link.is_room_subscribed("room-123") is False
 
     def test_init_empty_event_queue(self):
         """Should start with empty event queue."""
@@ -144,21 +166,34 @@ class TestBandLinkConnection:
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
-        link._subscribed_rooms.add("room-1")
-        link._subscribed_rooms.add("room-2")
+        await link.subscribe_room("room-1")
+        await link.subscribe_room("room-2")
 
         await link.disconnect()
 
-        assert link._subscribed_rooms == set()
+        assert link.is_room_subscribed("room-1") is False
+        assert link.is_room_subscribed("room-2") is False
 
-    async def test_reconnect_keeps_tracked_room_subscriptions(self):
-        """_on_reconnected() should preserve room tracking for PHX re-subscriptions."""
+    @patch("band.platform.link.WebSocketClient")
+    async def test_reconnect_keeps_tracked_room_subscriptions(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """_on_reconnected() should preserve room tracking for PHX
+        re-subscriptions — a normally-subscribed room needs no reconciliation
+        leave, so the drain must leave it untouched."""
+        mock_ws_class.return_value = mock_ws_client
+
         link = BandLink(agent_id="agent-123", api_key="test-key")
-        link._subscribed_rooms.update({"room-1", "room-2"})
+        await link.connect()
+        await link.subscribe_room("room-1")
+        await link.subscribe_room("room-2")
 
         await link._on_reconnected()
 
-        assert link._subscribed_rooms == {"room-1", "room-2"}
+        assert link.is_room_subscribed("room-1") is True
+        assert link.is_room_subscribed("room-2") is True
+        mock_ws_client.leave_chat_room_channel.assert_not_called()
+        mock_ws_client.leave_room_participants_channel.assert_not_called()
 
     async def test_disconnect_when_not_connected_is_noop(self):
         """disconnect() when not connected should be a no-op."""
@@ -222,7 +257,7 @@ class TestBandLinkConnection:
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link._ws = mock_ws_client
         link._is_connected = True
-        link._subscribed_rooms.add("room-1")
+        await link.subscribe_room("room-1")
         payload = SupersedePayload(
             reason="session.already_connected",
             message="This connection has been superseded by a newer session for this agent.",
@@ -238,7 +273,7 @@ class TestBandLinkConnection:
         mock_ws_client.__aexit__.assert_called_once_with(None, None, None)
         assert link.is_connected is False
         assert link._ws is None
-        assert link._subscribed_rooms == set()
+        assert link.is_room_subscribed("room-1") is False
         assert link.last_disconnect_reason is not None
         assert link.last_disconnect_reason.reason == "session.already_connected"
 
@@ -295,14 +330,14 @@ class TestBandLinkSubscriptions:
     async def test_subscribe_room_tracks_subscription(
         self, mock_ws_class, mock_ws_client
     ):
-        """subscribe_room() should track room in _subscribed_rooms."""
+        """subscribe_room() should track the room as subscribed."""
         mock_ws_class.return_value = mock_ws_client
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
         await link.subscribe_room("room-123")
 
-        assert "room-123" in link._subscribed_rooms
+        assert link.is_room_subscribed("room-123") is True
 
     @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_room_idempotent(self, mock_ws_class, mock_ws_client):
@@ -345,7 +380,7 @@ class TestBandLinkSubscriptions:
     async def test_unsubscribe_room_removes_from_tracking(
         self, mock_ws_class, mock_ws_client
     ):
-        """unsubscribe_room() should remove room from _subscribed_rooms."""
+        """unsubscribe_room() should remove the room from tracking."""
         mock_ws_class.return_value = mock_ws_client
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
@@ -353,7 +388,7 @@ class TestBandLinkSubscriptions:
         await link.subscribe_room("room-123")
         await link.unsubscribe_room("room-123")
 
-        assert "room-123" not in link._subscribed_rooms
+        assert link.is_room_subscribed("room-123") is False
 
     @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_room_handles_leave_errors(
@@ -361,17 +396,17 @@ class TestBandLinkSubscriptions:
     ):
         """unsubscribe_room() should handle errors gracefully."""
         mock_ws_class.return_value = mock_ws_client
-        mock_ws_client.leave_chat_room_channel.side_effect = Exception("Leave failed")
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
-        link._subscribed_rooms.add("room-123")
+        await link.subscribe_room("room-123")
+        mock_ws_client.leave_chat_room_channel.side_effect = Exception("Leave failed")
 
         # Should not raise, just log warning
         await link.unsubscribe_room("room-123")
 
-        # Room should still be removed from tracking
-        assert "room-123" not in link._subscribed_rooms
+        # Room should still be removed from tracking despite the leave failure
+        assert link.is_room_subscribed("room-123") is False
 
     async def test_unsubscribe_room_noop_when_not_subscribed(self):
         """unsubscribe_room() should be no-op for unsubscribed room."""
@@ -379,6 +414,161 @@ class TestBandLinkSubscriptions:
 
         # Should not raise
         await link.unsubscribe_room("room-123")
+
+
+class TestBandLinkSubscriptionRaceAndReconciliation:
+    """SubscriptionTracker-backed dedup, reconciliation blocking, and
+    cancellation safety for subscribe_room/unsubscribe_room."""
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_concurrent_subscribe_room_only_one_join(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """Two concurrent subscribe_room() calls for the same room must not
+        both attempt the wire join: begin_room_subscribe's pre-await claim
+        check makes the loser a synchronous no-op rather than a second
+        `join_chat_room_channel` call."""
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        await asyncio.gather(
+            link.subscribe_room("room-123"),
+            link.subscribe_room("room-123"),
+        )
+
+        assert mock_ws_client.join_chat_room_channel.call_count == 1
+        assert link.is_room_subscribed("room-123") is True
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_subscribe_room_blocked_after_failed_rollback_until_reconnect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """A room whose rollback also failed (both topics ambiguous
+        server-side) must not be resubscribed on the same socket — it stays
+        blocked until the next reconnect drains the reconciliation set."""
+        mock_ws_class.return_value = mock_ws_client
+        mock_ws_client.join_room_participants_channel.side_effect = Exception(
+            "participants join failed"
+        )
+        mock_ws_client.leave_chat_room_channel.side_effect = Exception(
+            "rollback leave also failed"
+        )
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is False
+
+        # Blocked: a retry before the next reconnect must not attempt a join.
+        mock_ws_client.join_chat_room_channel.reset_mock()
+        await link.subscribe_room("room-123")
+        mock_ws_client.join_chat_room_channel.assert_not_called()
+
+        # The next reconnect drains the reconciliation set, unblocking it.
+        mock_ws_client.join_room_participants_channel.side_effect = None
+        mock_ws_client.leave_chat_room_channel.side_effect = None
+        await link._on_reconnected()
+
+        await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is True
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_reconnect_issues_best_effort_leave_before_acknowledging(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """_on_reconnected() must force a clean transport leave for every
+        room still needing reconciliation before acknowledging the tracker —
+        closes the gap where PHXChannelsClient's own auto-rejoin can
+        silently re-establish a stale-registered topic ahead of this hook."""
+        mock_ws_class.return_value = mock_ws_client
+        mock_ws_client.join_room_participants_channel.side_effect = Exception("boom")
+        mock_ws_client.leave_chat_room_channel.side_effect = Exception(
+            "rollback also failed"
+        )
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+        await link.subscribe_room("room-123")
+
+        mock_ws_client.leave_chat_room_channel.side_effect = None
+        mock_ws_client.leave_chat_room_channel.reset_mock()
+        mock_ws_client.leave_room_participants_channel.reset_mock()
+
+        await link._on_reconnected()
+
+        mock_ws_client.leave_chat_room_channel.assert_called_once_with("room-123")
+        mock_ws_client.leave_room_participants_channel.assert_called_once_with(
+            "room-123"
+        )
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_subscribe_room_cancelled_mid_join_blocks_until_reconnect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """Cancellation mid-await must resolve the ticket (never leak it)
+        and block the room until the next reconnect — proven with a gated
+        coroutine so the cancel lands truly mid-flight, not before entry."""
+        mock_ws_class.return_value = mock_ws_client
+        side_effect, started, release = gated_coroutine()
+        mock_ws_client.join_chat_room_channel.side_effect = side_effect
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        task = asyncio.create_task(link.subscribe_room("room-123"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert link.is_room_subscribed("room-123") is False
+
+        mock_ws_client.join_chat_room_channel.side_effect = None
+        mock_ws_client.join_chat_room_channel.reset_mock()
+        await link.subscribe_room("room-123")
+        mock_ws_client.join_chat_room_channel.assert_not_called()
+
+        await link._on_reconnected()
+
+        await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is True
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_unsubscribe_room_cancelled_mid_leave_blocks_until_reconnect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """Same guarantee on the leave path: a cancelled unsubscribe_room()
+        resolves to LeaveOutcome.Unknown and blocks the room, never leaking
+        the ticket."""
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+        await link.subscribe_room("room-123")
+
+        side_effect, started, release = gated_coroutine()
+        mock_ws_client.leave_chat_room_channel.side_effect = side_effect
+
+        task = asyncio.create_task(link.unsubscribe_room("room-123"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert link.is_room_subscribed("room-123") is False
+
+        mock_ws_client.leave_chat_room_channel.side_effect = None
+        mock_ws_client.join_chat_room_channel.reset_mock()
+        await link.subscribe_room("room-123")
+        mock_ws_client.join_chat_room_channel.assert_not_called()
+
+        await link._on_reconnected()
+
+        await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is True
 
 
 class TestBandLinkEventQueue:
