@@ -20,7 +20,7 @@ from tests.conftest import (
     make_room_deleted_event,
     make_room_removed_event,
 )
-from tests.platform.conftest import cancelled_mid_await
+from tests.platform.conftest import cancelled_mid_await, gated_coroutine
 from tests.runtime.conftest import admit_room, chat_row
 
 
@@ -148,6 +148,28 @@ class TestRoomPresenceStart:
 
         await presence.stop()
         assert first_task.done()
+
+    async def test_concurrent_start_calls_only_one_wins(self, mock_link, presences):
+        """Two start() calls racing before the first has a chance to assign
+        _event_task must not both proceed to create a consumer task -- the
+        second must raise, mirroring the sequential case above."""
+        side_effect, started, release = gated_coroutine()
+        mock_link.connect.side_effect = side_effect
+        mock_link.is_connected = False
+        presence = presences(auto_subscribe_existing=False)
+
+        first_call = asyncio.create_task(presence.start())
+        await started.wait()
+
+        with pytest.raises(RuntimeError):
+            await presence.start()
+
+        release.set()
+        await first_call
+
+        assert presence._event_task is not None
+        await presence.stop()
+        assert presence._event_task.done()
 
 
 class TestRoomPresenceStop:
@@ -389,7 +411,9 @@ class TestAdmissionRaces:
         cancelled) must not announce the room as joined, even though
         subscribe_room() itself succeeded — record_room_admission's return
         value is the roster's own authority on whether the ticket still
-        counted."""
+        counted. The real transport subscription it just made must also be
+        torn down: the roster no longer tracks the room, so no later cleanup
+        pass (stop()/reconcile()) will ever target it by room_id."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
         ticket = presence.roster.begin_room_admission("room-1", passes_filter=True)
@@ -404,6 +428,7 @@ class TestAdmissionRaces:
         assert result is False
         presence.on_room_joined.assert_not_called()
         assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
+        mock_link.unsubscribe_room.assert_called_once_with("room-1")
 
 
 class TestRoomPresenceRoomRemoved:

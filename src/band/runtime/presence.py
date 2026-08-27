@@ -103,6 +103,9 @@ class RoomPresence:
 
         # Internal task for consuming events from link
         self._event_task: asyncio.Task | None = None
+        # True for the span of start() before _event_task exists to guard
+        # against a second concurrent call (see start()).
+        self._starting = False
 
     async def _notify(
         self,
@@ -130,25 +133,35 @@ class RoomPresence:
         3. Subscribe to existing rooms (if configured)
         4. Spawn task to consume events from link
         """
-        if self._event_task is not None and not self._event_task.done():
+        if self._starting or (
+            self._event_task is not None and not self._event_task.done()
+        ):
             raise RuntimeError(
                 f"RoomPresence for agent {self.link.agent_id} is already running; "
                 "call stop() before starting again"
             )
 
-        # Connect if needed
-        if not self.link.is_connected:
-            await self.link.connect()
+        # Set synchronously, before the first await below, so a second
+        # concurrent start() call sees it even while this one is still
+        # mid-connect/mid-subscribe -- _event_task alone can't do that job,
+        # since it isn't assigned until the very end of this method.
+        self._starting = True
+        try:
+            # Connect if needed
+            if not self.link.is_connected:
+                await self.link.connect()
 
-        # Subscribe to room added/removed events
-        await self.link.subscribe_agent_rooms(self.link.agent_id)
+            # Subscribe to room added/removed events
+            await self.link.subscribe_agent_rooms(self.link.agent_id)
 
-        # Subscribe to existing rooms
-        if self.auto_subscribe_existing:
-            await self._subscribe_to_existing_rooms()
+            # Subscribe to existing rooms
+            if self.auto_subscribe_existing:
+                await self._subscribe_to_existing_rooms()
 
-        # Spawn task to consume events from link's async iterator
-        self._event_task = asyncio.create_task(self._consume_events())
+            # Spawn task to consume events from link's async iterator
+            self._event_task = asyncio.create_task(self._consume_events())
+        finally:
+            self._starting = False
 
         logger.info("RoomPresence started for agent %s", self.link.agent_id)
 
@@ -328,13 +341,18 @@ class RoomPresence:
         )
 
     async def _leave_one_room(self, room_id: str, *, context: str) -> None:
+        await self._unsubscribe_room(room_id, context=context)
+        await self._notify(self.on_room_left, room_id, label="on_room_left")
+
+    async def _unsubscribe_room(self, room_id: str, *, context: str) -> None:
+        """Best-effort unsubscribe: a transport-layer failure here must not
+        crash whatever join/leave sequence triggered it."""
         try:
             await self.link.unsubscribe_room(room_id)
         except Exception as e:
             logger.warning(
                 "Failed to unsubscribe room %s during %s: %s", room_id, context, e
             )
-        await self._notify(self.on_room_left, room_id, label="on_room_left")
 
     async def _admit_reconciled_rooms(
         self,
@@ -468,7 +486,8 @@ class RoomPresence:
         can go stale mid-flight (e.g. ``stop()``'s ``roster.clear()`` racing
         this call before ``self._event_task`` exists to be cancelled), and a
         stale-but-succeeded subscribe must not announce a room the roster no
-        longer considers ours.
+        longer considers ours -- nor leave the real transport subscription
+        behind for a room the roster has already forgotten about.
         """
         succeeded = False
         try:
@@ -495,10 +514,11 @@ class RoomPresence:
 
         if not admitted:
             logger.debug(
-                "Admission ticket for room %s went stale during %s, ignoring",
+                "Admission ticket for room %s went stale during %s, unsubscribing",
                 room_id,
                 context,
             )
+            await self._unsubscribe_room(room_id, context=context)
             return False
 
         # A callback that raises is the caller's problem, not a failed join:
