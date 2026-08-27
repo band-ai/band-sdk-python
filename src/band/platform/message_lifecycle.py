@@ -27,9 +27,8 @@ class MessageLifecycle:
     """
 
     def __init__(self) -> None:
-        # Debounce flag for activity-report failures: keep-alive runs at a few
-        # seconds per room, so a down endpoint would otherwise flood the log on
-        # every refresh. Log the first failure and the recovery, suppress repeats.
+        # Debounces activity-report warnings: keep-alive runs every few
+        # seconds, so a down endpoint would otherwise flood the log.
         self._activity_report_failing = False
 
     async def mark_processing(
@@ -107,16 +106,17 @@ class MessageLifecycle:
         """
         Report the agent's boolean working state for a room's execution.
 
-        Sends ``working: true`` while a reasoning cycle is active (refreshed on a
-        keep-alive cadence) and ``working: false`` when it ends. Failures are
-        swallowed and returned as ``False`` — the platform's TTL is the backstop,
-        so activity reporting must never break message processing.
+        ``working=True`` while a reasoning cycle is active (refreshed on a
+        keep-alive cadence), ``False`` once it ends. Never raises — failures
+        are swallowed and returned as ``False``, since the platform's TTL is
+        the backstop and activity reporting must never break message
+        processing.
 
-        The call is time-bounded by ``timeout_seconds`` (a per-POST deadline, not
-        the client default) so a slow/half-open endpoint can never wedge the
-        reasoning loop's teardown or stall the keep-alive. Retries are disabled:
-        a dropped keep-alive is re-sent on the next cadence tick, and a dropped
-        ``false`` is cleared by the platform TTL, so retrying only adds latency.
+        ``timeout_seconds`` bounds each POST so a slow/half-open endpoint
+        can't stall the keep-alive or wedge teardown. Retries are off: a
+        dropped keep-alive gets re-sent next cadence tick, and a dropped
+        ``false`` is cleared by the platform TTL either way — retrying would
+        only add latency.
         """
         try:
             await rest.agent_api_activity.report_agent_chat_activity(
@@ -156,18 +156,16 @@ class MessageLifecycle:
         """
         Get the next actionable message for a room from the server.
 
-        Returns:
-            ``PlatformMessage`` if there's an actionable message, or ``None``
-            if the platform returned no content (204). ``None`` means *the
-            platform told us there's nothing pending* — not "the call failed."
+        Returns ``None`` only when the platform reports 204 (nothing
+        pending) — never to mean "the call failed."
 
         Raises:
-            ApiError: REST call failed with a non-204 status.
-            Exception: Transport-level failure (connection error, timeout).
-                Callers that want to swallow transient failures should wrap
-                this call explicitly; the previous behavior of conflating
-                "no pending" with "lookup failed" silently dropped messages
-                at the claim step.
+            ApiError: non-204 REST failure.
+            Exception: transport-level failure (connection error, timeout).
+
+        Callers that want to swallow transient failures must wrap this call
+        themselves: conflating "no pending" with "lookup failed" used to
+        silently drop messages at the claim step.
         """
         logger.debug("Getting next message for room %s", room_id)
         try:
@@ -206,21 +204,16 @@ class MessageLifecycle:
         """
         Get messages stuck in 'processing' state for a room.
 
-        On agent restart, messages that were being processed when the agent
-        crashed remain in 'processing' state. The long-running runtime uses
-        this as an explicit recovery sweep at startup.
+        Recovery sweep for agent restart: a crash mid-processing leaves
+        messages in 'processing', and the long-running runtime calls this at
+        startup to drain them.
 
-        Note: ``get_next_message`` (the ``/next`` REST endpoint) already
-        includes stuck-processing messages in its "actionable" result set —
-        see ``Chat.get_next_actionable_message`` on the platform side, which
-        excludes only ``processed``. Callers that drive recovery solely
-        through ``/next`` (e.g. the bridge's rehydration nudge and
-        ``OneShotInvoker``'s claim step) do not need to call this method;
-        it exists for paths that want to drain *every* stuck message up
-        front rather than one-per-room.
-
-        Returns:
-            List of PlatformMessage objects in processing state.
+        Redundant for callers already polling ``/next``: it includes
+        stuck-processing messages in its "actionable" set too (excludes only
+        ``processed`` — see ``Chat.get_next_actionable_message`` on the
+        platform side), so the bridge's rehydration nudge and
+        ``OneShotInvoker``'s claim step don't need this method. It exists for
+        callers that want every stuck message up front, not one per room.
         """
         try:
             messages = []

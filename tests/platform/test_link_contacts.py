@@ -163,6 +163,33 @@ class TestContactTopicRaceAndReconciliation:
         assert mock_ws_client.join_agent_contacts_channel.call_count == 1
 
     @patch("band.platform.link.WebSocketClient")
+    async def test_ordinary_join_failure_is_not_blocking(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """An ordinary (non-cancelled) join failure resolves cleanly via
+        record_agent_topic_join(joined=False) — settled=True before the
+        finally block, so unlike cancellation it never reaches the local
+        reconciliation set. A retry must succeed immediately, no reconnect
+        needed."""
+        mock_ws_class.return_value = mock_ws_client
+        mock_ws_client.join_agent_contacts_channel.side_effect = Exception(
+            "join failed"
+        )
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+
+        await link.subscribe_agent_contacts("agent-123")
+
+        mock_ws_client.join_agent_contacts_channel.side_effect = None
+        mock_ws_client.join_agent_contacts_channel.reset_mock()
+        await link.subscribe_agent_contacts("agent-123")
+
+        # A genuinely fresh join attempt, not the retry silently no-opping
+        # as if still blocked.
+        mock_ws_client.join_agent_contacts_channel.assert_called_once()
+
+    @patch("band.platform.link.WebSocketClient")
     async def test_cancelled_join_blocks_agent_contacts_until_reconnect(
         self, mock_ws_class, mock_ws_client
     ):
