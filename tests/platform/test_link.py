@@ -165,6 +165,27 @@ class TestBandLinkConnection:
         assert link.is_connected is True
 
     @patch("band.platform.link.WebSocketClient")
+    async def test_cancelled_connect_clears_ws_for_a_later_retry(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """A connect() cancelled while awaiting __aenter__() must roll _ws
+        back to None -- otherwise every later connect() sees a non-None _ws
+        and silently no-ops forever, with is_connected stuck False."""
+        mock_ws_class.return_value = mock_ws_client
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+
+        async with cancelled_mid_await(mock_ws_client.__aenter__, link.connect()):
+            pass
+
+        assert link._ws is None
+        assert link.is_connected is False
+        mock_ws_client.__aexit__.assert_called_once()
+
+        await link.connect()
+
+        assert link.is_connected is True
+
+    @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_exits_websocket_context(
         self, mock_ws_class, mock_ws_client
     ):

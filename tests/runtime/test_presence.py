@@ -216,6 +216,32 @@ class TestRoomPresenceStop:
 
         on_left.assert_not_called()
 
+    async def test_stop_waits_for_an_in_progress_start_before_tearing_down(
+        self, mock_link, presences
+    ):
+        """stop() racing an in-flight start() must not return before the
+        instance is actually stopped: it has to wait for start() to finish
+        creating _event_task and then tear it down, rather than finding
+        nothing to cancel and returning while start() is still running."""
+        side_effect, started, release = gated_coroutine()
+        mock_link.connect.side_effect = side_effect
+        mock_link.is_connected = False
+        presence = presences(auto_subscribe_existing=False)
+
+        start_task = asyncio.create_task(presence.start())
+        await started.wait()
+
+        stop_task = asyncio.create_task(presence.stop())
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+
+        release.set()
+        await start_task
+        await stop_task
+
+        assert presence._event_task is not None
+        assert presence._event_task.done()
+
 
 class TestRoomPresenceRoomAdded:
     """Test room_added event handling."""

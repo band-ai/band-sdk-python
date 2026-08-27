@@ -184,22 +184,27 @@ class BandLink:
             return
 
         self._last_disconnect_reason = None
-        self._ws = WebSocketClient(
+        ws = WebSocketClient(
             self.ws_url,
             self.api_key,
             self.agent_id,
             on_reconnect=self._on_reconnected,
             on_disconnect=self._on_disconnected,
         )
-        await self._ws.__aenter__()
+        self._ws = ws
         try:
-            await self._ws.join_agent_control_channel(
+            await ws.__aenter__()
+            await ws.join_agent_control_channel(
                 self.agent_id,
                 on_supersede=self._on_supersede,
                 on_control=self._on_control,
             )
-        except Exception:
-            await self._ws.__aexit__(None, None, None)
+        except BaseException:
+            # BaseException, not Exception: a cancellation reaching this
+            # await (e.g. the caller's own task being cancelled) must roll
+            # _ws back too, or every later connect() sees it as non-None and
+            # silently no-ops forever with _is_connected still False.
+            await ws.__aexit__(None, None, None)
             self._ws = None
             raise
         self._is_connected = True

@@ -106,6 +106,11 @@ class RoomPresence:
         # True for the span of start() before _event_task exists to guard
         # against a second concurrent call (see start()).
         self._starting = False
+        # Serializes start()'s and stop()'s bodies against each other: a
+        # stop() racing an in-flight start() must wait for it to finish
+        # (and thus actually create _event_task) rather than finding
+        # nothing to tear down and returning while start() is still running.
+        self._lifecycle_lock = asyncio.Lock()
 
     async def _notify(
         self,
@@ -147,19 +152,20 @@ class RoomPresence:
         # since it isn't assigned until the very end of this method.
         self._starting = True
         try:
-            # Connect if needed
-            if not self.link.is_connected:
-                await self.link.connect()
+            async with self._lifecycle_lock:
+                # Connect if needed
+                if not self.link.is_connected:
+                    await self.link.connect()
 
-            # Subscribe to room added/removed events
-            await self.link.subscribe_agent_rooms(self.link.agent_id)
+                # Subscribe to room added/removed events
+                await self.link.subscribe_agent_rooms(self.link.agent_id)
 
-            # Subscribe to existing rooms
-            if self.auto_subscribe_existing:
-                await self._subscribe_to_existing_rooms()
+                # Subscribe to existing rooms
+                if self.auto_subscribe_existing:
+                    await self._subscribe_to_existing_rooms()
 
-            # Spawn task to consume events from link's async iterator
-            self._event_task = asyncio.create_task(self._consume_events())
+                # Spawn task to consume events from link's async iterator
+                self._event_task = asyncio.create_task(self._consume_events())
         finally:
             self._starting = False
 
@@ -181,19 +187,24 @@ class RoomPresence:
 
         Cancels event consumer, unsubscribes from all rooms and clears state.
         Does NOT disconnect the link (caller may want to reuse it).
-        """
-        # Cancel event consumer task
-        if self._event_task and not self._event_task.done():
-            self._event_task.cancel()
-            try:
-                await self._event_task
-            except asyncio.CancelledError:
-                pass
-            self._event_task = None
 
-        admitted_room_ids = self.roster.tracked_room_ids()
-        self.roster.clear()
-        await self._leave_and_notify(admitted_room_ids, context="stop")
+        Waits for an in-flight start() to finish (see _lifecycle_lock) rather
+        than finding nothing to tear down yet -- otherwise start() could go
+        on to create _event_task after this method already returned.
+        """
+        async with self._lifecycle_lock:
+            # Cancel event consumer task
+            if self._event_task and not self._event_task.done():
+                self._event_task.cancel()
+                try:
+                    await self._event_task
+                except asyncio.CancelledError:
+                    pass
+                self._event_task = None
+
+            admitted_room_ids = self.roster.tracked_room_ids()
+            self.roster.clear()
+            await self._leave_and_notify(admitted_room_ids, context="stop")
         logger.info("RoomPresence stopped")
 
     async def _on_platform_event(self, event: PlatformEvent) -> None:
