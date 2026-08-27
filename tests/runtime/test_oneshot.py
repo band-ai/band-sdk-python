@@ -482,8 +482,9 @@ class TestProcessMessage:
 # Participant roster surfaced to the model
 #
 # The long-running path treats "no prior roster sent yet" as changed (see
-# ExecutionContext.participants_changed: `_last_participants_sent is None`
-# -> True), so a room's very first message already carries the roster via
+# ExecutionContext.participants_changed, which delegates to
+# band_sdk_core.ParticipantRoster.changed() -- True before the first
+# mark_sent()), so a room's very first message already carries the roster via
 # `participants_msg`. OneShotInvoker has no cross-call state to diff
 # against, so every invocation is that same "first time" case — it should
 # always build and pass the current roster, never a hardcoded None.
@@ -842,7 +843,7 @@ class TestCustomToolDispatch:
 # picks it up next, and a fresh adapter instance replays the whole turn from
 # scratch. This documents that as current, real behavior (not a bug this
 # file can fix — see band.runtime.single_instance and
-# band.runtime.claims.MessageClaimRegistry, both of which state the same
+# band_sdk_core.ClaimRegistry, both of which state the same
 # cross-process boundary is out of the SDK's reach).
 # ---------------------------------------------------------------------------
 

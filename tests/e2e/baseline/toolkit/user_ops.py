@@ -150,3 +150,50 @@ class UserOps:
         async with httpx.AsyncClient(timeout=30.0) as http:
             response = await http.delete(url, headers=wrapper.get_headers())
             response.raise_for_status()
+
+    async def stop_agent(self, room_id: str) -> None:
+        """Stop agents in a user-owned room through the control endpoint.
+
+        The generated Human API has not exposed control operations yet, so this
+        follows the same authenticated raw-REST boundary as :meth:`delete_room`.
+        """
+        await self._post_control(f"/api/v1/me/chats/{room_id}/agents/stop")
+
+    async def play_agent(self, room_id: str) -> None:
+        """Resume agents in a user-owned room through the control endpoint."""
+        await self._post_control(f"/api/v1/me/chats/{room_id}/agents/play")
+
+    async def interrupt_active_agent_execution(self, agent_id: str) -> None:
+        """Interrupt one active execution of a user-owned agent.
+
+        Agent-scope interrupt fans out to the agent's active rooms, so any
+        execution id is a valid target. The platform must expose one once the
+        controlled handler has entered its cycle.
+        """
+        response = await self._control_request(
+            "GET", f"/api/v1/me/agents/{agent_id}/executions"
+        )
+        payload = response.json()
+        assert isinstance(payload, dict), "execution list response was not an object"
+        executions = payload.get("data")
+        assert isinstance(executions, list) and executions, (
+            f"no active execution available for agent {agent_id}"
+        )
+        execution = executions[0]
+        assert isinstance(execution, dict) and isinstance(execution.get("id"), str), (
+            "execution list response contained no execution id"
+        )
+        await self._post_control(
+            f"/api/v1/me/agents/{agent_id}/executions/{execution['id']}/interrupt"
+        )
+
+    async def _post_control(self, path: str) -> None:
+        await self._control_request("POST", path)
+
+    async def _control_request(self, method: str, path: str) -> httpx.Response:
+        wrapper = self._client._client_wrapper
+        url = f"{wrapper.get_base_url().rstrip('/')}{path}"
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            response = await http.request(method, url, headers=wrapper.get_headers())
+            response.raise_for_status()
+            return response
