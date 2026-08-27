@@ -26,7 +26,7 @@ from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
     MemorySystem,
-    WorkingLongTermMemoryType,
+    MemoryType,
     enum_values,
 )
 from band.core.types import AdapterFeatures, Capability
@@ -89,10 +89,10 @@ Use `band_supersede_memory` to mark outdated memories and
 
 
 _MEMORY_COMMON_PATTERNS = f"""Common patterns:
-- Facts learned about other agents/entities: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
-- Events that occurred: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.EPISODIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
-- User preferences or profile info: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.USER.value}"`
-- How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
+- Facts learned about other agents/entities: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- Events that occurred: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.EPISODIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- User preferences or profile info: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.USER.value}"`
+- How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{MemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
 
 
 _MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` whenever the memory is about a specific person or agent, so it

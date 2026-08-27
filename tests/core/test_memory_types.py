@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
+import band_sdk_core
 import pytest
 
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     ORGANIZATION_SCOPE_REJECTED_CODE,
+    MemorySegment,
+    MemoryStatus,
     MemoryStoreScope,
     MemorySystem,
-    SensoryMemoryType,
-    WorkingLongTermMemoryType,
+    MemoryType,
     enum_values,
     is_organization_scope_rejection,
     organization_scope_rejected_message,
@@ -23,21 +27,19 @@ class TestMemorySystemTypeMap:
         """Every memory system has an entry in the type map."""
         assert set(MEMORY_SYSTEM_TYPE_MAP) == set(enum_values(MemorySystem))
 
-    def test_mapped_types_cover_memory_type_union(self):
+    def test_mapped_types_cover_memory_type_enum(self):
         """The system map covers every supported memory type."""
         mapped_types = {
             memory_type
             for types in MEMORY_SYSTEM_TYPE_MAP.values()
             for memory_type in types
         }
-        sensory = set(enum_values(SensoryMemoryType))
-        working_long_term = set(enum_values(WorkingLongTermMemoryType))
-        assert mapped_types == sensory | working_long_term
+        assert mapped_types == set(enum_values(MemoryType))
 
     def test_sensory_and_working_long_term_types_are_disjoint(self):
         """Sensory types do not overlap with working/long-term types."""
-        sensory = set(enum_values(SensoryMemoryType))
-        working_long_term = set(enum_values(WorkingLongTermMemoryType))
+        sensory = set(MEMORY_SYSTEM_TYPE_MAP[MemorySystem.SENSORY.value])
+        working_long_term = set(MEMORY_SYSTEM_TYPE_MAP[MemorySystem.WORKING.value])
         assert sensory.isdisjoint(working_long_term)
 
     def test_working_and_long_term_share_types(self):
@@ -46,6 +48,93 @@ class TestMemorySystemTypeMap:
             MEMORY_SYSTEM_TYPE_MAP[MemorySystem.WORKING.value]
             == MEMORY_SYSTEM_TYPE_MAP[MemorySystem.LONG_TERM.value]
         )
+
+
+def _core_members(cls: type) -> dict[str, object]:
+    """Discover a band_sdk_core PyO3 enum's variants dynamically -- no
+    hardcoded name list, so this actually catches core adding a member the
+    local mirror doesn't know about yet."""
+    return {
+        name: getattr(cls, name)
+        for name in dir(cls)
+        if isinstance(getattr(cls, name), cls)
+    }
+
+
+class TestBandSdkCoreParity:
+    """Guard against the local StrEnum mirrors drifting from band_sdk_core's
+    canonical taxonomy -- band_sdk_core's classes are opaque PyO3 types (not
+    str subclasses, not Pydantic-schema-generatable), so they can't replace
+    these mirrors directly; this test is what keeps them equivalent."""
+
+    @pytest.mark.parametrize(
+        ("local_enum", "core_enum"),
+        [
+            (MemorySystem, band_sdk_core.MemorySystem),
+            (MemoryType, band_sdk_core.MemoryType),
+            (MemorySegment, band_sdk_core.MemorySegment),
+            (MemoryStatus, band_sdk_core.MemoryStatus),
+        ],
+    )
+    def test_wire_values_match(
+        self, local_enum: type[StrEnum], core_enum: type
+    ) -> None:
+        local_values = set(enum_values(local_enum))
+        core_values = {str(member) for member in _core_members(core_enum).values()}
+        assert local_values == core_values
+
+    def test_every_core_system_type_pair_agrees_with_local_map(self) -> None:
+        """Cross-product built from core's own members (not the local
+        enum's), so this catches core adding an entirely new system/type
+        this ticket's local mirror doesn't know about yet."""
+        systems = _core_members(band_sdk_core.MemorySystem)
+        types = _core_members(band_sdk_core.MemoryType)
+        for system in systems.values():
+            for memory_type in types.values():
+                system_value = str(system)
+                type_value = str(memory_type)
+                try:
+                    band_sdk_core.validate_memory_type_for_system(system, memory_type)
+                    core_says_valid = True
+                except ValueError:
+                    core_says_valid = False
+
+                local_says_valid = type_value in MEMORY_SYSTEM_TYPE_MAP.get(
+                    system_value, ()
+                )
+                assert core_says_valid == local_says_valid, (system_value, type_value)
+
+
+class TestValidateMemoryTypeForSystem:
+    """Direct tests against band_sdk_core.validate_memory_type_for_system
+    itself -- call the real installed binding, not a mock."""
+
+    def test_valid_combo_returns_none(self) -> None:
+        assert (
+            band_sdk_core.validate_memory_type_for_system("sensory", "iconic") is None
+        )
+
+    def test_mismatched_combo_raises_with_issues(self) -> None:
+        with pytest.raises(
+            ValueError, match="type `semantic` is not valid"
+        ) as exc_info:
+            band_sdk_core.validate_memory_type_for_system("sensory", "semantic")
+        assert exc_info.value.issues == (
+            (
+                "type",
+                "invalid_value",
+                "type `semantic` is not valid for system `sensory`; "
+                "expected one of: iconic, echoic, haptic",
+            ),
+        )
+
+    def test_unknown_system_raises(self) -> None:
+        with pytest.raises(ValueError, match="unknown memory system `bogus`"):
+            band_sdk_core.validate_memory_type_for_system("bogus", "iconic")
+
+    def test_unknown_type_raises(self) -> None:
+        with pytest.raises(ValueError, match="unknown memory type `bogus`"):
+            band_sdk_core.validate_memory_type_for_system("sensory", "bogus")
 
 
 class TestValidateSubjectScope:

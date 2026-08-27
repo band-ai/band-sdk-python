@@ -33,8 +33,7 @@ from band.core.memory_types import (
     MemoryStatus,
     MemoryStoreScope,
     MemorySystem,
-    SensoryMemoryType,
-    WorkingLongTermMemoryType,
+    MemoryType,
     enum_values,
 )
 from band.integrations.mcp.engine import WideEventMessageType, build_engine
@@ -140,9 +139,7 @@ def _field_literal_values(model: type[BaseModel], field_name: str) -> tuple[str,
     )
 
 
-_MEMORY_TYPE_VALUES = enum_values(SensoryMemoryType) + enum_values(
-    WorkingLongTermMemoryType
-)
+_MEMORY_TYPE_VALUES = enum_values(MemoryType)
 
 
 @dataclass(frozen=True)

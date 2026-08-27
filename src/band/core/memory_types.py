@@ -6,7 +6,8 @@ from enum import StrEnum
 
 
 class MemorySystem(StrEnum):
-    """Memory tier; constrains valid ``type`` values via MEMORY_SYSTEM_TYPE_MAP."""
+    """Memory tier; constrains valid ``type`` values via
+    ``band_sdk_core.validate_memory_type_for_system``."""
 
     SENSORY = "sensory"  # Brief sensory inputs (iconic/echoic/haptic)
     WORKING = "working"  # Short-term session context (episodic/semantic/procedural)
@@ -15,28 +16,21 @@ class MemorySystem(StrEnum):
     )
 
 
-class SensoryMemoryType(StrEnum):
-    """Types allowed when ``system`` is sensory."""
+class MemoryType(StrEnum):
+    """Types passed as ``type`` on store/list; must match the chosen system."""
 
     ICONIC = "iconic"  # Visual input
     ECHOIC = "echoic"  # Auditory input
     HAPTIC = "haptic"  # Tactile input
-
-
-class WorkingLongTermMemoryType(StrEnum):
-    """Types allowed when ``system`` is working or long_term."""
-
     EPISODIC = "episodic"  # Events that occurred
     SEMANTIC = "semantic"  # Facts, preferences, learned knowledge
     PROCEDURAL = "procedural"  # How to perform tasks
 
 
-# Union passed as ``type`` on store/list; must match the chosen system.
-MemoryType = SensoryMemoryType | WorkingLongTermMemoryType
-
-
 class MemorySegment(StrEnum):
-    """Logical subject category for a stored memory."""
+    """Logical subject category for a stored memory. Mirrors
+    ``band_sdk_core.MemorySegment``, kept locally only because the core
+    class isn't Pydantic-schema-generatable."""
 
     USER = "user"  # User preferences or profile info
     AGENT = "agent"  # Facts or events about agents/entities
@@ -62,7 +56,9 @@ class MemoryListScope(StrEnum):
 
 
 class MemoryStatus(StrEnum):
-    """Lifecycle state; list filter and set by supersede/archive tools."""
+    """Lifecycle state; list filter and set by supersede/archive tools.
+    Mirrors ``band_sdk_core.MemoryStatus``, kept locally only because the
+    core class isn't Pydantic-schema-generatable."""
 
     ACTIVE = "active"  # Normal, visible memories
     SUPERSEDED = "superseded"  # Outdated; soft-deleted via band_supersede_memory
@@ -75,10 +71,25 @@ def enum_values(enum_cls: type[StrEnum]) -> tuple[str, ...]:
     return tuple(member.value for member in enum_cls)
 
 
+# Descriptive mirror only -- prompt text and field descriptions read this,
+# but the actual validity rule is enforced by
+# band_sdk_core.validate_memory_type_for_system. A drift-guard test keeps
+# the two in sync.
+_SENSORY_TYPES = (
+    MemoryType.ICONIC.value,
+    MemoryType.ECHOIC.value,
+    MemoryType.HAPTIC.value,
+)
+_WORKING_LONG_TERM_TYPES = (
+    MemoryType.EPISODIC.value,
+    MemoryType.SEMANTIC.value,
+    MemoryType.PROCEDURAL.value,
+)
+
 MEMORY_SYSTEM_TYPE_MAP: dict[str, tuple[str, ...]] = {
-    MemorySystem.SENSORY.value: enum_values(SensoryMemoryType),
-    MemorySystem.WORKING.value: enum_values(WorkingLongTermMemoryType),
-    MemorySystem.LONG_TERM.value: enum_values(WorkingLongTermMemoryType),
+    MemorySystem.SENSORY.value: _SENSORY_TYPES,
+    MemorySystem.WORKING.value: _WORKING_LONG_TERM_TYPES,
+    MemorySystem.LONG_TERM.value: _WORKING_LONG_TERM_TYPES,
 }
 
 
@@ -94,26 +105,6 @@ def validate_subject_scope(
             "provide one. If you do not have a concrete subject UUID, retry "
             f'with scope="{MemoryStoreScope.AGENT.value}" and omit subject_id. '
             "Do not invent a UUID."
-        )
-
-
-def validate_memory_type_for_system(
-    system: MemorySystem | str,
-    memory_type: MemoryType | str,
-) -> None:
-    """Require memory ``type`` to match the selected memory ``system``."""
-    system_value = system.value if isinstance(system, MemorySystem) else str(system)
-    type_value = (
-        memory_type.value
-        if isinstance(memory_type, SensoryMemoryType | WorkingLongTermMemoryType)
-        else str(memory_type)
-    )
-
-    valid_types = MEMORY_SYSTEM_TYPE_MAP.get(system_value)
-    if valid_types is None or type_value not in valid_types:
-        raise ValueError(
-            f'type="{type_value}" is not valid for system="{system_value}". '
-            f"Valid types: {', '.join(valid_types or ())}"
         )
 
 
