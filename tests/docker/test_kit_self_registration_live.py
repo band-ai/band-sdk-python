@@ -22,7 +22,9 @@ Band deployment `.env.test` points at. Gated behind BOTH ``sandbox``
 from __future__ import annotations
 
 import argparse
+import logging
 import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from contextlib import ExitStack
 from pathlib import Path
@@ -38,6 +40,7 @@ from tests.docker.toolkit.sbx_cli import (
     Sandbox,
     allow_network,
     kit_baseline_hosts,
+    remove_custom_secret_command,
     sandbox_name,
     sbx_available,
 )
@@ -47,6 +50,8 @@ from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.paths import KIT_DIR
 from tests.toolkit.timeouts import backstop_timeout
+
+logger = logging.getLogger(__name__)
 
 _SANDBOX_TIMEOUT = CREATE_TIMEOUT_S + backstop_timeout(
     BaselineSettings().e2e_timeout, extra_s=90
@@ -127,6 +132,27 @@ async def self_registered_sandbox(
         # Not tracked via resource_manager.provision_agent (provision.run()
         # registered it directly with the user key), so it needs its own reap.
         await resource_manager.reap_agent(agent_id)
+        # Sandbox.create's own teardown only removes the sandbox (`sbx rm`) --
+        # the scoped custom secret provision.run() injected outlives that
+        # (verified live: a removed sandbox's `sbx secret ls` still lists it),
+        # so it needs its own cleanup too, or the real agent key is left
+        # sitting in the host's secret store indefinitely.
+        removal = subprocess.run(
+            remove_custom_secret_command(sandbox=name, host=args.host),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        if removal.returncode != 0:
+            logger.warning(
+                "failed to remove the scoped Band secret for sandbox %s (exit %s); "
+                "remove it manually: sbx secret rm %s --host %s -f",
+                name,
+                removal.returncode,
+                name,
+                args.host,
+            )
 
 
 @pytest.mark.asyncio(loop_scope="session")
