@@ -19,6 +19,7 @@ import pytest
 from band_rest.core.api_error import ApiError
 
 from band.docker.provision import (
+    NO_RETRY_REQUEST_OPTIONS,
     PLACEHOLDER_AGENT_ID,
     ProvisionSettings,
     _describe_register_error,
@@ -28,6 +29,7 @@ from band.docker.provision import (
     main,
     read_agent_id,
     run,
+    sandbox_exists,
     sandbox_has_band_secret,
     write_agent_id,
 )
@@ -59,6 +61,7 @@ class FakeSbx:
     """Records every `sbx` invocation and returns scripted results."""
 
     ls_output: str = ""
+    sandbox_ls_json: str = '{"sandboxes": []}'
     set_custom_returncode: int = 0
     set_custom_stderr: str = ""
     create_returncode: int = 0
@@ -86,6 +89,10 @@ class FakeSbx:
                 self.set_custom_returncode,
                 stdout="",
                 stderr=self.set_custom_stderr,
+            )
+        if argv[1:3] == ["ls", "--json"]:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=self.sandbox_ls_json, stderr=""
             )
         if argv[1] == "create":
             return subprocess.CompletedProcess(
@@ -300,6 +307,26 @@ class TestSandboxHasBandSecret:
             sandbox_has_band_secret("my-agent", "**.band.ai")
 
 
+class TestSandboxExists:
+    def test_true_when_present(self, monkeypatch):
+        fake = FakeSbx(sandbox_ls_json='{"sandboxes": [{"name": "my-agent"}]}')
+        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        assert sandbox_exists("my-agent") is True
+
+    def test_false_when_absent(self, monkeypatch):
+        fake = FakeSbx(sandbox_ls_json='{"sandboxes": []}')
+        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        assert sandbox_exists("my-agent") is False
+
+    def test_raises_on_sbx_failure(self, monkeypatch):
+        def failing(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="daemon down")
+
+        monkeypatch.setattr("band.docker.provision.subprocess.run", failing)
+        with pytest.raises(RuntimeError, match="daemon down"):
+            sandbox_exists("my-agent")
+
+
 # --- inject_agent_key: key delivery ---
 
 
@@ -407,6 +434,80 @@ class TestRun:
         create_calls = [c for c in fake_sbx.calls if c["argv"][1] == "create"]
         assert len(create_calls) == 1
         assert "oci://example/kit:latest" in create_calls[0]["argv"]
+
+    @pytest.mark.asyncio
+    async def test_registration_uses_zero_retries(self, tmp_path, monkeypatch):
+        """Registration mints a key shown exactly once and has no idempotency
+        key -- a transport-level retry after the platform already committed
+        the write would hit the duplicate-name path with the original
+        response (and its key) already gone. Must never retry."""
+        workspace = _placeholder_workspace(tmp_path)
+        args = _make_args(workspace.root)
+        fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
+        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+
+        with patch("band.docker.provision.AsyncRestClient") as MockClient:
+            mock_client = _make_mock_client(_register_response())
+            MockClient.return_value = mock_client
+            await run(args)
+
+        call_kwargs = mock_client.human_api_agents.register_my_agent.call_args.kwargs
+        assert call_kwargs["request_options"] == NO_RETRY_REQUEST_OPTIONS
+
+    @pytest.mark.asyncio
+    async def test_create_after_already_registered_creates_missing_sandbox(
+        self, tmp_path, monkeypatch
+    ):
+        """Registration and secret injection succeeded on a prior run, but
+        `sbx create` itself failed transiently. Re-running with --create must
+        still create the sandbox: a saved agent.id + secret only proves the
+        agent was registered, not that the sandbox exists."""
+        workspace = make_workspace(tmp_path)
+        config = default_config(workspace)
+        config["agent"]["id"] = "already-registered-agent"
+        write_config(workspace, config)
+
+        args = _make_args(
+            workspace.root, name="my-agent", create=True, kit="oci://example/kit:latest"
+        )
+        fake_sbx = FakeSbx(
+            ls_output=_ls_table(scope="my-agent", host="**.band.ai"),
+            sandbox_ls_json='{"sandboxes": []}',
+        )
+        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+
+        with patch("band.docker.provision.AsyncRestClient") as MockClient:
+            agent_id = await run(args)
+            MockClient.assert_not_called()
+
+        assert agent_id == "already-registered-agent"
+        create_calls = [c for c in fake_sbx.calls if c["argv"][1] == "create"]
+        assert len(create_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_create_after_already_registered_skips_when_sandbox_exists(
+        self, tmp_path, monkeypatch
+    ):
+        workspace = make_workspace(tmp_path)
+        config = default_config(workspace)
+        config["agent"]["id"] = "already-registered-agent"
+        write_config(workspace, config)
+
+        args = _make_args(
+            workspace.root, name="my-agent", create=True, kit="oci://example/kit:latest"
+        )
+        fake_sbx = FakeSbx(
+            ls_output=_ls_table(scope="my-agent", host="**.band.ai"),
+            sandbox_ls_json='{"sandboxes": [{"name": "my-agent"}]}',
+        )
+        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+
+        with patch("band.docker.provision.AsyncRestClient") as MockClient:
+            agent_id = await run(args)
+            MockClient.assert_not_called()
+
+        assert agent_id == "already-registered-agent"
+        assert not any(c["argv"][1] == "create" for c in fake_sbx.calls)
 
     @pytest.mark.asyncio
     async def test_idempotent_skip_when_already_provisioned(

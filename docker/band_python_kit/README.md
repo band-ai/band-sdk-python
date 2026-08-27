@@ -159,10 +159,14 @@ sbx secret set-custom my-band-agent --host '**.band.ai' \
 — and then runs `sbx create`. Pass `--no-create` to only register and inject,
 and create the sandbox yourself later.
 
-Idempotent: re-running `provision` for a sandbox that already has both a
-non-placeholder `agent.id` and the injected secret is a no-op — it registers
-nothing and consumes no plan-cap headroom. `sbx stop` / restart never
-re-registers either, since the host secret and `band.yaml` both persist.
+Idempotent, checked independently for registration and creation: re-running
+`provision` skips registration when the sandbox already has both a
+non-placeholder `agent.id` and the injected secret (no plan-cap headroom
+consumed), and separately skips `sbx create` only when a sandbox by that name
+already exists — so if `sbx create` itself failed on a prior run, re-running
+`provision --create` still creates it without registering a second agent.
+`sbx stop` / restart never re-registers either, since the host secret and
+`band.yaml` both persist.
 
 Two things this does **not** do, by design:
 

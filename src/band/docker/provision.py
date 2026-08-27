@@ -9,8 +9,12 @@ VM never sees it is to register outside the VM: this runs on the host, then
 hands the minted key to `sbx secret set-custom` (the same proxy-managed
 injection slot INT-981 wired up) and writes the non-secret agent id into the
 workspace's `band.yaml`, which `resolve_agent_id` already reads
-(`band.docker.launcher.config`). Idempotency is host-side: a sandbox that
-already has both the injected secret and a real `agent.id` is left alone.
+(`band.docker.launcher.config`). Idempotency is host-side and split across two
+independent checks: registration is skipped when the workspace already has
+both the injected secret and a real `agent.id`; sandbox creation is skipped
+separately, whenever `sbx` already reports a sandbox by that name — so a
+`sbx create` that failed on a prior run (after registration and injection
+already succeeded) still gets retried.
 
 Exit codes:
     0 — success (prints the agent id to stdout; the agent key is never printed
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import re
 import subprocess
@@ -43,7 +48,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REST_URL = "https://app.band.ai/"
 DEFAULT_BAND_HOST = "**.band.ai"
-DEFAULT_REQUEST_OPTIONS: Final[RequestOptions] = {"max_retries": 3}
+# register_my_agent has no idempotency key and mints a key shown exactly once
+# (band_rest's own docstring says so). A transport-level retry after the
+# platform already committed the write (e.g. a 5xx on a lost response) would
+# hit the duplicate-name path with the original response — and its key —
+# already gone, orphaning an agent against the user's plan cap with no way to
+# recover its credentials. Zero retries until the endpoint gains an
+# idempotency key or an adopt-existing path.
+NO_RETRY_REQUEST_OPTIONS: Final[RequestOptions] = {"max_retries": 0}
 DEFAULT_TIMEOUT: Final[int] = 120
 SBX_SECRET_TIMEOUT_S: Final[int] = 60
 SBX_CREATE_TIMEOUT_S: Final[int] = 600
@@ -288,6 +300,30 @@ def inject_agent_key(*, name: str, host: str, agent_key: str) -> None:
         )
 
 
+def sandbox_exists(name: str) -> bool:
+    """Whether an `sbx` sandbox named `name` currently exists (`sbx ls --json`).
+
+    Distinct from `sandbox_has_band_secret`: a sandbox can have been
+    registered and had its secret injected on a prior run, then never actually
+    get created because `sbx create` itself failed transiently — the two
+    resources fail independently and must be checked independently.
+    """
+    result = subprocess.run(
+        [SBX, "ls", "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=SBX_SECRET_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sbx ls --json failed (exit {result.returncode}): "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
+    sandboxes = json.loads(result.stdout).get("sandboxes") or []
+    return any(sandbox.get("name") == name for sandbox in sandboxes)
+
+
 def create_sandbox(*, name: str, kit: str, workspace: Path) -> None:
     """`sbx create --name <name> --kit <kit> band-python-kit <workspace>`."""
     result = subprocess.run(
@@ -312,7 +348,7 @@ async def register_agent(
     try:
         response = await client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(name=name, description=description),
-            request_options=DEFAULT_REQUEST_OPTIONS,
+            request_options=NO_RETRY_REQUEST_OPTIONS,
         )
     except ApiError as e:
         raise RuntimeError(_describe_register_error(e)) from e
@@ -339,55 +375,73 @@ async def run(args: argparse.Namespace) -> str:
 
     existing_id = read_agent_id(workspace)
     already_has_secret = sandbox_has_band_secret(args.name, args.host)
-    if existing_id and existing_id != PLACEHOLDER_AGENT_ID and already_has_secret:
+    already_registered = bool(
+        existing_id and existing_id != PLACEHOLDER_AGENT_ID and already_has_secret
+    )
+
+    if already_registered:
         logger.info(
-            "Sandbox %s already provisioned (agent.id=%s, secret present) — skipping",
+            "Sandbox %s already registered (agent.id=%s, secret present) — "
+            "skipping registration",
             args.name,
             existing_id,
         )
-        return existing_id
-    if existing_id and existing_id != PLACEHOLDER_AGENT_ID and not already_has_secret:
-        logger.warning(
-            "band.yaml already names agent %s but no injected secret was found "
-            "for %s — registering a new agent rather than reusing it",
-            existing_id,
-            args.name,
-        )
+        agent_id = existing_id
+    else:
+        if (
+            existing_id
+            and existing_id != PLACEHOLDER_AGENT_ID
+            and not already_has_secret
+        ):
+            logger.warning(
+                "band.yaml already names agent %s but no injected secret was found "
+                "for %s — registering a new agent rather than reusing it",
+                existing_id,
+                args.name,
+            )
 
-    logger.info("Registering agent %r...", agent_name)
-    try:
-        agent_id, agent_key = await asyncio.wait_for(
-            register_agent(
-                api_key=api_key,
-                rest_url=rest_url,
-                name=agent_name,
-                description=args.description,
-            ),
-            timeout=args.timeout,
-        )
-    except asyncio.TimeoutError:
-        raise RuntimeError(f"registration timed out after {args.timeout}s") from None
-    logger.info("Registered agent: %s", agent_id)
+        logger.info("Registering agent %r...", agent_name)
+        try:
+            agent_id, agent_key = await asyncio.wait_for(
+                register_agent(
+                    api_key=api_key,
+                    rest_url=rest_url,
+                    name=agent_name,
+                    description=args.description,
+                ),
+                timeout=args.timeout,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"registration timed out after {args.timeout}s"
+            ) from None
+        logger.info("Registered agent: %s", agent_id)
 
-    try:
-        write_agent_id(workspace, agent_id)
-        inject_agent_key(name=args.name, host=args.host, agent_key=agent_key)
-    except Exception:
-        logger.error(
-            "Registered agent %s but failed to persist its key locally", agent_id
-        )
-        sys.stderr.write(
-            f"\nCRITICAL: agent {agent_id} was registered but its key could not "
-            "be stored. The platform shows this key exactly once and it cannot "
-            "be retrieved again — store it now or the agent is orphaned:\n\n"
-            f"  {agent_key}\n\n"
-        )
-        raise
+        try:
+            write_agent_id(workspace, agent_id)
+            inject_agent_key(name=args.name, host=args.host, agent_key=agent_key)
+        except Exception:
+            logger.error(
+                "Registered agent %s but failed to persist its key locally", agent_id
+            )
+            sys.stderr.write(
+                f"\nCRITICAL: agent {agent_id} was registered but its key could not "
+                "be stored. The platform shows this key exactly once and it cannot "
+                "be retrieved again — store it now or the agent is orphaned:\n\n"
+                f"  {agent_key}\n\n"
+            )
+            raise
 
+    # A sandbox that failed to create on a prior run (registration and secret
+    # injection both already done) must still get created here — the identity
+    # check above says nothing about whether the sandbox itself exists.
     if args.create:
-        logger.info("Creating sandbox %s...", args.name)
-        create_sandbox(name=args.name, kit=args.kit, workspace=workspace)
-        logger.info("Sandbox created: %s", args.name)
+        if sandbox_exists(args.name):
+            logger.info("Sandbox %s already exists — skipping create", args.name)
+        else:
+            logger.info("Creating sandbox %s...", args.name)
+            create_sandbox(name=args.name, kit=args.kit, workspace=workspace)
+            logger.info("Sandbox created: %s", args.name)
 
     return agent_id
 
