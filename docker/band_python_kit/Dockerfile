@@ -30,6 +30,13 @@ COPY --from=uv /uv /uvx /usr/local/bin/
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
+# The lockfile's [tool.uv.workspace] includes packages/* (today, only
+# band-mcp); `uv sync --locked` validates every member's pyproject.toml
+# against the lock even though this image only installs the root band-sdk
+# project, so --locked fails as stale without it. Verified: only the
+# manifest is read for that check, not the member's src/ or README — a
+# second workspace member under packages/ needs its own line here too.
+COPY packages/band-mcp/pyproject.toml ./packages/band-mcp/pyproject.toml
 
 # Prefer HTTPS for GitHub URLs to avoid SSH key requirements in container builds.
 RUN git config --global --add url."https://github.com/".insteadOf "git@github.com:" \
