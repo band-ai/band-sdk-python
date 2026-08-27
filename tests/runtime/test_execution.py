@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.claims import MessageClaimRegistry
+from band_sdk_core import ClaimRegistry, RetryTracker
+
+from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
     Execution,
     ExecutionContext,
@@ -363,6 +365,75 @@ class TestExecutionContextParticipants:
 
         assert ctx.participants_changed() is True
 
+    def test_participants_changed_true_after_pure_reorder(
+        self, mock_link, mock_handler
+    ):
+        """band_sdk_core.ParticipantRoster.changed() is order-sensitive: the
+        exact same membership, resent in a different order, must still report
+        changed -- a deliberate behavior change from the old Python
+        id-keyed-dict comparison, which was order-insensitive."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants(
+            [
+                {"id": "user-1", "name": "User 1", "type": "User"},
+                {"id": "user-2", "name": "User 2", "type": "User"},
+            ]
+        )
+        ctx.mark_participants_sent()
+        assert ctx.participants_changed() is False
+
+        ctx.set_participants(
+            [
+                {"id": "user-2", "name": "User 2", "type": "User"},
+                {"id": "user-1", "name": "User 1", "type": "User"},
+            ]
+        )
+
+        assert ctx.participants_changed() is True
+
+    def test_set_participants_duplicate_id_raises_and_leaves_roster_untouched(
+        self, mock_link, mock_handler
+    ):
+        """A duplicate id in the authoritative snapshot must reject the whole
+        snapshot with a ValueError naming the repeated id in .issues, leaving
+        the previous roster in place rather than partially applying it."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants([{"id": "user-1", "name": "User One", "type": "User"}])
+
+        with pytest.raises(ValueError) as exc_info:
+            ctx.set_participants(
+                [
+                    {"id": "user-2", "name": "User Two", "type": "User"},
+                    {"id": "user-2", "name": "User Two Dup", "type": "User"},
+                ]
+            )
+
+        issues = exc_info.value.issues
+        assert any("user-2" in issue[2] for issue in issues)
+        assert [p["id"] for p in ctx.participants] == ["user-1"]
+
+    def test_set_participants_duplicate_id_error_carries_the_turn_trace_context(
+        self, mock_link, mock_handler
+    ):
+        """set_participants passes the ambient per-turn TRACE_CONTEXT into
+        set_all, not a hardcoded None -- the duplicate-id error must carry
+        whichever turn actually called it."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        duplicates = [
+            {"id": "user-1", "name": "User One", "type": "User"},
+            {"id": "user-1", "name": "User One Dup", "type": "User"},
+        ]
+
+        with trace_context_scope():
+            active = TRACE_CONTEXT.get()
+            with pytest.raises(ValueError) as exc_info:
+                ctx.set_participants(duplicates)
+        assert exc_info.value.trace_context == active
+
+        with pytest.raises(ValueError) as exc_info:
+            ctx.set_participants(duplicates)
+        assert exc_info.value.trace_context is None
+
 
 class TestExecutionContextHydration:
     """Test context hydration."""
@@ -423,6 +494,42 @@ class TestExecutionContextHydration:
             == 1
         )
 
+    async def test_load_participants_empty_list_clears_roster(
+        self, mock_link, mock_handler
+    ):
+        """response.data == [] is authoritative and empty -- it must clear a
+        previously-loaded roster, not be treated as falsy/no-op."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants([{"id": "stale-user", "name": "Stale", "type": "User"}])
+
+        mock_link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+            return_value=MagicMock(data=[])
+        )
+        ctx._participants_loaded = False
+
+        result = await ctx.load_participants()
+
+        assert result == []
+        assert ctx.participants == []
+
+    async def test_load_participants_none_data_leaves_roster_untouched(
+        self, mock_link, mock_handler
+    ):
+        """response.data is None (a transient/unexpected response) must leave
+        the previous roster in place -- unlike an authoritative empty list."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants([{"id": "kept-user", "name": "Kept", "type": "User"}])
+
+        mock_link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+            return_value=MagicMock(data=None)
+        )
+        ctx._participants_loaded = False
+
+        result = await ctx.load_participants()
+
+        assert [p["id"] for p in result] == ["kept-user"]
+        assert [p["id"] for p in ctx.participants] == ["kept-user"]
+
 
 class TestExecutionContextLLMState:
     """Test LLM initialization state."""
@@ -477,6 +584,35 @@ class TestExecutionContextParticipantEvents:
         assert not any(p["id"] == "user-1" for p in ctx.participants)
 
         await ctx.stop()
+
+    async def test_participant_added_visible_in_same_cycle_context(
+        self, mock_link, mock_handler
+    ):
+        """A participant_added event applied inside _process_event_body must
+        be visible in the same-cycle get_context() call that follows it --
+        without a second REST fetch. build_context() refreshes participants
+        from the live roster on every call instead of returning whatever
+        snapshot was baked in at hydrate time."""
+        captured: list[str] = []
+
+        async def handler(ctx, event):
+            context = await ctx.get_context()
+            captured.extend(p["id"] for p in context.participants)
+
+        ctx = ExecutionContext("room-123", mock_link, handler)
+        await ctx.hydrate()  # seeds the roster with user-1 (mock_link fixture)
+
+        event = make_participant_added_event(
+            room_id="room-123",
+            participant_id="user-2",
+            name="User Two",
+            type="User",
+        )
+        await ctx._process_event_body(event, None, None)
+
+        assert "user-1" in captured
+        assert "user-2" in captured
+        assert mock_link.rest.agent_api_context.get_agent_chat_context.call_count == 1
 
 
 class TestCrashRecoverySync:
@@ -890,7 +1026,7 @@ class TestCrashRecoverySync:
         await backlog_task
 
         assert mock_handler.await_count == 1
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_first_message_to_fresh_room_executes_once(self, mock_link_with_next):
         """A message posted before the room's context was live executes once.
@@ -967,7 +1103,7 @@ class TestCrashRecoverySync:
             handler_started.set()
             await release_handler.wait()
 
-        registry = MessageClaimRegistry()
+        registry = ClaimRegistry()
 
         def fresh_context() -> ExecutionContext:
             return ExecutionContext(
@@ -1019,7 +1155,7 @@ class TestCrashRecoverySync:
         )
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processed.assert_not_called()
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_handler_failure_marks_failed_and_releases_claim(
         self, mock_link_with_next
@@ -1044,7 +1180,7 @@ class TestCrashRecoverySync:
         mock_link_with_next.mark_failed.assert_awaited_once_with(
             "room-123", "msg-handler-fails", "handler failed"
         )
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_backlog_processed_ack_failure_is_not_remembered(
         self, mock_link_with_next, mock_handler
@@ -1081,7 +1217,7 @@ class TestCrashRecoverySync:
         )
         assert "msg-ack-fails" not in ctx.claims.completed_ids(ctx.room_id)
         assert ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-fails")
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_websocket_processed_ack_failure_is_not_remembered(
         self, mock_link_with_next, mock_handler
@@ -1278,6 +1414,52 @@ class TestCrashRecoverySync:
         assert ctx.claims.pending_ack_ids(ctx.room_id) == []
 
         await ctx.stop()
+
+    async def test_resync_retries_pending_ack_before_advancing_to_newer_backlog(
+        self, mock_link_with_next, mock_handler
+    ):
+        """_wait_until_resync_complete (the backlog-side resync loop, distinct
+        from the WebSocket-queue path above) must retry a stuck pending ACK
+        before processing a newer /next backlog message -- normal resync
+        cannot get past a stuck pending ACK to reach newer backlog. Once the
+        ACK confirms, resync proceeds normally to the newer message."""
+        from band.runtime.types import PlatformMessage
+
+        newer_msg = PlatformMessage(
+            id="msg-newer",
+            room_id="room-123",
+            content="newer",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(return_value=True)
+        mock_link_with_next.get_next_message = AsyncMock(side_effect=[newer_msg, None])
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        ctx.claims.remember_ack_pending("room-123", "msg-stuck")
+
+        await ctx._wait_until_resync_complete()
+
+        # The stuck ACK is retried before the newer backlog message is fetched.
+        assert mock_link_with_next.mark_processed.await_args_list[0].args == (
+            "room-123",
+            "msg-stuck",
+        )
+        assert "msg-stuck" in ctx.claims.completed_ids("room-123")
+        # The handler only ever ran for the newer message -- the stuck entry's
+        # ACK retry never replays it.
+        mock_handler.assert_awaited_once()
+        assert "msg-newer" in ctx.claims.completed_ids("room-123")
 
     async def test_sync_point_claim_failure_does_not_clear_marker(
         self, mock_link_with_next, mock_handler
@@ -1555,6 +1737,50 @@ class TestCrashRecoverySync:
         # But we only process once per /next call
         await ctx.stop()
 
+    async def test_retry_saturation_skips_handler_on_next_delivery(
+        self, mock_link_with_next
+    ):
+        """Once a message's attempts exceed max_retries it becomes permanently
+        failed, and a *subsequent* delivery of that same message must skip the
+        handler entirely rather than invoke it again."""
+        from band.runtime.types import PlatformMessage
+
+        failing_handler = AsyncMock(side_effect=Exception("Processing failed"))
+        msg = PlatformMessage(
+            id="msg-saturates",
+            room_id="room-123",
+            content="Test",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_failed = AsyncMock(return_value=True)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False, max_message_retries=1),
+        )
+
+        # Attempt 1 (attempts=1, within max_retries=1) invokes the handler and
+        # fails. Attempt 2 (attempts=2, exceeds max_retries=1) is the allowed
+        # budget's last attempt getting saturated -- record_attempt reports
+        # exceeded before the handler would run, so it is skipped here too.
+        await ctx._process_backlog_message(msg)
+        await ctx._process_backlog_message(msg)
+        assert failing_handler.await_count == 1
+        assert ctx._retry_tracker.is_permanently_failed("msg-saturates")
+
+        # A further delivery of the same message must not invoke the handler.
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == BacklogProcessResult.ADVANCED
+        assert failing_handler.await_count == 1
+
 
 class TestSessionConfigDefaults:
     """Test SessionConfig default values."""
@@ -1652,7 +1878,7 @@ class TestCancellationDuringProcessing:
         assert elapsed < 1.0, f"stop() took {elapsed}s - should cancel processing"
 
         # Cancellation must release the local in-flight claim
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
 
 class TestContextHydrationConfig:
@@ -2141,3 +2367,33 @@ class TestErrorLabel:
 
     def test_strips_surrounding_whitespace(self):
         assert _error_label(ValueError("  trimmed  ")) == "trimmed"
+
+
+class TestBandSdkCoreConstructorValidation:
+    """Regression guard for band-sdk-core's RetryTracker.max_retries
+    range-validation gap, fixed in 0.7.2: every zero-capacity/out-of-range
+    constructor argument must raise a clean ValueError, never a bare
+    OverflowError. Runs against the actual installed band_sdk_core artifact,
+    not a mock -- ExecutionContext constructs both types directly from it."""
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            pytest.param(
+                lambda: ClaimRegistry(max_completed=0), id="claim-zero-capacity"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_tracked=0), id="retry-zero-max-tracked"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_retries=-1), id="retry-negative-max-retries"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_retries=4294967296),  # u32::MAX + 1
+                id="retry-max-retries-overflows-u32",
+            ),
+        ],
+    )
+    def test_rejects_invalid_constructor_args(self, factory):
+        with pytest.raises(ValueError):
+            factory()

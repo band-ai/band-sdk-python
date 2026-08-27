@@ -162,6 +162,17 @@ def trace_context_extra(exc: BaseException) -> dict[str, str]:
     return {"trace_context": value} if value else {}
 
 
+def core_issues(exc: BaseException) -> list[tuple[str, str, str]] | None:
+    """``band_sdk_core``'s structured violation list on ``exc``, if present.
+
+    Only a `ValueError` `band_sdk_core` itself raised (e.g. a duplicate
+    participant id, a rejected wire payload) carries `.issues`; any other
+    exception -- including a plain `ValueError`/`TypeError` raised for a
+    wrong argument shape -- has none.
+    """
+    return getattr(exc, "issues", None)
+
+
 # Mirrors OTEL_CORRELATION_FIELDS's role: part of the *default* JSON schema,
 # populated by _TraceContextFilter above rather than OpenTelemetry -- absent a
 # call to trace_context_scope() it serializes as null, same shape either way.
