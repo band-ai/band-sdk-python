@@ -20,7 +20,7 @@ from band.client.streaming import (
     WireEvent,
 )
 
-from tests.platform.conftest import gated_coroutine
+from tests.platform.conftest import cancelled_mid_await
 
 
 @pytest.fixture
@@ -172,20 +172,17 @@ class TestContactTopicRaceAndReconciliation:
         here, proven with a gated coroutine so the cancel lands truly
         mid-flight."""
         mock_ws_class.return_value = mock_ws_client
-        side_effect, started, _release = gated_coroutine()
-        mock_ws_client.join_agent_contacts_channel.side_effect = side_effect
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
-        task = asyncio.create_task(link.subscribe_agent_contacts("agent-123"))
-        await started.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        async with cancelled_mid_await(
+            mock_ws_client.join_agent_contacts_channel,
+            link.subscribe_agent_contacts("agent-123"),
+        ):
+            pass
 
         # Blocked: a retry before the next reconnect must not attempt a join.
-        mock_ws_client.join_agent_contacts_channel.side_effect = None
         mock_ws_client.join_agent_contacts_channel.reset_mock()
         await link.subscribe_agent_contacts("agent-123")
         mock_ws_client.join_agent_contacts_channel.assert_not_called()

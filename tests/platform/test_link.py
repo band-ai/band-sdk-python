@@ -11,7 +11,7 @@ from band.client.streaming import SupersedePayload
 from band.platform.event import WebSocketDisconnectedEvent
 from band.platform.link import BandLink
 
-from tests.platform.conftest import gated_coroutine
+from tests.platform.conftest import cancelled_mid_await
 
 
 @pytest.fixture
@@ -511,17 +511,14 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         and block the room until the next reconnect — proven with a gated
         coroutine so the cancel lands truly mid-flight, not before entry."""
         mock_ws_class.return_value = mock_ws_client
-        side_effect, started, release = gated_coroutine()
-        mock_ws_client.join_chat_room_channel.side_effect = side_effect
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
-        task = asyncio.create_task(link.subscribe_room("room-123"))
-        await started.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        async with cancelled_mid_await(
+            mock_ws_client.join_chat_room_channel, link.subscribe_room("room-123")
+        ):
+            pass
 
         assert link.is_room_subscribed("room-123") is False
 
@@ -548,18 +545,13 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         await link.connect()
         await link.subscribe_room("room-123")
 
-        side_effect, started, release = gated_coroutine()
-        mock_ws_client.leave_chat_room_channel.side_effect = side_effect
-
-        task = asyncio.create_task(link.unsubscribe_room("room-123"))
-        await started.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        async with cancelled_mid_await(
+            mock_ws_client.leave_chat_room_channel, link.unsubscribe_room("room-123")
+        ):
+            pass
 
         assert link.is_room_subscribed("room-123") is False
 
-        mock_ws_client.leave_chat_room_channel.side_effect = None
         mock_ws_client.join_chat_room_channel.reset_mock()
         await link.subscribe_room("room-123")
         mock_ws_client.join_chat_room_channel.assert_not_called()
@@ -579,20 +571,14 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         to the session that produced the ambiguity, never one that outlives
         it."""
         mock_ws_class.return_value = mock_ws_client
-        side_effect, started, release = gated_coroutine()
-        mock_ws_client.join_chat_room_channel.side_effect = side_effect
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
-        task = asyncio.create_task(link.subscribe_room("room-123"))
-        await started.wait()
-
-        await link.disconnect()
-
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        async with cancelled_mid_await(
+            mock_ws_client.join_chat_room_channel, link.subscribe_room("room-123")
+        ):
+            await link.disconnect()
 
         # A fresh connection is unrelated to the torn-down session's
         # ambiguity — subscribing must actually attempt the join, not
