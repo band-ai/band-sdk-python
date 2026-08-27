@@ -11,7 +11,7 @@ from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
     MemorySystem,
-    WorkingLongTermMemoryType,
+    MemoryType,
 )
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
@@ -127,7 +127,7 @@ async def test_wrappers_call_agent_tools_methods() -> None:
         {
             "content": "prefers concise answers",
             "system": MemorySystem.LONG_TERM,
-            "type": WorkingLongTermMemoryType.SEMANTIC,
+            "type": MemoryType.SEMANTIC,
             "segment": MemorySegment.USER,
             "thought": "user stated preference",
             "scope": MemoryStoreScope.ORGANIZATION,

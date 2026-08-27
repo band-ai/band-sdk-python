@@ -622,7 +622,9 @@ class TestStoreMemoryArgsSchema:
     def test_rejects_type_for_wrong_system(self, platform_args_schemas) -> None:
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+        with pytest.raises(
+            ValidationError, match="type `semantic` is not valid for system `sensory`"
+        ):
             platform_args_schemas["band_store_memory"].model_validate(
                 {
                     "content": "remember this",

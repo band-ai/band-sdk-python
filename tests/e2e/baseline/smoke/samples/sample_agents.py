@@ -27,7 +27,7 @@ from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
     MemorySystem,
-    WorkingLongTermMemoryType,
+    MemoryType,
 )
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
@@ -189,7 +189,7 @@ def store_memory_instruction(marker: str) -> str:
         "Call band_store_memory exactly once with these exact arguments: "
         f"content = a short sentence that includes the exact token {marker}; "
         f"system = {MemorySystem.LONG_TERM.value}; "
-        f"type = {WorkingLongTermMemoryType.SEMANTIC.value}; "
+        f"type = {MemoryType.SEMANTIC.value}; "
         f"segment = {MemorySegment.USER.value}; "
         f"scope = {MemoryStoreScope.AGENT.value}; "
         "thought = a brief reason. Do not include subject_id. Do not call any "
@@ -213,7 +213,7 @@ def store_subject_memory_instruction(marker: str, subject_id: str) -> str:
         "Call band_store_memory exactly once with these exact arguments: "
         f"content = a short sentence that includes the exact token {marker}; "
         f"system = {MemorySystem.LONG_TERM.value}; "
-        f"type = {WorkingLongTermMemoryType.SEMANTIC.value}; "
+        f"type = {MemoryType.SEMANTIC.value}; "
         f"segment = {MemorySegment.AGENT.value}; "
         f"scope = {MemoryStoreScope.SUBJECT.value}; "
         f"subject_id = {subject_id}; "
@@ -245,7 +245,7 @@ def supersede_memory_instruction(marker: str) -> str:
     return (
         f"First call {MemoryTool.STORE.value} with content including the exact "
         f"token {marker}, system={MemorySystem.LONG_TERM.value}, "
-        f"type={WorkingLongTermMemoryType.SEMANTIC.value}, "
+        f"type={MemoryType.SEMANTIC.value}, "
         f"segment={MemorySegment.USER.value}, "
         f"scope={MemoryStoreScope.AGENT.value}, and a brief thought. "
         f"Then call {MemoryTool.SUPERSEDE.value} with memory_id set to the id "
@@ -260,7 +260,7 @@ def archive_memory_instruction(marker: str) -> str:
     return (
         f"First call {MemoryTool.STORE.value} with content including the exact "
         f"token {marker}, system={MemorySystem.LONG_TERM.value}, "
-        f"type={WorkingLongTermMemoryType.SEMANTIC.value}, "
+        f"type={MemoryType.SEMANTIC.value}, "
         f"segment={MemorySegment.USER.value}, "
         f"scope={MemoryStoreScope.AGENT.value}, and a brief thought. "
         f"Then call {MemoryTool.ARCHIVE.value} with memory_id set to the id "
@@ -275,7 +275,7 @@ def recall_memory_instruction(marker: str) -> str:
     return (
         f"First call {MemoryTool.STORE.value} with content including the exact "
         f"token {marker}, system={MemorySystem.LONG_TERM.value}, "
-        f"type={WorkingLongTermMemoryType.SEMANTIC.value}, "
+        f"type={MemoryType.SEMANTIC.value}, "
         f"segment={MemorySegment.USER.value}, "
         f"scope={MemoryStoreScope.AGENT.value}, and a brief thought. "
         f"Then call {MemoryTool.LIST.value} with content_query={marker} to find "
@@ -308,9 +308,9 @@ def store_two_memories_instruction(marker: str) -> str:
         f"segment={MemorySegment.USER.value} "
         f"scope={MemoryStoreScope.AGENT.value}. First store: "
         f"system={MemorySystem.LONG_TERM.value}, "
-        f"type={WorkingLongTermMemoryType.SEMANTIC.value}. Second store: "
+        f"type={MemoryType.SEMANTIC.value}. Second store: "
         f"system={MemorySystem.WORKING.value}, "
-        f"type={WorkingLongTermMemoryType.EPISODIC.value}. "
+        f"type={MemoryType.EPISODIC.value}. "
         "Do not call any other tool."
     )
 
