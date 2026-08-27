@@ -381,6 +381,30 @@ class TestAdmissionRaces:
         assert mock_link.subscribe_room.call_count == 1
         assert len(joined) == 1
 
+    async def test_stale_ticket_after_concurrent_clear_does_not_notify(
+        self, mock_link, presences
+    ):
+        """A ticket invalidated mid-flight (e.g. stop()'s roster.clear()
+        racing an in-flight admission before self._event_task exists to be
+        cancelled) must not announce the room as joined, even though
+        subscribe_room() itself succeeded — record_room_admission's return
+        value is the roster's own authority on whether the ticket still
+        counted."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        ticket = presence.roster.begin_room_admission("room-1", passes_filter=True)
+        presence.roster.clear()
+
+        presence.on_room_joined = AsyncMock()
+
+        result = await presence._complete_room_admission(
+            "room-1", ticket, {}, context="room_added"
+        )
+
+        assert result is False
+        presence.on_room_joined.assert_not_called()
+        assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
+
 
 class TestRoomPresenceRoomRemoved:
     """Test room_removed event handling."""

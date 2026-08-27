@@ -200,11 +200,7 @@ class RoomPresence:
                 # Terminal for this connection (e.g. another consumer of the
                 # same key superseded it). The transport will not recover by
                 # itself, so the owner must be told rather than left waiting.
-                if self.on_disconnected:
-                    try:
-                        await self.on_disconnected()
-                    except Exception as e:
-                        logger.warning("on_disconnected callback error: %s", e)
+                await self._notify(self.on_disconnected, label="on_disconnected")
             case (
                 ContactRequestReceivedEvent()
                 | ContactRequestUpdatedEvent()
@@ -384,13 +380,14 @@ class RoomPresence:
             logger.debug("Event for untracked room %s, ignoring", room_id)
             return
 
-        if self.on_room_event:
-            try:
-                await self.on_room_event(room_id, event)
-            except Exception as e:
-                logger.error(
-                    "on_room_event error for %s: %s", room_id, e, exc_info=True
-                )
+        await self._notify(
+            self.on_room_event,
+            room_id,
+            event,
+            label="on_room_event",
+            level=logging.ERROR,
+            exc_info=True,
+        )
 
     async def _handle_contact_event(self, event: ContactEvent) -> None:
         """
@@ -399,16 +396,13 @@ class RoomPresence:
         Contact events have no room context and are agent-level.
         Forwards to on_contact_event callback.
         """
-        if self.on_contact_event:
-            try:
-                await self.on_contact_event(event)
-            except Exception as e:
-                logger.error(
-                    "on_contact_event error for %s: %s",
-                    type(event).__name__,
-                    e,
-                    exc_info=True,
-                )
+        await self._notify(
+            self.on_contact_event,
+            event,
+            label=f"on_contact_event ({type(event).__name__})",
+            level=logging.ERROR,
+            exc_info=True,
+        )
 
     async def _list_existing_rooms(self) -> dict[str, dict[str, Any]]:
         """Every current room the filter accepts, keyed by room ID.
@@ -470,6 +464,11 @@ class RoomPresence:
         ``record_room_admission`` is a safe no-op on an already-resolved/stale
         ticket, so a bare ``finally`` is enough to roll a cancelled or failed
         subscribe back to ``Unadmitted`` — no extra "settled" bookkeeping needed.
+        Its return value still matters on the success path though: a ticket
+        can go stale mid-flight (e.g. ``stop()``'s ``roster.clear()`` racing
+        this call before ``self._event_task`` exists to be cancelled), and a
+        stale-but-succeeded subscribe must not announce a room the roster no
+        longer considers ours.
         """
         succeeded = False
         try:
@@ -492,7 +491,15 @@ class RoomPresence:
 
             succeeded = True
         finally:
-            self.roster.record_room_admission(room_id, ticket, succeeded)
+            admitted = self.roster.record_room_admission(room_id, ticket, succeeded)
+
+        if not admitted:
+            logger.debug(
+                "Admission ticket for room %s went stale during %s, ignoring",
+                room_id,
+                context,
+            )
+            return False
 
         # A callback that raises is the caller's problem, not a failed join:
         # the room is subscribed either way, and untracking it here would drop
