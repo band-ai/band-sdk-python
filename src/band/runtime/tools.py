@@ -34,7 +34,7 @@ from band.client.rest import (
     UnprocessableEntityError,
 )
 from band.runtime.capabilities import with_hub_room_contacts
-from band.runtime.participants import participant_snapshot
+from band.runtime.participants import log_roster_call, participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -2135,9 +2135,17 @@ class AgentTools(AgentToolsProtocol):
             {**participant.model_dump(), "name": participant_name}
         )
         self._participants.append(new_participant)
-        # Sync back to ExecutionContext so future turns see the update
+        # Sync back to ExecutionContext so future turns see the update. The
+        # REST add already succeeded server-side, so a local roster failure
+        # must not fail this tool call after that change was applied.
         if self._ctx is not None:
-            self._ctx.add_participant(new_participant)
+            ctx = self._ctx
+            log_roster_call(
+                logger,
+                call=ctx.add_participant,
+                arg=new_participant,
+                room_id=self.room_id,
+            )
         logger.debug(
             "Updated participant cache: added %s, total=%s",
             participant_name,
@@ -2275,11 +2283,14 @@ class AgentTools(AgentToolsProtocol):
         # boundaries. Without this, a new AgentTools built via from_context()
         # on the next turn would revert to the old participant snapshot.
         # set_participants treats the REST list as authoritative membership
-        # (stale entries drop out, even ones this AgentTools never saw) while
-        # merging fields per id, so a field the list endpoint omits (e.g.
-        # description) is never erased once learned.
+        # while retaining known fields omitted by this endpoint. Duplicate
+        # ids leave the previous context roster intact and must not fail the
+        # tool call.
         if self._ctx is not None:
-            self._ctx.set_participants(refreshed)
+            ctx = self._ctx
+            log_roster_call(
+                logger, call=ctx.set_participants, arg=refreshed, room_id=self.room_id
+            )
 
         self._participants = refreshed
         return response.data

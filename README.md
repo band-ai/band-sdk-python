@@ -548,24 +548,25 @@ Emit controls adapter-level telemetry: events the adapter publishes when it obse
 
 Adapter emit support:
 
-| Adapter | `TOOL_CALLS` | `THOUGHTS` | `TASK_EVENTS` |
-| ------- | ----------- | ---------- | ------------- |
-| Codex | Yes | Yes | Yes |
-| Claude SDK | Yes | Yes | - |
-| Agno | Yes | Yes | - |
-| OpenCode | Yes | - | Yes |
-| Letta | Yes | - | Yes |
-| Anthropic | Yes | - | - |
-| CrewAI | Yes | - | - |
-| CrewAI Flow | Yes | - | - |
-| Gemini | Yes | - | - |
-| Google ADK | Yes | - | - |
-| Pydantic AI | Yes | - | - |
-| LangGraph | Yes | - | - |
-| Strands Agents | Yes | - | - |
-| Parlant | - | - | - |
-| A2A / A2A Gateway | - | - | - |
-| ACP Client | - | - | - |
+| Adapter | `TOOL_CALLS` | `THOUGHTS` | `TASK_EVENTS` | `USAGE` |
+| ------- | ----------- | ---------- | ------------- | ------- |
+| Codex | Yes | Yes | Yes | Yes |
+| Claude SDK | Yes | Yes | - | Yes |
+| Copilot SDK | Yes | Yes | - | Yes |
+| Agno | Yes | Yes | - | Yes |
+| OpenCode | Yes | - | Yes | Yes |
+| Letta | Yes | - | Yes | Yes |
+| Anthropic | Yes | - | - | Yes |
+| CrewAI | Yes | - | - | - |
+| CrewAI Flow | Yes | - | - | - |
+| Gemini | Yes | - | - | Yes |
+| Google ADK | Yes | - | - | Yes |
+| Pydantic AI | Yes | - | - | Yes |
+| LangGraph | Yes | - | - | Yes |
+| Strands Agents | Yes | - | - | Yes |
+| Parlant | - | - | - | - |
+| A2A / A2A Gateway | - | - | - | - |
+| ACP Client | - | - | - | - |
 
 Requesting an unsupported `emit` or `capabilities` value raises `BandConfigError` immediately at construction.
 
