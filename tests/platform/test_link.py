@@ -151,10 +151,10 @@ class TestBandLinkConnection:
         self, mock_ws_class, mock_ws_client
     ):
         """Two genuinely concurrent connect() calls must not both build a
-        WebSocketClient: the guard has to be the synchronous `self._ws`
-        assignment itself, not `self._is_connected` (only set true after
-        two awaits) — otherwise the second call races past the flag and
-        leaks the first client."""
+        WebSocketClient: the guard has to be the synchronous `self._connecting`
+        assignment, not `self._is_connected` (only set true after two awaits)
+        or `self._ws` (only assigned once fully connected) — otherwise the
+        second call races past the flag and leaks the first client."""
         mock_ws_class.return_value = mock_ws_client
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
@@ -165,12 +165,13 @@ class TestBandLinkConnection:
         assert link.is_connected is True
 
     @patch("band.platform.link.WebSocketClient")
-    async def test_cancelled_connect_clears_ws_for_a_later_retry(
+    async def test_cancelled_connect_closes_the_half_opened_client_and_allows_retry(
         self, mock_ws_class, mock_ws_client
     ):
-        """A connect() cancelled while awaiting __aenter__() must roll _ws
-        back to None -- otherwise every later connect() sees a non-None _ws
-        and silently no-ops forever, with is_connected stuck False."""
+        """A connect() cancelled while awaiting __aenter__() must close the
+        half-opened client it made, and a later connect() must actually
+        retry -- not see a leftover non-None _ws and silently no-op forever
+        with is_connected stuck False."""
         mock_ws_class.return_value = mock_ws_client
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -179,6 +180,7 @@ class TestBandLinkConnection:
 
         assert link._ws is None
         assert link.is_connected is False
+        assert link._connecting is False
         mock_ws_client.__aexit__.assert_called_once()
 
         await link.connect()
