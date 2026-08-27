@@ -1137,7 +1137,7 @@ class TestReportActivity:
             side_effect=Exception("down")
         )
 
-        with caplog.at_level(logging.WARNING, logger="band.platform.link"):
+        with caplog.at_level(logging.WARNING, logger="band.platform.message_lifecycle"):
             assert await link.report_activity("room-1", True) is False
             assert await link.report_activity("room-1", True) is False
 
@@ -1146,7 +1146,7 @@ class TestReportActivity:
 
         # Recovery logs once at INFO and re-arms the warning.
         link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock()
-        with caplog.at_level(logging.INFO, logger="band.platform.link"):
+        with caplog.at_level(logging.INFO, logger="band.platform.message_lifecycle"):
             caplog.clear()
             assert await link.report_activity("room-1", True) is True
         assert any("recovered" in r.message.lower() for r in caplog.records)
