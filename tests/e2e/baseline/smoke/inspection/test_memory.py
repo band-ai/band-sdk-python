@@ -31,7 +31,7 @@ from band.core.memory_types import (
     MemoryStatus,
     MemoryStoreScope,
     MemorySystem,
-    WorkingLongTermMemoryType,
+    MemoryType,
 )
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
@@ -90,13 +90,13 @@ async def test_memory_stored(
         content=marker,
         scope=MemoryStoreScope.AGENT,
         system=MemorySystem.LONG_TERM,
-        type=WorkingLongTermMemoryType.SEMANTIC,
+        type=MemoryType.SEMANTIC,
     )
     mem.stored.assert_stored(
         content=marker,
         scope=MemoryStoreScope.AGENT,
         system=MemorySystem.LONG_TERM,
-        type=WorkingLongTermMemoryType.SEMANTIC,
+        type=MemoryType.SEMANTIC,
     )
 
 
@@ -364,10 +364,10 @@ async def test_memory_store_layer_filtering(
     # Both landed; slice the single collection by dimension.
     mem.stored.assert_at_least(2)
     mem.stored.where(system=MemorySystem.LONG_TERM).assert_stored(
-        content=marker, type=WorkingLongTermMemoryType.SEMANTIC
+        content=marker, type=MemoryType.SEMANTIC
     )
     mem.stored.where(system=MemorySystem.WORKING).assert_stored(
-        content=marker, type=WorkingLongTermMemoryType.EPISODIC
+        content=marker, type=MemoryType.EPISODIC
     )
 
 
@@ -457,7 +457,7 @@ async def test_memory_organization_scope_rejected_on_store(
             memory=AgentMemoryCreateRequest(
                 content=unique_marker("orgreject"),
                 system=MemorySystem.LONG_TERM.value,
-                type=WorkingLongTermMemoryType.SEMANTIC.value,
+                type=MemoryType.SEMANTIC.value,
                 segment=MemorySegment.USER.value,
                 thought="probing the organization-scope guard",
                 scope=MemoryStoreScope.ORGANIZATION.value,

@@ -239,6 +239,31 @@ class TestMemoryTools:
 
         mock_rest_client.agent_api_memories.create_agent_memory.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_store_memory_rejects_type_for_wrong_system(
+        self, mock_rest_client
+    ) -> None:
+        """Reject a system/type mismatch before it reaches the API -- the raw
+        tool method's ValueError comes straight from band_sdk_core, unlike
+        StoreMemoryInput's model_validate, which wraps it in a
+        pydantic.ValidationError."""
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock()
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(
+            ValueError, match="type `semantic` is not valid for system `sensory`"
+        ):
+            await tools.store_memory(
+                content="remember this",
+                system="sensory",
+                type="semantic",
+                segment="user",
+                thought="useful later",
+                scope="agent",
+            )
+
+        mock_rest_client.agent_api_memories.create_agent_memory.assert_not_called()
+
     def test_store_memory_input_rejects_subject_scope_without_subject_id(self) -> None:
         """Validate tool input rejects subject scope without subject_id."""
         with pytest.raises(ValidationError, match="requires a subject_id"):
@@ -255,7 +280,9 @@ class TestMemoryTools:
 
     def test_store_memory_input_rejects_type_for_wrong_system(self) -> None:
         """Validate memory type matches the chosen system."""
-        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+        with pytest.raises(
+            ValidationError, match="type `semantic` is not valid for system `sensory`"
+        ):
             StoreMemoryInput.model_validate(
                 {
                     "content": "remember this",

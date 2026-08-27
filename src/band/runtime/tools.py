@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iter
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
+import band_sdk_core
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -47,7 +48,6 @@ from band.core.memory_types import (
     memory_store_scope_field_description,
     memory_type_field_description,
     organization_scope_rejected_message,
-    validate_memory_type_for_system,
     validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
@@ -431,7 +431,7 @@ class StoreMemoryInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_memory_fields(self) -> "StoreMemoryInput":
-        validate_memory_type_for_system(self.system, self.type)
+        band_sdk_core.validate_memory_type_for_system(self.system, self.type)
         validate_subject_scope(self.scope, self.subject_id)
         return self
 
@@ -2543,7 +2543,7 @@ class AgentTools(AgentToolsProtocol):
         """
         from band.client.rest import AgentMemoryCreateRequest
 
-        validate_memory_type_for_system(system, type)
+        band_sdk_core.validate_memory_type_for_system(system, type)
         validate_subject_scope(MemoryStoreScope(scope), subject_id)
 
         logger.debug(
