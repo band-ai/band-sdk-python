@@ -36,16 +36,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
-
-import yaml
 
 # tests.* is dev-only source, not part of the published band-sdk package, so
 # this (like examples/sandbox/staging-smoke/probe.py) runs from a repo
@@ -54,19 +48,24 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from band import LogSettings, LogStream
-from band.core.types import MessageType
 from band.docker.provision import read_agent_id
-from band_rest import AsyncRestClient, ChatMessage
-from tests.docker.toolkit.sbx_cli import allow_network, kit_baseline_hosts, sandbox_name
-from tests.e2e.baseline.settings import BandEndpoints, BaselineSettings
-from tests.e2e.baseline.toolkit.provisioning import user_rest_client
-from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.docker.test_kit_proxy_managed_live import (
+    _deployment_hosts,
+    _prepare_workspace,
+)
+from tests.docker.toolkit.sbx_cli import (
+    allow_network_for_hosts,
+    remove_custom_secret_command,
+    sandbox_name,
+)
+from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.capture import Replies, reply_capture
+from tests.e2e.baseline.toolkit.provisioning import ResourceManager, user_rest_client
+from tests.e2e.baseline.toolkit.ws import user_ws_observer
 from tests.paths import KIT_DIR
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL_S = 2
-POLL_ATTEMPTS = 15
 AGENT_DESCRIPTION = "examples/sandbox/self-registration demo agent."
 BAND_HOST_PATTERN = "**.band.ai"
 
@@ -97,36 +96,6 @@ def _require_settings() -> BaselineSettings:
     if not settings.credentials.api_key_user:
         raise SystemExit("BAND_API_KEY_USER is required (see .env.test)")
     return settings
-
-
-def _prepare_workspace(dest: Path, *, endpoints: BandEndpoints) -> Path:
-    """A throwaway echo-agent copy, `agent.id` unset (as shipped), pointed at
-    the target deployment — the state a customer with no identity starts from."""
-    workspace = dest / "echo-agent"
-    shutil.copytree(KIT_DIR / "echo-agent", workspace)
-    config_path = workspace / "band.yaml"
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config["band"] = {"restUrl": endpoints.rest_url, "wsUrl": endpoints.ws_url}
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-    return workspace
-
-
-def _deployment_hosts(endpoints: BandEndpoints) -> list[str]:
-    """The distinct hosts the agent reaches, in order (usually one)."""
-    hosts = [urlsplit(endpoints.rest_url).hostname, urlsplit(endpoints.ws_url).hostname]
-    return list(dict.fromkeys(host for host in hosts if host))
-
-
-@contextmanager
-def _network_access_granted(endpoints: BandEndpoints) -> Iterator[None]:
-    """Grant sbx network access, for the block, to any deployment host the kit's
-    baseline doesn't already cover (a non-production Band deployment)."""
-    baseline = kit_baseline_hosts(KIT_DIR)
-    with ExitStack() as stack:
-        for host in _deployment_hosts(endpoints):
-            if host not in baseline:
-                stack.enter_context(allow_network(host))
-        yield
 
 
 def _band_kit_provision(
@@ -166,29 +135,29 @@ def _band_kit_provision(
     return result.stdout.strip()
 
 
-async def _send_ping(user_ops: UserOps, *, agent_id: str, agent_name: str) -> str:
-    """Create a room, add the agent, send it a mention. Returns the room id."""
-    room_id = await user_ops.create_room()
-    await user_ops.add_participant(room_id, agent_id)
-    await user_ops.send_message(
-        room_id, "ping", mention_id=agent_id, mention_name=agent_name
-    )
-    return room_id
-
-
-async def _wait_for_echo_reply(
-    user_ops: UserOps, *, room_id: str, agent_id: str
-) -> ChatMessage:
-    """Poll the room until the agent's echo reply shows up, or raise."""
-    for _ in range(POLL_ATTEMPTS):
-        await asyncio.sleep(POLL_INTERVAL_S)
-        messages = await user_ops.list_messages(room_id, message_type=MessageType.TEXT)
-        if reply := next(
-            (m for m in messages if m.sender_id == agent_id and "echo:" in m.content),
-            None,
-        ):
-            return reply
-    raise RuntimeError("no echo reply received within the poll budget")
+async def _ping_and_await_echo(
+    resource_manager: ResourceManager,
+    *,
+    settings: BaselineSettings,
+    room_id: str,
+    agent_id: str,
+    agent_name: str,
+) -> Replies:
+    """Send a mention and wait for the agent's echo reply, subscribed first."""
+    async with (
+        user_ws_observer(settings) as tracking,
+        reply_capture(
+            tracking,
+            room_id,
+            user_ops=resource_manager.user_ops,
+            settings=settings,
+            deadline_s=settings.e2e_timeout,
+        ) as capture,
+    ):
+        mid = await resource_manager.user_ops.send_message(
+            room_id, "ping", mention_id=agent_id, mention_name=agent_name
+        )
+        return await capture.wait_for_reply(mid, agent_id)
 
 
 def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> None:
@@ -198,25 +167,11 @@ def _teardown_sbx(name: str, *, host: str = BAND_HOST_PATTERN) -> None:
         ["sbx", "rm", "-f", name], capture_output=True, text=True, check=False
     )
     subprocess.run(
-        ["sbx", "secret", "rm", name, "--host", host, "-f"],
+        remove_custom_secret_command(sandbox=name, host=host),
         capture_output=True,
         text=True,
         check=False,
     )
-
-
-async def _reap(
-    client: AsyncRestClient,
-    user_ops: UserOps,
-    *,
-    room_id: str | None,
-    agent_id: str | None,
-) -> None:
-    """Delete the room and agent this run provisioned, if it got that far."""
-    if room_id:
-        await user_ops.delete_room(room_id)
-    if agent_id:
-        await client.human_api_agents.delete_my_agent(agent_id, force=True)
 
 
 async def cleanup_by_name(name: str) -> None:
@@ -230,12 +185,15 @@ async def cleanup_by_name(name: str) -> None:
     """
     settings = _require_settings()
     client = user_rest_client(settings)
+    resource_manager = ResourceManager(
+        user_client=client, settings=settings, run_id=name
+    )
 
     agents = await client.human_api_agents.list_my_agents(page=1, page_size=100)
     matches = [a for a in (agents.data or []) if name in (a.name or "")]
     for agent in matches:
         logger.info("Deleting orphaned agent %s (%s)", agent.id, agent.name)
-        await client.human_api_agents.delete_my_agent(agent.id, force=True)
+        await resource_manager.reap_agent(agent.id)
     if not matches:
         logger.info("No registered agent found matching %r", name)
 
@@ -248,9 +206,11 @@ async def cleanup_by_name(name: str) -> None:
 async def run(kit: str) -> None:
     settings = _require_settings()
     client = user_rest_client(settings)
-    user_ops = UserOps(client)
 
     name = sandbox_name(prefix="band-selfreg-demo")
+    resource_manager = ResourceManager(
+        user_client=client, settings=settings, run_id=name
+    )
     # Embeds `name` (already unique) rather than a fixed literal: the platform
     # rejects a duplicate agent name (422), so re-running this demo against
     # the same account would collide with a still-registered prior run.
@@ -262,8 +222,9 @@ async def run(kit: str) -> None:
     try:
         with tempfile.TemporaryDirectory(prefix="band-selfreg-demo-") as tmp_dir:
             workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
+            hosts = _deployment_hosts(settings.endpoints)
 
-            with _network_access_granted(settings.endpoints):
+            with allow_network_for_hosts(hosts, kit=KIT_DIR):
                 logger.info("Step 1/4: band-kit provision --create (registers + boots)")
                 agent_id = _band_kit_provision(
                     name=name,
@@ -275,16 +236,21 @@ async def run(kit: str) -> None:
                 assert read_agent_id(workspace) == agent_id
                 logger.info("Registered and booted agent: %s", agent_id)
 
-                logger.info("Step 2/4: sending a room message")
-                room_id = await _send_ping(
-                    user_ops, agent_id=agent_id, agent_name=agent_name
-                )
+                logger.info("Step 2/4: creating room and adding the agent")
+                room_id = await resource_manager.provision_room(participants=[agent_id])
 
-                logger.info("Step 3/4: waiting for the echo reply")
-                reply = await _wait_for_echo_reply(
-                    user_ops, room_id=room_id, agent_id=agent_id
+                logger.info(
+                    "Step 3/4: sending a room message and awaiting the echo reply"
                 )
-                logger.info("Got reply: %s", reply.content)
+                replies = await _ping_and_await_echo(
+                    resource_manager,
+                    settings=settings,
+                    room_id=room_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                replies.assert_contains_any(["echo:"])
+                logger.info("Got a reply containing 'echo:'")
 
                 logger.info("Step 4/4: re-running provision to prove idempotency")
                 rerun_id = _band_kit_provision(
@@ -300,7 +266,10 @@ async def run(kit: str) -> None:
     finally:
         logger.info("Cleaning up...")
         _teardown_sbx(name)
-        await _reap(client, user_ops, room_id=room_id, agent_id=agent_id)
+        if room_id:
+            await resource_manager.reap_room(room_id)
+        if agent_id:
+            await resource_manager.reap_agent(agent_id)
         logger.info("Cleanup complete: sandbox, secret, room, and agent all removed")
 
 

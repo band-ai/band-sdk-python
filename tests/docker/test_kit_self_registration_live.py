@@ -23,23 +23,22 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shutil
 import subprocess
 from collections.abc import AsyncIterator
-from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
-import yaml
 
 from band.docker.provision import read_agent_id
 from band.docker.provision import run as provision_run
-from tests.docker.test_kit_proxy_managed_live import _deployment_hosts
+from tests.docker.test_kit_proxy_managed_live import (
+    _deployment_hosts,
+    _prepare_workspace,
+)
 from tests.docker.toolkit.sbx_cli import (
     CREATE_TIMEOUT_S,
     Sandbox,
-    allow_network,
-    kit_baseline_hosts,
+    allow_network_for_hosts,
     remove_custom_secret_command,
     sandbox_name,
     sbx_available,
@@ -64,19 +63,6 @@ pytestmark = [
 ]
 
 
-def _prepare_unregistered_workspace(dest: Path, *, endpoints) -> Path:
-    """A throwaway echo-agent copy with `agent.id` left as shipped (unset) —
-    the state a customer with no pre-provisioned identity actually starts
-    from, pointed at the settings deployment."""
-    workspace = dest / "echo-agent"
-    shutil.copytree(KIT_DIR / "echo-agent", workspace)
-    config_path = workspace / "band.yaml"
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config["band"] = {"restUrl": endpoints.rest_url, "wsUrl": endpoints.ws_url}
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-    return workspace
-
-
 @pytest.fixture
 async def self_registered_sandbox(
     tmp_path: Path,
@@ -96,9 +82,7 @@ async def self_registered_sandbox(
     if not user_key:
         pytest.skip("BAND_API_KEY_USER is required")
 
-    workspace = _prepare_unregistered_workspace(
-        tmp_path, endpoints=baseline_settings.endpoints
-    )
+    workspace = _prepare_workspace(tmp_path, endpoints=baseline_settings.endpoints)
     name = sandbox_name(prefix="band-selfreg")
     args = argparse.Namespace(
         name=name,
@@ -121,11 +105,8 @@ async def self_registered_sandbox(
 
     room_id = await resource_manager.provision_room(participants=[agent_id])
     try:
-        baseline = kit_baseline_hosts(KIT_DIR)
-        with ExitStack() as stack:
-            for host in _deployment_hosts(baseline_settings.endpoints):
-                if host not in baseline:
-                    stack.enter_context(allow_network(host))
+        hosts = _deployment_hosts(baseline_settings.endpoints)
+        with allow_network_for_hosts(hosts, kit=KIT_DIR):
             with Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace):
                 yield agent_id, room_id, args
     finally:

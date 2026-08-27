@@ -23,7 +23,10 @@ from band.docker.provision import (
     NO_RETRY_REQUEST_OPTIONS,
     PLACEHOLDER_AGENT_ID,
     ProvisionSettings,
+    RegistrationTimeoutOutcome,
+    _check_registration_after_timeout,
     _describe_register_error,
+    _describe_registration_timeout,
     _table_targets,
     build_parser,
     inject_agent_key,
@@ -250,6 +253,40 @@ class TestDescribeRegisterError:
         assert _describe_register_error(err) == "Failed to register agent: HTTP 500"
 
 
+class TestDescribeRegistrationTimeout:
+    """Pure formatting, mirroring TestDescribeRegisterError -- no I/O, no
+    mocking. What each outcome actually gets *determined* is
+    TestCheckRegistrationAfterTimeout's job, below."""
+
+    def test_confirmed_absent_says_safe_to_retry(self):
+        message = _describe_registration_timeout(
+            RegistrationTimeoutOutcome.CONFIRMED_ABSENT,
+            agent_name="my-agent",
+            agent_id=None,
+            timeout=30,
+        )
+        assert "safe to retry" in message
+
+    def test_confirmed_present_names_the_orphan(self):
+        message = _describe_registration_timeout(
+            RegistrationTimeoutOutcome.CONFIRMED_PRESENT,
+            agent_name="my-agent",
+            agent_id="orphan-agent-1",
+            timeout=30,
+        )
+        assert "orphan-agent-1" in message
+        assert "cannot be retrieved" in message
+
+    def test_unknown_says_could_not_be_confirmed(self):
+        message = _describe_registration_timeout(
+            RegistrationTimeoutOutcome.UNKNOWN,
+            agent_name="my-agent",
+            agent_id=None,
+            timeout=30,
+        )
+        assert "could not be confirmed" in message
+
+
 # --- band.yaml read/write ---
 
 
@@ -379,6 +416,62 @@ class TestInjectAgentKey:
             )
 
         assert "super-secret-key" not in str(exc_info.value)
+
+
+class TestCheckRegistrationAfterTimeout:
+    """Direct coverage of the post-timeout lookup -- no sleep race needed,
+    since this calls the checker itself rather than inducing a real
+    asyncio.wait_for timeout through run()."""
+
+    @staticmethod
+    def _mock_client(**list_my_agents_kwargs):
+        mock_client = AsyncMock()
+        mock_client._client_wrapper.httpx_client.httpx_client.aclose = AsyncMock()
+        mock_client.human_api_agents.list_my_agents.configure_mock(
+            **list_my_agents_kwargs
+        )
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_confirmed_absent_when_no_match(self):
+        mock_client = self._mock_client(return_value=_agents_response())
+        with patch("band.docker.provision.AsyncRestClient", return_value=mock_client):
+            outcome, agent_id = await _check_registration_after_timeout(
+                api_key="k", rest_url="https://x", agent_name="my-agent"
+            )
+
+        assert outcome is RegistrationTimeoutOutcome.CONFIRMED_ABSENT
+        assert agent_id is None
+        assert (
+            mock_client.human_api_agents.list_my_agents.call_args.kwargs["name"]
+            == "my-agent"
+        )
+
+    @pytest.mark.asyncio
+    async def test_confirmed_present_when_name_matches(self):
+        mock_client = self._mock_client(
+            return_value=_agents_response(
+                SimpleNamespace(name="my-agent", id="orphan-agent-1")
+            )
+        )
+        with patch("band.docker.provision.AsyncRestClient", return_value=mock_client):
+            outcome, agent_id = await _check_registration_after_timeout(
+                api_key="k", rest_url="https://x", agent_name="my-agent"
+            )
+
+        assert outcome is RegistrationTimeoutOutcome.CONFIRMED_PRESENT
+        assert agent_id == "orphan-agent-1"
+
+    @pytest.mark.asyncio
+    async def test_unknown_when_lookup_itself_fails(self):
+        mock_client = self._mock_client(side_effect=RuntimeError("network down"))
+        with patch("band.docker.provision.AsyncRestClient", return_value=mock_client):
+            outcome, agent_id = await _check_registration_after_timeout(
+                api_key="k", rest_url="https://x", agent_name="my-agent"
+            )
+
+        assert outcome is RegistrationTimeoutOutcome.UNKNOWN
+        assert agent_id is None
 
 
 # --- run() orchestration ---
@@ -585,7 +678,14 @@ class TestRun:
         mock_client.human_api_agents.register_my_agent.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_plan_cap_403_writes_nothing(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(
+        "status_code, expected_match",
+        [(403, "cap reached"), (422, "PLT-1066")],
+        ids=["403-plan-cap", "422-duplicate-name"],
+    )
+    async def test_register_error_writes_nothing(
+        self, tmp_path, monkeypatch, status_code, expected_match
+    ):
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
@@ -593,9 +693,9 @@ class TestRun:
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             MockClient.return_value = _make_mock_client(
-                register_side_effect=ApiError(status_code=403, body=None)
+                register_side_effect=ApiError(status_code=status_code, body=None)
             )
-            with pytest.raises(RuntimeError, match="cap reached"):
+            with pytest.raises(RuntimeError, match=expected_match):
                 await run(args)
 
         assert read_agent_id(workspace.root) == PLACEHOLDER_AGENT_ID
@@ -604,28 +704,13 @@ class TestRun:
         )
 
     @pytest.mark.asyncio
-    async def test_same_name_422_writes_nothing(self, tmp_path, monkeypatch):
-        workspace = _placeholder_workspace(tmp_path)
-        args = _make_args(workspace.root)
-        fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
-
-        with patch("band.docker.provision.AsyncRestClient") as MockClient:
-            MockClient.return_value = _make_mock_client(
-                register_side_effect=ApiError(status_code=422, body=None)
-            )
-            with pytest.raises(RuntimeError, match="PLT-1066"):
-                await run(args)
-
-        assert read_agent_id(workspace.root) == PLACEHOLDER_AGENT_ID
-
-    @pytest.mark.asyncio
-    async def test_timeout_confirmed_not_registered_says_safe_to_retry(
-        self, tmp_path, monkeypatch
-    ):
-        """Registration has no idempotency key, so a bare client-side timeout
-        can't say whether the write landed. A follow-up lookup by name that
-        finds nothing should say so plainly rather than leaving it ambiguous."""
+    async def test_timeout_is_disambiguated_end_to_end(self, tmp_path, monkeypatch):
+        """Wiring proof: run() actually routes a registration timeout through
+        _check_registration_after_timeout + _describe_registration_timeout.
+        Each piece's own behavior (the three possible outcomes, and the
+        message each produces) is covered directly and cheaply by
+        TestCheckRegistrationAfterTimeout / TestDescribeRegistrationTimeout
+        below -- this is the one test proving they're actually connected."""
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root, timeout=0.01)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
@@ -649,71 +734,10 @@ class TestRun:
             with pytest.raises(RuntimeError, match="safe to retry"):
                 await run(args)
 
-        mock_client.human_api_agents.list_my_agents.assert_called_once()
         assert (
             mock_client.human_api_agents.list_my_agents.call_args.kwargs["name"]
             == "my-agent"
         )
-
-    @pytest.mark.asyncio
-    async def test_timeout_confirmed_registered_names_the_orphan(
-        self, tmp_path, monkeypatch
-    ):
-        """When the follow-up lookup finds a same-named agent anyway, the
-        write landed after all -- the error must say so and name the id, not
-        just report an ambiguous timeout."""
-        workspace = _placeholder_workspace(tmp_path)
-        args = _make_args(workspace.root, timeout=0.01)
-        fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
-
-        async def _slow_register_agent(**kwargs):
-            await asyncio.sleep(10)
-
-        monkeypatch.setattr(
-            "band.docker.provision.register_agent", _slow_register_agent
-        )
-
-        with patch("band.docker.provision.AsyncRestClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client._client_wrapper.httpx_client.httpx_client.aclose = AsyncMock()
-            mock_client.human_api_agents.list_my_agents.return_value = _agents_response(
-                SimpleNamespace(name="my-agent", id="orphan-agent-1")
-            )
-            MockClient.return_value = mock_client
-
-            with pytest.raises(RuntimeError, match="orphan-agent-1"):
-                await run(args)
-
-    @pytest.mark.asyncio
-    async def test_timeout_check_failure_falls_back_to_ambiguous_message(
-        self, tmp_path, monkeypatch
-    ):
-        """If the disambiguation lookup itself can't complete (e.g. the
-        network is genuinely down), fail honestly rather than claiming a
-        confirmed outcome the check never actually reached."""
-        workspace = _placeholder_workspace(tmp_path)
-        args = _make_args(workspace.root, timeout=0.01)
-        fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
-
-        async def _slow_register_agent(**kwargs):
-            await asyncio.sleep(10)
-
-        monkeypatch.setattr(
-            "band.docker.provision.register_agent", _slow_register_agent
-        )
-
-        with patch("band.docker.provision.AsyncRestClient") as MockClient:
-            mock_client = AsyncMock()
-            mock_client._client_wrapper.httpx_client.httpx_client.aclose = AsyncMock()
-            mock_client.human_api_agents.list_my_agents.side_effect = RuntimeError(
-                "network down"
-            )
-            MockClient.return_value = mock_client
-
-            with pytest.raises(RuntimeError, match="could not be confirmed"):
-                await run(args)
 
     @pytest.mark.asyncio
     async def test_key_never_appears_in_logs(self, tmp_path, monkeypatch, caplog):
@@ -759,22 +783,22 @@ class TestRun:
 # --- main() ---
 
 
+_MINIMAL_PROVISION_ARGV = [
+    "band-kit",
+    "provision",
+    "--name",
+    "a",
+    "--description",
+    "d",
+    "--workspace",
+    ".",
+    "--no-create",
+]
+
+
 class TestMain:
     def test_exits_0_on_success(self, monkeypatch):
-        monkeypatch.setattr(
-            "sys.argv",
-            [
-                "band-kit",
-                "provision",
-                "--name",
-                "a",
-                "--description",
-                "d",
-                "--workspace",
-                ".",
-                "--no-create",
-            ],
-        )
+        monkeypatch.setattr("sys.argv", _MINIMAL_PROVISION_ARGV)
         with (
             patch(
                 "band.docker.provision.asyncio.run",
@@ -786,20 +810,7 @@ class TestMain:
         assert exc_info.value.code == 0
 
     def test_writes_agent_id_to_stdout_only(self, monkeypatch, capsys):
-        monkeypatch.setattr(
-            "sys.argv",
-            [
-                "band-kit",
-                "provision",
-                "--name",
-                "a",
-                "--description",
-                "d",
-                "--workspace",
-                ".",
-                "--no-create",
-            ],
-        )
+        monkeypatch.setattr("sys.argv", _MINIMAL_PROVISION_ARGV)
         with (
             patch(
                 "band.docker.provision.asyncio.run",
@@ -811,20 +822,7 @@ class TestMain:
         assert capsys.readouterr().out.strip() == "agent-xyz"
 
     def test_exits_1_on_value_error(self, monkeypatch, capsys):
-        monkeypatch.setattr(
-            "sys.argv",
-            [
-                "band-kit",
-                "provision",
-                "--name",
-                "a",
-                "--description",
-                "d",
-                "--workspace",
-                ".",
-                "--no-create",
-            ],
-        )
+        monkeypatch.setattr("sys.argv", _MINIMAL_PROVISION_ARGV)
         with (
             patch(
                 "band.docker.provision.asyncio.run",

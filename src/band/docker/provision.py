@@ -35,6 +35,9 @@ import logging
 import re
 import subprocess
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
@@ -46,11 +49,10 @@ from ruamel.yaml import YAML
 
 from band import LogSettings, LogStream
 from band.credentials import PROXY_MANAGED_API_KEY
-from band.docker.launcher.config import load_workspace_config
+from band.docker.launcher.config import DEFAULT_REST_URL, load_workspace_config
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REST_URL = "https://app.band.ai/"
 DEFAULT_BAND_HOST = "**.band.ai"
 # register_my_agent has no idempotency key and mints a key shown exactly once
 # (band_rest's own docstring says so). A transport-level retry after the
@@ -254,20 +256,39 @@ def _table_targets(ls_output: str) -> set[str]:
     return targets
 
 
-def sandbox_has_band_secret(name: str, host: str) -> bool:
-    """Whether `name`'s own scope already has a custom secret for `host`."""
+def _run_sbx(
+    argv: list[str],
+    *,
+    timeout: int,
+    input: str | None = None,
+    redact: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run an `sbx` subprocess; raise RuntimeError naming the command and its
+    stderr/stdout on non-zero exit. `redact`, if given (e.g. a secret piped
+    via `input`), is stripped from the raised message should it ever surface
+    in `sbx`'s own output.
+    """
     result = subprocess.run(
-        [SBX, "secret", "ls", name],
+        argv,
+        input=input,
         capture_output=True,
         text=True,
         check=False,
-        timeout=SBX_SECRET_TIMEOUT_S,
+        timeout=timeout,
     )
     if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        if redact:
+            detail = detail.replace(redact, "***")
         raise RuntimeError(
-            f"sbx secret ls {name} failed (exit {result.returncode}): "
-            f"{(result.stderr or result.stdout).strip()}"
+            f"{' '.join(argv)} failed (exit {result.returncode}): {detail}"
         )
+    return result
+
+
+def sandbox_has_band_secret(name: str, host: str) -> bool:
+    """Whether `name`'s own scope already has a custom secret for `host`."""
+    result = _run_sbx([SBX, "secret", "ls", name], timeout=SBX_SECRET_TIMEOUT_S)
     return host in _table_targets(result.stdout)
 
 
@@ -291,21 +312,7 @@ def inject_agent_key(*, name: str, host: str, agent_key: str) -> None:
         "--placeholder",
         PROXY_MANAGED_API_KEY,
     ]
-    result = subprocess.run(
-        argv,
-        input=agent_key,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=SBX_SECRET_TIMEOUT_S,
-    )
-    if result.returncode != 0:
-        detail = (
-            (result.stderr or result.stdout or "").replace(agent_key, "***").strip()
-        )
-        raise RuntimeError(
-            f"sbx secret set-custom failed (exit {result.returncode}): {detail}"
-        )
+    _run_sbx(argv, timeout=SBX_SECRET_TIMEOUT_S, input=agent_key, redact=agent_key)
 
 
 def sandbox_exists(name: str) -> bool:
@@ -316,101 +323,220 @@ def sandbox_exists(name: str) -> bool:
     get created because `sbx create` itself failed transiently — the two
     resources fail independently and must be checked independently.
     """
-    result = subprocess.run(
-        [SBX, "ls", "--json"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=SBX_SECRET_TIMEOUT_S,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"sbx ls --json failed (exit {result.returncode}): "
-            f"{(result.stderr or result.stdout).strip()}"
-        )
+    result = _run_sbx([SBX, "ls", "--json"], timeout=SBX_SECRET_TIMEOUT_S)
     sandboxes = json.loads(result.stdout).get("sandboxes") or []
     return any(sandbox.get("name") == name for sandbox in sandboxes)
 
 
 def create_sandbox(*, name: str, kit: str, workspace: Path) -> None:
     """`sbx create --name <name> --kit <kit> band-python-kit <workspace>`."""
-    result = subprocess.run(
+    _run_sbx(
         [SBX, "create", "--name", name, "--kit", kit, KIT_AGENT_NAME, str(workspace)],
-        capture_output=True,
-        text=True,
-        check=False,
         timeout=SBX_CREATE_TIMEOUT_S,
     )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"sbx create failed (exit {result.returncode}): "
-            f"{(result.stderr or result.stdout).strip()}"
-        )
+
+
+@asynccontextmanager
+async def _rest_client(
+    *, api_key: str, rest_url: str
+) -> AsyncIterator[AsyncRestClient]:
+    """A short-lived `AsyncRestClient`, closed on exit -- this CLI never keeps
+    one alive across calls."""
+    client = AsyncRestClient(api_key=api_key, base_url=rest_url.rstrip("/"))
+    try:
+        yield client
+    finally:
+        await client._client_wrapper.httpx_client.httpx_client.aclose()
 
 
 async def register_agent(
     *, api_key: str, rest_url: str, name: str, description: str
 ) -> tuple[str, str]:
     """Register on the host with a user key. Returns (agent_id, agent_api_key)."""
-    client = AsyncRestClient(api_key=api_key, base_url=rest_url.rstrip("/"))
-    try:
-        response = await client.human_api_agents.register_my_agent(
-            agent=AgentRegisterRequest(name=name, description=description),
-            request_options=NO_RETRY_REQUEST_OPTIONS,
-        )
-    except ApiError as e:
-        raise RuntimeError(_describe_register_error(e)) from e
-    finally:
-        await client._client_wrapper.httpx_client.httpx_client.aclose()
+    async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
+        try:
+            response = await client.human_api_agents.register_my_agent(
+                agent=AgentRegisterRequest(name=name, description=description),
+                request_options=NO_RETRY_REQUEST_OPTIONS,
+            )
+        except ApiError as e:
+            raise RuntimeError(_describe_register_error(e)) from e
     return response.data.agent.id, response.data.credentials.api_key
 
 
-async def _describe_registration_timeout(
-    *, api_key: str, rest_url: str, agent_name: str, timeout: int
-) -> str:
-    """A registration call timed out client-side; turn that into an actionable
-    message instead of an ambiguous one.
+class RegistrationTimeoutOutcome(StrEnum):
+    """What a post-timeout lookup-by-name found."""
+
+    CONFIRMED_ABSENT = "confirmed_absent"
+    CONFIRMED_PRESENT = "confirmed_present"
+    UNKNOWN = "unknown"
+
+
+async def _check_registration_after_timeout(
+    *, api_key: str, rest_url: str, agent_name: str
+) -> tuple[RegistrationTimeoutOutcome, str | None]:
+    """A registration call timed out client-side; find out what actually
+    happened instead of leaving it ambiguous.
 
     `register_my_agent` has no idempotency key, so the timeout alone can't
     say whether the platform committed the write before the response was
-    lost — and if it did, the minted key (shown exactly once) is gone either
-    way. Best-effort: look the agent up by name with a fresh, short-lived
-    request to turn "maybe orphaned" into a definite answer where possible.
+    lost. Best-effort: look the agent up by name with a fresh, short-lived
+    request. Returns the confirmed outcome and, when the agent was found
+    anyway, its id.
     """
-    base = f"registration timed out after {timeout}s"
-    client = AsyncRestClient(api_key=api_key, base_url=rest_url.rstrip("/"))
     try:
-        response = await asyncio.wait_for(
-            client.human_api_agents.list_my_agents(
-                name=agent_name, request_options=NO_RETRY_REQUEST_OPTIONS
-            ),
-            timeout=TIMEOUT_RECOVERY_CHECK_S,
-        )
+        async with _rest_client(api_key=api_key, rest_url=rest_url) as client:
+            response = await asyncio.wait_for(
+                client.human_api_agents.list_my_agents(
+                    name=agent_name, request_options=NO_RETRY_REQUEST_OPTIONS
+                ),
+                timeout=TIMEOUT_RECOVERY_CHECK_S,
+            )
     except Exception:
         logger.warning(
             "could not confirm registration state after timeout", exc_info=True
         )
-        return (
-            f"{base} and its outcome could not be confirmed. The platform may "
-            f"have registered {agent_name!r} and minted its key before the "
-            "response was lost -- that key cannot be retrieved again. Check "
-            f"the platform for an agent named {agent_name!r} before retrying."
-        )
-    finally:
-        await client._client_wrapper.httpx_client.httpx_client.aclose()
+        return RegistrationTimeoutOutcome.UNKNOWN, None
 
     match = next((a for a in response.data if a.name == agent_name), None)
     if match is None:
-        return (
-            f"{base}; confirmed no agent named {agent_name!r} was registered "
-            "-- safe to retry."
+        return RegistrationTimeoutOutcome.CONFIRMED_ABSENT, None
+    return RegistrationTimeoutOutcome.CONFIRMED_PRESENT, match.id
+
+
+def _describe_registration_timeout(
+    outcome: RegistrationTimeoutOutcome,
+    *,
+    agent_name: str,
+    agent_id: str | None,
+    timeout: int,
+) -> str:
+    """A human-readable message for a timed-out registration call, given what
+    the follow-up lookup found. Pure formatting -- mirrors
+    `_describe_register_error`'s split from the I/O that determines the
+    outcome (`_check_registration_after_timeout`)."""
+    base = f"registration timed out after {timeout}s"
+    match outcome:
+        case RegistrationTimeoutOutcome.CONFIRMED_ABSENT:
+            return (
+                f"{base}; confirmed no agent named {agent_name!r} was registered "
+                "-- safe to retry."
+            )
+        case RegistrationTimeoutOutcome.CONFIRMED_PRESENT:
+            return (
+                f"{base}, but agent {agent_name!r} (id={agent_id}) was registered "
+                "anyway before the response arrived. Its key was shown exactly once "
+                "and cannot be retrieved -- delete the orphaned agent and retry with "
+                "a new --agent-name, or see PLT-1066 for adopt-existing semantics."
+            )
+        case RegistrationTimeoutOutcome.UNKNOWN:
+            return (
+                f"{base} and its outcome could not be confirmed. The platform may "
+                f"have registered {agent_name!r} and minted its key before the "
+                "response was lost -- that key cannot be retrieved again. Check "
+                f"the platform for an agent named {agent_name!r} before retrying."
+            )
+
+
+async def _ensure_agent_registered(
+    args: argparse.Namespace, *, api_key: str, rest_url: str
+) -> str:
+    """Register the agent unless the workspace and the `sbx` secret store
+    already agree it's done. Returns the agent id either way."""
+    workspace = args.workspace
+    agent_name = args.agent_name or args.name
+
+    existing_id = read_agent_id(workspace)
+    has_local_identity = bool(existing_id and existing_id != PLACEHOLDER_AGENT_ID)
+    already_has_secret = sandbox_has_band_secret(args.name, args.host)
+
+    # `sbx secret set-custom` is create-or-update: a secret already sitting at
+    # this name/host with no matching local agent.id isn't a resumed run of
+    # this workspace -- it's somebody else's sandbox. Registering here would
+    # silently overwrite their live credential, so refuse instead of guessing.
+    if already_has_secret and not has_local_identity:
+        raise RuntimeError(
+            f"a Band secret is already injected for sandbox name {args.name!r} "
+            f"(host {args.host}), but workspace {workspace} has no matching "
+            "registered agent (agent.id is unset or still the placeholder). "
+            "Registering would overwrite that secret via `sbx secret "
+            "set-custom`'s create-or-update semantics. Pick a different "
+            "--name, or if this really is the same sandbox, restore its "
+            "agent.id in band.yaml instead of re-registering."
         )
-    return (
-        f"{base}, but agent {agent_name!r} (id={match.id}) was registered "
-        "anyway before the response arrived. Its key was shown exactly once "
-        "and cannot be retrieved -- delete the orphaned agent and retry with "
-        "a new --agent-name, or see PLT-1066 for adopt-existing semantics."
-    )
+
+    if has_local_identity and already_has_secret:
+        logger.info(
+            "Sandbox %s already registered (agent.id=%s, secret present) — "
+            "skipping registration",
+            args.name,
+            existing_id,
+        )
+        return existing_id
+
+    if has_local_identity:
+        logger.warning(
+            "band.yaml already names agent %s but no injected secret was found "
+            "for %s — registering a new agent rather than reusing it",
+            existing_id,
+            args.name,
+        )
+
+    logger.info("Registering agent %r...", agent_name)
+    try:
+        agent_id, agent_key = await asyncio.wait_for(
+            register_agent(
+                api_key=api_key,
+                rest_url=rest_url,
+                name=agent_name,
+                description=args.description,
+            ),
+            timeout=args.timeout,
+        )
+    except asyncio.TimeoutError:
+        outcome, orphaned_id = await _check_registration_after_timeout(
+            api_key=api_key, rest_url=rest_url, agent_name=agent_name
+        )
+        raise RuntimeError(
+            _describe_registration_timeout(
+                outcome,
+                agent_name=agent_name,
+                agent_id=orphaned_id,
+                timeout=args.timeout,
+            )
+        ) from None
+    logger.info("Registered agent: %s", agent_id)
+
+    try:
+        write_agent_id(workspace, agent_id)
+        inject_agent_key(name=args.name, host=args.host, agent_key=agent_key)
+    except Exception:
+        logger.error(
+            "Registered agent %s but failed to persist its key locally", agent_id
+        )
+        sys.stderr.write(
+            f"\nCRITICAL: agent {agent_id} was registered but its key could not "
+            "be stored. The platform shows this key exactly once and it cannot "
+            "be retrieved again — store it now or the agent is orphaned:\n\n"
+            f"  {agent_key}\n\n"
+        )
+        raise
+
+    return agent_id
+
+
+def _ensure_sandbox_created(args: argparse.Namespace) -> None:
+    """A sandbox that failed to create on a prior run (registration and
+    secret injection both already done) must still get created here — agent
+    registration says nothing about whether the sandbox itself exists."""
+    if not args.create:
+        return
+    if sandbox_exists(args.name):
+        logger.info("Sandbox %s already exists — skipping create", args.name)
+        return
+    logger.info("Creating sandbox %s...", args.name)
+    create_sandbox(name=args.name, kit=args.kit, workspace=args.workspace)
+    logger.info("Sandbox created: %s", args.name)
 
 
 async def run(args: argparse.Namespace) -> str:
@@ -426,98 +552,8 @@ async def run(args: argparse.Namespace) -> str:
     if args.create and not args.kit:
         raise ValueError("--kit is required unless --no-create is passed.")
 
-    workspace = args.workspace
-    agent_name = args.agent_name or args.name
-
-    existing_id = read_agent_id(workspace)
-    already_has_secret = sandbox_has_band_secret(args.name, args.host)
-    already_registered = bool(
-        existing_id and existing_id != PLACEHOLDER_AGENT_ID and already_has_secret
-    )
-    # `sbx secret set-custom` is create-or-update: a secret already sitting at
-    # this name/host with no matching local agent.id isn't a resumed run of
-    # this workspace -- it's somebody else's sandbox. Registering here would
-    # silently overwrite their live credential, so refuse instead of guessing.
-    if already_has_secret and not already_registered:
-        raise RuntimeError(
-            f"a Band secret is already injected for sandbox name {args.name!r} "
-            f"(host {args.host}), but workspace {workspace} has no matching "
-            "registered agent (agent.id is unset or still the placeholder). "
-            "Registering would overwrite that secret via `sbx secret "
-            "set-custom`'s create-or-update semantics. Pick a different "
-            "--name, or if this really is the same sandbox, restore its "
-            "agent.id in band.yaml instead of re-registering."
-        )
-
-    if already_registered:
-        logger.info(
-            "Sandbox %s already registered (agent.id=%s, secret present) — "
-            "skipping registration",
-            args.name,
-            existing_id,
-        )
-        agent_id = existing_id
-    else:
-        if (
-            existing_id
-            and existing_id != PLACEHOLDER_AGENT_ID
-            and not already_has_secret
-        ):
-            logger.warning(
-                "band.yaml already names agent %s but no injected secret was found "
-                "for %s — registering a new agent rather than reusing it",
-                existing_id,
-                args.name,
-            )
-
-        logger.info("Registering agent %r...", agent_name)
-        try:
-            agent_id, agent_key = await asyncio.wait_for(
-                register_agent(
-                    api_key=api_key,
-                    rest_url=rest_url,
-                    name=agent_name,
-                    description=args.description,
-                ),
-                timeout=args.timeout,
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError(
-                await _describe_registration_timeout(
-                    api_key=api_key,
-                    rest_url=rest_url,
-                    agent_name=agent_name,
-                    timeout=args.timeout,
-                )
-            ) from None
-        logger.info("Registered agent: %s", agent_id)
-
-        try:
-            write_agent_id(workspace, agent_id)
-            inject_agent_key(name=args.name, host=args.host, agent_key=agent_key)
-        except Exception:
-            logger.error(
-                "Registered agent %s but failed to persist its key locally", agent_id
-            )
-            sys.stderr.write(
-                f"\nCRITICAL: agent {agent_id} was registered but its key could not "
-                "be stored. The platform shows this key exactly once and it cannot "
-                "be retrieved again — store it now or the agent is orphaned:\n\n"
-                f"  {agent_key}\n\n"
-            )
-            raise
-
-    # A sandbox that failed to create on a prior run (registration and secret
-    # injection both already done) must still get created here — the identity
-    # check above says nothing about whether the sandbox itself exists.
-    if args.create:
-        if sandbox_exists(args.name):
-            logger.info("Sandbox %s already exists — skipping create", args.name)
-        else:
-            logger.info("Creating sandbox %s...", args.name)
-            create_sandbox(name=args.name, kit=args.kit, workspace=workspace)
-            logger.info("Sandbox created: %s", args.name)
-
+    agent_id = await _ensure_agent_registered(args, api_key=api_key, rest_url=rest_url)
+    _ensure_sandbox_created(args)
     return agent_id
 
 
