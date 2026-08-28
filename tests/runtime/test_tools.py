@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -331,6 +332,7 @@ def _attachment(
     name: str = "notes.txt",
     content_type: str = "text/plain",
     size: int = 20,
+    expires_at: datetime | None = None,
 ) -> Attachment:
     return Attachment(
         id=file_id,
@@ -339,6 +341,7 @@ def _attachment(
         bytes=size,
         sha256="a" * 64,
         has_thumb=False,
+        expires_at=expires_at,
     )
 
 
@@ -684,6 +687,21 @@ class TestFileTools:
         result = await tools._find_attachment("file-1")
 
         assert result.id == "file-1"
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_rejects_expired_cached_entry(self, mock_rest_client):
+        """An attachment past its own expires_at must not be handed back
+        from cache -- it's treated as not found and evicted, not downloaded."""
+        expired = _attachment(
+            "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+        )
+        _mock_attachment_page(mock_rest_client, expired)
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+        assert AgentTools._fetch_attachment.cache_info().currsize == 0
 
     def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
         """The @alru_cache's maxsize must actually come from RuntimeSettings

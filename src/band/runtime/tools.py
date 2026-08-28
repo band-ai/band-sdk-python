@@ -12,7 +12,7 @@ import logging
 import re
 import warnings
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -2738,8 +2738,18 @@ class AgentTools(AgentToolsProtocol):
 
     async def _find_attachment(self, file_id: str) -> "Attachment":
         """Locate an attachment by id -- see ``_fetch_attachment`` for the
-        cached page-walk this delegates to."""
-        return await self._fetch_attachment(self.room_id, self.rest, file_id)
+        cached page-walk this delegates to.
+
+        A cached attachment past its own ``expires_at`` is evicted and
+        treated as not found, rather than left to a doomed download call.
+        """
+        attachment = await self._fetch_attachment(self.room_id, self.rest, file_id)
+        if attachment.expires_at is not None and attachment.expires_at <= datetime.now(
+            timezone.utc
+        ):
+            self._fetch_attachment.cache_invalidate(self.room_id, self.rest, file_id)
+            raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+        return attachment
 
     async def _download_file(self, file_id: str) -> bytes:
         """Download an attachment's raw bytes, translating a 404 for the LLM."""
