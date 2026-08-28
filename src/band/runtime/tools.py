@@ -1815,6 +1815,7 @@ class AgentTools(AgentToolsProtocol):
         *,
         hub_room_id: str | None = None,
         agent_id: str | None = None,
+        attachment_cache: dict[str, "Attachment"] | None = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1830,12 +1831,21 @@ class AgentTools(AgentToolsProtocol):
                 hub-room system prompt instructs the LLM to call contact
                 tools, so they must be exposed even if the adapter would
                 otherwise gate them.
+            attachment_cache: Optional file_id->Attachment map for
+                _find_attachment to check before paginating. Pass the same
+                dict across calls (e.g. ExecutionContext.attachment_cache) to
+                skip re-pagination across turns; omitted, a fresh instance
+                dict is still populated and reused for this instance's own
+                lifetime.
         """
         self.room_id = room_id
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
+        self._attachment_cache: dict[str, Attachment] = (
+            attachment_cache if attachment_cache is not None else {}
+        )
         self._ctx: ExecutionContext | None = None
 
     @property
@@ -1871,6 +1881,7 @@ class AgentTools(AgentToolsProtocol):
             ctx.participants,
             hub_room_id=getattr(ctx, "hub_room_id", None),
             agent_id=ctx.agent_id,
+            attachment_cache=ctx.attachment_cache,
         )
         tools._ctx = ctx
         return tools
@@ -2716,11 +2727,20 @@ class AgentTools(AgentToolsProtocol):
         ``_lookup_peer``) instead of returning one page: the target file may
         be older than the first page, and there is no dedicated "get
         attachment by id" endpoint to reach it directly.
+
+        Checks ``self._attachment_cache`` first, so a room-scoped cache
+        (see ``attachment_cache`` on ``__init__``) skips pagination entirely
+        on a repeat or cross-turn lookup. Every attachment passed while
+        walking pages is cached, not just the match, so one page walk pays
+        for every file on it.
         """
+        if cached := self._attachment_cache.get(file_id):
+            return cached
         async for response in self._iter_message_pages():
             for attachment in self._attachments_in(response.data):
-                if attachment.id == file_id:
-                    return attachment
+                self._attachment_cache[attachment.id] = attachment
+            if file_id in self._attachment_cache:
+                return self._attachment_cache[file_id]
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
 
     async def _download_file(self, file_id: str) -> bytes:

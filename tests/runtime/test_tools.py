@@ -24,6 +24,7 @@ from band.client.rest import (
 from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
+from band.runtime.execution import ExecutionContext
 from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
@@ -647,6 +648,49 @@ class TestFileTools:
         assert get_context.await_count == 2
         _, second_call_kwargs = get_context.await_args_list[1]
         assert second_call_kwargs["cursor"] == "cursor-2"
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_skips_pagination_on_cache_hit(
+        self, mock_rest_client
+    ):
+        """A second lookup sharing the same cache dict must not re-paginate."""
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        shared_cache: dict[str, Attachment] = {}
+        first = AgentTools("room-123", mock_rest_client, attachment_cache=shared_cache)
+        second = AgentTools("room-123", mock_rest_client, attachment_cache=shared_cache)
+
+        await first._find_attachment("file-1")
+        await second._find_attachment("file-1")
+
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_caches_attachments_across_recreated_tools(
+        self, mock_rest_client
+    ):
+        """Real ExecutionContext + from_context(): a file found by one turn's
+        AgentTools must skip re-pagination on the next turn's recreated
+        instance, since AgentTools.from_context() rebuilds fresh every turn.
+        """
+        _mock_attachment_page(
+            mock_rest_client, _attachment(content_type="text/plain", size=5)
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        ctx = ExecutionContext(
+            room_id="room-789",
+            link=MagicMock(rest=mock_rest_client),
+            on_execute=AsyncMock(),
+        )
+
+        tools1 = AgentTools.from_context(ctx)
+        await tools1.read_room_file("file-1")
+
+        tools2 = AgentTools.from_context(ctx)
+        await tools2.read_room_file("file-1")
+
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
 
     # --- send_room_file ---
 

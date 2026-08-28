@@ -56,6 +56,7 @@ from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
+    from band.client.rest import Attachment
     from band.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
@@ -283,6 +284,14 @@ class ExecutionContext:
         self._roster = ParticipantRoster()
         self._participants_loaded = False
 
+        # Attachment lookup cache, shared live (not snapshotted) with every
+        # AgentTools built via from_context() for this room -- unlike the
+        # roster above, attachments are never edited or removed once posted,
+        # so a plain accumulating dict needs no merge/diff logic. Grows with
+        # total attachments ever shared in this room's lifetime, not with
+        # room size at any moment; accepted for a low-traffic lookup cache.
+        self._attachment_cache: dict[str, Attachment] = {}
+
         # LLM context tracking
         self._llm_initialized = False
 
@@ -377,6 +386,11 @@ class ExecutionContext:
     def agent_id(self) -> str | None:
         """This agent's own ID, used to exclude itself from mention lists."""
         return self._agent_id
+
+    @property
+    def attachment_cache(self) -> dict[str, Attachment]:
+        """Live attachment-lookup cache, shared by reference across turns."""
+        return self._attachment_cache
 
     @property
     def is_llm_initialized(self) -> bool:
