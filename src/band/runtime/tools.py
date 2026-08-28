@@ -1795,6 +1795,7 @@ class AttachmentCache(Protocol):
         self, room_id: str, rest: "AsyncRestClient", file_id: str
     ) -> "Attachment": ...
     def cache_invalidate(self, *args: Any, **kwargs: Any) -> bool: ...
+    def cache_contains(self, *args: Any, **kwargs: Any) -> bool: ...
     def cache_info(self) -> Any: ...
     def cache_parameters(self) -> Any: ...
 
@@ -2704,7 +2705,10 @@ class AgentTools(AgentToolsProtocol):
         ceiling to bound against, and a target that's merely old, not
         missing, must still be found. The only thing guarded against is a
         malformed response repeating a cursor it already returned, which
-        would otherwise loop forever making no progress.
+        would otherwise loop forever making no progress -- safe to key on
+        the cursor value itself, since ``get_agent_chat_context`` documents
+        ``cursor`` as keyset pagination (derived from the boundary row, not
+        an opaque session token), so two distinct pages can't coincide.
         """
         cursor: str | None = None
         seen_cursors: set[str] = set()
@@ -2802,6 +2806,8 @@ class AgentTools(AgentToolsProtocol):
         re-fetched once before being treated as not found: the cached copy
         may simply predate the platform extending that deadline, and a
         second stale-looking read shouldn't cost more than one extra lookup.
+        A still-expired refresh is evicted too, so the cache never keeps
+        serving metadata it has already given up on.
         """
         attachment = await AgentTools._attachment_cache()(
             self.room_id, self.rest, file_id
@@ -2814,6 +2820,9 @@ class AgentTools(AgentToolsProtocol):
                 self.room_id, self.rest, file_id
             )
             if self._attachment_expired(attachment):
+                AgentTools._attachment_cache().cache_invalidate(
+                    self.room_id, self.rest, file_id
+                )
                 raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
         return attachment
 

@@ -751,6 +751,26 @@ class TestFileTools:
         )
 
     @pytest.mark.asyncio
+    async def test_find_attachment_does_not_share_cache_across_rest_clients(
+        self, mock_rest_client
+    ):
+        """The same (room_id, file_id) looked up through two different REST
+        clients must not cache-hit across them -- the rest client identity is
+        part of the cache key, so two agents (or a pool of clients) never
+        leak each other's attachment metadata."""
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        other_rest_client = MagicMock()
+        _mock_attachment_page(other_rest_client, _attachment("file-1"))
+        tools_a = AgentTools("room-123", mock_rest_client)
+        tools_b = AgentTools("room-123", other_rest_client)
+
+        await tools_a._find_attachment("file-1")
+        await tools_b._find_attachment("file-1")
+
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+        other_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_find_attachment_retries_pagination_after_a_miss(
         self, mock_rest_client
     ):
@@ -774,7 +794,9 @@ class TestFileTools:
         """An attachment past its own expires_at must not be handed back
         from cache -- it's evicted and re-fetched once (the cached copy may
         just predate the platform extending the deadline), and only raised
-        as not-found if the fresh read is still expired too."""
+        as not-found if the fresh read is still expired too -- which also
+        evicts it, so the cache never keeps serving metadata it already
+        gave up on."""
         expired = _attachment(
             "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
         )
@@ -786,6 +808,9 @@ class TestFileTools:
 
         get_context = mock_rest_client.agent_api_context.get_agent_chat_context
         assert get_context.await_count == 2
+        assert not AgentTools._attachment_cache().cache_contains(
+            "room-123", mock_rest_client, "file-1"
+        )
 
     @pytest.mark.asyncio
     async def test_find_attachment_refreshes_an_expired_entry(self, mock_rest_client):
