@@ -25,12 +25,24 @@ def make_link(server_url: str) -> BandLink:
     )
 
 
-async def wait_until(predicate, *, timeout: float = 5.0) -> None:
-    async def poll() -> None:
-        while not predicate():
-            await asyncio.sleep(0.02)
+def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
+    """Arm a spy on ``_drain_reconciliation`` -- the last step
+    ``_on_reconnected`` runs -- and return an event set the instant the real
+    call completes. Lets a caller deterministically await one full
+    post-reconnect cycle (rejoin-failure detection, then drain) instead of
+    polling observable state on a fixed interval and hoping it has caught
+    up. Call before whatever triggers the reconnect (e.g.
+    ``server.abort_connection()``), so the spy is in place before
+    ``_on_reconnected`` fires."""
+    handled = asyncio.Event()
+    original_drain = link._drain_reconciliation
 
-    await asyncio.wait_for(poll(), timeout=timeout)
+    async def spy() -> None:
+        await original_drain()
+        handled.set()
+
+    link._drain_reconciliation = spy
+    return handled
 
 
 async def test_room_participants_rejection_rolls_back_chat_room_over_the_real_wire() -> (
@@ -71,9 +83,11 @@ async def test_room_participants_rejoin_failure_marks_room_unsubscribed() -> Non
         await link.subscribe_room("room-1")
         assert link.is_room_subscribed("room-1") is True
 
+        reconnect_handled = spy_on_reconciliation_drain(link)
         await server.abort_connection()
-        await wait_until(lambda: link.is_room_subscribed("room-1") is False)
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
 
+        assert link.is_room_subscribed("room-1") is False
         assert "room_participants:room-1" not in server.joined_topics
         assert (
             "chat_room:room-1" not in server.joined_topics
@@ -98,12 +112,11 @@ async def test_agent_rooms_rejoin_failure_marks_topic_unjoined() -> None:
             link._subscriptions.is_agent_topic_joined("agent_rooms:agent-123") is True
         )
 
+        reconnect_handled = spy_on_reconciliation_drain(link)
         await server.abort_connection()
-        await wait_until(
-            lambda: (
-                link._subscriptions.is_agent_topic_joined("agent_rooms:agent-123")
-                is False
-            )
-        )
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
 
+        assert (
+            link._subscriptions.is_agent_topic_joined("agent_rooms:agent-123") is False
+        )
         assert "agent_rooms:agent-123" not in server.joined_topics
