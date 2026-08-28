@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-from collections import OrderedDict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -44,6 +43,7 @@ from band.runtime.tools import (
     LookupPeersInput,
     GetParticipantsInput,
     CreateChatroomInput,
+    _fetch_attachment,
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
@@ -655,30 +655,24 @@ class TestFileTools:
     async def test_find_attachment_skips_pagination_on_cache_hit(
         self, mock_rest_client
     ):
-        """A second lookup sharing the same cache dict must not re-paginate."""
+        """A second lookup for the same (room, rest, file_id) must not
+        re-paginate -- _fetch_attachment is a module-level @alru_cache, keyed
+        on those three, not on the AgentTools instance calling it."""
         _mock_attachment_page(mock_rest_client, _attachment("file-1"))
-        shared_cache: OrderedDict[str, Attachment] = OrderedDict()
-        first = AgentTools("room-123", mock_rest_client, attachment_cache=shared_cache)
-        second = AgentTools("room-123", mock_rest_client, attachment_cache=shared_cache)
+        first = AgentTools("room-123", mock_rest_client)
+        second = AgentTools("room-123", mock_rest_client)
 
         await first._find_attachment("file-1")
         await second._find_attachment("file-1")
 
         mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_attachment_cache_evicts_oldest_past_max_size(self, mock_rest_client):
-        """Cache must not grow past MAX_ATTACHMENT_CACHE_SIZE -- the oldest
-        entry is evicted (FIFO), not the whole cache or a random one."""
-        tools = AgentTools("room-123", mock_rest_client)
-
-        for i in range(MAX_ATTACHMENT_CACHE_SIZE + 1):
-            tools._cache_attachment(_attachment(f"file-{i}"))
-
-        assert len(tools._attachment_cache) == MAX_ATTACHMENT_CACHE_SIZE
-        assert "file-0" not in tools._attachment_cache
-        assert "file-1" in tools._attachment_cache
-        assert f"file-{MAX_ATTACHMENT_CACHE_SIZE}" in tools._attachment_cache
+    def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
+        """The @alru_cache's maxsize must actually be MAX_ATTACHMENT_CACHE_SIZE
+        -- the eviction algorithm itself is async-lru's to test, not ours."""
+        assert _fetch_attachment.cache_parameters()["maxsize"] == (
+            MAX_ATTACHMENT_CACHE_SIZE
+        )
 
     @pytest.mark.asyncio
     async def test_read_room_file_caches_attachments_across_recreated_tools(

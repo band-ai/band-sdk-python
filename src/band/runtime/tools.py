@@ -13,12 +13,12 @@ import re
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
-from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import band_sdk_core
+from async_lru import alru_cache
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -34,6 +34,7 @@ from band.client.rest import (
     NotFoundError,
     UnprocessableEntityError,
 )
+from band.config.settings import RuntimeSettings
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import log_roster_call, participant_snapshot
 from band.core.exceptions import BandToolError
@@ -1323,13 +1324,12 @@ PREVIEWABLE_IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(
     {"image/jpeg", "image/png", "image/gif", "image/webp"}
 )
 
-# _find_attachment's cache (see attachment_cache on __init__) grows for as
-# long as its backing ExecutionContext lives -- the room's whole process
-# lifetime, not one turn. Bounded FIFO eviction, same pattern used for the
-# other long-lived per-room caches in this codebase (e.g.
-# contact_handler.py's MAX_DEDUP_CACHE_SIZE), keeps that growth from being
-# unbounded for a room with an unusually high file count over its lifetime.
-MAX_ATTACHMENT_CACHE_SIZE = 1000
+# _fetch_attachment's cache (see below) is a module-level @alru_cache, so
+# this budget is shared across every room and every agent in the process --
+# not "N per room". Configurable via BAND_ATTACHMENT_CACHE_MAXSIZE
+# (RuntimeSettings) since that scope-wide tradeoff is a legitimate deployment
+# knob, not a constant every caller should be stuck with.
+MAX_ATTACHMENT_CACHE_SIZE = RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE
 
 # The platform answers an identical 404 for "file transfer is off in this
 # deployment" and "wrong id / wrong room / file doesn't exist" -- there is no
@@ -1788,6 +1788,81 @@ def serialize_tool_result(result: Any) -> Any:
     return result
 
 
+async def _list_message_page(
+    room_id: str, rest: "AsyncRestClient", cursor: str | None
+) -> Any:
+    """Fetch one page of a room's message history, attachments included.
+
+    Uses the context/rehydration endpoint, not the plain agent messages one:
+    that one only ever returns messages that mention this agent, excluding
+    ones it authored -- which would make a file this agent just sent via
+    ``send_room_file`` undiscoverable by itself, forever. The context
+    endpoint's server-side query is explicitly ``sender_id == agent_id OR
+    mentions agent_id``, with no delivery-status concept to filter on.
+    """
+    kwargs: dict[str, Any] = {}
+    if cursor is not None:
+        kwargs["cursor"] = cursor
+    return await rest.agent_api_context.get_agent_chat_context(
+        chat_id=room_id,
+        request_options=DEFAULT_REQUEST_OPTIONS,
+        **kwargs,
+    )
+
+
+def _attachments_in(messages: Collection[Any]) -> Iterator[Attachment]:
+    """Yield every attachment across a page's messages, in message order."""
+    for message in messages:
+        yield from message.attachments or []
+
+
+async def _iter_message_pages(
+    fetch: Callable[[str | None], Awaitable[Any]],
+) -> AsyncIterator[Any]:
+    """Walk every page a ``fetch(cursor)`` callable returns, oldest first.
+
+    Termination is data-driven -- the platform's own ``has_more``/
+    ``next_cursor`` on the page just fetched, not knowable in advance -- so
+    this is where that walk lives, once, mirroring ``iter_chat_pages``'s
+    injected-fetcher shape above.
+    """
+    cursor: str | None = None
+    more_pages = True
+    while more_pages:
+        response = await fetch(cursor)
+        yield response
+        cursor = response.metadata.next_cursor
+        more_pages = bool(response.metadata.has_more and cursor)
+
+
+@alru_cache(maxsize=MAX_ATTACHMENT_CACHE_SIZE)
+async def _fetch_attachment(
+    room_id: str, rest: "AsyncRestClient", file_id: str
+) -> "Attachment":
+    """Locate an attachment by id, exhausting pagination (like
+    ``_lookup_peer``) instead of returning one page: the target file may be
+    older than the first page, and there is no dedicated "get attachment by
+    id" endpoint to reach it directly.
+
+    Module-level and keyed on ``(room_id, rest, file_id)`` -- not an
+    ``AgentTools`` method -- so the cache survives ``AgentTools`` being
+    rebuilt fresh every turn (``room_id``/``rest`` are stable across turns;
+    ``self`` is not). ``@alru_cache`` never caches a raised exception (an
+    entry's task is evicted on failure -- see async-lru's
+    ``_task_done_callback``), so a not-yet-posted file naturally isn't
+    negative-cached; the real existence check stays ``_download_file``'s 404.
+    """
+
+    async def fetch(cursor: str | None) -> Any:
+        return await _list_message_page(room_id, rest, cursor)
+
+    async for response in _iter_message_pages(fetch):
+        for attachment in _attachments_in(response.data):
+            if attachment.id == file_id:
+                return attachment
+    raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+
+
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -1824,7 +1899,6 @@ class AgentTools(AgentToolsProtocol):
         *,
         hub_room_id: str | None = None,
         agent_id: str | None = None,
-        attachment_cache: "OrderedDict[str, Attachment] | None" = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1840,22 +1914,12 @@ class AgentTools(AgentToolsProtocol):
                 hub-room system prompt instructs the LLM to call contact
                 tools, so they must be exposed even if the adapter would
                 otherwise gate them.
-            attachment_cache: Optional file_id->Attachment map for
-                _find_attachment to check before paginating. Pass the same
-                OrderedDict across calls (e.g. ExecutionContext.attachment_cache)
-                to skip re-pagination across turns; omitted, a fresh instance
-                dict is still populated and reused for this instance's own
-                lifetime. Bounded to MAX_ATTACHMENT_CACHE_SIZE with FIFO
-                eviction.
         """
         self.room_id = room_id
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
-        self._attachment_cache: OrderedDict[str, Attachment] = (
-            attachment_cache if attachment_cache is not None else OrderedDict()
-        )
         self._ctx: ExecutionContext | None = None
 
     @property
@@ -1891,7 +1955,6 @@ class AgentTools(AgentToolsProtocol):
             ctx.participants,
             hub_room_id=getattr(ctx, "hub_room_id", None),
             agent_id=ctx.agent_id,
-            attachment_cache=ctx.attachment_cache,
         )
         tools._ctx = ctx
         return tools
@@ -2664,26 +2727,6 @@ class AgentTools(AgentToolsProtocol):
 
     # --- File tools ---
 
-    async def _list_message_page(self, cursor: str | None) -> Any:
-        """Fetch one page of the room's message history, attachments included.
-
-        Uses the context/rehydration endpoint, not the plain agent messages
-        one: that one only ever returns messages that mention this agent,
-        excluding ones it authored -- which would make a file this agent
-        just sent via ``send_room_file`` undiscoverable by itself, forever.
-        The context endpoint's server-side query is explicitly ``sender_id
-        == agent_id OR mentions agent_id``, with no delivery-status concept
-        to filter on.
-        """
-        kwargs: dict[str, Any] = {}
-        if cursor is not None:
-            kwargs["cursor"] = cursor
-        return await self.rest.agent_api_context.get_agent_chat_context(
-            chat_id=self.room_id,
-            request_options=DEFAULT_REQUEST_OPTIONS,
-            **kwargs,
-        )
-
     async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
         """
         List files shared in the current room.
@@ -2699,69 +2742,20 @@ class AgentTools(AgentToolsProtocol):
             Dict with "data" (attachment dicts, deduplicated by id -- a file
             can be attached to more than one message) and "next_cursor".
         """
-        response = await self._list_message_page(cursor)
+        response = await _list_message_page(self.room_id, self.rest, cursor)
         seen: set[str] = set()
         attachments: list[dict[str, Any]] = []
-        for attachment in self._attachments_in(response.data):
+        for attachment in _attachments_in(response.data):
             if attachment.id in seen:
                 continue
             seen.add(attachment.id)
             attachments.append(attachment.model_dump())
         return {"data": attachments, "next_cursor": response.metadata.next_cursor}
 
-    @staticmethod
-    def _attachments_in(messages: Collection[Any]) -> Iterator[Attachment]:
-        """Yield every attachment across a page's messages, in message order."""
-        for message in messages:
-            yield from message.attachments or []
-
-    async def _iter_message_pages(self) -> AsyncIterator[Any]:
-        """Walk every page of the room's message history, oldest cursor first.
-
-        Termination is data-driven -- the platform's own ``has_more``/
-        ``next_cursor`` on the page just fetched, not knowable in advance --
-        so this is where that walk lives, once, as a plain page-at-a-time
-        generator. Callers that only need a match (``_find_attachment``)
-        drive it with a plain ``async for`` and no loop-control of their own.
-        """
-        cursor: str | None = None
-        more_pages = True
-        while more_pages:
-            response = await self._list_message_page(cursor)
-            yield response
-            cursor = response.metadata.next_cursor
-            more_pages = bool(response.metadata.has_more and cursor)
-
     async def _find_attachment(self, file_id: str) -> "Attachment":
-        """Locate an attachment by id, exhausting pagination (like
-        ``_lookup_peer``) instead of returning one page: the target file may
-        be older than the first page, and there is no dedicated "get
-        attachment by id" endpoint to reach it directly.
-
-        Checks ``self._attachment_cache`` first, so a room-scoped cache
-        (see ``attachment_cache`` on ``__init__``) skips pagination entirely
-        on a repeat or cross-turn lookup. Every attachment passed while
-        walking pages is cached, not just the match, so one page walk pays
-        for every file on it. A miss is never itself cached: the file may
-        simply not have been posted yet, and the real existence check is
-        already _download_file's 404, independent of this cache.
-        """
-        if cached := self._attachment_cache.get(file_id):
-            return cached
-        async for response in self._iter_message_pages():
-            for attachment in self._attachments_in(response.data):
-                self._cache_attachment(attachment)
-            if file_id in self._attachment_cache:
-                return self._attachment_cache[file_id]
-        raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
-
-    def _cache_attachment(self, attachment: "Attachment") -> None:
-        """Add to the attachment cache, evicting the oldest entry past
-        MAX_ATTACHMENT_CACHE_SIZE (FIFO, not access-order LRU -- same bounded
-        long-lived-cache pattern as contact_handler.py's dedup caches)."""
-        self._attachment_cache[attachment.id] = attachment
-        if len(self._attachment_cache) > MAX_ATTACHMENT_CACHE_SIZE:
-            self._attachment_cache.popitem(last=False)
+        """Locate an attachment by id -- see the module-level
+        ``_fetch_attachment`` for the cached page-walk this delegates to."""
+        return await _fetch_attachment(self.room_id, self.rest, file_id)
 
     async def _download_file(self, file_id: str) -> bytes:
         """Download an attachment's raw bytes, translating a 404 for the LLM."""
