@@ -13,6 +13,8 @@ from band.platform.event import RoomAddedEvent
 from band.platform.link import BandLink
 from band.testing import JoinOutcome, fake_phoenix_server
 
+from tests.conftest import spy_on_reconciliation_drain
+
 
 def make_link(server_url: str) -> BandLink:
     return BandLink(
@@ -117,14 +119,7 @@ async def test_abort_triggers_real_reconnect_and_drain() -> None:
         await link.connect()
         await link.subscribe_room("room-1")
 
-        drain_handled = asyncio.Event()
-        original_drain = link._drain_reconciliation
-
-        async def spy_drain() -> None:
-            await original_drain()
-            drain_handled.set()
-
-        link._drain_reconciliation = spy_drain
+        drain_handled = spy_on_reconciliation_drain(link)
 
         await server.abort_connection()
         await wait_until(lambda: server.connection_count == 2)

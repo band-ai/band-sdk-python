@@ -41,6 +41,15 @@ from tests.conftest import make_message_event
 from tests.platform.conftest import cancelled_mid_await
 
 
+class _AllTopicsJoined:
+    """A container reporting every topic as present -- the default 'nothing
+    failed to rejoin' fixture behavior for ``WebSocketClient.joined_topics``,
+    which returns a real snapshot BandLink checks membership against."""
+
+    def __contains__(self, topic: object) -> bool:
+        return True
+
+
 @pytest.fixture
 def mock_ws_client():
     """Autospecced WebSocketClient for testing BandLink.
@@ -56,10 +65,11 @@ def mock_ws_client():
     ws.__aexit__.return_value = None
 
     # Documented "nothing failed to rejoin" default -- an unconfigured
-    # autospec call would otherwise return a bare (truthy) MagicMock, making
-    # _detect_room_rejoin_failures/_detect_agent_topic_rejoin_failures read
-    # "topic present" by accident of mock truthiness rather than by design.
-    ws.is_topic_joined.return_value = True
+    # autospec call would otherwise return a bare (truthy) MagicMock, and
+    # `topic in <MagicMock>` raises TypeError rather than reading as
+    # "topic present" -- _detect_room_rejoin_failures/
+    # _detect_agent_topic_rejoin_failures need a real container.
+    ws.joined_topics.return_value = _AllTopicsJoined()
 
     ws.last_disconnect_reason = None
 

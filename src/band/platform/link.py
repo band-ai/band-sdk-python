@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING
 from band.client.rest import AsyncRestClient
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
-from band.client.streaming.client import chat_room_topic, room_participants_topic
+from band.client.streaming.client import (
+    AGENT_ROOMS_KIND,
+    agent_contacts_topic,
+    agent_rooms_topic,
+    chat_room_topic,
+    room_participants_topic,
+)
 from band.core.types import PlatformConnection
 from band.platform.message_lifecycle import MessageLifecycle
 from band.runtime.types import PlatformMessage
@@ -54,22 +60,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-
-# Single source of truth for the two single-topic agent-channel kinds: every
-# site that builds a topic string (_agent_*_topic) or parses one back apart
-# (_drain_reconciliation) reads these, so a typo in one can't silently
-# diverge from the other.
-_AGENT_ROOMS_KIND = "agent_rooms"
-_AGENT_CONTACTS_KIND = "agent_contacts"
-
-
-def _agent_rooms_topic(agent_id: str) -> str:
-    return f"{_AGENT_ROOMS_KIND}:{agent_id}"
-
-
-def _agent_contacts_topic(agent_id: str) -> str:
-    return f"{_AGENT_CONTACTS_KIND}:{agent_id}"
 
 
 class BandLink:
@@ -297,7 +287,7 @@ class BandLink:
         ws = self._ws
 
         await self._subscribe_agent_topic(
-            _agent_rooms_topic(agent_id),
+            agent_rooms_topic(agent_id),
             lambda: ws.join_agent_rooms_channel(
                 agent_id,
                 on_room_added=self._on_room_added,
@@ -419,7 +409,7 @@ class BandLink:
         ws = self._ws
 
         await self._subscribe_agent_topic(
-            _agent_contacts_topic(agent_id),
+            agent_contacts_topic(agent_id),
             lambda: ws.join_agent_contacts_channel(
                 agent_id,
                 on_contact_request_received=self._on_contact_request_received,
@@ -527,7 +517,7 @@ class BandLink:
         ws = self._ws
 
         await self._leave_agent_topic(
-            _agent_contacts_topic(self.agent_id),
+            agent_contacts_topic(self.agent_id),
             lambda: ws.leave_agent_contacts_channel(self.agent_id),
             ws,
         )
@@ -561,6 +551,13 @@ class BandLink:
         """Whether ``room_id`` is currently fully subscribed (both topics)."""
         return self._subscriptions.is_room_subscribed(room_id=room_id)
 
+    def _connected_ws(self) -> WebSocketClient:
+        """The active WebSocket client -- only ever called from the client's
+        own reconnect hook (``_on_reconnected``) or something it calls
+        synchronously from there, where a live connection is guaranteed."""
+        assert self._ws is not None
+        return self._ws
+
     def _detect_room_rejoin_failures(self, ws: WebSocketClient) -> None:
         """A room's chat_room/room_participants topic can fail to rejoin
         after a reconnect with no callback into anything BandLink-owned —
@@ -580,9 +577,14 @@ class BandLink:
         which either succeeds or eventually produces a real rejection this
         detector does catch.
         """
-        for room_id in self._subscriptions.subscribed_room_ids():
-            if ws.is_topic_joined(chat_room_topic(room_id)) and ws.is_topic_joined(
-                room_participants_topic(room_id)
+        room_ids = self._subscriptions.subscribed_room_ids()
+        if not room_ids:
+            return
+        joined = ws.joined_topics()
+        for room_id in room_ids:
+            if (
+                chat_room_topic(room_id) in joined
+                and room_participants_topic(room_id) in joined
             ):
                 continue
             if self._subscriptions.mark_room_rejoin_failed(room_id=room_id):
@@ -593,8 +595,12 @@ class BandLink:
     def _detect_agent_topic_rejoin_failures(self, ws: WebSocketClient) -> None:
         """Same rejoin-failure detection as ``_detect_room_rejoin_failures``,
         for the single-topic agent channels."""
-        for topic in self._subscriptions.joined_agent_topics():
-            if ws.is_topic_joined(topic):
+        agent_topics = self._subscriptions.joined_agent_topics()
+        if not agent_topics:
+            return
+        joined = ws.joined_topics()
+        for topic in agent_topics:
+            if topic in joined:
                 continue
             if self._subscriptions.mark_agent_topic_rejoin_failed(topic=topic):
                 self._mark_needing_reconciliation(
@@ -625,10 +631,7 @@ class BandLink:
         """
         logger.info("WebSocket reconnected — reconciling room state")
         self._subscriptions.on_reconnected()
-        assert (
-            self._ws is not None
-        )  # only called from the ws client's own reconnect hook
-        ws = self._ws
+        ws = self._connected_ws()
         self._detect_room_rejoin_failures(ws)
         self._detect_agent_topic_rejoin_failures(ws)
         await self._drain_reconciliation()
@@ -638,10 +641,7 @@ class BandLink:
         """Force a clean transport + tracker state for every room/topic left
         ambiguous since the last reconnect, then release the local block.
         """
-        assert (
-            self._ws is not None
-        )  # only called from the ws client's own reconnect hook
-        ws = self._ws
+        ws = self._connected_ws()
 
         await self._drain_room_reconciliation(ws)
         await self._drain_agent_topic_reconciliation(ws)
@@ -681,7 +681,7 @@ class BandLink:
             kind, _, agent_id = topic.partition(":")
             leave = (
                 ws.leave_agent_rooms_channel
-                if kind == _AGENT_ROOMS_KIND
+                if kind == AGENT_ROOMS_KIND
                 else ws.leave_agent_contacts_channel
             )
             await self._leave_channel(

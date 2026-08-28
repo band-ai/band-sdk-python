@@ -15,6 +15,8 @@ import asyncio
 from band.platform.link import BandLink
 from band.testing import JoinOutcome, fake_phoenix_server
 
+from tests.conftest import spy_on_reconciliation_drain
+
 
 def make_link(server_url: str) -> BandLink:
     return BandLink(
@@ -23,26 +25,6 @@ def make_link(server_url: str) -> BandLink:
         ws_url=server_url,
         rest_url="https://test.invalid",
     )
-
-
-def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
-    """Arm a spy on ``_drain_reconciliation`` -- the last step
-    ``_on_reconnected`` runs -- and return an event set the instant the real
-    call completes. Lets a caller deterministically await one full
-    post-reconnect cycle (rejoin-failure detection, then drain) instead of
-    polling observable state on a fixed interval and hoping it has caught
-    up. Call before whatever triggers the reconnect (e.g.
-    ``server.abort_connection()``), so the spy is in place before
-    ``_on_reconnected`` fires."""
-    handled = asyncio.Event()
-    original_drain = link._drain_reconciliation
-
-    async def spy() -> None:
-        await original_drain()
-        handled.set()
-
-    link._drain_reconciliation = spy
-    return handled
 
 
 async def test_room_participants_rejection_rolls_back_chat_room_over_the_real_wire() -> (

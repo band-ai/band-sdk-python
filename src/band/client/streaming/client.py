@@ -317,6 +317,22 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 
+# Single source of truth for the two single-topic agent-channel kinds: every
+# site that builds a topic string (agent_*_topic) or parses one back apart
+# (BandLink._drain_agent_topic_reconciliation) reads these, so a typo in one
+# can't silently diverge from the other.
+AGENT_ROOMS_KIND = "agent_rooms"
+AGENT_CONTACTS_KIND = "agent_contacts"
+
+
+def agent_rooms_topic(agent_id: str) -> str:
+    return f"{AGENT_ROOMS_KIND}:{agent_id}"
+
+
+def agent_contacts_topic(agent_id: str) -> str:
+    return f"{AGENT_CONTACTS_KIND}:{agent_id}"
+
+
 def chat_room_topic(chat_room_id: str) -> str:
     return f"chat_room:{chat_room_id}"
 
@@ -376,12 +392,14 @@ class WebSocketClient:
             raise RuntimeError("WebSocket client is not connected")
         return self.client
 
-    def is_topic_joined(self, topic: str) -> bool:
-        """Whether the transport's live subscription registry still has
-        `topic` joined -- the settled post-rejoin truth, not a cached
-        belief. Used to detect a topic that failed to rejoin after a
-        reconnect (see `_on_reconnect`'s ordering guarantee)."""
-        return topic in self._require_client().get_current_subscriptions()
+    def joined_topics(self) -> frozenset[str]:
+        """Snapshot of the transport's live subscription registry -- the
+        settled post-rejoin truth, not a cached belief (see
+        `_on_reconnect`'s ordering guarantee). Take one snapshot per
+        detection pass and check membership against it, rather than
+        querying per topic: the underlying client call does a full dict
+        copy every time it's invoked."""
+        return frozenset(self._require_client().get_current_subscriptions())
 
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
@@ -567,7 +585,7 @@ class WebSocketClient:
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
     ):
         """Subscribe to agent rooms topic with async callbacks"""
-        topic = f"agent_rooms:{agent_id}"
+        topic = agent_rooms_topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -683,7 +701,7 @@ class WebSocketClient:
 
     async def leave_agent_rooms_channel(self, agent_id: str):
         """Unsubscribe from agent rooms topic"""
-        topic = f"agent_rooms:{agent_id}"
+        topic = agent_rooms_topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
@@ -722,7 +740,7 @@ class WebSocketClient:
         on_contact_removed: Callable[[ContactRemovedPayload], Awaitable[None]],
     ):
         """Subscribe to agent contacts topic with async callbacks."""
-        topic = f"agent_contacts:{agent_id}"
+        topic = agent_contacts_topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -742,7 +760,7 @@ class WebSocketClient:
 
     async def leave_agent_contacts_channel(self, agent_id: str):
         """Unsubscribe from agent contacts topic."""
-        topic = f"agent_contacts:{agent_id}"
+        topic = agent_contacts_topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
