@@ -1324,13 +1324,6 @@ PREVIEWABLE_IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(
     {"image/jpeg", "image/png", "image/gif", "image/webp"}
 )
 
-# _fetch_attachment's cache (see below) is a module-level @alru_cache, so
-# this budget is shared across every room and every agent in the process --
-# not "N per room". Configurable via BAND_ATTACHMENT_CACHE_MAXSIZE
-# (RuntimeSettings) since that scope-wide tradeoff is a legitimate deployment
-# knob, not a constant every caller should be stuck with.
-MAX_ATTACHMENT_CACHE_SIZE = RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE
-
 # The platform answers an identical 404 for "file transfer is off in this
 # deployment" and "wrong id / wrong room / file doesn't exist" -- there is no
 # truthful way to tell those apart from the response, so one message covers
@@ -1835,7 +1828,7 @@ async def _iter_message_pages(
         more_pages = bool(response.metadata.has_more and cursor)
 
 
-@alru_cache(maxsize=MAX_ATTACHMENT_CACHE_SIZE)
+@alru_cache(maxsize=RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE)
 async def _fetch_attachment(
     room_id: str, rest: "AsyncRestClient", file_id: str
 ) -> "Attachment":
@@ -1847,10 +1840,13 @@ async def _fetch_attachment(
     Module-level and keyed on ``(room_id, rest, file_id)`` -- not an
     ``AgentTools`` method -- so the cache survives ``AgentTools`` being
     rebuilt fresh every turn (``room_id``/``rest`` are stable across turns;
-    ``self`` is not). ``@alru_cache`` never caches a raised exception (an
-    entry's task is evicted on failure -- see async-lru's
-    ``_task_done_callback``), so a not-yet-posted file naturally isn't
-    negative-cached; the real existence check stays ``_download_file``'s 404.
+    ``self`` is not). Being a module-level singleton also means its
+    ``maxsize`` (``RuntimeSettings.BAND_ATTACHMENT_CACHE_MAXSIZE``) is one
+    budget shared across every room/agent in the process, not "N per room".
+    ``@alru_cache`` never caches a raised exception (an entry's task is
+    evicted on failure -- see async-lru's ``_task_done_callback``), so a
+    not-yet-posted file naturally isn't negative-cached; the real existence
+    check stays ``_download_file``'s 404.
     """
 
     async def fetch(cursor: str | None) -> Any:

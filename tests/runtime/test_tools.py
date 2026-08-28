@@ -21,6 +21,7 @@ from band.client.rest import (
     NotFoundError,
     UnprocessableEntityError,
 )
+from band.config.settings import RuntimeSettings
 from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
@@ -29,7 +30,6 @@ from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
-    MAX_ATTACHMENT_CACHE_SIZE,
     MAX_INLINE_IMAGE_BYTES,
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
@@ -668,10 +668,10 @@ class TestFileTools:
         mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
 
     def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
-        """The @alru_cache's maxsize must actually be MAX_ATTACHMENT_CACHE_SIZE
+        """The @alru_cache's maxsize must actually come from RuntimeSettings
         -- the eviction algorithm itself is async-lru's to test, not ours."""
         assert _fetch_attachment.cache_parameters()["maxsize"] == (
-            MAX_ATTACHMENT_CACHE_SIZE
+            RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE
         )
 
     @pytest.mark.asyncio
