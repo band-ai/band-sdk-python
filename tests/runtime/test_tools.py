@@ -733,6 +733,24 @@ class TestFileTools:
         mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_find_attachment_does_not_share_cache_across_rooms(
+        self, mock_rest_client
+    ):
+        """The same file_id looked up in two different rooms must not
+        cache-hit across them -- room_id is part of the cache key, not
+        just file_id."""
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        room_a = AgentTools("room-a", mock_rest_client)
+        room_b = AgentTools("room-b", mock_rest_client)
+
+        await room_a._find_attachment("file-1")
+        await room_b._find_attachment("file-1")
+
+        assert (
+            mock_rest_client.agent_api_context.get_agent_chat_context.await_count == 2
+        )
+
+    @pytest.mark.asyncio
     async def test_find_attachment_retries_pagination_after_a_miss(
         self, mock_rest_client
     ):
