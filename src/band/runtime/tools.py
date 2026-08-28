@@ -13,6 +13,7 @@ import re
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
@@ -1322,6 +1323,14 @@ PREVIEWABLE_IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(
     {"image/jpeg", "image/png", "image/gif", "image/webp"}
 )
 
+# _find_attachment's cache (see attachment_cache on __init__) grows for as
+# long as its backing ExecutionContext lives -- the room's whole process
+# lifetime, not one turn. Bounded FIFO eviction, same pattern used for the
+# other long-lived per-room caches in this codebase (e.g.
+# contact_handler.py's MAX_DEDUP_CACHE_SIZE), keeps that growth from being
+# unbounded for a room with an unusually high file count over its lifetime.
+MAX_ATTACHMENT_CACHE_SIZE = 1000
+
 # The platform answers an identical 404 for "file transfer is off in this
 # deployment" and "wrong id / wrong room / file doesn't exist" -- there is no
 # truthful way to tell those apart from the response, so one message covers
@@ -1815,7 +1824,7 @@ class AgentTools(AgentToolsProtocol):
         *,
         hub_room_id: str | None = None,
         agent_id: str | None = None,
-        attachment_cache: dict[str, "Attachment"] | None = None,
+        attachment_cache: "OrderedDict[str, Attachment] | None" = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1833,18 +1842,19 @@ class AgentTools(AgentToolsProtocol):
                 otherwise gate them.
             attachment_cache: Optional file_id->Attachment map for
                 _find_attachment to check before paginating. Pass the same
-                dict across calls (e.g. ExecutionContext.attachment_cache) to
-                skip re-pagination across turns; omitted, a fresh instance
+                OrderedDict across calls (e.g. ExecutionContext.attachment_cache)
+                to skip re-pagination across turns; omitted, a fresh instance
                 dict is still populated and reused for this instance's own
-                lifetime.
+                lifetime. Bounded to MAX_ATTACHMENT_CACHE_SIZE with FIFO
+                eviction.
         """
         self.room_id = room_id
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
         self._agent_id = agent_id
-        self._attachment_cache: dict[str, Attachment] = (
-            attachment_cache if attachment_cache is not None else {}
+        self._attachment_cache: OrderedDict[str, Attachment] = (
+            attachment_cache if attachment_cache is not None else OrderedDict()
         )
         self._ctx: ExecutionContext | None = None
 
@@ -2732,16 +2742,26 @@ class AgentTools(AgentToolsProtocol):
         (see ``attachment_cache`` on ``__init__``) skips pagination entirely
         on a repeat or cross-turn lookup. Every attachment passed while
         walking pages is cached, not just the match, so one page walk pays
-        for every file on it.
+        for every file on it. A miss is never itself cached: the file may
+        simply not have been posted yet, and the real existence check is
+        already _download_file's 404, independent of this cache.
         """
         if cached := self._attachment_cache.get(file_id):
             return cached
         async for response in self._iter_message_pages():
             for attachment in self._attachments_in(response.data):
-                self._attachment_cache[attachment.id] = attachment
+                self._cache_attachment(attachment)
             if file_id in self._attachment_cache:
                 return self._attachment_cache[file_id]
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+
+    def _cache_attachment(self, attachment: "Attachment") -> None:
+        """Add to the attachment cache, evicting the oldest entry past
+        MAX_ATTACHMENT_CACHE_SIZE (FIFO, not access-order LRU -- same bounded
+        long-lived-cache pattern as contact_handler.py's dedup caches)."""
+        self._attachment_cache[attachment.id] = attachment
+        if len(self._attachment_cache) > MAX_ATTACHMENT_CACHE_SIZE:
+            self._attachment_cache.popitem(last=False)
 
     async def _download_file(self, file_id: str) -> bytes:
         """Download an attachment's raw bytes, translating a 404 for the LLM."""

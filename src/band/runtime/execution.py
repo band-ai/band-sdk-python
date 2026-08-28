@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections import OrderedDict
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
@@ -287,10 +288,12 @@ class ExecutionContext:
         # Attachment lookup cache, shared live (not snapshotted) with every
         # AgentTools built via from_context() for this room -- unlike the
         # roster above, attachments are never edited or removed once posted,
-        # so a plain accumulating dict needs no merge/diff logic. Grows with
-        # total attachments ever shared in this room's lifetime, not with
-        # room size at any moment; accepted for a low-traffic lookup cache.
-        self._attachment_cache: dict[str, Attachment] = {}
+        # so a plain accumulating dict needs no merge/diff logic. Bounded to
+        # MAX_ATTACHMENT_CACHE_SIZE with FIFO eviction (see
+        # AgentTools._cache_attachment) since it otherwise grows with total
+        # attachments ever shared in this room's lifetime, not with room
+        # size at any moment.
+        self._attachment_cache: OrderedDict[str, Attachment] = OrderedDict()
 
         # LLM context tracking
         self._llm_initialized = False
@@ -388,7 +391,7 @@ class ExecutionContext:
         return self._agent_id
 
     @property
-    def attachment_cache(self) -> dict[str, Attachment]:
+    def attachment_cache(self) -> OrderedDict[str, Attachment]:
         """Live attachment-lookup cache, shared by reference across turns."""
         return self._attachment_cache
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -29,6 +30,7 @@ from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
+    MAX_ATTACHMENT_CACHE_SIZE,
     MAX_INLINE_IMAGE_BYTES,
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
@@ -655,7 +657,7 @@ class TestFileTools:
     ):
         """A second lookup sharing the same cache dict must not re-paginate."""
         _mock_attachment_page(mock_rest_client, _attachment("file-1"))
-        shared_cache: dict[str, Attachment] = {}
+        shared_cache: OrderedDict[str, Attachment] = OrderedDict()
         first = AgentTools("room-123", mock_rest_client, attachment_cache=shared_cache)
         second = AgentTools("room-123", mock_rest_client, attachment_cache=shared_cache)
 
@@ -663,6 +665,20 @@ class TestFileTools:
         await second._find_attachment("file-1")
 
         mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_attachment_cache_evicts_oldest_past_max_size(self, mock_rest_client):
+        """Cache must not grow past MAX_ATTACHMENT_CACHE_SIZE -- the oldest
+        entry is evicted (FIFO), not the whole cache or a random one."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        for i in range(MAX_ATTACHMENT_CACHE_SIZE + 1):
+            tools._cache_attachment(_attachment(f"file-{i}"))
+
+        assert len(tools._attachment_cache) == MAX_ATTACHMENT_CACHE_SIZE
+        assert "file-0" not in tools._attachment_cache
+        assert "file-1" in tools._attachment_cache
+        assert f"file-{MAX_ATTACHMENT_CACHE_SIZE}" in tools._attachment_cache
 
     @pytest.mark.asyncio
     async def test_read_room_file_caches_attachments_across_recreated_tools(
