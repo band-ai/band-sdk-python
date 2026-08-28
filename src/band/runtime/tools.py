@@ -2701,18 +2701,12 @@ class AgentTools(AgentToolsProtocol):
         be older than the first page, and there is no dedicated "get
         attachment by id" endpoint to reach it directly.
 
-        A ``@staticmethod`` -- not a regular method -- so ``@alru_cache``
-        keys purely on ``(room_id, rest, file_id)`` with no ``self`` in the
-        signature to key on at all. That's what lets the cache survive
-        ``AgentTools`` being rebuilt fresh every turn (``room_id``/``rest``
-        are stable across turns; a bound ``self`` would not be). Being one
-        cache shared by the whole class also means its ``maxsize``
-        (``RuntimeSettings.BAND_ATTACHMENT_CACHE_MAXSIZE``) is one budget
-        shared across every room/agent in the process, not "N per room".
-        ``@alru_cache`` never caches a raised exception (an entry's task is
-        evicted on failure -- see async-lru's ``_task_done_callback``), so a
-        not-yet-posted file naturally isn't negative-cached; the real
-        existence check stays ``_download_file``'s 404.
+        ``@staticmethod`` so ``@alru_cache`` keys on ``(room_id, rest,
+        file_id)`` with no ``self`` to key on -- ``AgentTools`` is rebuilt
+        fresh every turn, ``room_id``/``rest`` are not. A raised exception
+        is never cached (async-lru evicts the entry on failure), so a
+        not-yet-posted file isn't negative-cached; ``_download_file``'s 404
+        stays the real existence check.
         """
 
         async def fetch(cursor: str | None) -> Any:
