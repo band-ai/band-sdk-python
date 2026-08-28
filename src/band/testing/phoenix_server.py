@@ -72,6 +72,13 @@ class FakePhoenixServer:
             outcomes.pop(0)
         return outcome
 
+    def _forget_topic(self, topic: str) -> None:
+        """Drop ``topic`` from joined-membership bookkeeping -- shared by a
+        leave and a rejected join, since both mean the server no longer
+        considers the topic joined."""
+        self.joined_topics.discard(topic)
+        self._join_refs.pop(topic, None)
+
     async def _reply(
         self,
         connection: ServerConnection,
@@ -111,12 +118,10 @@ class FakePhoenixServer:
                     # this topic joined -- including a stale entry from an
                     # earlier, since-superseded successful join on the same
                     # topic (e.g. a rejoin-after-reconnect rejection).
-                    self.joined_topics.discard(message.topic)
-                    self._join_refs.pop(message.topic, None)
+                    self._forget_topic(message.topic)
                 await self._reply(connection, message, outcome=outcome)
             case PHXEvent.leave:
-                self.joined_topics.discard(message.topic)
-                self._join_refs.pop(message.topic, None)
+                self._forget_topic(message.topic)
                 await self._reply(connection, message, outcome=JoinOutcome.OK)
             case _ if message.topic == "phoenix":
                 await self._reply(connection, message, outcome=JoinOutcome.OK)
