@@ -43,7 +43,6 @@ from band.runtime.tools import (
     LookupPeersInput,
     GetParticipantsInput,
     CreateChatroomInput,
-    _fetch_attachment,
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
@@ -656,7 +655,7 @@ class TestFileTools:
         self, mock_rest_client
     ):
         """A second lookup for the same (room, rest, file_id) must not
-        re-paginate -- _fetch_attachment is a module-level @alru_cache, keyed
+        re-paginate -- _fetch_attachment is a @staticmethod @alru_cache, keyed
         on those three, not on the AgentTools instance calling it."""
         _mock_attachment_page(mock_rest_client, _attachment("file-1"))
         first = AgentTools("room-123", mock_rest_client)
@@ -670,7 +669,7 @@ class TestFileTools:
     def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
         """The @alru_cache's maxsize must actually come from RuntimeSettings
         -- the eviction algorithm itself is async-lru's to test, not ours."""
-        assert _fetch_attachment.cache_parameters()["maxsize"] == (
+        assert AgentTools._fetch_attachment.cache_parameters()["maxsize"] == (
             RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE
         )
 
