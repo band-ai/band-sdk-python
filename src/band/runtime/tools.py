@@ -79,6 +79,12 @@ CHAT_PAGE_SIZE = 100
 # final page then degrades to a bounded read instead of looping forever.
 MAX_CHAT_PAGES = 50
 
+# Same "don't loop forever" rationale as MAX_CHAT_PAGES, for the cursor-based
+# message history walk _fetch_attachment_uncached falls back on for a cache
+# miss -- a mistyped or long-gone file_id would otherwise page through a
+# room's entire history looking for a match that isn't there.
+MAX_ATTACHMENT_LOOKUP_PAGES = 50
+
 
 async def iter_chat_pages(
     fetch: Callable[[int, int], Awaitable[Any]],
@@ -2679,18 +2685,25 @@ class AgentTools(AgentToolsProtocol):
     async def _iter_message_pages(
         fetch: Callable[[str | None], Awaitable[Any]],
     ) -> AsyncIterator[Any]:
-        """Walk every page a ``fetch(cursor)`` callable returns, oldest first.
+        """Walk up to ``MAX_ATTACHMENT_LOOKUP_PAGES`` pages a ``fetch(cursor)``
+        callable returns, oldest first.
 
-        Termination is data-driven -- the platform's own ``has_more``/
-        ``next_cursor`` on the page just fetched, not knowable in advance.
+        Termination is normally data-driven -- the platform's own
+        ``has_more``/``next_cursor`` on the page just fetched -- but capped
+        the same way ``iter_chat_pages`` is, so a target that's never found
+        can't page through a room's history forever.
         """
         cursor: str | None = None
-        more_pages = True
-        while more_pages:
+        for _ in range(MAX_ATTACHMENT_LOOKUP_PAGES):
             response = await fetch(cursor)
             yield response
             cursor = response.metadata.next_cursor
-            more_pages = bool(response.metadata.has_more and cursor)
+            if not (response.metadata.has_more and cursor):
+                return
+        logger.warning(
+            "Stopped searching room history at the %d page cap",
+            MAX_ATTACHMENT_LOOKUP_PAGES,
+        )
 
     @staticmethod
     async def _fetch_attachment_uncached(
@@ -2727,12 +2740,6 @@ class AgentTools(AgentToolsProtocol):
             AgentTools._fetch_attachment_uncached
         )
 
-    @staticmethod
-    async def _fetch_attachment(
-        room_id: str, rest: "AsyncRestClient", file_id: str
-    ) -> "Attachment":
-        return await AgentTools._attachment_cache()(room_id, rest, file_id)
-
     async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
         """
         List files shared in the current room.
@@ -2758,17 +2765,29 @@ class AgentTools(AgentToolsProtocol):
             attachments.append(attachment.model_dump())
         return {"data": attachments, "next_cursor": response.metadata.next_cursor}
 
+    @staticmethod
+    def _attachment_expired(attachment: "Attachment") -> bool:
+        """True once ``expires_at`` has passed. A naive value (no offset --
+        the Fern model doesn't enforce one) is treated as UTC, the platform's
+        only timezone, rather than raising on a naive/aware comparison."""
+        expires_at = attachment.expires_at
+        if expires_at is None:
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at <= datetime.now(timezone.utc)
+
     async def _find_attachment(self, file_id: str) -> "Attachment":
-        """Locate an attachment by id -- see ``_fetch_attachment`` for the
+        """Locate an attachment by id -- see ``_attachment_cache`` for the
         cached page-walk this delegates to.
 
         A cached attachment past its own ``expires_at`` is evicted and
         treated as not found, rather than left to a doomed download call.
         """
-        attachment = await self._fetch_attachment(self.room_id, self.rest, file_id)
-        if attachment.expires_at is not None and attachment.expires_at <= datetime.now(
-            timezone.utc
-        ):
+        attachment = await AgentTools._attachment_cache()(
+            self.room_id, self.rest, file_id
+        )
+        if self._attachment_expired(attachment):
             AgentTools._attachment_cache().cache_invalidate(
                 self.room_id, self.rest, file_id
             )

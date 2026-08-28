@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -31,6 +32,7 @@ from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
+    MAX_ATTACHMENT_LOOKUP_PAGES,
     MAX_INLINE_IMAGE_BYTES,
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
@@ -654,11 +656,35 @@ class TestFileTools:
         assert second_call_kwargs["cursor"] == "cursor-2"
 
     @pytest.mark.asyncio
+    async def test_find_attachment_stops_at_page_cap(self, mock_rest_client):
+        """A target that's never found must not page through a room's
+        history forever -- capped at MAX_ATTACHMENT_LOOKUP_PAGES, like
+        iter_chat_pages."""
+
+        def _endless_page(**_kwargs: Any) -> GetAgentChatContextResponse:
+            return _context_response(
+                [_message_with_attachments("msg", [_attachment("other-file")])],
+                next_cursor="next",
+                has_more=True,
+            )
+
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=_endless_page
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == MAX_ATTACHMENT_LOOKUP_PAGES
+
+    @pytest.mark.asyncio
     async def test_find_attachment_skips_pagination_on_cache_hit(
         self, mock_rest_client
     ):
         """A second lookup for the same (room, rest, file_id) must not
-        re-paginate -- _fetch_attachment delegates to a shared @alru_cache
+        re-paginate -- _find_attachment delegates to a shared @alru_cache
         keyed on those three, not on the AgentTools instance calling it."""
         _mock_attachment_page(mock_rest_client, _attachment("file-1"))
         first = AgentTools("room-123", mock_rest_client)
@@ -702,6 +728,20 @@ class TestFileTools:
             await tools._find_attachment("file-1")
 
         assert AgentTools._attachment_cache().cache_info().currsize == 0
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_rejects_expired_naive_timestamp(
+        self, mock_rest_client
+    ):
+        """A naive (offset-less) expires_at -- the Fern model doesn't enforce
+        one -- must be treated as UTC, not raise on comparison to aware
+        now()."""
+        expired = _attachment("file-1", expires_at=datetime(2020, 1, 1))  # no tzinfo
+        _mock_attachment_page(mock_rest_client, expired)
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
 
     def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
         """The @alru_cache's maxsize must actually come from RuntimeSettings
