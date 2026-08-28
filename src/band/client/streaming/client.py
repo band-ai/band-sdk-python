@@ -317,6 +317,14 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 
+def chat_room_topic(chat_room_id: str) -> str:
+    return f"chat_room:{chat_room_id}"
+
+
+def room_participants_topic(chat_room_id: str) -> str:
+    return f"room_participants:{chat_room_id}"
+
+
 def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
     delay = min(
         policy.max_delay_s, policy.base_delay_s * (policy.factor ** max(attempt, 0))
@@ -588,7 +596,7 @@ class WebSocketClient:
         ``message_updated`` events (e.g. delivery-status transitions). Omit it to
         ignore those events as before.
         """
-        topic = f"chat_room:{chat_room_id}"
+        topic = chat_room_topic(chat_room_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[[MessageCreatedPayload], Awaitable[None]]] = {
@@ -632,7 +640,7 @@ class WebSocketClient:
         ] = _noop_room_deleted,
     ):
         """Subscribe to room participants topic with async callbacks"""
-        topic = f"room_participants:{chat_room_id}"
+        topic = room_participants_topic(chat_room_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -681,7 +689,7 @@ class WebSocketClient:
 
     async def leave_chat_room_channel(self, chat_room_id: str):
         """Unsubscribe from chat room topic"""
-        topic = f"chat_room:{chat_room_id}"
+        topic = chat_room_topic(chat_room_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
@@ -692,7 +700,7 @@ class WebSocketClient:
 
     async def leave_room_participants_channel(self, chat_room_id: str):
         """Unsubscribe from room participants topic"""
-        topic = f"room_participants:{chat_room_id}"
+        topic = room_participants_topic(chat_room_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 

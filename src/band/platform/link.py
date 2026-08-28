@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from band.client.rest import AsyncRestClient
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
+from band.client.streaming.client import chat_room_topic, room_participants_topic
 from band.core.types import PlatformConnection
 from band.platform.message_lifecycle import MessageLifecycle
 from band.runtime.types import PlatformMessage
@@ -69,14 +70,6 @@ def _agent_rooms_topic(agent_id: str) -> str:
 
 def _agent_contacts_topic(agent_id: str) -> str:
     return f"{_AGENT_CONTACTS_KIND}:{agent_id}"
-
-
-def _chat_room_topic(room_id: str) -> str:
-    return f"chat_room:{room_id}"
-
-
-def _room_participants_topic(room_id: str) -> str:
-    return f"room_participants:{room_id}"
 
 
 class BandLink:
@@ -574,13 +567,22 @@ class BandLink:
         the Phoenix client has only connection-level hooks, no topic-level
         one — so this compares the transport's settled post-rejoin
         registry against the tracker's belief instead. Safe to read here
-        with no race: PHXChannelsClient's own rejoin fully completes,
-        including unregistering every topic that failed to rejoin, before
-        this reconnect hook ever fires.
+        with no race: PHXChannelsClient's own rejoin attempt for each topic
+        fully completes before this reconnect hook ever fires.
+
+        Only catches an *explicit* rejoin rejection (the server actually
+        replying no): PHXChannelsClient keeps a topic that hit a transient
+        failure (a join timeout, or the connection dropping mid-rejoin) in
+        its own subscription registry rather than unregistering it, logging
+        "will retry on next reconnect" — so this detector correctly sees it
+        as still joined. That topic isn't lost track of, just not caught by
+        this pass: the client itself retries it on the next reconnect,
+        which either succeeds or eventually produces a real rejection this
+        detector does catch.
         """
         for room_id in self._subscriptions.subscribed_room_ids():
-            if ws.is_topic_joined(_chat_room_topic(room_id)) and ws.is_topic_joined(
-                _room_participants_topic(room_id)
+            if ws.is_topic_joined(chat_room_topic(room_id)) and ws.is_topic_joined(
+                room_participants_topic(room_id)
             ):
                 continue
             if self._subscriptions.mark_room_rejoin_failed(room_id=room_id):
