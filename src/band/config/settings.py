@@ -30,10 +30,7 @@ class PlatformSettings(BaseSettings):
 class RuntimeSettings(BaseSettings):
     """Process-wide runtime tuning knobs, overridable via environment
     variables. Distinct from ``SessionConfig`` (``band.runtime.types``),
-    which holds per-agent-instance tunables passed explicitly by the caller
-    constructing that agent -- these are knobs for state that is itself
-    process-wide (e.g. a module-level cache shared by every agent/room in
-    the process), so a per-agent config object is the wrong scope for them.
+    which holds per-agent-instance tunables.
     """
 
     model_config = SettingsConfigDict(
@@ -42,7 +39,6 @@ class RuntimeSettings(BaseSettings):
         env_ignore_empty=True,
     )
 
-    # AgentTools._find_attachment's room-scoped lookup cache (see
-    # band.runtime.tools). Shared across every room/agent in the process, so
-    # this is one process-wide budget, not "N per room".
+    # AgentTools._fetch_attachment's cache size (band.runtime.tools) -- one
+    # process-wide budget, not "N per room".
     BAND_ATTACHMENT_CACHE_MAXSIZE: int = 1000

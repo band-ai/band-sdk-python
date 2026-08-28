@@ -2681,9 +2681,7 @@ class AgentTools(AgentToolsProtocol):
         """Walk every page a ``fetch(cursor)`` callable returns, oldest first.
 
         Termination is data-driven -- the platform's own ``has_more``/
-        ``next_cursor`` on the page just fetched, not knowable in advance --
-        so this is where that walk lives, once, mirroring ``iter_chat_pages``'s
-        injected-fetcher shape above.
+        ``next_cursor`` on the page just fetched, not knowable in advance.
         """
         cursor: str | None = None
         more_pages = True
