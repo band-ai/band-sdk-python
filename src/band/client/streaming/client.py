@@ -368,6 +368,13 @@ class WebSocketClient:
             raise RuntimeError("WebSocket client is not connected")
         return self.client
 
+    def is_topic_joined(self, topic: str) -> bool:
+        """Whether the transport's live subscription registry still has
+        `topic` joined -- the settled post-rejoin truth, not a cached
+        belief. Used to detect a topic that failed to rejoin after a
+        reconnect (see `_on_reconnect`'s ordering guarantee)."""
+        return topic in self._require_client().get_current_subscriptions()
+
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
         policy = ReconnectPolicy()

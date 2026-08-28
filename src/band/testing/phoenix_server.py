@@ -106,6 +106,13 @@ class FakePhoenixServer:
                 if outcome is JoinOutcome.OK:
                     self.joined_topics.add(message.topic)
                     self._join_refs[message.topic] = message.join_ref
+                else:
+                    # A rejected (re)join means the server does not consider
+                    # this topic joined -- including a stale entry from an
+                    # earlier, since-superseded successful join on the same
+                    # topic (e.g. a rejoin-after-reconnect rejection).
+                    self.joined_topics.discard(message.topic)
+                    self._join_refs.pop(message.topic, None)
                 await self._reply(connection, message, outcome=outcome)
             case PHXEvent.leave:
                 self.joined_topics.discard(message.topic)

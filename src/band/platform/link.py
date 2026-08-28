@@ -71,6 +71,14 @@ def _agent_contacts_topic(agent_id: str) -> str:
     return f"{_AGENT_CONTACTS_KIND}:{agent_id}"
 
 
+def _chat_room_topic(room_id: str) -> str:
+    return f"chat_room:{room_id}"
+
+
+def _room_participants_topic(room_id: str) -> str:
+    return f"room_participants:{room_id}"
+
+
 class BandLink:
     """
     Live link to Band platform.
@@ -560,6 +568,37 @@ class BandLink:
         """Whether ``room_id`` is currently fully subscribed (both topics)."""
         return self._subscriptions.is_room_subscribed(room_id=room_id)
 
+    def _detect_room_rejoin_failures(self, ws: WebSocketClient) -> None:
+        """A room's chat_room/room_participants topic can fail to rejoin
+        after a reconnect with no callback into anything BandLink-owned —
+        the Phoenix client has only connection-level hooks, no topic-level
+        one — so this compares the transport's settled post-rejoin
+        registry against the tracker's belief instead. Safe to read here
+        with no race: PHXChannelsClient's own rejoin fully completes,
+        including unregistering every topic that failed to rejoin, before
+        this reconnect hook ever fires.
+        """
+        for room_id in self._subscriptions.subscribed_room_ids():
+            if ws.is_topic_joined(_chat_room_topic(room_id)) and ws.is_topic_joined(
+                _room_participants_topic(room_id)
+            ):
+                continue
+            if self._subscriptions.mark_room_rejoin_failed(room_id=room_id):
+                self._mark_needing_reconciliation(
+                    room_id, self._rooms_needing_reconciliation, ws
+                )
+
+    def _detect_agent_topic_rejoin_failures(self, ws: WebSocketClient) -> None:
+        """Same rejoin-failure detection as ``_detect_room_rejoin_failures``,
+        for the single-topic agent channels."""
+        for topic in self._subscriptions.joined_agent_topics():
+            if ws.is_topic_joined(topic):
+                continue
+            if self._subscriptions.mark_agent_topic_rejoin_failed(topic=topic):
+                self._mark_needing_reconciliation(
+                    topic, self._agent_topics_needing_reconciliation, ws
+                )
+
     # --- Event handlers (from BandAgent, unified into PlatformEvent) ---
 
     async def _on_reconnected(self) -> None:
@@ -570,6 +609,11 @@ class BandLink:
         RoomPresence can then reconcile tracked rooms against the server state
         without leaking channels or replaying duplicate room joins.
 
+        Detects any room/agent topic that failed to *rejoin* (as opposed to
+        the ambiguous-outcome cases already tracked locally) before draining,
+        so a rejoin failure gets the same best-effort clean leave as every
+        other ambiguous case in the same reconnect cycle.
+
         Also drains anything left in the local reconciliation sets: the
         transport's own auto-rejoin above can silently succeed for a room/
         topic whose prior join or leave was ambiguous (cancelled, or a
@@ -579,6 +623,12 @@ class BandLink:
         """
         logger.info("WebSocket reconnected — reconciling room state")
         self._subscriptions.on_reconnected()
+        assert (
+            self._ws is not None
+        )  # only called from the ws client's own reconnect hook
+        ws = self._ws
+        self._detect_room_rejoin_failures(ws)
+        self._detect_agent_topic_rejoin_failures(ws)
         await self._drain_reconciliation()
         self._queue_event(ReconnectedEvent())
 

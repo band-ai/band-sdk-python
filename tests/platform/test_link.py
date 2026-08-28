@@ -55,6 +55,12 @@ def mock_ws_client():
     ws.__aenter__.return_value = ws
     ws.__aexit__.return_value = None
 
+    # Documented "nothing failed to rejoin" default -- an unconfigured
+    # autospec call would otherwise return a bare (truthy) MagicMock, making
+    # _detect_room_rejoin_failures/_detect_agent_topic_rejoin_failures read
+    # "topic present" by accident of mock truthiness rather than by design.
+    ws.is_topic_joined.return_value = True
+
     ws.last_disconnect_reason = None
 
     def record_terminal_disconnect(reason):
