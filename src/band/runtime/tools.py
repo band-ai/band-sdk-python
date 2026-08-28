@@ -2700,13 +2700,6 @@ class AgentTools(AgentToolsProtocol):
         ``_lookup_peer``) instead of returning one page: the target file may
         be older than the first page, and there is no dedicated "get
         attachment by id" endpoint to reach it directly.
-
-        ``@staticmethod`` so ``@alru_cache`` keys on ``(room_id, rest,
-        file_id)`` with no ``self`` to key on -- ``AgentTools`` is rebuilt
-        fresh every turn, ``room_id``/``rest`` are not. A raised exception
-        is never cached (async-lru evicts the entry on failure), so a
-        not-yet-posted file isn't negative-cached; ``_download_file``'s 404
-        stays the real existence check.
         """
 
         async def fetch(cursor: str | None) -> Any:

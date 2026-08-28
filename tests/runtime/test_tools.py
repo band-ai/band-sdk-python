@@ -666,6 +666,25 @@ class TestFileTools:
 
         mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_find_attachment_retries_pagination_after_a_miss(
+        self, mock_rest_client
+    ):
+        """A miss must not be cached: a file posted after a failed lookup is
+        still findable on the next attempt, not permanently "not found"."""
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            return_value=_context_response([])
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        result = await tools._find_attachment("file-1")
+
+        assert result.id == "file-1"
+
     def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
         """The @alru_cache's maxsize must actually come from RuntimeSettings
         -- the eviction algorithm itself is async-lru's to test, not ours."""
