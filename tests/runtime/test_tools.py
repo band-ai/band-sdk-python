@@ -658,8 +658,8 @@ class TestFileTools:
         self, mock_rest_client
     ):
         """A second lookup for the same (room, rest, file_id) must not
-        re-paginate -- _fetch_attachment is a @staticmethod @alru_cache, keyed
-        on those three, not on the AgentTools instance calling it."""
+        re-paginate -- _fetch_attachment delegates to a shared @alru_cache
+        keyed on those three, not on the AgentTools instance calling it."""
         _mock_attachment_page(mock_rest_client, _attachment("file-1"))
         first = AgentTools("room-123", mock_rest_client)
         second = AgentTools("room-123", mock_rest_client)
@@ -701,14 +701,29 @@ class TestFileTools:
         with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
             await tools._find_attachment("file-1")
 
-        assert AgentTools._fetch_attachment.cache_info().currsize == 0
+        assert AgentTools._attachment_cache().cache_info().currsize == 0
 
     def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
         """The @alru_cache's maxsize must actually come from RuntimeSettings
         -- the eviction algorithm itself is async-lru's to test, not ours."""
-        assert AgentTools._fetch_attachment.cache_parameters()["maxsize"] == (
+        assert AgentTools._attachment_cache().cache_parameters()["maxsize"] == (
             RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE
         )
+
+    def test_attachment_cache_rereads_settings_lazily(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """maxsize must come from RuntimeSettings at first real use, not at
+        module import -- every example does `from band import Agent` (which
+        imports this module) before its own load_dotenv() call, so baking
+        RuntimeSettings() into a decorator at class-body time would silently
+        ignore a .env-set override."""
+        AgentTools._attachment_cache.cache_clear()
+        monkeypatch.setenv("BAND_ATTACHMENT_CACHE_MAXSIZE", "42")
+        try:
+            assert AgentTools._attachment_cache().cache_parameters()["maxsize"] == 42
+        finally:
+            AgentTools._attachment_cache.cache_clear()
 
     @pytest.mark.asyncio
     async def test_read_room_file_caches_attachments_across_recreated_tools(

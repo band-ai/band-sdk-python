@@ -7,6 +7,7 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import logging
 import re
@@ -2692,8 +2693,7 @@ class AgentTools(AgentToolsProtocol):
             more_pages = bool(response.metadata.has_more and cursor)
 
     @staticmethod
-    @alru_cache(maxsize=RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE)
-    async def _fetch_attachment(
+    async def _fetch_attachment_uncached(
         room_id: str, rest: "AsyncRestClient", file_id: str
     ) -> "Attachment":
         """Locate an attachment by id, exhausting pagination (like
@@ -2710,6 +2710,28 @@ class AgentTools(AgentToolsProtocol):
                 if attachment.id == file_id:
                     return attachment
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+
+    @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _attachment_cache() -> Any:
+        """Build the ``alru_cache``-wrapped lookup once, lazily, on first use.
+
+        A zero-arg singleton so ``RuntimeSettings()`` (and thus
+        ``BAND_ATTACHMENT_CACHE_MAXSIZE``) is read on first call, not at
+        module import -- decorating ``_fetch_attachment_uncached`` directly
+        would bake the maxsize in before an app's ``load_dotenv()`` has had a
+        chance to run. Returns ``async_lru``'s wrapper object (``cache_info``/
+        ``cache_invalidate``/etc.), whose type is private to that library.
+        """
+        return alru_cache(maxsize=RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE)(
+            AgentTools._fetch_attachment_uncached
+        )
+
+    @staticmethod
+    async def _fetch_attachment(
+        room_id: str, rest: "AsyncRestClient", file_id: str
+    ) -> "Attachment":
+        return await AgentTools._attachment_cache()(room_id, rest, file_id)
 
     async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
         """
@@ -2747,7 +2769,9 @@ class AgentTools(AgentToolsProtocol):
         if attachment.expires_at is not None and attachment.expires_at <= datetime.now(
             timezone.utc
         ):
-            self._fetch_attachment.cache_invalidate(self.room_id, self.rest, file_id)
+            AgentTools._attachment_cache().cache_invalidate(
+                self.room_id, self.rest, file_id
+            )
             raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
         return attachment
 
