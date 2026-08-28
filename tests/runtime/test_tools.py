@@ -32,7 +32,6 @@ from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
-    MAX_ATTACHMENT_LOOKUP_PAGES,
     MAX_INLINE_IMAGE_BYTES,
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
@@ -656,20 +655,20 @@ class TestFileTools:
         assert second_call_kwargs["cursor"] == "cursor-2"
 
     @pytest.mark.asyncio
-    async def test_find_attachment_stops_at_page_cap(self, mock_rest_client):
-        """A target that's never found must not page through a room's
-        history forever -- capped at MAX_ATTACHMENT_LOOKUP_PAGES, like
-        iter_chat_pages."""
+    async def test_find_attachment_stops_on_repeated_cursor(self, mock_rest_client):
+        """A malformed response repeating a cursor must not loop forever --
+        the only pagination guard, since a room's history has no realistic
+        depth ceiling to cap against (unlike iter_chat_pages's room count)."""
 
-        def _endless_page(**_kwargs: Any) -> GetAgentChatContextResponse:
+        def _looping_page(**_kwargs: Any) -> GetAgentChatContextResponse:
             return _context_response(
                 [_message_with_attachments("msg", [_attachment("other-file")])],
-                next_cursor="next",
+                next_cursor="same-cursor",
                 has_more=True,
             )
 
         mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
-            side_effect=_endless_page
+            side_effect=_looping_page
         )
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -677,7 +676,45 @@ class TestFileTools:
             await tools._find_attachment("file-1")
 
         get_context = mock_rest_client.agent_api_context.get_agent_chat_context
-        assert get_context.await_count == MAX_ATTACHMENT_LOOKUP_PAGES
+        assert get_context.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_searches_past_fifty_pages(self, mock_rest_client):
+        """A room with more than 50 pages of history before the target file
+        must still resolve it -- there is no depth cap."""
+        target_page = 60
+        target = _attachment(content_type="text/plain", size=5)
+
+        def _paged_history(**kwargs: Any) -> GetAgentChatContextResponse:
+            cursor = kwargs.get("cursor")
+            page = int(cursor.removeprefix("page-")) if cursor else 1
+            if page < target_page:
+                return _context_response(
+                    [
+                        _message_with_attachments(
+                            f"msg-{page}", [_attachment("other-file")]
+                        )
+                    ],
+                    next_cursor=f"page-{page + 1}",
+                    has_more=True,
+                )
+            return _context_response(
+                [_message_with_attachments(f"msg-{page}", [target])]
+            )
+
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=_paged_history
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["text"] == "hello"
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == target_page
 
     @pytest.mark.asyncio
     async def test_find_attachment_skips_pagination_on_cache_hit(
@@ -717,7 +754,9 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_find_attachment_rejects_expired_cached_entry(self, mock_rest_client):
         """An attachment past its own expires_at must not be handed back
-        from cache -- it's treated as not found and evicted, not downloaded."""
+        from cache -- it's evicted and re-fetched once (the cached copy may
+        just predate the platform extending the deadline), and only raised
+        as not-found if the fresh read is still expired too."""
         expired = _attachment(
             "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
         )
@@ -727,7 +766,49 @@ class TestFileTools:
         with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
             await tools._find_attachment("file-1")
 
-        assert AgentTools._attachment_cache().cache_info().currsize == 0
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_refreshes_an_expired_entry(self, mock_rest_client):
+        """A cache entry whose expires_at has passed gets exactly one
+        real re-fetch -- if that comes back not-expired (the platform
+        extended it), it's returned, not rejected on the stale cached
+        timestamp."""
+        not_expired = _attachment(
+            "file-1",
+            content_type="text/plain",
+            size=5,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        expired_page = _context_response(
+            [
+                _message_with_attachments(
+                    "msg-1",
+                    [
+                        _attachment(
+                            "file-1",
+                            expires_at=datetime.now(timezone.utc)
+                            - timedelta(seconds=1),
+                        )
+                    ],
+                )
+            ]
+        )
+        refreshed_page = _context_response(
+            [_message_with_attachments("msg-1", [not_expired])]
+        )
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=[expired_page, refreshed_page]
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["text"] == "hello"
 
     @pytest.mark.asyncio
     async def test_find_attachment_rejects_expired_naive_timestamp(

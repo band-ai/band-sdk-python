@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast
 
 import band_sdk_core
 from async_lru import alru_cache
@@ -78,12 +78,6 @@ CHAT_PAGE_SIZE = 100
 # 5,000 rooms is far past any real agent, and a listing that never reports a
 # final page then degrades to a bounded read instead of looping forever.
 MAX_CHAT_PAGES = 50
-
-# Same "don't loop forever" rationale as MAX_CHAT_PAGES, for the cursor-based
-# message history walk _fetch_attachment_uncached falls back on for a cache
-# miss -- a mistyped or long-gone file_id would otherwise page through a
-# room's entire history looking for a match that isn't there.
-MAX_ATTACHMENT_LOOKUP_PAGES = 50
 
 
 async def iter_chat_pages(
@@ -1788,6 +1782,23 @@ def serialize_tool_result(result: Any) -> Any:
     return result
 
 
+class AttachmentCache(Protocol):
+    """The subset of async_lru's wrapper object AgentTools relies on.
+
+    Structural, not the real ``_LRUCacheWrapper`` -- that class is private to
+    async_lru (leading underscore, not exported), so naming it here would
+    couple us to an implementation detail that library owes us no stability
+    on.
+    """
+
+    async def __call__(
+        self, room_id: str, rest: "AsyncRestClient", file_id: str
+    ) -> "Attachment": ...
+    def cache_invalidate(self, *args: Any, **kwargs: Any) -> bool: ...
+    def cache_info(self) -> Any: ...
+    def cache_parameters(self) -> Any: ...
+
+
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -2685,25 +2696,32 @@ class AgentTools(AgentToolsProtocol):
     async def _iter_message_pages(
         fetch: Callable[[str | None], Awaitable[Any]],
     ) -> AsyncIterator[Any]:
-        """Walk up to ``MAX_ATTACHMENT_LOOKUP_PAGES`` pages a ``fetch(cursor)``
-        callable returns, oldest first.
+        """Walk every page a ``fetch(cursor)`` callable returns, oldest first.
 
-        Termination is normally data-driven -- the platform's own
-        ``has_more``/``next_cursor`` on the page just fetched -- but capped
-        the same way ``iter_chat_pages`` is, so a target that's never found
-        can't page through a room's history forever.
+        Termination is data-driven -- the platform's own ``has_more``/
+        ``next_cursor`` on the page just fetched. Unlike ``iter_chat_pages``,
+        this has no depth cap: a room's message history has no realistic
+        ceiling to bound against, and a target that's merely old, not
+        missing, must still be found. The only thing guarded against is a
+        malformed response repeating a cursor it already returned, which
+        would otherwise loop forever making no progress.
         """
         cursor: str | None = None
-        for _ in range(MAX_ATTACHMENT_LOOKUP_PAGES):
+        seen_cursors: set[str] = set()
+        more_pages = True
+        while more_pages:
             response = await fetch(cursor)
             yield response
             cursor = response.metadata.next_cursor
-            if not (response.metadata.has_more and cursor):
-                return
-        logger.warning(
-            "Stopped searching room history at the %d page cap",
-            MAX_ATTACHMENT_LOOKUP_PAGES,
-        )
+            more_pages = bool(response.metadata.has_more and cursor)
+            if more_pages:
+                if cursor in seen_cursors:
+                    logger.warning(
+                        "Stopped searching room history: server repeated cursor %r",
+                        cursor,
+                    )
+                    return
+                seen_cursors.add(cursor)
 
     @staticmethod
     async def _fetch_attachment_uncached(
@@ -2726,15 +2744,14 @@ class AgentTools(AgentToolsProtocol):
 
     @staticmethod
     @functools.lru_cache(maxsize=None)
-    def _attachment_cache() -> Any:
+    def _attachment_cache() -> AttachmentCache:
         """Build the ``alru_cache``-wrapped lookup once, lazily, on first use.
 
         A zero-arg singleton so ``RuntimeSettings()`` (and thus
         ``BAND_ATTACHMENT_CACHE_MAXSIZE``) is read on first call, not at
         module import -- decorating ``_fetch_attachment_uncached`` directly
         would bake the maxsize in before an app's ``load_dotenv()`` has had a
-        chance to run. Returns ``async_lru``'s wrapper object (``cache_info``/
-        ``cache_invalidate``/etc.), whose type is private to that library.
+        chance to run.
         """
         return alru_cache(maxsize=RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE)(
             AgentTools._fetch_attachment_uncached
@@ -2782,7 +2799,9 @@ class AgentTools(AgentToolsProtocol):
         cached page-walk this delegates to.
 
         A cached attachment past its own ``expires_at`` is evicted and
-        treated as not found, rather than left to a doomed download call.
+        re-fetched once before being treated as not found: the cached copy
+        may simply predate the platform extending that deadline, and a
+        second stale-looking read shouldn't cost more than one extra lookup.
         """
         attachment = await AgentTools._attachment_cache()(
             self.room_id, self.rest, file_id
@@ -2791,7 +2810,11 @@ class AgentTools(AgentToolsProtocol):
             AgentTools._attachment_cache().cache_invalidate(
                 self.room_id, self.rest, file_id
             )
-            raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+            attachment = await AgentTools._attachment_cache()(
+                self.room_id, self.rest, file_id
+            )
+            if self._attachment_expired(attachment):
+                raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
         return attachment
 
     async def _download_file(self, file_id: str) -> bytes:
