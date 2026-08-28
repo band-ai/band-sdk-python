@@ -340,8 +340,8 @@ addopts = "-v"
 # override to 120s via pytest_collection_modifyitems in their conftest.
 timeout = 30
 filterwarnings = [
-    # AgentTools._find_attachment's module-level @alru_cache binds to the
-    # first asyncio event loop it runs on; pytest-asyncio's default
+    # AgentTools._attachment_cache's @alru_cache binds to the first asyncio
+    # event loop it runs on; pytest-asyncio's default
     # function-scoped test loop means the *first* test-to-test loop switch
     # trips this once per process, ever -- async_lru's own message says so
     # ("safe but unusual outside of tests"). Real deployments run one loop

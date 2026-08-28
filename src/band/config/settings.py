@@ -39,6 +39,6 @@ class RuntimeSettings(BaseSettings):
         env_ignore_empty=True,
     )
 
-    # AgentTools._fetch_attachment's cache size (band.runtime.tools) -- one
+    # AgentTools._attachment_cache's size (band.runtime.tools) -- one
     # process-wide budget, not "N per room".
     BAND_ATTACHMENT_CACHE_MAXSIZE: int = 1000
