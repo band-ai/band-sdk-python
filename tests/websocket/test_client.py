@@ -1061,13 +1061,13 @@ async def test_watchdog_ack_keeps_connection_alive_across_heartbeat_cycles():
     """A real heartbeat/ack round-trip resets the watchdog deadline each
     cycle, so the connection survives well past a single dead_threshold_s
     window without the watchdog ever tripping."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=0.15)
+    policy = _fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
     async with phoenix_peer() as (ws_url, connected):
         async with WebSocketClient(
             ws_url, "test-key", "agent-123", session_policy=policy
         ) as client:
             await asyncio.wait_for(connected, timeout=5)
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(1.0)
             assert client.client is not None
             assert client.client.connection is not None
             assert client.client.connection.close_code is None
@@ -1077,7 +1077,7 @@ async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
     """A withheld ack forces close_connection at (approximately)
     dead_threshold_s, and the forced close flows into the client's own
     reconnect path -- on_reconnect fires once the new connection lands."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=0.15)
+    policy = _fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
     reconnected = asyncio.Event()
 
     async def on_reconnect() -> None:
@@ -1209,6 +1209,45 @@ async def test_watchdog_does_not_warn_or_close_while_already_disconnected():
     watchdog = asyncio.create_task(client._watchdog_loop(fake))
 
     await asyncio.sleep(0.15)
+    watchdog.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await watchdog
+
+    assert fake.close_calls == []
+
+
+async def test_reconnect_resets_watchdog_deadline_so_a_fresh_socket_survives():
+    """A reconnect must reset the watchdog deadline immediately -- otherwise
+    it can inherit a stale deadline (from the disconnected-state polling
+    above) that expires before the fresh socket's first heartbeat cycle,
+    force-closing a healthy connection."""
+
+    class FakePHXClient:
+        def __init__(self) -> None:
+            self.connection = object()
+            self.close_calls: list[str] = []
+
+        async def close_connection(self, reason: str) -> None:
+            self.close_calls.append(reason)
+
+    policy = _fast_session_policy(heartbeat_interval_s=0.1, dead_threshold_s=0.12)
+    client = WebSocketClient(
+        "ws://localhost", "test-key", "agent-123", session_policy=policy
+    )
+    fake = FakePHXClient()
+
+    # The disconnected-state watchdog polling has already scheduled a trip
+    # unrelated to when reconnect actually completes.
+    client._reset_watchdog_deadline()
+    await asyncio.sleep(policy.dead_threshold_s * 0.8)
+
+    # Reconnect completes just before that already-scheduled deadline.
+    await client._handle_reconnect()
+
+    watchdog = asyncio.create_task(client._watchdog_loop(fake))
+    # Wait less than heartbeat_interval_s: the fresh connection hasn't had
+    # time to send or ack its first heartbeat yet.
+    await asyncio.sleep(policy.heartbeat_interval_s * 0.5)
     watchdog.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await watchdog

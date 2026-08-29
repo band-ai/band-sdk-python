@@ -355,11 +355,11 @@ markers = [
 members = ["packages/*"]
 
 [tool.uv.sources]
-# TEMPORARY (INT-1323): phoenix-channels-python-client's on_heartbeat_ack
-# callback and close_connection method are not on PyPI yet -- they ship in
-# https://github.com/band-ai/phoenix-channels-python-client/pull/53, still
-# open. Remove this table and the >=0.3.0 pin above once that PR merges and
-# releases; PyPI's next release is what 0.3.0 should resolve to.
+# TEMPORARY (INT-1323): on_heartbeat_ack/close_connection aren't released yet
+# (github.com/band-ai/phoenix-channels-python-client/pull/53). The >=0.3.0
+# floor above is a placeholder, not a real version -- don't lower it to
+# resolve to 0.2.3, which lacks these methods and would crash at runtime.
+# Remove this table and set the real floor once PR #53 releases.
 phoenix-channels-python-client = { git = "https://github.com/AlexanderZ-Band/phoenix-channels-python-client", branch = "int-1323-add-shared-heartbeat-interval-dead-threshold-policy-to-band" }
 
 [tool.uv]

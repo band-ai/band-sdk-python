@@ -379,6 +379,18 @@ class WebSocketClient:
             asyncio.get_running_loop().time() + self._session_policy.dead_threshold_s
         )
 
+    async def _handle_reconnect(self) -> None:
+        """Reset the watchdog deadline on reconnect, then forward to the
+        caller's own on_reconnect callback (if any).
+
+        Without this, a reconnect can inherit a deadline set before the new
+        socket existed and expire before its first heartbeat_interval_s
+        cycle completes, force-closing a healthy connection.
+        """
+        self._reset_watchdog_deadline()
+        if self._on_reconnect is not None:
+            await self._on_reconnect()
+
     async def _watchdog_loop(self, client: PHXChannelsClient) -> None:
         """Force-close ``client`` once dead_threshold_s passes with no ack.
 
@@ -439,7 +451,7 @@ class WebSocketClient:
                 protocol_version=PhoenixChannelsProtocolVersion.V2,
                 auto_reconnect=False,
                 heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
-                on_reconnect=self._on_reconnect,
+                on_reconnect=self._handle_reconnect,
                 on_disconnect=self._on_disconnect,
                 on_heartbeat_ack=self._reset_watchdog_deadline,
                 # Also send the key as an x-api-key handshake header. Under
