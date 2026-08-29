@@ -18,6 +18,7 @@ from phoenix_channels_python_client.phx_messages import PHXMessage
 from band.client.streaming.errors import classify_initial_upgrade_error
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
+from band_sdk_core import AgentTopicKind, chat_room_topic, room_participants_topic
 
 logger = logging.getLogger(__name__)
 
@@ -317,30 +318,6 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 
-# Single source of truth for the two single-topic agent-channel kinds: every
-# site that builds a topic string (agent_*_topic) or parses one back apart
-# (BandLink._drain_agent_topic_reconciliation) reads these, so a typo in one
-# can't silently diverge from the other.
-AGENT_ROOMS_KIND = "agent_rooms"
-AGENT_CONTACTS_KIND = "agent_contacts"
-
-
-def agent_rooms_topic(agent_id: str) -> str:
-    return f"{AGENT_ROOMS_KIND}:{agent_id}"
-
-
-def agent_contacts_topic(agent_id: str) -> str:
-    return f"{AGENT_CONTACTS_KIND}:{agent_id}"
-
-
-def chat_room_topic(chat_room_id: str) -> str:
-    return f"chat_room:{chat_room_id}"
-
-
-def room_participants_topic(chat_room_id: str) -> str:
-    return f"room_participants:{chat_room_id}"
-
-
 def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
     delay = min(
         policy.max_delay_s, policy.base_delay_s * (policy.factor ** max(attempt, 0))
@@ -562,7 +539,7 @@ class WebSocketClient:
         Handles terminal ``supersede`` events and, when ``on_control`` is
         provided, ``agent.control`` interrupt/stop/play signals.
         """
-        topic = f"agent_control:{agent_id}"
+        topic = AgentTopicKind.Control.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[..., Awaitable[None]]] = {
@@ -585,7 +562,7 @@ class WebSocketClient:
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
     ):
         """Subscribe to agent rooms topic with async callbacks"""
-        topic = agent_rooms_topic(agent_id)
+        topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -695,13 +672,13 @@ class WebSocketClient:
 
     async def leave_agent_control_channel(self, agent_id: str):
         """Unsubscribe from agent control topic"""
-        topic = f"agent_control:{agent_id}"
+        topic = AgentTopicKind.Control.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_agent_rooms_channel(self, agent_id: str):
         """Unsubscribe from agent rooms topic"""
-        topic = agent_rooms_topic(agent_id)
+        topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
@@ -740,7 +717,7 @@ class WebSocketClient:
         on_contact_removed: Callable[[ContactRemovedPayload], Awaitable[None]],
     ):
         """Subscribe to agent contacts topic with async callbacks."""
-        topic = agent_contacts_topic(agent_id)
+        topic = AgentTopicKind.Contacts.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -760,7 +737,7 @@ class WebSocketClient:
 
     async def leave_agent_contacts_channel(self, agent_id: str):
         """Unsubscribe from agent contacts topic."""
-        topic = agent_contacts_topic(agent_id)
+        topic = AgentTopicKind.Contacts.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
