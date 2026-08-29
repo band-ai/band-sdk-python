@@ -76,6 +76,34 @@ async def test_room_participants_rejoin_failure_marks_room_unsubscribed() -> Non
         )  # forced clean of both topics
 
 
+async def test_agent_control_rejoin_failure_is_recovered_on_reconnect() -> None:
+    """agent_control is joined directly in connect(), outside
+    SubscriptionTracker, so it is invisible to
+    _detect_agent_topic_rejoin_failures -- a rejected rejoin must instead be
+    repaired by _recover_agent_control, or later STOP/INTERRUPT/PLAY control
+    pushes are silently lost for the rest of the process."""
+    async with fake_phoenix_server(
+        join_outcomes={
+            "agent_control:agent-123": [
+                JoinOutcome.OK,
+                JoinOutcome.REJECTED,
+                JoinOutcome.OK,
+            ],
+        }
+    ) as server:
+        link = make_link(server.url)
+        await link.connect()
+        assert "agent_control:agent-123" in server.joined_topics
+
+        reconnect_handled = spy_on_reconciliation_drain(link)
+        await server.abort_connection()
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
+
+        # The recovery rejoin (the third declared outcome) actually reached
+        # the server and was acked -- not just that BandLink attempted it.
+        assert "agent_control:agent-123" in server.joined_topics
+
+
 async def test_agent_rooms_rejoin_failure_marks_topic_unjoined() -> None:
     """Same rejoin-failure detection as the room test, for the single-topic
     agent channels. No public BandLink-level read exists for agent-topic

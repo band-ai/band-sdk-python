@@ -588,6 +588,26 @@ class BandLink:
                     topic, self._agent_topics_needing_reconciliation, ws
                 )
 
+    async def _recover_agent_control(self, ws: WebSocketClient) -> None:
+        """agent_control is joined once in connect() and lives for the whole
+        session, outside SubscriptionTracker entirely -- unlike the
+        tracker-owned channels, there is no consumer-facing resubscribe call
+        waiting to be unblocked, so a rejoin PHX itself rejected is repaired
+        here directly instead of only flagged for later."""
+        topic = AgentTopicKind.Control.topic(self.agent_id)
+        if topic in ws.joined_topics():
+            return
+        logger.warning("agent_control rejoin failed, attempting recovery")
+        try:
+            await ws.join_agent_control_channel(
+                self.agent_id,
+                on_supersede=self._on_supersede,
+                on_control=self._on_control,
+            )
+            logger.info("Recovered agent_control after a rejected rejoin")
+        except Exception as e:
+            logger.warning("Failed to recover agent_control: %s", e)
+
     # --- Event handlers (from BandAgent, unified into PlatformEvent) ---
 
     async def _on_reconnected(self) -> None:
@@ -605,6 +625,7 @@ class BandLink:
         logger.info("WebSocket reconnected — reconciling room state")
         self._subscriptions.on_reconnected()
         ws = self._connected_ws()
+        await self._recover_agent_control(ws)
         self._detect_room_rejoin_failures(ws)
         self._detect_agent_topic_rejoin_failures(ws)
         await self._drain_reconciliation()
