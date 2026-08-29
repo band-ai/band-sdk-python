@@ -374,12 +374,9 @@ class WebSocketClient:
         return self.client
 
     def joined_topics(self) -> frozenset[str]:
-        """Snapshot of the transport's live subscription registry -- the
-        settled post-rejoin truth, not a cached belief (see
-        `_on_reconnect`'s ordering guarantee). Take one snapshot per
-        detection pass and check membership against it, rather than
-        querying per topic: the underlying client call does a full dict
-        copy every time it's invoked."""
+        """Live snapshot of the transport's subscription registry. Call
+        once per detection pass and check membership against it --
+        `get_current_subscriptions` copies its dict on every call."""
         return frozenset(self._require_client().get_current_subscriptions())
 
     async def __aenter__(self):
