@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +17,7 @@ from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from band.client.streaming.errors import classify_initial_upgrade_error
+from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
 
@@ -346,9 +346,7 @@ class WebSocketClient:
         self._on_disconnect = on_disconnect
         self._validation_error_count: int = 0
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
-        self._session_policy = session_policy or SessionPolicy.default()
-        self._watchdog_task: asyncio.Task[None] | None = None
-        self._watchdog_deadline: float = 0.0
+        self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
 
     @property
     def validation_error_count(self) -> int:
@@ -374,11 +372,6 @@ class WebSocketClient:
             raise RuntimeError("WebSocket client is not connected")
         return self.client
 
-    def _reset_watchdog_deadline(self) -> None:
-        self._watchdog_deadline = (
-            asyncio.get_running_loop().time() + self._session_policy.dead_threshold_s
-        )
-
     async def _handle_reconnect(self) -> None:
         """Reset the watchdog deadline on reconnect, then forward to the
         caller's own on_reconnect callback (if any).
@@ -387,59 +380,9 @@ class WebSocketClient:
         socket existed and expire before its first heartbeat_interval_s
         cycle completes, force-closing a healthy connection.
         """
-        self._reset_watchdog_deadline()
+        self._watchdog.reset_deadline()
         if self._on_reconnect is not None:
             await self._on_reconnect()
-
-    async def _watchdog_loop(self, client: PHXChannelsClient) -> None:
-        """Force-close ``client`` once dead_threshold_s passes with no ack.
-
-        Takes the specific `PHXChannelsClient` this task watches as an
-        argument (rather than reading ``self.client``) so a stale watchdog
-        left over from a superseded initial-connect attempt can never act on
-        whatever instance `self.client` has since been reassigned to.
-        """
-        while True:
-            await self._sleep_until_watchdog_deadline()
-            await self._force_close_if_stale(client)
-
-    async def _sleep_until_watchdog_deadline(self) -> None:
-        """Sleep until ``self._watchdog_deadline``, re-reading it after each
-        wake so an ack (which pushes it forward via `_reset_watchdog_deadline`)
-        reschedules the sleep instead of firing early."""
-        while True:
-            remaining = self._watchdog_deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                return
-            await asyncio.sleep(remaining)
-
-    async def _force_close_if_stale(self, client: PHXChannelsClient) -> None:
-        """Force-close ``client`` if it still has a live connection.
-
-        ``close_connection`` failures are caught and logged -- this is the
-        only watchdog for the rest of `client`'s lifetime, so it must not
-        die silently on one bad close.
-        """
-        self._reset_watchdog_deadline()
-        if client.connection is None:
-            # Already disconnected (e.g. mid initial-connect or backoff);
-            # nothing to force-close, and nothing to warn about.
-            return
-        logger.warning(
-            "[WebSocket] No heartbeat ack within %.2fs; forcing reconnect",
-            self._session_policy.dead_threshold_s,
-        )
-        try:
-            await client.close_connection("Heartbeat dead-threshold exceeded")
-        except Exception:
-            logger.exception("[WebSocket] Failed to force-close dead connection")
-
-    async def _cancel_watchdog(self) -> None:
-        if self._watchdog_task is not None and not self._watchdog_task.done():
-            self._watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._watchdog_task
-        self._watchdog_task = None
 
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
@@ -450,10 +393,10 @@ class WebSocketClient:
                 self.api_key,
                 protocol_version=PhoenixChannelsProtocolVersion.V2,
                 auto_reconnect=False,
-                heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
+                heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
                 on_reconnect=self._handle_reconnect,
                 on_disconnect=self._on_disconnect,
-                on_heartbeat_ack=self._reset_watchdog_deadline,
+                on_heartbeat_ack=self._watchdog.reset_deadline,
                 # Also send the key as an x-api-key handshake header. Under
                 # proxy-managed sandbox custody the host-side proxy replaces the
                 # sentinel in this header (it can't touch the URL query), and the
@@ -485,17 +428,14 @@ class WebSocketClient:
                 await asyncio.sleep(delay)
             else:
                 self.client.auto_reconnect = True
-                self._reset_watchdog_deadline()
-                self._watchdog_task = asyncio.create_task(
-                    self._watchdog_loop(self.client)
-                )
+                self._watchdog.start(self.client)
                 return self
 
         raise RuntimeError("WebSocket client failed to connect")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""
-        await self._cancel_watchdog()
+        await self._watchdog.stop()
         if self.client:
             await self.client.__aexit__(exc_type, exc_val, exc_tb)
 
