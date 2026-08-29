@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -378,9 +379,6 @@ class WebSocketClient:
             asyncio.get_running_loop().time() + self._session_policy.dead_threshold_s
         )
 
-    def _on_heartbeat_ack(self) -> None:
-        self._reset_watchdog_deadline()
-
     async def _watchdog_loop(self, client: PHXChannelsClient) -> None:
         """Force-close ``client`` once dead_threshold_s passes with no ack.
 
@@ -388,39 +386,47 @@ class WebSocketClient:
         argument (rather than reading ``self.client``) so a stale watchdog
         left over from a superseded initial-connect attempt can never act on
         whatever instance `self.client` has since been reassigned to.
-
-        Reads ``self._watchdog_deadline`` fresh each iteration so an ack
-        (which pushes it forward from `_on_heartbeat_ack`) reschedules the
-        sleep instead of firing early. ``close_connection`` failures are
-        caught and logged -- this loop is the only watchdog for the rest of
-        `client`'s lifetime, so it must not die silently on one bad close.
         """
         while True:
+            await self._sleep_until_watchdog_deadline()
+            await self._force_close_if_stale(client)
+
+    async def _sleep_until_watchdog_deadline(self) -> None:
+        """Sleep until ``self._watchdog_deadline``, re-reading it after each
+        wake so an ack (which pushes it forward via `_reset_watchdog_deadline`)
+        reschedules the sleep instead of firing early."""
+        while True:
             remaining = self._watchdog_deadline - asyncio.get_running_loop().time()
-            if remaining > 0:
-                await asyncio.sleep(remaining)
-                continue
-            self._reset_watchdog_deadline()
-            if client.connection is None:
-                # Already disconnected (e.g. mid initial-connect or backoff);
-                # nothing to force-close, and nothing to warn about.
-                continue
-            logger.warning(
-                "[WebSocket] No heartbeat ack within %.2fs; forcing reconnect",
-                self._session_policy.dead_threshold_s,
-            )
-            try:
-                await client.close_connection("Heartbeat dead-threshold exceeded")
-            except Exception:
-                logger.exception("[WebSocket] Failed to force-close dead connection")
+            if remaining <= 0:
+                return
+            await asyncio.sleep(remaining)
+
+    async def _force_close_if_stale(self, client: PHXChannelsClient) -> None:
+        """Force-close ``client`` if it still has a live connection.
+
+        ``close_connection`` failures are caught and logged -- this is the
+        only watchdog for the rest of `client`'s lifetime, so it must not
+        die silently on one bad close.
+        """
+        self._reset_watchdog_deadline()
+        if client.connection is None:
+            # Already disconnected (e.g. mid initial-connect or backoff);
+            # nothing to force-close, and nothing to warn about.
+            return
+        logger.warning(
+            "[WebSocket] No heartbeat ack within %.2fs; forcing reconnect",
+            self._session_policy.dead_threshold_s,
+        )
+        try:
+            await client.close_connection("Heartbeat dead-threshold exceeded")
+        except Exception:
+            logger.exception("[WebSocket] Failed to force-close dead connection")
 
     async def _cancel_watchdog(self) -> None:
         if self._watchdog_task is not None and not self._watchdog_task.done():
             self._watchdog_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._watchdog_task
-            except asyncio.CancelledError:
-                pass
         self._watchdog_task = None
 
     async def __aenter__(self):
@@ -435,7 +441,7 @@ class WebSocketClient:
                 heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
                 on_reconnect=self._on_reconnect,
                 on_disconnect=self._on_disconnect,
-                on_heartbeat_ack=self._on_heartbeat_ack,
+                on_heartbeat_ack=self._reset_watchdog_deadline,
                 # Also send the key as an x-api-key handshake header. Under
                 # proxy-managed sandbox custody the host-side proxy replaces the
                 # sentinel in this header (it can't touch the URL query), and the
@@ -446,12 +452,9 @@ class WebSocketClient:
             )
             if self.agent_id:
                 self.client.channel_socket_url += f"&agent_id={self.agent_id}"
-            self._reset_watchdog_deadline()
-            self._watchdog_task = asyncio.create_task(self._watchdog_loop(self.client))
             try:
                 await self.client.__aenter__()
             except Exception as exc:
-                await self._cancel_watchdog()
                 upgrade_error = await classify_initial_upgrade_error(
                     exc, self.client.channel_socket_url
                 )
@@ -470,6 +473,10 @@ class WebSocketClient:
                 await asyncio.sleep(delay)
             else:
                 self.client.auto_reconnect = True
+                self._reset_watchdog_deadline()
+                self._watchdog_task = asyncio.create_task(
+                    self._watchdog_loop(self.client)
+                )
                 return self
 
         raise RuntimeError("WebSocket client failed to connect")
