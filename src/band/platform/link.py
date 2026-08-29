@@ -366,15 +366,17 @@ class BandLink:
         finally:
             # Cancellation (or any other unexpected escape) leaves the ticket
             # unresolved: force it into the one outcome that can express
-            # ambiguity to core (see design doc), and block local resubscribe
-            # until the next reconnect regardless of what core reports back.
+            # ambiguity to core (see design doc). Only block local resubscribe
+            # if this ticket was still current when it applied -- a stale
+            # ticket (already resolved another way) must not mark reconciliation.
             if not settled:
-                self._subscriptions.record_room_participants_join_failed(
+                result = self._subscriptions.record_room_participants_join_failed(
                     room_id=room_id, ticket=ticket, chat_room_left=False
                 )
-                self._mark_needing_reconciliation(
-                    room_id, self._rooms_needing_reconciliation, ws
-                )
+                if result is RoomSubscribeResult.RollbackFailed:
+                    self._mark_needing_reconciliation(
+                        room_id, self._rooms_needing_reconciliation, ws
+                    )
 
     async def subscribe_agent_contacts(self, agent_id: str) -> None:
         """
