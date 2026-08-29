@@ -552,12 +552,15 @@ class BandLink:
         if not candidates:
             return
         joined = ws.joined_topics()
-        for room_id, ticket in candidates:
-            if (
+        dropped = [
+            (room_id, ticket)
+            for room_id, ticket in candidates
+            if not (
                 chat_room_topic(room_id) in joined
                 and room_participants_topic(room_id) in joined
-            ):
-                continue
+            )
+        ]
+        for room_id, ticket in dropped:
             if self._subscriptions.mark_room_rejoin_failed(
                 room_id=room_id, ticket=ticket
             ):
@@ -572,9 +575,10 @@ class BandLink:
         if not candidates:
             return
         joined = ws.joined_topics()
-        for topic, ticket in candidates:
-            if topic in joined:
-                continue
+        dropped = [
+            (topic, ticket) for topic, ticket in candidates if topic not in joined
+        ]
+        for topic, ticket in dropped:
             if self._subscriptions.mark_agent_topic_rejoin_failed(
                 topic=topic, ticket=ticket
             ):
