@@ -432,18 +432,16 @@ class BandLink:
             settled = True
         finally:
             # An unresolved ticket means the real transport outcome is
-            # unknown (e.g. cancelled after PHX's own join call started).
+            # unknown (e.g. cancelled after PHX's own join call started) --
             # record_agent_topic_join_ambiguous resolves core straight to
-            # NeedsReconciliation instead of Absent, and only reports True
-            # (blocking local resubscribe) if this is still the pending
-            # claim -- a stale ticket is a no-op, same as the rejoin-failure
-            # methods above.
-            if not settled and self._subscriptions.record_agent_topic_join_ambiguous(
-                topic=topic, ticket=ticket
-            ):
-                self._mark_needing_reconciliation(
-                    topic, self._agent_topics_needing_reconciliation, ws
-                )
+            # NeedsReconciliation instead of Absent.
+            if not settled:
+                if self._subscriptions.record_agent_topic_join_ambiguous(
+                    topic=topic, ticket=ticket
+                ):
+                    self._mark_needing_reconciliation(
+                        topic, self._agent_topics_needing_reconciliation, ws
+                    )
 
     async def unsubscribe_room(self, room_id: str) -> None:
         if not self._ws:
