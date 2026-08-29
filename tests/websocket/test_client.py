@@ -8,6 +8,8 @@ errors and skipping malformed events, rather than crashing the connection.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -16,6 +18,7 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from band_sdk_core import SessionPolicy
 from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
@@ -984,3 +987,169 @@ async def test_cancelled_error_propagates_through_callback():
         await client._handle_events(
             MockMessage(), {"message_created": cancelling_callback}
         )
+
+
+# --- Heartbeat dead-threshold watchdog tests (INT-1323) ---
+
+
+def _fast_session_policy(
+    *, heartbeat_interval_s: float, dead_threshold_s: float
+) -> SessionPolicy:
+    """A SessionPolicy with real reconnect-backoff defaults (mirroring
+    SessionPolicy.default()) but a fast heartbeat/dead-threshold pair, so
+    watchdog tests run in real fractional seconds instead of production's
+    30s/60s."""
+    return SessionPolicy(
+        {
+            "base_delay_s": 1.0,
+            "factor": 2.0,
+            "max_delay_s": 30.0,
+            "stable_reset_s": 60.0,
+            "rapid_disconnect_uptime_s": 10.0,
+            "rapid_window_s": 300.0,
+            "rapid_first_min_delay_s": 1.0,
+            "rapid_second_min_delay_s": 5.0,
+            "rapid_cooldown_base_s": 10.0,
+            "rapid_cooldown_step_s": 10.0,
+            "rapid_cooldown_max_s": 60.0,
+            "rapid_threshold": 10,
+            "heartbeat_interval_s": heartbeat_interval_s,
+            "dead_threshold_s": dead_threshold_s,
+        }
+    )
+
+
+@asynccontextmanager
+async def phoenix_peer(*, ack_heartbeats: bool = True):
+    """In-process peer that completes the WS upgrade and, when
+    ack_heartbeats, replies to every V2 heartbeat frame (topic "phoenix")
+    with a matching phx_reply -- a real wire heartbeat round-trip drives
+    on_heartbeat_ack, nothing about it is mocked. Yields ``(ws_url,
+    connected)``, where ``connected`` resolves with the first accepted
+    ServerConnection.
+    """
+    connected: asyncio.Future[ServerConnection] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    async def handler(conn: ServerConnection) -> None:
+        if not connected.done():
+            connected.set_result(conn)
+        async for raw in conn:
+            if not ack_heartbeats:
+                continue
+            join_ref, ref, topic, _event, _payload = json.loads(raw)
+            if topic == "phoenix":
+                await conn.send(
+                    json.dumps(
+                        [
+                            join_ref,
+                            ref,
+                            "phoenix",
+                            "phx_reply",
+                            {"status": "ok", "response": {}},
+                        ]
+                    )
+                )
+
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        yield f"ws://127.0.0.1:{port}/socket/websocket", connected
+
+
+async def test_watchdog_ack_keeps_connection_alive_across_heartbeat_cycles():
+    """A real heartbeat/ack round-trip resets the watchdog deadline each
+    cycle, so the connection survives well past a single dead_threshold_s
+    window without the watchdog ever tripping."""
+    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=0.15)
+    async with phoenix_peer() as (ws_url, connected):
+        async with WebSocketClient(
+            ws_url, "test-key", "agent-123", session_policy=policy
+        ) as client:
+            await asyncio.wait_for(connected, timeout=5)
+            await asyncio.sleep(0.4)
+            assert client.client is not None
+            assert client.client.connection is not None
+            assert client.client.connection.close_code is None
+
+
+async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
+    """A withheld ack forces close_connection at (approximately)
+    dead_threshold_s, and the forced close flows into the client's own
+    reconnect path -- on_reconnect fires once the new connection lands."""
+    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=0.15)
+    reconnected = asyncio.Event()
+
+    async def on_reconnect() -> None:
+        reconnected.set()
+
+    async with phoenix_peer(ack_heartbeats=False) as (ws_url, connected):
+        async with WebSocketClient(
+            ws_url,
+            "test-key",
+            "agent-123",
+            on_reconnect=on_reconnect,
+            session_policy=policy,
+        ):
+            await asyncio.wait_for(connected, timeout=5)
+            start = asyncio.get_running_loop().time()
+            await asyncio.wait_for(reconnected.wait(), timeout=5)
+            elapsed = asyncio.get_running_loop().time() - start
+
+    assert elapsed >= policy.dead_threshold_s * 0.5
+
+
+async def test_watchdog_task_cancelled_cleanly_on_aexit():
+    """__aexit__ cancels the watchdog task -- no dangling task survives
+    shutdown."""
+    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=5.0)
+    async with phoenix_peer() as (ws_url, connected):
+        client = WebSocketClient(ws_url, "test-key", "agent-123", session_policy=policy)
+        async with client:
+            await asyncio.wait_for(connected, timeout=5)
+            watchdog_task = client._watchdog_task
+            assert watchdog_task is not None
+            assert not watchdog_task.done()
+
+    assert watchdog_task.done()
+    assert watchdog_task.cancelled()
+    assert client._watchdog_task is None
+
+
+async def test_stale_watchdog_cannot_close_a_superseded_connection():
+    """A watchdog task stays bound to the specific PHXChannelsClient it was
+    created for. If it fires late -- after `self.client` has already moved
+    on to a newer instance, as happens when an initial-connect attempt is
+    superseded by the next one in `__aenter__`'s retry loop -- it must only
+    ever act on its own (stale) instance, never the replacement."""
+
+    class FakePHXClient:
+        def __init__(self) -> None:
+            self.close_calls: list[str] = []
+
+        async def close_connection(self, reason: str) -> None:
+            self.close_calls.append(reason)
+
+    policy = _fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
+    client = WebSocketClient(
+        "ws://localhost", "test-key", "agent-123", session_policy=policy
+    )
+    first, second = FakePHXClient(), FakePHXClient()
+
+    client.client = first
+    client._reset_watchdog_deadline()
+    watchdog = asyncio.create_task(client._watchdog_loop(first))
+    client.client = second  # the retry loop moving on to the next attempt
+
+    await asyncio.sleep(
+        0.2
+    )  # comfortably past dead_threshold_s (may trip more than once)
+    watchdog.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await watchdog
+
+    assert first.close_calls
+    assert all(
+        reason == "Heartbeat dead-threshold exceeded" for reason in first.close_calls
+    )
+    assert second.close_calls == []

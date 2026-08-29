@@ -23,8 +23,8 @@ classifiers = [
 
 dependencies = [
     "band-client-rest==0.0.27",
-    "band-sdk-core==0.7.2",
-    "phoenix-channels-python-client>=0.2.2",
+    "band-sdk-core==2.0.0",
+    "phoenix-channels-python-client>=0.3.0",
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
     "pydantic-settings>=2.0.0",
@@ -353,6 +353,14 @@ markers = [
 # workspace members that aren't root dependencies — every dev-loop command
 # here and in CLAUDE.md uses `--all-packages`.
 members = ["packages/*"]
+
+[tool.uv.sources]
+# TEMPORARY (INT-1323): phoenix-channels-python-client's on_heartbeat_ack
+# callback and close_connection method are not on PyPI yet -- they ship in
+# https://github.com/band-ai/phoenix-channels-python-client/pull/53, still
+# open. Remove this table and the >=0.3.0 pin above once that PR merges and
+# releases; PyPI's next release is what 0.3.0 should resolve to.
+phoenix-channels-python-client = { git = "https://github.com/AlexanderZ-Band/phoenix-channels-python-client", branch = "int-1323-add-shared-heartbeat-interval-dead-threshold-policy-to-band" }
 
 [tool.uv]
 # google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is

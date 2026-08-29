@@ -8,6 +8,7 @@ import logging
 import random
 from typing import Any, Literal
 
+from band_sdk_core import SessionPolicy
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
@@ -334,6 +335,7 @@ class WebSocketClient:
         agent_id: str | None = None,
         on_reconnect: Callable[[], Awaitable[None]] | None = None,
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
+        session_policy: SessionPolicy | None = None,
     ):
         self.ws_url = ws_url
         self.api_key = api_key
@@ -343,6 +345,9 @@ class WebSocketClient:
         self._on_disconnect = on_disconnect
         self._validation_error_count: int = 0
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+        self._session_policy = session_policy or SessionPolicy.default()
+        self._watchdog_task: asyncio.Task[None] | None = None
+        self._watchdog_deadline: float = 0.0
 
     @property
     def validation_error_count(self) -> int:
@@ -368,6 +373,50 @@ class WebSocketClient:
             raise RuntimeError("WebSocket client is not connected")
         return self.client
 
+    def _reset_watchdog_deadline(self) -> None:
+        self._watchdog_deadline = (
+            asyncio.get_running_loop().time() + self._session_policy.dead_threshold_s
+        )
+
+    def _on_heartbeat_ack(self) -> None:
+        self._reset_watchdog_deadline()
+
+    async def _watchdog_loop(self, client: PHXChannelsClient) -> None:
+        """Force-close ``client`` once dead_threshold_s passes with no ack.
+
+        Takes the specific `PHXChannelsClient` this task watches as an
+        argument (rather than reading ``self.client``) so a stale watchdog
+        left over from a superseded initial-connect attempt can never act on
+        whatever instance `self.client` has since been reassigned to.
+
+        Reads ``self._watchdog_deadline`` fresh each iteration so an ack
+        (which pushes it forward from `_on_heartbeat_ack`) reschedules the
+        sleep instead of firing early.
+        """
+        while True:
+            deadline = self._watchdog_deadline
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+                continue
+            if self._watchdog_deadline != deadline:
+                continue
+            logger.warning(
+                "[WebSocket] No heartbeat ack within %.2fs; forcing reconnect",
+                self._session_policy.dead_threshold_s,
+            )
+            self._reset_watchdog_deadline()
+            await client.close_connection("Heartbeat dead-threshold exceeded")
+
+    async def _cancel_watchdog(self) -> None:
+        if self._watchdog_task is not None and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+        self._watchdog_task = None
+
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
         policy = ReconnectPolicy()
@@ -377,8 +426,10 @@ class WebSocketClient:
                 self.api_key,
                 protocol_version=PhoenixChannelsProtocolVersion.V2,
                 auto_reconnect=False,
+                heartbeat_interval_s=self._session_policy.heartbeat_interval_s,
                 on_reconnect=self._on_reconnect,
                 on_disconnect=self._on_disconnect,
+                on_heartbeat_ack=self._on_heartbeat_ack,
                 # Also send the key as an x-api-key handshake header. Under
                 # proxy-managed sandbox custody the host-side proxy replaces the
                 # sentinel in this header (it can't touch the URL query), and the
@@ -389,9 +440,12 @@ class WebSocketClient:
             )
             if self.agent_id:
                 self.client.channel_socket_url += f"&agent_id={self.agent_id}"
+            self._reset_watchdog_deadline()
+            self._watchdog_task = asyncio.create_task(self._watchdog_loop(self.client))
             try:
                 await self.client.__aenter__()
             except Exception as exc:
+                await self._cancel_watchdog()
                 upgrade_error = await classify_initial_upgrade_error(
                     exc, self.client.channel_socket_url
                 )
@@ -416,6 +470,7 @@ class WebSocketClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""
+        await self._cancel_watchdog()
         if self.client:
             await self.client.__aexit__(exc_type, exc_val, exc_tb)
 
