@@ -268,9 +268,13 @@ class WireEvent(StrEnum):
     method's handler-dict keys are keyed from, instead of each repeating the
     string literal. A member is still a plain ``str``, so it passes straight
     through to `from_wire`/`band_sdk_core` unchanged. Members through
-    `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary;
+    `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary
+    (kept as literals, not derived, since `EventType` is an opaque PyO3 type
+    that can't be a `StrEnum` member's value; a drift-guard test in
+    `tests/websocket/test_client.py` keeps the two in sync).
     `TASK_CREATED`/`TASK_UPDATED` are outside it entirely (the `tasks:*`
-    channel's raw-dict passthrough never calls `validate_event_payload`).
+    channel's raw-dict passthrough never calls `validate_event_payload`, and
+    has no band-sdk-typescript counterpart to justify a core module).
     """
 
     MESSAGE_CREATED = "message_created"
