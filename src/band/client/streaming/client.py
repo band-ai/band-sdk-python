@@ -391,22 +391,28 @@ class WebSocketClient:
 
         Reads ``self._watchdog_deadline`` fresh each iteration so an ack
         (which pushes it forward from `_on_heartbeat_ack`) reschedules the
-        sleep instead of firing early.
+        sleep instead of firing early. ``close_connection`` failures are
+        caught and logged -- this loop is the only watchdog for the rest of
+        `client`'s lifetime, so it must not die silently on one bad close.
         """
         while True:
-            deadline = self._watchdog_deadline
-            remaining = deadline - asyncio.get_running_loop().time()
+            remaining = self._watchdog_deadline - asyncio.get_running_loop().time()
             if remaining > 0:
                 await asyncio.sleep(remaining)
                 continue
-            if self._watchdog_deadline != deadline:
+            self._reset_watchdog_deadline()
+            if client.connection is None:
+                # Already disconnected (e.g. mid initial-connect or backoff);
+                # nothing to force-close, and nothing to warn about.
                 continue
             logger.warning(
                 "[WebSocket] No heartbeat ack within %.2fs; forcing reconnect",
                 self._session_policy.dead_threshold_s,
             )
-            self._reset_watchdog_deadline()
-            await client.close_connection("Heartbeat dead-threshold exceeded")
+            try:
+                await client.close_connection("Heartbeat dead-threshold exceeded")
+            except Exception:
+                logger.exception("[WebSocket] Failed to force-close dead connection")
 
     async def _cancel_watchdog(self) -> None:
         if self._watchdog_task is not None and not self._watchdog_task.done():

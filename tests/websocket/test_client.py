@@ -1125,6 +1125,7 @@ async def test_stale_watchdog_cannot_close_a_superseded_connection():
 
     class FakePHXClient:
         def __init__(self) -> None:
+            self.connection = object()  # watchdog only closes a live connection
             self.close_calls: list[str] = []
 
         async def close_connection(self, reason: str) -> None:
@@ -1153,3 +1154,63 @@ async def test_stale_watchdog_cannot_close_a_superseded_connection():
         reason == "Heartbeat dead-threshold exceeded" for reason in first.close_calls
     )
     assert second.close_calls == []
+
+
+async def test_watchdog_survives_a_close_connection_failure():
+    """A `close_connection` failure must not kill the watchdog task -- it is
+    the only monitor for the rest of this client's lifetime, so one bad
+    close must not silently disable dead-threshold enforcement forever."""
+
+    class FlakyThenFakePHXClient:
+        def __init__(self) -> None:
+            self.connection = object()
+            self.close_calls: list[str] = []
+
+        async def close_connection(self, reason: str) -> None:
+            self.close_calls.append(reason)
+            if len(self.close_calls) == 1:
+                raise RuntimeError("close boom")
+
+    policy = _fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
+    client = WebSocketClient(
+        "ws://localhost", "test-key", "agent-123", session_policy=policy
+    )
+    fake = FlakyThenFakePHXClient()
+    client._reset_watchdog_deadline()
+    watchdog = asyncio.create_task(client._watchdog_loop(fake))
+
+    await asyncio.sleep(0.2)  # comfortably past two dead_threshold_s windows
+    watchdog.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await watchdog
+
+    assert len(fake.close_calls) >= 2
+
+
+async def test_watchdog_does_not_warn_or_close_while_already_disconnected():
+    """No live connection to force-close means nothing to warn about either
+    -- an extended reconnect backoff must not spam misleading 'forcing
+    reconnect' warnings for a connection that's already down."""
+
+    class DisconnectedFakePHXClient:
+        def __init__(self) -> None:
+            self.connection = None
+            self.close_calls: list[str] = []
+
+        async def close_connection(self, reason: str) -> None:
+            self.close_calls.append(reason)
+
+    policy = _fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
+    client = WebSocketClient(
+        "ws://localhost", "test-key", "agent-123", session_policy=policy
+    )
+    fake = DisconnectedFakePHXClient()
+    client._reset_watchdog_deadline()
+    watchdog = asyncio.create_task(client._watchdog_loop(fake))
+
+    await asyncio.sleep(0.15)
+    watchdog.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await watchdog
+
+    assert fake.close_calls == []
