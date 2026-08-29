@@ -431,13 +431,16 @@ class BandLink:
             )
             settled = True
         finally:
-            # record_agent_topic_join(joined=False) never reaches core's own
-            # NeedsReconciliation (see design doc) — the local set is the
-            # only thing that blocks a same-socket retry here.
-            if not settled:
-                self._subscriptions.record_agent_topic_join(
-                    topic=topic, ticket=ticket, joined=False
-                )
+            # An unresolved ticket means the real transport outcome is
+            # unknown (e.g. cancelled after PHX's own join call started).
+            # record_agent_topic_join_ambiguous resolves core straight to
+            # NeedsReconciliation instead of Absent, and only reports True
+            # (blocking local resubscribe) if this is still the pending
+            # claim -- a stale ticket is a no-op, same as the rejoin-failure
+            # methods above.
+            if not settled and self._subscriptions.record_agent_topic_join_ambiguous(
+                topic=topic, ticket=ticket
+            ):
                 self._mark_needing_reconciliation(
                     topic, self._agent_topics_needing_reconciliation, ws
                 )
@@ -542,18 +545,24 @@ class BandLink:
         transient failure stays in PHX's own registry ("will retry on next
         reconnect"), so it still reads as joined here and is caught later
         if it ever fails for real.
+
+        Reports each candidate's own generation ticket, so a room that was
+        unsubscribed and re-subscribed between the failure and this check
+        is left alone: the tracker rejects the stale ticket as a no-op.
         """
-        room_ids = self._subscriptions.subscribed_room_ids()
-        if not room_ids:
+        candidates = self._subscriptions.room_rejoin_candidates()
+        if not candidates:
             return
         joined = ws.joined_topics()
-        for room_id in room_ids:
+        for room_id, ticket in candidates:
             if (
                 chat_room_topic(room_id) in joined
                 and room_participants_topic(room_id) in joined
             ):
                 continue
-            if self._subscriptions.mark_room_rejoin_failed(room_id=room_id):
+            if self._subscriptions.mark_room_rejoin_failed(
+                room_id=room_id, ticket=ticket
+            ):
                 self._mark_needing_reconciliation(
                     room_id, self._rooms_needing_reconciliation, ws
                 )
@@ -561,14 +570,16 @@ class BandLink:
     def _detect_agent_topic_rejoin_failures(self, ws: WebSocketClient) -> None:
         """Same rejoin-failure detection as ``_detect_room_rejoin_failures``,
         for the single-topic agent channels."""
-        agent_topics = self._subscriptions.joined_agent_topics()
-        if not agent_topics:
+        candidates = self._subscriptions.agent_topic_rejoin_candidates()
+        if not candidates:
             return
         joined = ws.joined_topics()
-        for topic in agent_topics:
+        for topic, ticket in candidates:
             if topic in joined:
                 continue
-            if self._subscriptions.mark_agent_topic_rejoin_failed(topic=topic):
+            if self._subscriptions.mark_agent_topic_rejoin_failed(
+                topic=topic, ticket=ticket
+            ):
                 self._mark_needing_reconciliation(
                     topic, self._agent_topics_needing_reconciliation, ws
                 )
