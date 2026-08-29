@@ -15,17 +15,17 @@ from typing import TYPE_CHECKING
 from band.client.rest import AsyncRestClient
 from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
-from band.client.streaming.client import (
-    AGENT_ROOMS_KIND,
-    agent_contacts_topic,
-    agent_rooms_topic,
-    chat_room_topic,
-    room_participants_topic,
-)
 from band.core.types import PlatformConnection
 from band.platform.message_lifecycle import MessageLifecycle
 from band.runtime.types import PlatformMessage
-from band_sdk_core import LeaveOutcome, RoomSubscribeResult, SubscriptionTracker
+from band_sdk_core import (
+    AgentTopicKind,
+    LeaveOutcome,
+    RoomSubscribeResult,
+    SubscriptionTracker,
+    chat_room_topic,
+    room_participants_topic,
+)
 
 from band.platform.event import (
     MessageEvent,
@@ -287,7 +287,7 @@ class BandLink:
         ws = self._ws
 
         await self._subscribe_agent_topic(
-            agent_rooms_topic(agent_id),
+            AgentTopicKind.Rooms.topic(agent_id),
             lambda: ws.join_agent_rooms_channel(
                 agent_id,
                 on_room_added=self._on_room_added,
@@ -409,7 +409,7 @@ class BandLink:
         ws = self._ws
 
         await self._subscribe_agent_topic(
-            agent_contacts_topic(agent_id),
+            AgentTopicKind.Contacts.topic(agent_id),
             lambda: ws.join_agent_contacts_channel(
                 agent_id,
                 on_contact_request_received=self._on_contact_request_received,
@@ -517,7 +517,7 @@ class BandLink:
         ws = self._ws
 
         await self._leave_agent_topic(
-            agent_contacts_topic(self.agent_id),
+            AgentTopicKind.Contacts.topic(self.agent_id),
             lambda: ws.leave_agent_contacts_channel(self.agent_id),
             ws,
         )
@@ -681,7 +681,7 @@ class BandLink:
             kind, _, agent_id = topic.partition(":")
             leave = (
                 ws.leave_agent_rooms_channel
-                if kind == AGENT_ROOMS_KIND
+                if AgentTopicKind.from_wire_name(kind) == AgentTopicKind.Rooms
                 else ws.leave_agent_contacts_channel
             )
             await self._leave_channel(
