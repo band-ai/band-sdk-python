@@ -247,6 +247,33 @@ class TestDescribeRegisterError:
         assert "already exists" in message
         assert "not decided yet" in message
 
+    def test_422_name_collision_from_changeset_details(self):
+        # The real Ecto unique-constraint shape: bare field name, no JSON pointer.
+        body = {"error": {"details": {"name": ["has already been taken"]}}}
+        err = ApiError(status_code=422, body=body)
+        message = _describe_register_error(err)
+        assert "already exists" in message
+
+    def test_422_other_field_failure_surfaces_the_real_message(self):
+        # A schema-level cast failure (e.g. --description too short) must not
+        # be mapped to the fixed "name already exists" message -- the caller
+        # needs the actual field/reason to act on.
+        body = {
+            "error": {
+                "message": "Request validation failed",
+                "details": {
+                    "/agent/description": [
+                        "String length is smaller than minLength: 10"
+                    ]
+                },
+            }
+        }
+        err = ApiError(status_code=422, body=body)
+        message = _describe_register_error(err)
+        assert "already exists" not in message
+        assert "/agent/description" in message
+        assert "minLength: 10" in message
+
     def test_falls_back_to_body_message(self):
         body = SimpleNamespace(error=SimpleNamespace(message="server exploded"))
         err = ApiError(status_code=500, body=body)
@@ -368,19 +395,19 @@ class TestTableTargets:
 class TestSandboxHasBandSecret:
     def test_true_when_present(self, monkeypatch):
         fake = FakeSbx(ls_output=_ls_table(scope="my-agent", host="**.band.ai"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
         assert sandbox_has_band_secret("my-agent", "**.band.ai") is True
 
     def test_false_when_absent(self, monkeypatch):
         fake = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
         assert sandbox_has_band_secret("my-agent", "**.band.ai") is False
 
     def test_raises_on_sbx_failure(self, monkeypatch):
         def failing(argv, **kwargs):
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr="daemon down")
 
-        monkeypatch.setattr("band.docker.provision.subprocess.run", failing)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", failing)
         with pytest.raises(RuntimeError, match="daemon down"):
             sandbox_has_band_secret("my-agent", "**.band.ai")
 
@@ -388,19 +415,19 @@ class TestSandboxHasBandSecret:
 class TestSandboxExists:
     def test_true_when_present(self, monkeypatch):
         fake = FakeSbx(sandbox_ls_json='{"sandboxes": [{"name": "my-agent"}]}')
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
         assert sandbox_exists("my-agent") is True
 
     def test_false_when_absent(self, monkeypatch):
         fake = FakeSbx(sandbox_ls_json='{"sandboxes": []}')
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
         assert sandbox_exists("my-agent") is False
 
     def test_raises_on_sbx_failure(self, monkeypatch):
         def failing(argv, **kwargs):
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr="daemon down")
 
-        monkeypatch.setattr("band.docker.provision.subprocess.run", failing)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", failing)
         with pytest.raises(RuntimeError, match="daemon down"):
             sandbox_exists("my-agent")
 
@@ -411,7 +438,7 @@ class TestSandboxExists:
 class TestInjectAgentKey:
     def test_key_never_on_argv(self, monkeypatch):
         fake = FakeSbx()
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
 
         inject_agent_key(
             name="my-agent", host="**.band.ai", agent_key="super-secret-key"
@@ -423,7 +450,7 @@ class TestInjectAgentKey:
 
     def test_key_delivered_via_stdin(self, monkeypatch):
         fake = FakeSbx()
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
 
         inject_agent_key(
             name="my-agent", host="**.band.ai", agent_key="super-secret-key"
@@ -433,7 +460,7 @@ class TestInjectAgentKey:
 
     def test_placeholder_is_the_sentinel(self, monkeypatch):
         fake = FakeSbx()
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
 
         inject_agent_key(name="my-agent", host="**.band.ai", agent_key="k")
 
@@ -444,7 +471,7 @@ class TestInjectAgentKey:
         fake = FakeSbx(
             set_custom_returncode=1, set_custom_stderr="failed near super-secret-key"
         )
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake)
 
         with pytest.raises(RuntimeError) as exc_info:
             inject_agent_key(
@@ -561,7 +588,7 @@ class TestRun:
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             mock_client = _make_mock_client(
@@ -586,7 +613,7 @@ class TestRun:
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root, create=True, kit="oci://example/kit:latest")
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             MockClient.return_value = _make_mock_client()
@@ -605,7 +632,7 @@ class TestRun:
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             mock_client = _make_mock_client(_register_response())
@@ -635,7 +662,7 @@ class TestRun:
             ls_output=_ls_table(scope="my-agent", host="**.band.ai"),
             sandbox_ls_json='{"sandboxes": []}',
         )
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             agent_id = await run(args)
@@ -661,7 +688,7 @@ class TestRun:
             ls_output=_ls_table(scope="my-agent", host="**.band.ai"),
             sandbox_ls_json='{"sandboxes": [{"name": "my-agent"}]}',
         )
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             agent_id = await run(args)
@@ -683,7 +710,7 @@ class TestRun:
         fake_sbx = FakeSbx(
             ls_output=_ls_table(scope="someone-elses-sandbox", host="**.band.ai")
         )
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             with pytest.raises(RuntimeError, match="collides|overwrite"):
@@ -707,7 +734,7 @@ class TestRun:
 
         args = _make_args(workspace.root, name="my-agent")
         fake_sbx = FakeSbx(_ls_table(scope="my-agent", host="**.band.ai"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             agent_id = await run(args)
@@ -718,9 +745,13 @@ class TestRun:
         assert all(c["argv"][1:3] == ["secret", "ls"] for c in fake_sbx.calls)
 
     @pytest.mark.asyncio
-    async def test_reregisters_when_secret_missing_despite_saved_id(
+    async def test_refuses_when_secret_missing_despite_saved_id(
         self, tmp_path, monkeypatch
     ):
+        """A saved agent.id with no injected secret is indistinguishable from
+        a mid-provision crash (registered + id written, then inject_agent_key
+        failed) -- silently registering a second agent would orphan the
+        first one's unrecoverable key. Must refuse instead of guessing."""
         workspace = make_workspace(tmp_path)
         config = default_config(workspace)
         config["agent"]["id"] = "stale-agent-id"
@@ -728,17 +759,18 @@ class TestRun:
 
         args = _make_args(workspace.root, name="my-agent")
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
-            mock_client = _make_mock_client(
-                _register_response(agent_id="fresh-agent-id")
-            )
-            MockClient.return_value = mock_client
-            agent_id = await run(args)
+            with pytest.raises(RuntimeError, match="stale-agent-id"):
+                await run(args)
+            MockClient.assert_not_called()
 
-        assert agent_id == "fresh-agent-id"
-        mock_client.human_api_agents.register_my_agent.assert_called_once()
+        # Refused before any mutation: no registration, no secret write.
+        assert not any(
+            c["argv"][1:3] == ["secret", "set-custom"] for c in fake_sbx.calls
+        )
+        assert read_agent_id(workspace.root) == "stale-agent-id"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -752,7 +784,7 @@ class TestRun:
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             MockClient.return_value = _make_mock_client(
@@ -777,7 +809,7 @@ class TestRun:
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root, timeout=0.01)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         async def _slow_register_agent(**kwargs):
             await asyncio.sleep(10)
@@ -807,7 +839,7 @@ class TestRun:
         workspace = _placeholder_workspace(tmp_path)
         args = _make_args(workspace.root)
         fake_sbx = FakeSbx(ls_output=_empty_ls_output("my-agent"))
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with (
             caplog.at_level("DEBUG"),
@@ -831,7 +863,7 @@ class TestRun:
             set_custom_returncode=1,
             set_custom_stderr="daemon unreachable",
         )
-        monkeypatch.setattr("band.docker.provision.subprocess.run", fake_sbx)
+        monkeypatch.setattr("band.docker.sbx_process.subprocess.run", fake_sbx)
 
         with patch("band.docker.provision.AsyncRestClient") as MockClient:
             MockClient.return_value = _make_mock_client(

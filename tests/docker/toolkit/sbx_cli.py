@@ -28,6 +28,8 @@ from typing import Any
 
 import yaml
 
+from band.docker.sbx_process import run_sbx_subprocess
+
 logger = logging.getLogger(__name__)
 
 SBX = "sbx"
@@ -139,21 +141,14 @@ def remove_custom_secret_command(*, sandbox: str, host: str) -> list[str]:
 def run_redacting_secret(argv: list[str], *, secret: str, timeout: int = 60) -> str:
     """Run a secret-bearing command, redacting ``secret`` from any error.
 
-    ``subprocess`` renders the failing argv into ``CalledProcessError``, so a
-    routine failure (daemon down, auth, a dead sandbox) would spill the
-    credential into the traceback and captured test logs — whether the secret is
-    a whole argument (``--value <secret>``) or embedded inside one (a grep
-    command quoting it). Run unchecked and raise a redacted error instead;
-    stdout is returned on success, so the secret is never surfaced either way.
+    A routine failure (daemon down, auth, a dead sandbox) would otherwise spill
+    the credential into the raised error and captured test logs — whether the
+    secret is a whole argument (``--value <secret>``) or embedded inside one (a
+    grep command quoting it). ``run_sbx_subprocess`` does the run-and-redact;
+    this just adapts its stdout-on-success/CompletedProcess shape to the
+    stdout-only return every caller here wants.
     """
-    result = subprocess.run(
-        argv, capture_output=True, text=True, check=False, timeout=timeout
-    )
-    if result.returncode == 0:
-        return result.stdout
-    redacted = " ".join(shlex.quote(arg).replace(secret, "***") for arg in argv)
-    detail = (result.stderr or result.stdout or "").replace(secret, "***").strip()
-    raise RuntimeError(f"{redacted} failed (exit {result.returncode}): {detail}")
+    return run_sbx_subprocess(argv, timeout=timeout, redact=secret).stdout
 
 
 @contextmanager

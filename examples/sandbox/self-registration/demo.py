@@ -262,7 +262,7 @@ async def run(kit: str) -> None:
                     )
                 logger.info("Confirmed idempotent: no duplicate agent registered")
 
-        print(f"\nSuccess: agent {agent_id} self-registered and round-tripped.\n")
+        logger.info("Success: agent %s self-registered and round-tripped.", agent_id)
     finally:
         logger.info("Cleaning up...")
         _teardown_sbx(name)

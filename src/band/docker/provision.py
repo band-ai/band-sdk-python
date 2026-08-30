@@ -33,7 +33,6 @@ import asyncio
 import json
 import logging
 import re
-import subprocess
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -48,8 +47,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from ruamel.yaml import YAML
 
 from band import LogSettings, LogStream
+from band.client.rest import aclose_rest_client
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.config import DEFAULT_REST_URL, load_workspace_config
+from band.docker.sbx_process import run_sbx_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -181,11 +182,52 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Both the name-collision Ecto changeset error (bare field name, e.g. `name`)
+# and a schema-level cast error on the same field (JSON-pointer style, e.g.
+# `/agent/name`) mean the same thing to the caller here.
+_NAME_DETAIL_KEYS = frozenset({"name", "/agent/name"})
+
+
+def _registration_error_details(body: Any) -> dict[str, list[str]]:
+    """The `error.details` field-error map from a 422 body, if present.
+
+    `register_my_agent`'s 422s carry an untyped dict body (verified against
+    the platform: a schema-level cast failure, e.g. `--description` below the
+    platform's minimum length, responds with `{"error": {"details":
+    {"/agent/description": [...]}}}`; the field's own validation -- e.g. a
+    unique-name collision -- responds with the bare field name instead, e.g.
+    `{"error": {"details": {"name": ["has already been taken"]}}}`), so this
+    reads it as `dict`s throughout rather than assuming attribute access.
+    """
+    if not isinstance(body, dict):
+        return {}
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return {}
+    details = error.get("details")
+    return details if isinstance(details, dict) else {}
+
+
 def _describe_register_error(err: ApiError) -> str:
     """A human-readable message for a failed registration call."""
     if err.status_code == 403:
         return "Plan agent cap reached — cannot register another external agent."
     if err.status_code == 422:
+        details = _registration_error_details(err.body)
+        other_fields = {
+            field: messages
+            for field, messages in details.items()
+            if field not in _NAME_DETAIL_KEYS
+        }
+        if other_fields:
+            field_errors = "; ".join(
+                f"{field}: {', '.join(messages)}"
+                for field, messages in other_fields.items()
+            )
+            return f"Failed to register agent: {field_errors}"
+        # No details, or the only failing field is the name -- the by-design
+        # same-name collision case (or an unclassifiable 422, which defaults
+        # to it too, since it was historically the only known 422 cause here).
         return (
             "An agent with this name already exists. Re-registration semantics "
             "for a re-created sandbox (new identity vs. adopt-existing) are not "
@@ -276,39 +318,11 @@ def _table_targets(ls_output: str) -> set[str]:
     return targets
 
 
-def _run_sbx(
-    argv: list[str],
-    *,
-    timeout: int,
-    input: str | None = None,
-    redact: str | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Run an `sbx` subprocess; raise RuntimeError naming the command and its
-    stderr/stdout on non-zero exit. `redact`, if given (e.g. a secret piped
-    via `input`), is stripped from the raised message should it ever surface
-    in `sbx`'s own output.
-    """
-    result = subprocess.run(
-        argv,
-        input=input,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        if redact:
-            detail = detail.replace(redact, "***")
-        raise RuntimeError(
-            f"{' '.join(argv)} failed (exit {result.returncode}): {detail}"
-        )
-    return result
-
-
 def sandbox_has_band_secret(name: str, host: str) -> bool:
     """Whether `name`'s own scope already has a custom secret for `host`."""
-    result = _run_sbx([SBX, "secret", "ls", name], timeout=SBX_SECRET_TIMEOUT_S)
+    result = run_sbx_subprocess(
+        [SBX, "secret", "ls", name], timeout=SBX_SECRET_TIMEOUT_S
+    )
     return host in _table_targets(result.stdout)
 
 
@@ -332,7 +346,9 @@ def inject_agent_key(*, name: str, host: str, agent_key: str) -> None:
         "--placeholder",
         PROXY_MANAGED_API_KEY,
     ]
-    _run_sbx(argv, timeout=SBX_SECRET_TIMEOUT_S, input=agent_key, redact=agent_key)
+    run_sbx_subprocess(
+        argv, timeout=SBX_SECRET_TIMEOUT_S, input=agent_key, redact=agent_key
+    )
 
 
 def sandbox_exists(name: str) -> bool:
@@ -343,14 +359,14 @@ def sandbox_exists(name: str) -> bool:
     get created because `sbx create` itself failed transiently — the two
     resources fail independently and must be checked independently.
     """
-    result = _run_sbx([SBX, "ls", "--json"], timeout=SBX_SECRET_TIMEOUT_S)
+    result = run_sbx_subprocess([SBX, "ls", "--json"], timeout=SBX_SECRET_TIMEOUT_S)
     sandboxes = json.loads(result.stdout).get("sandboxes") or []
     return any(sandbox.get("name") == name for sandbox in sandboxes)
 
 
 def create_sandbox(*, name: str, kit: str, workspace: Path) -> None:
     """`sbx create --name <name> --kit <kit> band-python-kit <workspace>`."""
-    _run_sbx(
+    run_sbx_subprocess(
         [SBX, "create", "--name", name, "--kit", kit, KIT_AGENT_NAME, str(workspace)],
         timeout=SBX_CREATE_TIMEOUT_S,
     )
@@ -366,7 +382,7 @@ async def _rest_client(
     try:
         yield client
     finally:
-        await client._client_wrapper.httpx_client.httpx_client.aclose()
+        await aclose_rest_client(client)
 
 
 async def register_agent(
@@ -517,11 +533,23 @@ async def _ensure_agent_registered(
         return existing_id
 
     if has_local_identity:
-        logger.warning(
-            "band.yaml already names agent %s but no injected secret was found "
-            "for %s — registering a new agent rather than reusing it",
-            existing_id,
-            args.name,
+        # A prior run that registered the agent and wrote its id, then died
+        # before inject_agent_key ran (or ran and failed), lands here on
+        # retry -- indistinguishable from a hand-edited/foreign agent.id with
+        # no injected secret. Either way, registering fresh would orphan
+        # whichever agent existing_id names: its key was shown exactly once
+        # and cannot be retrieved, and it still counts against the plan's
+        # agent cap. Fail loudly instead of silently minting a second agent.
+        raise RuntimeError(
+            f"workspace {workspace} already names agent {existing_id!r} in "
+            f"band.yaml, but no Band secret is injected for sandbox "
+            f"{args.name!r} (host {args.host}). If a previous run registered "
+            "this agent and then failed before (or while) injecting its key, "
+            "that key cannot be retrieved again -- re-inject it manually with "
+            "`sbx secret set-custom` if you still have it, or clear "
+            "band.yaml's agent.id and retry with a new --agent-name to "
+            "register a fresh agent (the orphaned one still counts against "
+            "the plan's agent cap)."
         )
 
     logger.info("Registering agent %r...", agent_name)
