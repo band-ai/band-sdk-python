@@ -32,6 +32,7 @@ dependencies = [
     "cryptography>=46.0.5",
     "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
     "async-lru>=2.3.0",  # AgentTools._find_attachment's cross-turn cache (band.runtime.tools)
+    "ruamel.yaml>=0.18",  # Comment-preserving round-trip write of band.yaml (band-kit provision)
 ]
 
 [project.optional-dependencies]
@@ -314,6 +315,7 @@ dev-parlant = [
 
 [project.scripts]
 band-acp = "band.integrations.acp.cli:entry_point"
+band-kit = "band.docker.provision:main"
 band-room-view = "band.integrations.desktop_app.cli:entry_point"
 band-trigger = "band.cli.trigger:main"
 

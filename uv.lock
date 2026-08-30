@@ -544,6 +544,7 @@ dependencies = [
     { name = "pydantic-settings", version = "2.14.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "ruamel-yaml" },
 ]
 
 [package.optional-dependencies]
@@ -887,6 +888,7 @@ requires-dist = [
     { name = "rich", marker = "extra == 'dev-crewai'", specifier = ">=13.0.0" },
     { name = "rich", marker = "extra == 'dev-parlant'", specifier = ">=13.0.0" },
     { name = "rich", marker = "extra == 'logging'", specifier = ">=14.0.0" },
+    { name = "ruamel-yaml", specifier = ">=0.18" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev-crewai'", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev-parlant'", specifier = ">=0.8.0" },
