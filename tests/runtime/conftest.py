@@ -31,6 +31,26 @@ from band_rest import (
 )
 
 from band.core.types import PlatformConnection, PlatformMessage
+from band.runtime.presence import RoomPresence
+
+
+def admit_room(presence: RoomPresence, room_id: str) -> None:
+    """Seed ``room_id`` as already ``Admitted`` on a presence's roster.
+
+    For tests about dispatch/routing, not about the join flow itself — goes
+    through RoomRoster's own public methods, not a private attribute.
+    """
+    ticket = presence.roster.begin_room_admission(room_id, passes_filter=True)
+    assert ticket is not None
+    presence.roster.record_room_admission(room_id, ticket, True)
+
+
+def chat_row(room_id: str) -> MagicMock:
+    """One room as the chats listing returns it."""
+    room = MagicMock()
+    room.id = room_id
+    room.model_dump.return_value = {"id": room_id}
+    return room
 
 
 def make_participant(p: dict[str, Any]) -> ChatParticipant:

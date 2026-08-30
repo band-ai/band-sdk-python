@@ -108,6 +108,9 @@ class BandLink:
         # WebSocket client
         self._ws: WebSocketClient | None = None
         self._is_connected = False
+        # True for the span of connect() before _ws is assigned, so a second
+        # concurrent connect() sees it even mid-handshake (see connect()).
+        self._connecting = False
 
         # Subscription tracking (band_sdk_core.SubscriptionTracker) plus local
         # bookkeeping for claims whose real-world outcome is ambiguous (a
@@ -165,27 +168,41 @@ class BandLink:
     # --- Connection lifecycle ---
 
     async def connect(self) -> None:
-        if self._ws is not None:
+        if self._connecting or self._ws is not None:
             logger.warning("Already connected or connecting")
             return
 
-        self._last_disconnect_reason = None
-        self._ws = WebSocketClient(
-            self.ws_url,
-            self.api_key,
-            self.agent_id,
-            on_reconnect=self._on_reconnected,
-            on_disconnect=self._on_disconnected,
-        )
-        await self._ws.__aenter__()
+        # Set synchronously, before the first await below, so a second
+        # concurrent connect() sees it immediately -- _ws alone can't do
+        # that job, since it's only assigned once fully connected below
+        # (never a half-connected client a caller could act on).
+        self._connecting = True
         try:
-            await self._join_agent_control_channel(self._ws)
-        except Exception:
-            await self._ws.__aexit__(None, None, None)
-            self._ws = None
-            raise
-        self._is_connected = True
-        logger.info("Connected to platform")
+            self._last_disconnect_reason = None
+            ws = WebSocketClient(
+                self.ws_url,
+                self.api_key,
+                self.agent_id,
+                on_reconnect=self._on_reconnected,
+                on_disconnect=self._on_disconnected,
+            )
+            try:
+                await ws.__aenter__()
+                await self._join_agent_control_channel(ws)
+            except BaseException:
+                # BaseException, not Exception: a cancellation reaching one
+                # of these awaits (e.g. the caller's own task being
+                # cancelled) must still close the half-opened client, or it
+                # leaks -- _ws itself was never assigned, so there's nothing
+                # to roll back on that side.
+                await ws.__aexit__(None, None, None)
+                raise
+
+            self._ws = ws
+            self._is_connected = True
+            logger.info("Connected to platform")
+        finally:
+            self._connecting = False
 
     async def disconnect(self) -> None:
         if not self._ws:

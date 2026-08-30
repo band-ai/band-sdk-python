@@ -24,6 +24,8 @@ from band.runtime.presence import RoomPresence
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage, SessionConfig
 
+from tests.runtime.conftest import admit_room
+
 
 async def wait_for_condition(
     predicate, *, timeout: float = 1.0, interval: float = 0.01
@@ -461,7 +463,7 @@ class TestPresenceReconnectOnReconnectedCallback:
         )
 
         presence = RoomPresence(mock_presence_link, auto_subscribe_existing=True)
-        presence.rooms = {"room-old"}
+        admit_room(presence, "room-old")
         presence.on_reconnected = on_reconnected
 
         await presence._handle_reconnect()

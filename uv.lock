@@ -428,6 +428,15 @@ wheels = [
 ]
 
 [[package]]
+name = "async-lru"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/1f/989ecfef8e64109a489fff357450cb73fa73a865a92bd8c272170a6922c2/async_lru-2.3.0.tar.gz", hash = "sha256:89bdb258a0140d7313cf8f4031d816a042202faa61d0ab310a0a538baa1c24b6", size = 16332, upload-time = "2026-03-19T01:04:32.413Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/e2/c2e3abf398f80732e58b03be77bde9022550d221dd8781bf586bd4d97cc1/async_lru-2.3.0-py3-none-any.whl", hash = "sha256:eea27b01841909316f2cc739807acea1c623df2be8c5cfad7583286397bb8315", size = 8403, upload-time = "2026-03-19T01:04:30.883Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -524,6 +533,7 @@ name = "band-sdk"
 version = "3.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "async-lru" },
     { name = "band-client-rest" },
     { name = "band-sdk-core" },
     { name = "cryptography" },
@@ -761,8 +771,9 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0" },
+    { name = "async-lru", specifier = ">=2.3.0" },
     { name = "band-client-rest", specifier = "==0.0.27" },
-    { name = "band-sdk-core", specifier = "==1.2.1" },
+    { name = "band-sdk-core", specifier = "==2.0.0" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-parlant'", specifier = "==0.1.4" },
@@ -830,7 +841,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'dev'", specifier = ">=1.44.0" },
     { name = "parlant", marker = "extra == 'dev-parlant'", specifier = ">=3.3.2" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2" },
-    { name = "phoenix-channels-python-client", specifier = ">=0.2.2" },
+    { name = "phoenix-channels-python-client", specifier = ">=0.2.4" },
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -905,17 +916,17 @@ provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic
 
 [[package]]
 name = "band-sdk-core"
-version = "1.2.1"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/9f/fe0b093e8c19f05f22df2b40ebfbe512068831bf39dc6d4b96c06294e416/band_sdk_core-1.2.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7dcebc9adddd24c0b64d3b79b95cce4fc49930e5c3050a652a60872f4612f1d4", size = 456499, upload-time = "2026-08-29T05:26:25.331Z" },
-    { url = "https://files.pythonhosted.org/packages/42/e5/71b52071f76fa197790c9b847bb3fba7100520727248c44e0bab95a11401/band_sdk_core-1.2.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:54b4fb0ac2676ee2ef0ffe6591561ba4c780d327342c912abe192a9ee99c864d", size = 458361, upload-time = "2026-08-29T05:26:27.233Z" },
-    { url = "https://files.pythonhosted.org/packages/38/5d/b8406f66625a1bf2ef2f619783fb0f00dca41c32e67bdd84388af9558ca3/band_sdk_core-1.2.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:503202ff8151dfb9d3336732a3fcd8a8176a3e5558ff784d787646e48fcfcc37", size = 508748, upload-time = "2026-08-29T05:26:28.795Z" },
-    { url = "https://files.pythonhosted.org/packages/9e/78/df7cf6b12f0ae1e81d432a4910d2dea755eabf05f644a8206a1385368278/band_sdk_core-1.2.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:327318e5f028849303a979d7e2d203f189bf242e3c9a32f775820c4c4285ce9f", size = 508553, upload-time = "2026-08-29T05:26:30.403Z" },
-    { url = "https://files.pythonhosted.org/packages/c2/14/69baa63522bcbb7a6ee8e44dccab29e0adfdc3f255ad542e9f722d53b720/band_sdk_core-1.2.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:c6b81490a4d466ea1c0d234ebf5141226e17cc1b7bfd8cace7ba0c792cea5152", size = 685229, upload-time = "2026-08-29T05:26:31.855Z" },
-    { url = "https://files.pythonhosted.org/packages/c2/2d/d3c55986ea39751069704feba4ed35c3a60bbad5411006135e25ee9d79bc/band_sdk_core-1.2.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:52d9b5269428b80ee126901e651435e589f6b344ab3f16a61bf84dcb18ac33ea", size = 721156, upload-time = "2026-08-29T05:26:33.712Z" },
-    { url = "https://files.pythonhosted.org/packages/18/0c/258bd0a76cdbe1c907a1ef3de35fcd15a810ed1d59a3d8775c729fb7bd69/band_sdk_core-1.2.1-cp311-abi3-win_amd64.whl", hash = "sha256:588b9a6da4cd2810940f8d3d0b6f337a8e0808e7331f82c85540ed4966cf0ab3", size = 331294, upload-time = "2026-08-29T05:26:35.463Z" },
-    { url = "https://files.pythonhosted.org/packages/54/9b/76219b41badff3e204513ccf97cf8b9a8326a41bd089fee2d7c9c2e8eed4/band_sdk_core-1.2.1-cp311-abi3-win_arm64.whl", hash = "sha256:312d466fb8758e06031ba2a7a8e84cfcffaf277f5fad9535865aa1acdeb1e333", size = 315000, upload-time = "2026-08-29T05:26:36.878Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/b0/c0450d0df122aa46ffaf11aabacd5dcf27b81e35ff1f5b08639c0cfa1457/band_sdk_core-2.0.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7db8f08f4dc4616ecee2aa5e8a7bd61d846d959a309a6b25da598e649d4ac278", size = 457389, upload-time = "2026-08-29T12:00:47.019Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/99/12d8e5a5fb4ef42e684117de2687cbb7bf8df0b706eeb65587caa9867b49/band_sdk_core-2.0.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:556f420711b7026b0b3dbb9abf0a2dcdd6f7126f2c09ec40ca281c081229851c", size = 458700, upload-time = "2026-08-29T12:00:48.396Z" },
+    { url = "https://files.pythonhosted.org/packages/16/c3/a894dd0a873a80184bdf443e770917c2ec85e671a8c72f4c8400584692e9/band_sdk_core-2.0.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:19e58438cf932bb0324c0358a8c332437eade63bb253e6f7cddbfa02c928051e", size = 509782, upload-time = "2026-08-29T12:00:49.711Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/95/18d976f8a12d24819e3788a2c880ec7d07945673c6a34b68fd7653142ee8/band_sdk_core-2.0.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:9f581c2173967e44a219d86f124a65650fc915c8c99a1f9ddf69c0e98612253f", size = 510429, upload-time = "2026-08-29T12:00:50.849Z" },
+    { url = "https://files.pythonhosted.org/packages/67/87/1eef985931ddddf2f2ff9623622f15bab460d4d943aa7dc96d1da8227d37/band_sdk_core-2.0.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:430fb51e32080fa58a1c84f8d2342c443865c85a05f8ad727288063e5bdb425a", size = 687161, upload-time = "2026-08-29T12:00:51.987Z" },
+    { url = "https://files.pythonhosted.org/packages/08/8d/61d49368320438ad8ee7ebfc689cfc62163cdb9a5d7592e8d48a3438aae4/band_sdk_core-2.0.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3606b58f5a3d9ff006fcd9db425cc4ac47c4482380146a282e23299ca6f0fcab", size = 724455, upload-time = "2026-08-29T12:00:53.376Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/17/c795774be4b1b1c96633c68b5a8f2966bfd0752004835920f6f0a676153a/band_sdk_core-2.0.0-cp311-abi3-win_amd64.whl", hash = "sha256:8ac8e95b466e8110f4e3dd99afaa4520f825c294e2b731d04c246efe1edd7685", size = 331961, upload-time = "2026-08-29T12:00:54.47Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/93/aa331d33db1d8436dba57df83d4592c6534223ffc11bf94c1eb5090714cc/band_sdk_core-2.0.0-cp311-abi3-win_arm64.whl", hash = "sha256:d802cb5a411afa5b7e6089962cdc3b4573ad6d43048fc2b28a8a9079a247aa0b", size = 314808, upload-time = "2026-08-29T12:00:55.707Z" },
 ]
 
 [[package]]
@@ -5885,14 +5896,14 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.2.2"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1e/4a/3fad1bc7724c874b9224878af9e6f7062e295c448b325da4fdd9b7745176/phoenix_channels_python_client-0.2.2.tar.gz", hash = "sha256:b610e54b56ecfa238aa8568b33dba4c9ae9a7f5362a0f3c66fdec013ae38f728", size = 29491, upload-time = "2026-07-20T14:10:55.912Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/7a/c8545746a7055205a86be4b02aa545e1ed1cfdc57c797226f3cd581f7002/phoenix_channels_python_client-0.2.4.tar.gz", hash = "sha256:7b9c7f27ccbaecdecbf89fd975e9c18ce493df1dfec792d13364d385eed58395", size = 31301, upload-time = "2026-08-30T06:25:46.127Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/e9/47ac73a5a8bc6b8dec339fbb2b89f325bf2270fa68c81dfe1f2495a7e7a6/phoenix_channels_python_client-0.2.2-py3-none-any.whl", hash = "sha256:ebbf468a15b3ffaa8bc463ddd0132811e94a2fcd5bc20f507ee76109e45b8b14", size = 24197, upload-time = "2026-07-20T14:10:54.799Z" },
+    { url = "https://files.pythonhosted.org/packages/07/32/5e1a22892562857d1535a676947df174c32ee39a27c56ae7d8c92908e2a4/phoenix_channels_python_client-0.2.4-py3-none-any.whl", hash = "sha256:9f18a51ce33f3edb25d2896194c415096ef5952b896276931a98096e9ddeb3ce", size = 25372, upload-time = "2026-08-30T06:25:44.58Z" },
 ]
 
 [[package]]
