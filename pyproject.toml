@@ -354,14 +354,6 @@ markers = [
 # here and in CLAUDE.md uses `--all-packages`.
 members = ["packages/*"]
 
-[tool.uv.sources]
-# TEMPORARY (INT-1323): on_heartbeat_ack/close_connection aren't released yet
-# (github.com/band-ai/phoenix-channels-python-client/pull/54). The >=0.3.0
-# floor above is a placeholder, not a real version -- don't lower it to
-# resolve to 0.2.3, which lacks these methods and would crash at runtime.
-# Remove this table and set the real floor once PR #54 releases.
-phoenix-channels-python-client = { git = "https://github.com/band-ai/phoenix-channels-python-client", branch = "int-1323-add-shared-heartbeat-interval-dead-threshold-policy-to-band" }
-
 [tool.uv]
 # google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is
 # yanked and whose only newer release is a pre-release. Steering that resolution is
