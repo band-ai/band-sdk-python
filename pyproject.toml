@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "band-client-rest==0.0.27",
+    "band-client-rest==0.0.29",
     "band-sdk-core==1.0.1",
     "phoenix-channels-python-client>=0.2.2",
     "python-dotenv>=1.2.2",
@@ -96,7 +96,7 @@ parlant = [
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.15.5",
+    "crewai==1.15.17",
     "openai>=2.0.0",  # crewai 1.14.3 requires openai>=2.0.0
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -110,13 +110,13 @@ a2a = [
 a2a_gateway = [
     "a2a-sdk[http-server]>=1.1.2,<2",  # Route factories require sse-starlette
     "starlette>=0.40.0",  # HTTP server framework
-    "uvicorn>=0.32.0",  # ASGI server
+    "uvicorn>=0.29",  # ASGI server
     "python-multipart>=0.0.22",
 ]
 a2a_gateway_demo = [
     "a2a-sdk[http-server]>=1.1.2,<2",  # Demo builds gateway route factories
     "starlette>=0.40.0",    # HTTP server
-    "uvicorn>=0.32.0",      # ASGI server
+    "uvicorn>=0.29",      # ASGI server
     "langgraph>=1.0.0",     # LangGraph for orchestrator agent
     "langchain-openai>=0.3.0",  # OpenAI model for LLM
     "click>=8.0.0",         # CLI for demo orchestrator
@@ -130,12 +130,12 @@ acp = [
     # Floor pinned to crewai's own transitive pin (mcp~=1.28.1) -- see `desktop` above.
     "mcp>=1.28.1,<2",
     "starlette>=0.40.0",
-    "uvicorn>=0.32.0",
+    "uvicorn>=0.29",
 ]
 slack = [
     "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
     "starlette>=0.40.0",     # HTTP server framework
-    "uvicorn>=0.32.0",       # ASGI server
+    "uvicorn>=0.29",       # ASGI server
     "aiohttp>=3.9,<4",       # Socket Mode transport (slack_sdk.socket_mode.aiohttp)
 ]
 bridge = [
@@ -211,7 +211,7 @@ dev = [
     "a2a-sdk>=1.1.2,<2",
     # Include a2a_gateway deps for testing
     "starlette>=0.40.0",
-    "uvicorn>=0.32.0",
+    "uvicorn>=0.29",
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
     # Include ACP deps for testing
@@ -269,7 +269,7 @@ dev-crewai = [
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.15.5",
+    "crewai==1.15.17",
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
