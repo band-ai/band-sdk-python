@@ -762,7 +762,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0" },
     { name = "band-client-rest", specifier = "==0.0.27" },
-    { name = "band-sdk-core", specifier = "==1.0.1" },
+    { name = "band-sdk-core", specifier = "==2.0.0" },
     { name = "band-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "band-testing-python", marker = "extra == 'dev-parlant'", specifier = "==0.1.4" },
@@ -830,7 +830,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'dev'", specifier = ">=1.44.0" },
     { name = "parlant", marker = "extra == 'dev-parlant'", specifier = ">=3.3.2" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2" },
-    { name = "phoenix-channels-python-client", specifier = ">=0.2.2" },
+    { name = "phoenix-channels-python-client", specifier = ">=0.2.4" },
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -905,17 +905,17 @@ provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic
 
 [[package]]
 name = "band-sdk-core"
-version = "1.0.1"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/d5/aeb477b538e8b45b39415a550b284df6cdc325a7aa68450afdf824599bd7/band_sdk_core-1.0.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:b5164b1db960859df2abd7009127169bfc0ac32bc19fbf008cd8f5e4e420caff", size = 448888, upload-time = "2026-08-28T09:06:57.447Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/87/2497d6b832aacf2769a9b6bdd74dcaa70a46fbc57ed2e001ca4ae2e98ae6/band_sdk_core-1.0.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:1357df440dd4ab13e8eea637ef42bae2cb25945cbe78315d5bb1ac093a2b6c1a", size = 449584, upload-time = "2026-08-28T09:06:59.155Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/04/0dc7d3d1e261f4abf3b5e3405bc009ad16066466e30348305921b0177398/band_sdk_core-1.0.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d243982ad2f712563dd523b08df5c6dfe68414d62a71519df9cc7434c32185a3", size = 497400, upload-time = "2026-08-28T09:07:00.688Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/4f/b7adb0a5060edc6870a82b940a20fb8c490d0bee742f2e5ba38877fb696d/band_sdk_core-1.0.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:3c9853cd3f2043618a22fcd60524affda338c9e41d18093817627fa9902f41fa", size = 500494, upload-time = "2026-08-28T09:07:02.115Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/84/a9253c540bf87c1524d8e1c984affb0c1e0c333bac173c3c5d141bb976c8/band_sdk_core-1.0.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:f3b0e2d19b111407420c5804b5c04617a2996e22cbe7264b676dead4aa21e7dc", size = 674977, upload-time = "2026-08-28T09:07:03.465Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/73/58c2043f50f55d0304aa8bef7520e549b0b138cf52b84adaee39ea4b6c27/band_sdk_core-1.0.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d018755b6ccb6d713664aa1015369e81a4b05b7121e2788d649c6b37dc4a5095", size = 711175, upload-time = "2026-08-28T09:07:04.984Z" },
-    { url = "https://files.pythonhosted.org/packages/36/2d/81e0a6c945d6d2c789696238b2d884c9a30fe68c6571144541e147ce1c86/band_sdk_core-1.0.1-cp311-abi3-win_amd64.whl", hash = "sha256:5bbf57b1769e7e67b8374dc473cb2fdfc41944ce77894123835a44e027cd8b4d", size = 323740, upload-time = "2026-08-28T09:07:06.674Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/67/a716987c42910f0f5692a5f9fea3ec133ba2b15b22ac695570618b7c55c0/band_sdk_core-1.0.1-cp311-abi3-win_arm64.whl", hash = "sha256:7ebdb88ac1c4cd7e8d116649965d43023c9c0505ecb0ecff860b5559dc256e17", size = 309016, upload-time = "2026-08-28T09:07:08.266Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/b0/c0450d0df122aa46ffaf11aabacd5dcf27b81e35ff1f5b08639c0cfa1457/band_sdk_core-2.0.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7db8f08f4dc4616ecee2aa5e8a7bd61d846d959a309a6b25da598e649d4ac278", size = 457389, upload-time = "2026-08-29T12:00:47.019Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/99/12d8e5a5fb4ef42e684117de2687cbb7bf8df0b706eeb65587caa9867b49/band_sdk_core-2.0.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:556f420711b7026b0b3dbb9abf0a2dcdd6f7126f2c09ec40ca281c081229851c", size = 458700, upload-time = "2026-08-29T12:00:48.396Z" },
+    { url = "https://files.pythonhosted.org/packages/16/c3/a894dd0a873a80184bdf443e770917c2ec85e671a8c72f4c8400584692e9/band_sdk_core-2.0.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:19e58438cf932bb0324c0358a8c332437eade63bb253e6f7cddbfa02c928051e", size = 509782, upload-time = "2026-08-29T12:00:49.711Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/95/18d976f8a12d24819e3788a2c880ec7d07945673c6a34b68fd7653142ee8/band_sdk_core-2.0.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:9f581c2173967e44a219d86f124a65650fc915c8c99a1f9ddf69c0e98612253f", size = 510429, upload-time = "2026-08-29T12:00:50.849Z" },
+    { url = "https://files.pythonhosted.org/packages/67/87/1eef985931ddddf2f2ff9623622f15bab460d4d943aa7dc96d1da8227d37/band_sdk_core-2.0.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:430fb51e32080fa58a1c84f8d2342c443865c85a05f8ad727288063e5bdb425a", size = 687161, upload-time = "2026-08-29T12:00:51.987Z" },
+    { url = "https://files.pythonhosted.org/packages/08/8d/61d49368320438ad8ee7ebfc689cfc62163cdb9a5d7592e8d48a3438aae4/band_sdk_core-2.0.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3606b58f5a3d9ff006fcd9db425cc4ac47c4482380146a282e23299ca6f0fcab", size = 724455, upload-time = "2026-08-29T12:00:53.376Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/17/c795774be4b1b1c96633c68b5a8f2966bfd0752004835920f6f0a676153a/band_sdk_core-2.0.0-cp311-abi3-win_amd64.whl", hash = "sha256:8ac8e95b466e8110f4e3dd99afaa4520f825c294e2b731d04c246efe1edd7685", size = 331961, upload-time = "2026-08-29T12:00:54.47Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/93/aa331d33db1d8436dba57df83d4592c6534223ffc11bf94c1eb5090714cc/band_sdk_core-2.0.0-cp311-abi3-win_arm64.whl", hash = "sha256:d802cb5a411afa5b7e6089962cdc3b4573ad6d43048fc2b28a8a9079a247aa0b", size = 314808, upload-time = "2026-08-29T12:00:55.707Z" },
 ]
 
 [[package]]
@@ -5885,14 +5885,14 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.2.2"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1e/4a/3fad1bc7724c874b9224878af9e6f7062e295c448b325da4fdd9b7745176/phoenix_channels_python_client-0.2.2.tar.gz", hash = "sha256:b610e54b56ecfa238aa8568b33dba4c9ae9a7f5362a0f3c66fdec013ae38f728", size = 29491, upload-time = "2026-07-20T14:10:55.912Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/7a/c8545746a7055205a86be4b02aa545e1ed1cfdc57c797226f3cd581f7002/phoenix_channels_python_client-0.2.4.tar.gz", hash = "sha256:7b9c7f27ccbaecdecbf89fd975e9c18ce493df1dfec792d13364d385eed58395", size = 31301, upload-time = "2026-08-30T06:25:46.127Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/e9/47ac73a5a8bc6b8dec339fbb2b89f325bf2270fa68c81dfe1f2495a7e7a6/phoenix_channels_python_client-0.2.2-py3-none-any.whl", hash = "sha256:ebbf468a15b3ffaa8bc463ddd0132811e94a2fcd5bc20f507ee76109e45b8b14", size = 24197, upload-time = "2026-07-20T14:10:54.799Z" },
+    { url = "https://files.pythonhosted.org/packages/07/32/5e1a22892562857d1535a676947df174c32ee39a27c56ae7d8c92908e2a4/phoenix_channels_python_client-0.2.4-py3-none-any.whl", hash = "sha256:9f18a51ce33f3edb25d2896194c415096ef5952b896276931a98096e9ddeb3ce", size = 25372, upload-time = "2026-08-30T06:25:44.58Z" },
 ]
 
 [[package]]
