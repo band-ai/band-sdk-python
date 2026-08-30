@@ -8,6 +8,7 @@ import logging
 import random
 from typing import Any, Literal
 
+from band_sdk_core import SessionPolicy
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
@@ -16,6 +17,7 @@ from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from band.client.streaming.errors import classify_initial_upgrade_error
+from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
 
@@ -334,6 +336,7 @@ class WebSocketClient:
         agent_id: str | None = None,
         on_reconnect: Callable[[], Awaitable[None]] | None = None,
         on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
+        session_policy: SessionPolicy | None = None,
     ):
         self.ws_url = ws_url
         self.api_key = api_key
@@ -343,6 +346,7 @@ class WebSocketClient:
         self._on_disconnect = on_disconnect
         self._validation_error_count: int = 0
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+        self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
 
     @property
     def validation_error_count(self) -> int:
@@ -368,6 +372,18 @@ class WebSocketClient:
             raise RuntimeError("WebSocket client is not connected")
         return self.client
 
+    async def _handle_reconnect(self) -> None:
+        """Reset the watchdog deadline on reconnect, then forward to the
+        caller's own on_reconnect callback (if any).
+
+        Without this, a reconnect can inherit a deadline set before the new
+        socket existed and expire before its first heartbeat_interval_s
+        cycle completes, force-closing a healthy connection.
+        """
+        self._watchdog.reset_deadline()
+        if self._on_reconnect is not None:
+            await self._on_reconnect()
+
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
         policy = ReconnectPolicy()
@@ -377,8 +393,10 @@ class WebSocketClient:
                 self.api_key,
                 protocol_version=PhoenixChannelsProtocolVersion.V2,
                 auto_reconnect=False,
-                on_reconnect=self._on_reconnect,
+                heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
+                on_reconnect=self._handle_reconnect,
                 on_disconnect=self._on_disconnect,
+                on_heartbeat_ack=self._watchdog.reset_deadline,
                 # Also send the key as an x-api-key handshake header. Under
                 # proxy-managed sandbox custody the host-side proxy replaces the
                 # sentinel in this header (it can't touch the URL query), and the
@@ -410,12 +428,14 @@ class WebSocketClient:
                 await asyncio.sleep(delay)
             else:
                 self.client.auto_reconnect = True
+                self._watchdog.start(self.client)
                 return self
 
         raise RuntimeError("WebSocket client failed to connect")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""
+        await self._watchdog.stop()
         if self.client:
             await self.client.__aexit__(exc_type, exc_val, exc_tb)
 

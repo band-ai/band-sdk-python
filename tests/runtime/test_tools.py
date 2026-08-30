@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -21,9 +23,11 @@ from band.client.rest import (
     NotFoundError,
     UnprocessableEntityError,
 )
+from band.config.settings import RuntimeSettings
 from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
+from band.runtime.execution import ExecutionContext
 from tests.conftest import make_participant_mock
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
@@ -329,6 +333,7 @@ def _attachment(
     name: str = "notes.txt",
     content_type: str = "text/plain",
     size: int = 20,
+    expires_at: datetime | None = None,
 ) -> Attachment:
     return Attachment(
         id=file_id,
@@ -337,6 +342,7 @@ def _attachment(
         bytes=size,
         sha256="a" * 64,
         has_thumb=False,
+        expires_at=expires_at,
     )
 
 
@@ -647,6 +653,269 @@ class TestFileTools:
         assert get_context.await_count == 2
         _, second_call_kwargs = get_context.await_args_list[1]
         assert second_call_kwargs["cursor"] == "cursor-2"
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_stops_on_repeated_cursor(self, mock_rest_client):
+        """A malformed response repeating a cursor must not loop forever --
+        the only pagination guard, since a room's history has no realistic
+        depth ceiling to cap against (unlike iter_chat_pages's room count)."""
+
+        def _looping_page(**_kwargs: Any) -> GetAgentChatContextResponse:
+            return _context_response(
+                [_message_with_attachments("msg", [_attachment("other-file")])],
+                next_cursor="same-cursor",
+                has_more=True,
+            )
+
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=_looping_page
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_searches_past_fifty_pages(self, mock_rest_client):
+        """A room with more than 50 pages of history before the target file
+        must still resolve it -- there is no depth cap."""
+        target_page = 60
+        target = _attachment(content_type="text/plain", size=5)
+
+        def _paged_history(**kwargs: Any) -> GetAgentChatContextResponse:
+            cursor = kwargs.get("cursor")
+            page = int(cursor.removeprefix("page-")) if cursor else 1
+            if page < target_page:
+                return _context_response(
+                    [
+                        _message_with_attachments(
+                            f"msg-{page}", [_attachment("other-file")]
+                        )
+                    ],
+                    next_cursor=f"page-{page + 1}",
+                    has_more=True,
+                )
+            return _context_response(
+                [_message_with_attachments(f"msg-{page}", [target])]
+            )
+
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=_paged_history
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["text"] == "hello"
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == target_page
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_skips_pagination_on_cache_hit(
+        self, mock_rest_client
+    ):
+        """A second lookup for the same (room, rest, file_id) must not
+        re-paginate -- _find_attachment delegates to a shared @alru_cache
+        keyed on those three, not on the AgentTools instance calling it."""
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        first = AgentTools("room-123", mock_rest_client)
+        second = AgentTools("room-123", mock_rest_client)
+
+        await first._find_attachment("file-1")
+        await second._find_attachment("file-1")
+
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_does_not_share_cache_across_rooms(
+        self, mock_rest_client
+    ):
+        """The same file_id looked up in two different rooms must not
+        cache-hit across them -- room_id is part of the cache key, not
+        just file_id."""
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        room_a = AgentTools("room-a", mock_rest_client)
+        room_b = AgentTools("room-b", mock_rest_client)
+
+        await room_a._find_attachment("file-1")
+        await room_b._find_attachment("file-1")
+
+        assert (
+            mock_rest_client.agent_api_context.get_agent_chat_context.await_count == 2
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_does_not_share_cache_across_rest_clients(
+        self, mock_rest_client
+    ):
+        """The same (room_id, file_id) looked up through two different REST
+        clients must not cache-hit across them -- the rest client identity is
+        part of the cache key, so two agents (or a pool of clients) never
+        leak each other's attachment metadata."""
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        other_rest_client = MagicMock()
+        _mock_attachment_page(other_rest_client, _attachment("file-1"))
+        tools_a = AgentTools("room-123", mock_rest_client)
+        tools_b = AgentTools("room-123", other_rest_client)
+
+        await tools_a._find_attachment("file-1")
+        await tools_b._find_attachment("file-1")
+
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+        other_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_retries_pagination_after_a_miss(
+        self, mock_rest_client
+    ):
+        """A miss must not be cached: a file posted after a failed lookup is
+        still findable on the next attempt, not permanently "not found"."""
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            return_value=_context_response([])
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+        _mock_attachment_page(mock_rest_client, _attachment("file-1"))
+        result = await tools._find_attachment("file-1")
+
+        assert result.id == "file-1"
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_rejects_expired_cached_entry(self, mock_rest_client):
+        """An attachment past its own expires_at must not be handed back
+        from cache -- it's evicted and re-fetched once (the cached copy may
+        just predate the platform extending the deadline), and only raised
+        as not-found if the fresh read is still expired too -- which also
+        evicts it, so the cache never keeps serving metadata it already
+        gave up on."""
+        expired = _attachment(
+            "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+        )
+        _mock_attachment_page(mock_rest_client, expired)
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+        get_context = mock_rest_client.agent_api_context.get_agent_chat_context
+        assert get_context.await_count == 2
+        assert not AgentTools._attachment_cache().cache_contains(
+            "room-123", mock_rest_client, "file-1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_refreshes_an_expired_entry(self, mock_rest_client):
+        """A cache entry whose expires_at has passed gets exactly one
+        real re-fetch -- if that comes back not-expired (the platform
+        extended it), it's returned, not rejected on the stale cached
+        timestamp."""
+        not_expired = _attachment(
+            "file-1",
+            content_type="text/plain",
+            size=5,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        expired_page = _context_response(
+            [
+                _message_with_attachments(
+                    "msg-1",
+                    [
+                        _attachment(
+                            "file-1",
+                            expires_at=datetime.now(timezone.utc)
+                            - timedelta(seconds=1),
+                        )
+                    ],
+                )
+            ]
+        )
+        refreshed_page = _context_response(
+            [_message_with_attachments("msg-1", [not_expired])]
+        )
+        mock_rest_client.agent_api_context.get_agent_chat_context = AsyncMock(
+            side_effect=[expired_page, refreshed_page]
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_find_attachment_rejects_expired_naive_timestamp(
+        self, mock_rest_client
+    ):
+        """A naive (offset-less) expires_at -- the Fern model doesn't enforce
+        one -- must be treated as UTC, not raise on comparison to aware
+        now()."""
+        expired = _attachment("file-1", expires_at=datetime(2020, 1, 1))  # no tzinfo
+        _mock_attachment_page(mock_rest_client, expired)
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(BandToolError, match=FILE_UNAVAILABLE_MESSAGE):
+            await tools._find_attachment("file-1")
+
+    def test_attachment_cache_maxsize_is_wired_to_settings(self) -> None:
+        """The @alru_cache's maxsize must actually come from RuntimeSettings
+        -- the eviction algorithm itself is async-lru's to test, not ours."""
+        assert AgentTools._attachment_cache().cache_parameters()["maxsize"] == (
+            RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE
+        )
+
+    def test_attachment_cache_rereads_settings_lazily(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """maxsize must come from RuntimeSettings at first real use, not at
+        module import -- every example does `from band import Agent` (which
+        imports this module) before its own load_dotenv() call, so baking
+        RuntimeSettings() into a decorator at class-body time would silently
+        ignore a .env-set override."""
+        AgentTools._attachment_cache.cache_clear()
+        monkeypatch.setenv("BAND_ATTACHMENT_CACHE_MAXSIZE", "42")
+        try:
+            assert AgentTools._attachment_cache().cache_parameters()["maxsize"] == 42
+        finally:
+            AgentTools._attachment_cache.cache_clear()
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_caches_attachments_across_recreated_tools(
+        self, mock_rest_client
+    ):
+        """Real ExecutionContext + from_context(): a file found by one turn's
+        AgentTools must skip re-pagination on the next turn's recreated
+        instance, since AgentTools.from_context() rebuilds fresh every turn.
+        """
+        _mock_attachment_page(
+            mock_rest_client, _attachment(content_type="text/plain", size=5)
+        )
+        mock_rest_client.agent_api_files.download_agent_chat_file = lambda **_kw: (
+            _fake_download(b"hello")
+        )
+        ctx = ExecutionContext(
+            room_id="room-789",
+            link=MagicMock(rest=mock_rest_client),
+            on_execute=AsyncMock(),
+        )
+
+        tools1 = AgentTools.from_context(ctx)
+        await tools1.read_room_file("file-1")
+
+        tools2 = AgentTools.from_context(ctx)
+        await tools2.read_room_file("file-1")
+
+        mock_rest_client.agent_api_context.get_agent_chat_context.assert_awaited_once()
 
     # --- send_room_file ---
 

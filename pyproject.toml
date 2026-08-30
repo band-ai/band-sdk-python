@@ -23,14 +23,15 @@ classifiers = [
 
 dependencies = [
     "band-client-rest==0.0.27",
-    "band-sdk-core==0.7.2",
-    "phoenix-channels-python-client>=0.2.2",
+    "band-sdk-core==2.0.0",
+    "phoenix-channels-python-client>=0.2.4",
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
     "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
+    "async-lru>=2.3.0",  # AgentTools._find_attachment's cross-turn cache (band.runtime.tools)
     "ruamel.yaml>=0.18",  # Comment-preserving round-trip write of band.yaml (band-kit provision)
 ]
 
@@ -340,6 +341,15 @@ addopts = "-v"
 # Global safety net: catch runaway unit tests. Integration and E2E tests
 # override to 120s via pytest_collection_modifyitems in their conftest.
 timeout = 30
+filterwarnings = [
+    # AgentTools._attachment_cache's @alru_cache binds to the first asyncio
+    # event loop it runs on; pytest-asyncio's default
+    # function-scoped test loop means the *first* test-to-test loop switch
+    # trips this once per process, ever -- async_lru's own message says so
+    # ("safe but unusual outside of tests"). Real deployments run one loop
+    # for the process's whole life and never trigger it.
+    "ignore:alru_cache detected event loop change:async_lru.AlruCacheLoopResetWarning",
+]
 markers = [
     "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
