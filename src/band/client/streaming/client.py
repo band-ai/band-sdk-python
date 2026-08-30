@@ -20,6 +20,7 @@ from band.client.streaming.errors import classify_initial_upgrade_error
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
+from band_sdk_core import AgentTopicKind, chat_room_topic, room_participants_topic
 
 logger = logging.getLogger(__name__)
 
@@ -269,9 +270,13 @@ class WireEvent(StrEnum):
     method's handler-dict keys are keyed from, instead of each repeating the
     string literal. A member is still a plain ``str``, so it passes straight
     through to `from_wire`/`band_sdk_core` unchanged. Members through
-    `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary;
+    `AGENT_CONTROL` mirror `band_sdk_core.EventType`'s wire-name vocabulary
+    (kept as literals, not derived, since `EventType` is an opaque PyO3 type
+    that can't be a `StrEnum` member's value; a drift-guard test in
+    `tests/websocket/test_client.py` keeps the two in sync).
     `TASK_CREATED`/`TASK_UPDATED` are outside it entirely (the `tasks:*`
-    channel's raw-dict passthrough never calls `validate_event_payload`).
+    channel's raw-dict passthrough never calls `validate_event_payload`, and
+    has no band-sdk-typescript counterpart to justify a core module).
     """
 
     MESSAGE_CREATED = "message_created"
@@ -371,6 +376,12 @@ class WebSocketClient:
         if self.client is None:
             raise RuntimeError("WebSocket client is not connected")
         return self.client
+
+    def joined_topics(self) -> frozenset[str]:
+        """Live snapshot of the transport's subscription registry. Call
+        once per detection pass and check membership against it --
+        `get_current_subscriptions` copies its dict on every call."""
+        return frozenset(self._require_client().get_current_subscriptions())
 
     async def _handle_reconnect(self) -> None:
         """Reset the watchdog deadline on reconnect, then forward to the
@@ -549,7 +560,7 @@ class WebSocketClient:
         Handles terminal ``supersede`` events and, when ``on_control`` is
         provided, ``agent.control`` interrupt/stop/play signals.
         """
-        topic = f"agent_control:{agent_id}"
+        topic = AgentTopicKind.Control.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[..., Awaitable[None]]] = {
@@ -572,7 +583,7 @@ class WebSocketClient:
         on_room_removed: Callable[[RoomRemovedPayload], Awaitable[None]],
     ):
         """Subscribe to agent rooms topic with async callbacks"""
-        topic = f"agent_rooms:{agent_id}"
+        topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -601,7 +612,7 @@ class WebSocketClient:
         ``message_updated`` events (e.g. delivery-status transitions). Omit it to
         ignore those events as before.
         """
-        topic = f"chat_room:{chat_room_id}"
+        topic = chat_room_topic(chat_room_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         handlers: dict[str, Callable[[MessageCreatedPayload], Awaitable[None]]] = {
@@ -645,7 +656,7 @@ class WebSocketClient:
         ] = _noop_room_deleted,
     ):
         """Subscribe to room participants topic with async callbacks"""
-        topic = f"room_participants:{chat_room_id}"
+        topic = room_participants_topic(chat_room_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -682,19 +693,19 @@ class WebSocketClient:
 
     async def leave_agent_control_channel(self, agent_id: str):
         """Unsubscribe from agent control topic"""
-        topic = f"agent_control:{agent_id}"
+        topic = AgentTopicKind.Control.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_agent_rooms_channel(self, agent_id: str):
         """Unsubscribe from agent rooms topic"""
-        topic = f"agent_rooms:{agent_id}"
+        topic = AgentTopicKind.Rooms.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_chat_room_channel(self, chat_room_id: str):
         """Unsubscribe from chat room topic"""
-        topic = f"chat_room:{chat_room_id}"
+        topic = chat_room_topic(chat_room_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
@@ -705,7 +716,7 @@ class WebSocketClient:
 
     async def leave_room_participants_channel(self, chat_room_id: str):
         """Unsubscribe from room participants topic"""
-        topic = f"room_participants:{chat_room_id}"
+        topic = room_participants_topic(chat_room_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 
@@ -727,7 +738,7 @@ class WebSocketClient:
         on_contact_removed: Callable[[ContactRemovedPayload], Awaitable[None]],
     ):
         """Subscribe to agent contacts topic with async callbacks."""
-        topic = f"agent_contacts:{agent_id}"
+        topic = AgentTopicKind.Contacts.topic(agent_id)
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
         async def message_handler(message):
@@ -747,7 +758,7 @@ class WebSocketClient:
 
     async def leave_agent_contacts_channel(self, agent_id: str):
         """Unsubscribe from agent contacts topic."""
-        topic = f"agent_contacts:{agent_id}"
+        topic = AgentTopicKind.Contacts.topic(agent_id)
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
         return await self._require_client().unsubscribe_from_topic(topic)
 

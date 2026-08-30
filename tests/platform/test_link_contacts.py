@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from band.platform.link import BandLink
 from band.platform.event import (
@@ -19,6 +19,7 @@ from band.client.streaming import (
     ContactRemovedPayload,
     WireEvent,
 )
+from band_sdk_core import AgentTopicKind, AgentTopicStatus
 
 from tests.platform.conftest import cancelled_mid_await
 
@@ -32,6 +33,13 @@ def mock_ws_client():
     ws.join_agent_contacts_channel = AsyncMock()
     ws.leave_agent_contacts_channel = AsyncMock()
     ws.run_forever = AsyncMock()
+    # joined_topics() is synchronous on the real client; a bare AsyncMock
+    # attribute would make it awaitable instead, which _recover_agent_control
+    # (called from _on_reconnected) would then fail to iterate. Reports
+    # agent_control as already present -- this file's tests aren't about it.
+    ws.joined_topics = MagicMock(
+        return_value=frozenset({AgentTopicKind.Control.topic("agent-123")})
+    )
     return ws
 
 
@@ -193,11 +201,11 @@ class TestContactTopicRaceAndReconciliation:
     async def test_cancelled_join_blocks_agent_contacts_until_reconnect(
         self, mock_ws_class, mock_ws_client
     ):
-        """record_agent_topic_join(joined=False) never reaches core's own
-        NeedsReconciliation (unlike a room's second-phase rollback failure)
-        — the local reconciliation set is what actually blocks the retry
-        here, proven with a gated coroutine so the cancel lands truly
-        mid-flight."""
+        """A cancel mid-flight (after PHX's own join call has started, proven
+        with a gated coroutine) leaves the real transport outcome unknown, so
+        record_agent_topic_join_ambiguous resolves core straight to
+        NeedsReconciliation instead of Absent — verified directly against the
+        tracker, not just the retry-blocking behavior it drives."""
         mock_ws_class.return_value = mock_ws_client
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
@@ -208,6 +216,12 @@ class TestContactTopicRaceAndReconciliation:
             link.subscribe_agent_contacts("agent-123"),
         ):
             pass
+
+        topic = AgentTopicKind.Contacts.topic("agent-123")
+        assert (
+            link._subscriptions.agent_topic_status(topic)
+            == AgentTopicStatus.NeedsReconciliation
+        )
 
         # Blocked: a retry before the next reconnect must not attempt a join.
         mock_ws_client.join_agent_contacts_channel.reset_mock()

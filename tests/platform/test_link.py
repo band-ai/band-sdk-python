@@ -36,9 +36,30 @@ from band.platform.event import (
     WebSocketDisconnectedEvent,
 )
 from band.platform.link import BandLink
+from band_sdk_core import AgentTopicStatus, chat_room_topic
 
 from tests.conftest import make_message_event
 from tests.platform.conftest import cancelled_mid_await
+
+
+class AllTopicsJoined:
+    """A container reporting every topic as present -- the default 'nothing
+    failed to rejoin' fixture behavior for ``WebSocketClient.joined_topics``,
+    which returns a real snapshot BandLink checks membership against."""
+
+    def __contains__(self, topic: object) -> bool:
+        return True
+
+
+class AllTopicsExcept:
+    """Reports every topic present except the given ones -- simulates a
+    room/topic that PHX's own rejoin pass did not re-establish."""
+
+    def __init__(self, missing: set[str]) -> None:
+        self._missing = missing
+
+    def __contains__(self, topic: object) -> bool:
+        return topic not in self._missing
 
 
 @pytest.fixture
@@ -54,6 +75,13 @@ def mock_ws_client():
     # Async context manager support
     ws.__aenter__.return_value = ws
     ws.__aexit__.return_value = None
+
+    # Documented "nothing failed to rejoin" default -- an unconfigured
+    # autospec call would otherwise return a bare (truthy) MagicMock, and
+    # `topic in <MagicMock>` raises TypeError rather than reading as
+    # "topic present" -- _detect_room_rejoin_failures/
+    # _detect_agent_topic_rejoin_failures need a real container.
+    ws.joined_topics.return_value = AllTopicsJoined()
 
     ws.last_disconnect_reason = None
 
@@ -632,6 +660,63 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         mock_ws_client.leave_room_participants_channel.assert_called_once_with(
             "room-123"
         )
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_room_rejoin_failure_is_detected_and_drained_on_reconnect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """A room whose chat_room topic didn't survive PHX's own rejoin pass
+        is caught by _detect_room_rejoin_failures: the candidate ticket it
+        reports still matches the tracker's current generation, so the
+        report applies. Detection runs before _drain_reconciliation within
+        the same _on_reconnected() call, so the room is force-left and
+        acknowledged immediately -- no extra reconnect needed before a fresh
+        subscribe succeeds."""
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+        await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is True
+
+        mock_ws_client.joined_topics.return_value = AllTopicsExcept(
+            {chat_room_topic("room-123")}
+        )
+        await link._on_reconnected()
+        assert link.is_room_subscribed("room-123") is False
+        mock_ws_client.leave_chat_room_channel.assert_called_once_with("room-123")
+        mock_ws_client.leave_room_participants_channel.assert_called_once_with(
+            "room-123"
+        )
+
+        mock_ws_client.joined_topics.return_value = AllTopicsJoined()
+        await link.subscribe_room("room-123")
+        assert link.is_room_subscribed("room-123") is True
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_agent_topic_rejoin_failure_is_detected_and_drained_on_reconnect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """Same detection for the single-topic agent_rooms channel:
+        _detect_agent_topic_rejoin_failures reports the current ticket, the
+        tracker applies it, and the same-call drain force-leaves and
+        acknowledges it immediately."""
+        mock_ws_class.return_value = mock_ws_client
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        await link.connect()
+        await link.subscribe_agent_rooms("agent-123")
+
+        topic = "agent_rooms:agent-123"
+        mock_ws_client.joined_topics.return_value = AllTopicsExcept({topic})
+        await link._on_reconnected()
+        mock_ws_client.leave_agent_rooms_channel.assert_called_once_with("agent-123")
+        assert link._subscriptions.agent_topic_status(topic) == AgentTopicStatus.Absent
+
+        mock_ws_client.joined_topics.return_value = AllTopicsJoined()
+        mock_ws_client.join_agent_rooms_channel.reset_mock()
+        await link.subscribe_agent_rooms("agent-123")
+        mock_ws_client.join_agent_rooms_channel.assert_called_once()
 
     @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_room_cancelled_mid_join_blocks_until_reconnect(

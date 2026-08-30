@@ -25,6 +25,8 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
+import band_sdk_core
+
 from band.credentials import PROXY_MANAGED_API_KEY
 import band.client.streaming.wire as wire_module
 from band.client.streaming import (
@@ -598,6 +600,19 @@ def test_delivery_status_enum_matches_backend_values():
         "processed",
         "failed",
     }
+
+
+def test_wire_event_matches_band_sdk_core_event_type():
+    """Drift guard: WireEvent's members through AGENT_CONTROL are meant to
+    mirror band_sdk_core.EventType's wire-name vocabulary exactly (they're
+    kept as separate literals, not derived, since EventType is an opaque
+    PyO3 type that can't be a StrEnum member's value)."""
+    core_wire_names = {
+        getattr(band_sdk_core.EventType, name).wire_name
+        for name in dir(band_sdk_core.EventType)
+        if isinstance(getattr(band_sdk_core.EventType, name), band_sdk_core.EventType)
+    }
+    assert core_wire_names <= {member.value for member in WireEvent}
 
 
 async def test_ignores_message_updated_when_no_handler_registered(caplog):
