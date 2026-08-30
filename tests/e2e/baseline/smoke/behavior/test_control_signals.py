@@ -11,6 +11,7 @@ import pytest
 from band.client.streaming import DeliveryStatus
 
 from tests.e2e.baseline.agents import Lane, lane
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.control import running_control_runtime
@@ -21,6 +22,11 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
 @lane(Lane.CORE)
+@flaky_infra(
+    "agent.control is platform-documented best-effort delivery (see "
+    "ThenvoiCom.Channels.AgentControl moduledoc); a dropped push times out "
+    "control.wait_for_cancellation with no code defect on either side"
+)
 async def test_stop_cancels_then_play_replays(
     resource_manager: ResourceManager,
     user_ops: UserOps,
@@ -61,6 +67,11 @@ async def test_stop_cancels_then_play_replays(
 
 
 @lane(Lane.CORE)
+@flaky_infra(
+    "agent.control is platform-documented best-effort delivery (see "
+    "ThenvoiCom.Channels.AgentControl moduledoc); a dropped push times out "
+    "control.wait_for_cancellation with no code defect on either side"
+)
 async def test_interrupt_cancels_and_consumes(
     resource_manager: ResourceManager,
     user_ops: UserOps,
