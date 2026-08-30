@@ -374,6 +374,9 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
         async def __aenter__(self):
             return self
 
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
     monkeypatch.setattr(
         "band.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
     )
@@ -383,6 +386,11 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
 
     assert init_kwargs["auto_reconnect"] is False
     assert client.client.auto_reconnect is True
+
+    # A successful __aenter__ starts the watchdog against this double, which
+    # has no real `.connection` -- __aexit__ stops it before returning so it
+    # can never fire `_force_close_if_stale` against a torn-down test.
+    await client.__aexit__(None, None, None)
 
 
 async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch):
