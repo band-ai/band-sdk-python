@@ -7,17 +7,19 @@ Bound to a room_id. Uses AsyncRestClient directly for API calls.
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import logging
 import re
 import warnings
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast
 
 import band_sdk_core
+from async_lru import alru_cache
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -33,6 +35,7 @@ from band.client.rest import (
     NotFoundError,
     UnprocessableEntityError,
 )
+from band.config.settings import RuntimeSettings
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import log_roster_call, participant_snapshot
 from band.core.exceptions import BandToolError
@@ -1779,6 +1782,24 @@ def serialize_tool_result(result: Any) -> Any:
     return result
 
 
+class AttachmentCache(Protocol):
+    """The subset of async_lru's wrapper object AgentTools relies on.
+
+    Structural, not the real ``_LRUCacheWrapper`` -- that class is private to
+    async_lru (leading underscore, not exported), so naming it here would
+    couple us to an implementation detail that library owes us no stability
+    on.
+    """
+
+    async def __call__(
+        self, room_id: str, rest: "AsyncRestClient", file_id: str
+    ) -> "Attachment": ...
+    def cache_invalidate(self, *args: Any, **kwargs: Any) -> bool: ...
+    def cache_contains(self, *args: Any, **kwargs: Any) -> bool: ...
+    def cache_info(self) -> Any: ...
+    def cache_parameters(self) -> Any: ...
+
+
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -2643,8 +2664,11 @@ class AgentTools(AgentToolsProtocol):
 
     # --- File tools ---
 
-    async def _list_message_page(self, cursor: str | None) -> Any:
-        """Fetch one page of the room's message history, attachments included.
+    @staticmethod
+    async def _list_message_page(
+        room_id: str, rest: "AsyncRestClient", cursor: str | None
+    ) -> Any:
+        """Fetch one page of a room's message history, attachments included.
 
         Uses the context/rehydration endpoint, not the plain agent messages
         one: that one only ever returns messages that mention this agent,
@@ -2657,10 +2681,84 @@ class AgentTools(AgentToolsProtocol):
         kwargs: dict[str, Any] = {}
         if cursor is not None:
             kwargs["cursor"] = cursor
-        return await self.rest.agent_api_context.get_agent_chat_context(
-            chat_id=self.room_id,
+        return await rest.agent_api_context.get_agent_chat_context(
+            chat_id=room_id,
             request_options=DEFAULT_REQUEST_OPTIONS,
             **kwargs,
+        )
+
+    @staticmethod
+    def _attachments_in(messages: Collection[Any]) -> Iterator[Attachment]:
+        """Yield every attachment across a page's messages, in message order."""
+        for message in messages:
+            yield from message.attachments or []
+
+    @staticmethod
+    async def _iter_message_pages(
+        fetch: Callable[[str | None], Awaitable[Any]],
+    ) -> AsyncIterator[Any]:
+        """Walk every page a ``fetch(cursor)`` callable returns, oldest first.
+
+        Termination is data-driven -- the platform's own ``has_more``/
+        ``next_cursor`` on the page just fetched. Unlike ``iter_chat_pages``,
+        this has no depth cap: a room's message history has no realistic
+        ceiling to bound against, and a target that's merely old, not
+        missing, must still be found. The only thing guarded against is a
+        malformed response repeating a cursor it already returned, which
+        would otherwise loop forever making no progress -- safe to key on
+        the cursor value itself, since ``get_agent_chat_context`` documents
+        ``cursor`` as keyset pagination (derived from the boundary row, not
+        an opaque session token), so two distinct pages can't coincide.
+        """
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        more_pages = True
+        while more_pages:
+            response = await fetch(cursor)
+            yield response
+            cursor = response.metadata.next_cursor
+            more_pages = bool(response.metadata.has_more and cursor)
+            if more_pages:
+                if cursor in seen_cursors:
+                    logger.warning(
+                        "Stopped searching room history: server repeated cursor %r",
+                        cursor,
+                    )
+                    return
+                seen_cursors.add(cursor)
+
+    @staticmethod
+    async def _fetch_attachment_uncached(
+        room_id: str, rest: "AsyncRestClient", file_id: str
+    ) -> "Attachment":
+        """Locate an attachment by id, exhausting pagination (like
+        ``_lookup_peer``) instead of returning one page: the target file may
+        be older than the first page, and there is no dedicated "get
+        attachment by id" endpoint to reach it directly.
+        """
+
+        async def fetch(cursor: str | None) -> Any:
+            return await AgentTools._list_message_page(room_id, rest, cursor)
+
+        async for response in AgentTools._iter_message_pages(fetch):
+            for attachment in AgentTools._attachments_in(response.data):
+                if attachment.id == file_id:
+                    return attachment
+        raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
+
+    @staticmethod
+    @functools.lru_cache(maxsize=None)
+    def _attachment_cache() -> AttachmentCache:
+        """Build the ``alru_cache``-wrapped lookup once, lazily, on first use.
+
+        A zero-arg singleton so ``RuntimeSettings()`` (and thus
+        ``BAND_ATTACHMENT_CACHE_MAXSIZE``) is read on first call, not at
+        module import -- decorating ``_fetch_attachment_uncached`` directly
+        would bake the maxsize in before an app's ``load_dotenv()`` has had a
+        chance to run.
+        """
+        return alru_cache(maxsize=RuntimeSettings().BAND_ATTACHMENT_CACHE_MAXSIZE)(
+            AgentTools._fetch_attachment_uncached
         )
 
     async def list_room_files(self, cursor: str | None = None) -> dict[str, Any]:
@@ -2678,7 +2776,7 @@ class AgentTools(AgentToolsProtocol):
             Dict with "data" (attachment dicts, deduplicated by id -- a file
             can be attached to more than one message) and "next_cursor".
         """
-        response = await self._list_message_page(cursor)
+        response = await self._list_message_page(self.room_id, self.rest, cursor)
         seen: set[str] = set()
         attachments: list[dict[str, Any]] = []
         for attachment in self._attachments_in(response.data):
@@ -2689,38 +2787,36 @@ class AgentTools(AgentToolsProtocol):
         return {"data": attachments, "next_cursor": response.metadata.next_cursor}
 
     @staticmethod
-    def _attachments_in(messages: Collection[Any]) -> Iterator[Attachment]:
-        """Yield every attachment across a page's messages, in message order."""
-        for message in messages:
-            yield from message.attachments or []
-
-    async def _iter_message_pages(self) -> AsyncIterator[Any]:
-        """Walk every page of the room's message history, oldest cursor first.
-
-        Termination is data-driven -- the platform's own ``has_more``/
-        ``next_cursor`` on the page just fetched, not knowable in advance --
-        so this is where that walk lives, once, as a plain page-at-a-time
-        generator. Callers that only need a match (``_find_attachment``)
-        drive it with a plain ``async for`` and no loop-control of their own.
-        """
-        cursor: str | None = None
-        more_pages = True
-        while more_pages:
-            response = await self._list_message_page(cursor)
-            yield response
-            cursor = response.metadata.next_cursor
-            more_pages = bool(response.metadata.has_more and cursor)
+    def _attachment_expired(attachment: "Attachment") -> bool:
+        """True once ``expires_at`` has passed. A naive value (no offset --
+        the Fern model doesn't enforce one) is treated as UTC, the platform's
+        only timezone, rather than raising on a naive/aware comparison."""
+        expires_at = attachment.expires_at
+        if expires_at is None:
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return expires_at <= datetime.now(timezone.utc)
 
     async def _find_attachment(self, file_id: str) -> "Attachment":
-        """Locate an attachment by id, exhausting pagination (like
-        ``_lookup_peer``) instead of returning one page: the target file may
-        be older than the first page, and there is no dedicated "get
-        attachment by id" endpoint to reach it directly.
+        """Locate an attachment by id -- see ``_attachment_cache`` for the
+        cached page-walk this delegates to.
+
+        A cached attachment past its own ``expires_at`` is evicted and
+        re-fetched once before being treated as not found: the cached copy
+        may simply predate the platform extending that deadline, and a
+        second stale-looking read shouldn't cost more than one extra lookup.
+        A still-expired refresh is evicted too, so the cache never keeps
+        serving metadata it has already given up on.
         """
-        async for response in self._iter_message_pages():
-            for attachment in self._attachments_in(response.data):
-                if attachment.id == file_id:
-                    return attachment
+        cache = AgentTools._attachment_cache()
+        attachment = await cache(self.room_id, self.rest, file_id)
+        for attempt in range(2):
+            if attempt:
+                attachment = await cache(self.room_id, self.rest, file_id)
+            if not self._attachment_expired(attachment):
+                return attachment
+            cache.cache_invalidate(self.room_id, self.rest, file_id)
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
 
     async def _download_file(self, file_id: str) -> bytes:
