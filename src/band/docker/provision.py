@@ -49,7 +49,11 @@ from ruamel.yaml import YAML
 from band import LogSettings, LogStream
 from band.client.rest import aclose_rest_client
 from band.credentials import PROXY_MANAGED_API_KEY
-from band.docker.launcher.config import DEFAULT_REST_URL, load_workspace_config
+from band.docker.launcher.config import (
+    DEFAULT_REST_URL,
+    PLACEHOLDER_AGENT_ID,
+    load_workspace_config,
+)
 from band.docker.sbx_process import run_sbx_subprocess
 
 logger = logging.getLogger(__name__)
@@ -70,11 +74,6 @@ SBX_CREATE_TIMEOUT_S: Final[int] = 600
 # (see _describe_registration_timeout); independent of --timeout since this
 # is a plain read, not the write whose outcome is in question.
 TIMEOUT_RECOVERY_CHECK_S: Final[int] = 30
-
-# The echo-agent starter's shipped-but-unset marker (docker/band_python_kit/
-# echo-agent/band.yaml); a workspace still carrying it has never been
-# provisioned even though `agent.id` is non-empty.
-PLACEHOLDER_AGENT_ID = "replace-with-agent-id"
 
 # The published kit's own name (docker/band_python_kit/spec.yaml `name`), not a
 # per-workspace choice — every sandbox this CLI creates rides that one kit.
