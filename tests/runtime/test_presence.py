@@ -318,6 +318,22 @@ class TestJoiningOnce:
         assert joined == ["room-1"], "the callback ran again for a room already joined"
         assert mock_link.subscribe_room.call_count == 1
 
+    async def test_subscribe_rooms_skips_a_room_already_admitted(
+        self, mock_link, presences
+    ):
+        """A room a concurrent room_added event already admitted before
+        _subscribe_rooms ran must be skipped, not re-attempted and counted
+        as a failed admission -- _join_room's own no-op for an already-
+        admitted room would otherwise misreport an already-successful join
+        as a failure in the admission-results log."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        admit_room(presence, "room-1")
+
+        await presence._subscribe_rooms({"room-1": {}}, context="startup")
+
+        mock_link.subscribe_room.assert_not_called()
+
     async def test_a_room_on_two_pages_of_one_snapshot_joins_once(
         self, mock_link, presences
     ):
@@ -399,7 +415,11 @@ class TestAdmissionRaces:
     ):
         """Cancelling _join_room while subscribe_room() is in flight must not
         leave the room stuck Admitting forever — record_room_admission's
-        bare finally always resolves the ticket, even on cancellation."""
+        bare finally always resolves the ticket, even on cancellation. The
+        join may have already reached the server by the time the
+        cancellation lands, so this must also attempt a best-effort
+        unsubscribe rather than leave a transport subscription nothing in
+        the roster will ever target for cleanup."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
 
@@ -410,6 +430,7 @@ class TestAdmissionRaces:
             pass
 
         assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
+        mock_link.unsubscribe_room.assert_called_once_with("room-1")
 
     async def test_concurrent_join_room_only_one_admits(self, mock_link, presences):
         """Two concurrent _join_room calls for the same room must not both

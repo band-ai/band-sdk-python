@@ -202,6 +202,11 @@ class RoomPresence:
                     pass
                 self._event_task = None
 
+            # `clear()`'s own return value is not a substitute here: it
+            # includes every tracked room regardless of membership (an
+            # in-flight Admitting one too), while a leave/on_room_left is
+            # only correct for rooms that reached Admitted -- one never
+            # announced as joined must not be announced as left either.
             admitted_room_ids = self.roster.tracked_room_ids()
             self.roster.clear()
             await self._leave_and_notify(admitted_room_ids, context="stop")
@@ -491,19 +496,33 @@ class RoomPresence:
         """Subscribe to a claimed room and resolve its ticket, whatever happens.
 
         ``record_room_admission`` is a safe no-op on an already-resolved/stale
-        ticket, so a bare ``finally`` is enough to roll a cancelled or failed
-        subscribe back to ``Unadmitted`` — no extra "settled" bookkeeping needed.
-        Its return value still matters on the success path though: a ticket
-        can go stale mid-flight (e.g. ``stop()``'s ``roster.clear()`` racing
-        this call before ``self._event_task`` exists to be cancelled), and a
+        ticket, so a bare ``finally`` is enough to roll a failed subscribe
+        back to ``Unadmitted`` -- no extra "settled" bookkeeping needed. Its
+        return value still matters on the success path though: a ticket can
+        go stale mid-flight (e.g. ``stop()``'s ``roster.clear()`` racing this
+        call before ``self._event_task`` exists to be cancelled), and a
         stale-but-succeeded subscribe must not announce a room the roster no
         longer considers ours -- nor leave the real transport subscription
         behind for a room the roster has already forgotten about.
+
+        A genuine cancellation *while awaiting* ``subscribe_room`` itself is
+        the one case the ``finally`` alone can't cover: the join may have
+        already reached the server before the cancellation lands, and once
+        this coroutine unwinds there is no later return value to check --
+        only ``BandLink``'s own next-reconnect reconciliation would ever
+        notice, and the roster (already rolled back to ``Unadmitted`` by the
+        ``finally``) has nothing to hand ``stop()``/``reconcile()`` to target
+        it for cleanup meanwhile. That specific await gets its own best-effort
+        unsubscribe before re-raising, below.
         """
         succeeded = False
         try:
             try:
-                await self.link.subscribe_room(room_id)
+                try:
+                    await self.link.subscribe_room(room_id)
+                except asyncio.CancelledError:
+                    await self._unsubscribe_room(room_id, context=context)
+                    raise
             except Exception as e:
                 logger.warning(
                     "Failed to subscribe to room %s during %s: %s", room_id, context, e
@@ -553,14 +572,27 @@ class RoomPresence:
         *,
         context: str,
     ) -> None:
-        """Join every room in parallel."""
-        if not rooms_to_join:
+        """Join every room in parallel.
+
+        Excludes rooms a concurrent ``room_added`` event already admitted
+        before this ran (the startup-snapshot-vs-live-event race
+        ``_join_room``'s docstring describes) -- ``_join_room`` would still
+        safely no-op on one of those via its own ticket claim, but counting
+        that no-op as an admission attempt in ``_log_admission_results``
+        misreports an already-successful join as a failure.
+        """
+        new_rooms = {
+            room_id: payload
+            for room_id, payload in rooms_to_join.items()
+            if self.roster.room_membership(room_id) is not RoomMembership.Admitted
+        }
+        if not new_rooms:
             return
 
         results = await asyncio.gather(
             *[
                 self._join_room(room_id, payload, context=context)
-                for room_id, payload in rooms_to_join.items()
+                for room_id, payload in new_rooms.items()
             ],
         )
         self._log_admission_results(results, context=context)
