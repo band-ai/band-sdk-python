@@ -2809,22 +2809,15 @@ class AgentTools(AgentToolsProtocol):
         A still-expired refresh is evicted too, so the cache never keeps
         serving metadata it has already given up on.
         """
-        attachment = await AgentTools._attachment_cache()(
-            self.room_id, self.rest, file_id
-        )
-        if self._attachment_expired(attachment):
-            AgentTools._attachment_cache().cache_invalidate(
-                self.room_id, self.rest, file_id
-            )
-            attachment = await AgentTools._attachment_cache()(
-                self.room_id, self.rest, file_id
-            )
-            if self._attachment_expired(attachment):
-                AgentTools._attachment_cache().cache_invalidate(
-                    self.room_id, self.rest, file_id
-                )
-                raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
-        return attachment
+        cache = AgentTools._attachment_cache()
+        attachment = await cache(self.room_id, self.rest, file_id)
+        for attempt in range(2):
+            if attempt:
+                attachment = await cache(self.room_id, self.rest, file_id)
+            if not self._attachment_expired(attachment):
+                return attachment
+            cache.cache_invalidate(self.room_id, self.rest, file_id)
+        raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
 
     async def _download_file(self, file_id: str) -> bytes:
         """Download an attachment's raw bytes, translating a 404 for the LLM."""
