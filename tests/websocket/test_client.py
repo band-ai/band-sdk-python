@@ -401,6 +401,9 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
                 raise PHXConnectionError("temporary network failure")
             return self
 
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
     async def no_upgrade_error(exc, websocket_url):
         return None
 
@@ -422,6 +425,10 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
     assert attempts == 3
     assert len(sleep_delays) == 2
     assert client.client.auto_reconnect is True
+
+    # fake_sleep never advances the clock; an un-stopped watchdog's
+    # deadline-check loop would spin on it with no real yield point.
+    await client.__aexit__(None, None, None)
 
 
 async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
