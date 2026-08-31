@@ -212,3 +212,52 @@ class TestAdapterFeaturesContract:
         """Omitting emit= narrates everything the adapter declares support for."""
         adapter = adapter_config.adapter_factory()
         assert adapter.features.emit == type(adapter).SUPPORTED_EMIT
+
+    def test_declared_capabilities_accepted_at_construction(self, adapter_config):
+        """Every capability an adapter claims via SUPPORTED_CAPABILITIES must
+        actually be accepted, not just listed -- guards against a stale
+        SUPPORTED_CAPABILITIES entry whose wiring to the schema-building call
+        site was removed or never passed self.features.capabilities through.
+        """
+        cls = adapter_config.adapter_factory().__class__
+        adapter = adapter_config.adapter_factory(
+            capabilities=cls.SUPPORTED_CAPABILITIES
+        )
+        assert adapter.features.capabilities == cls.SUPPORTED_CAPABILITIES
+
+
+# Adapters that still hand-roll one wrapper function/class per platform tool
+# (CrewAI's BaseTool subclasses, PydanticAI's @platform_tool functions,
+# Parlant's @band_tool functions) instead of deriving their tool surface from
+# the central registry (iter_tool_definitions/get_openai_tool_schemas/
+# get_anthropic_tool_schemas). Capability.FILES needs three new hand-written
+# wrappers there, not just a capability declaration -- not yet done. Remove a
+# framework_id here once it grows real band_list_room_files/band_read_room_file/
+# band_send_room_file wrappers.
+FILES_CAPABILITY_PENDING_FRAMEWORK_IDS = frozenset(
+    {"crewai", "crewai_flow", "pydantic_ai", "parlant"}
+)
+
+
+class TestFilesCapabilityMatrix:
+    """Capability.FILES adoption matrix across every registered adapter.
+
+    Turns Capability.FILES on for every adapter in ADAPTER_CONFIGS: an
+    adapter not in FILES_CAPABILITY_PENDING_FRAMEWORK_IDS must accept it
+    (schema exposure is generic there -- see the shared registry in
+    band.runtime.tools); one still pending must reject it with
+    BandConfigError until it grows real tool wrappers. Adding a new adapter
+    to ADAPTER_CONFIGS without a decision either way fails this test.
+    """
+
+    def test_supports_or_is_pending(self, adapter_config):
+        from band.core.exceptions import BandConfigError
+        from band.core.types import Capability
+
+        pending = adapter_config.framework_id in FILES_CAPABILITY_PENDING_FRAMEWORK_IDS
+        if pending:
+            with pytest.raises(BandConfigError):
+                adapter_config.adapter_factory(capabilities=Capability.FILES)
+        else:
+            adapter = adapter_config.adapter_factory(capabilities=Capability.FILES)
+            assert Capability.FILES in adapter.features.capabilities
