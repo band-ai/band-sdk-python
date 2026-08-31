@@ -60,7 +60,9 @@ def test_feature_negotiation_rebuilds_cached_file_tool_registrations(
 
     adapter.apply_effective_features(AdapterFeatures())  # type: ignore[attr-defined]
 
-    assert not FILE_TOOL_NAMES & {definition.name for definition in definitions(adapter)}
+    assert not FILE_TOOL_NAMES & {
+        definition.name for definition in definitions(adapter)
+    }
 
 
 def test_tool_results_assert_succeeded_requires_a_successful_readback() -> None:

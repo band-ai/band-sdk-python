@@ -17,6 +17,9 @@ This module provides the same tools as LangGraph/Claude adapters:
 - band_remove_contact: Remove an existing contact
 - band_list_contact_requests: List received and sent requests
 - band_respond_contact_request: Approve, reject, or cancel requests
+- band_list_room_files: List files shared in the current room
+- band_read_room_file: Read a file shared in the current room
+- band_send_room_file: Upload text content as a file and share it
 
 NOTE: We intentionally do NOT use `from __future__ import annotations` here
 because Parlant's @p.tool decorator checks annotation types at runtime.
@@ -651,6 +654,159 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error responding to contact request: {e}")
 
+    include_files = features is None or Capability.FILES in features.capabilities
+
+    @band_tool()
+    async def band_list_room_files(
+        context: ToolContext,
+        cursor: str = "",
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] list_room_files called: session=%s, cursor=%s",
+            context.session_id,
+            cursor,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] list_room_files: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.list_room_files(cursor if cursor else None)
+            data = serialize_tool_result(result)
+            files = data.get("data") or []
+            if not files:
+                return ToolResult(data="No files found in this room")
+            lines = ["Files in this room:"]
+            for f in files:
+                name = f.get("name", "Unknown")
+                content_type = f.get("content_type", "unknown")
+                size = f.get("bytes", 0)
+                file_id = f.get("id", "")
+                lines.append(f"- {name} ({content_type}, {size} bytes) id={file_id}")
+            next_cursor = data.get("next_cursor")
+            if next_cursor:
+                lines.append(
+                    f"More files available; call again with cursor='{next_cursor}' "
+                    "to see the rest."
+                )
+            return ToolResult(data="\n".join(lines))
+        except Exception as e:
+            logger.error(
+                "[Parlant Tool] Error listing room files: %s", e, exc_info=True
+            )
+            return ToolResult(data=f"Error listing room files: {e}")
+
+    @band_tool()
+    async def band_read_room_file(
+        context: ToolContext,
+        file_id: str,
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] read_room_file called: session=%s, file_id=%s",
+            context.session_id,
+            file_id,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] read_room_file: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.read_room_file(file_id)
+            if "text" in result:
+                text = result["text"]
+                note = result.get("description")
+                return ToolResult(data=text if not note else f"{text}\n\n({note})")
+            if "content" in result:
+                # This tool's result is text-only, so an inline-previewable
+                # image is described instead of shown -- other frameworks
+                # (anthropic, gemini, ...) pass the same result through as
+                # real vision content; Parlant tool results have no such
+                # multimodal channel.
+                block = result["content"][0]
+                mime_type = block.get("mimeType", "image")
+                return ToolResult(
+                    data=(
+                        f"This file is a {mime_type} image; image content cannot "
+                        "be shown inline by this tool."
+                    )
+                )
+            name = result.get("name", "Unknown")
+            content_type = result.get("content_type", "unknown")
+            size = result.get("bytes", 0)
+            description = result.get("description", "")
+            summary = f"{name} ({content_type}, {size} bytes)"
+            return ToolResult(
+                data=f"{summary}. {description}" if description else summary
+            )
+        except Exception as e:
+            logger.error("[Parlant Tool] Error reading room file: %s", e, exc_info=True)
+            return ToolResult(data=f"Error reading room file: {e}")
+
+    @band_tool(
+        SEND_MESSAGE_MENTIONS_NOTE,
+        param_overrides={"mentions": SEND_MESSAGE_MENTIONS_PARAM_NOTE},
+    )
+    async def band_send_room_file(
+        context: ToolContext,
+        content: str,
+        filename: str,
+        mentions: str,
+        caption: str = "",
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] send_room_file called: session=%s, filename=%s",
+            context.session_id,
+            filename,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] send_room_file: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            mention_list = [m.strip() for m in mentions.split(",") if m.strip()]
+            if not mention_list:
+                logger.warning("[Parlant Tool] send_room_file: No mentions provided")
+                error = append_available_mention_handles(
+                    "At least one mention is required",
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
+                return ToolResult(data=f"Error: {error}")
+
+            result = await tools.send_room_file(
+                content, filename, caption, mention_list
+            )
+            attachment = result.get("attachment") or {}
+            name = attachment.get("name", filename)
+            file_id = attachment.get("id", "")
+            logger.info("[Parlant Tool] Uploaded room file: %s (id=%s)", name, file_id)
+            return ToolResult(
+                data=f"Uploaded '{name}' (id={file_id}) and shared with "
+                f"{', '.join(mention_list)}"
+            )
+        except Exception as e:
+            logger.error("[Parlant Tool] Error sending room file: %s", e, exc_info=True)
+            error = str(e)
+            if isinstance(e, (ValueError, BandToolError)):
+                error = append_available_mention_handles(
+                    error,
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
+            return ToolResult(data=f"Error sending room file: {error}")
+
     tools = [
         band_send_message,
         band_send_event,
@@ -669,6 +825,15 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 band_remove_contact,
                 band_list_contact_requests,
                 band_respond_contact_request,
+            ]
+        )
+
+    if include_files:
+        tools.extend(
+            [
+                band_list_room_files,
+                band_read_room_file,
+                band_send_room_file,
             ]
         )
 

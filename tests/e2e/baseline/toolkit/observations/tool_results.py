@@ -113,7 +113,9 @@ class ToolResults(list[ToolResult]):
         """Assert at least one result was captured."""
         assert_nonempty(len(self), label=what or "a tool_result event")
 
-    def assert_succeeded(self, name: str, *, output_contains: str | None = None) -> None:
+    def assert_succeeded(
+        self, name: str, *, output_contains: str | None = None
+    ) -> None:
         """Assert a named tool returned successfully, optionally with content."""
         matching = [result for result in self if result.name.lower() == name.lower()]
         if not matching:
@@ -123,9 +125,7 @@ class ToolResults(list[ToolResult]):
             )
         failures = [result.output for result in matching if result.is_error]
         if failures:
-            raise AssertionError(
-                f"tool {name!r} returned an error: {failures}"
-            )
+            raise AssertionError(f"tool {name!r} returned an error: {failures}")
         if output_contains is not None and not any(
             output_contains in result.output for result in matching
         ):
