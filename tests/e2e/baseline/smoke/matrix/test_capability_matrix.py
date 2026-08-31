@@ -35,6 +35,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     store_memory_instruction,
     unique_marker,
 )
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.observations import ContactTool, FileTool
@@ -42,11 +43,20 @@ from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
-    file_transfer_enabled,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 JudgeFn = Callable[..., Awaitable[Verdict]]
+
+# The file/image cells need a deployment with ``ff_file_transfer`` on; without
+# it ``Capability.FILES`` is pruned before a file tool ever reaches the model,
+# so they cannot pass. Skips rather than fails (the ``GITHUB_TOKEN`` hosted-auth
+# smoke's rationale): on SaaS the flag is off by design, not misconfiguration,
+# and no key can turn it on -- this is optional extra coverage over the matrix.
+requires_file_transfer = pytest.mark.skipif(
+    not BaselineSettings().deployment.file_transfer,
+    reason="E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)",
+)
 
 
 @per_adapter(supports={Capability.MEMORY}, **MEMORY_AGENT)
@@ -210,6 +220,7 @@ async def test_list_contacts_across_contacts_adapters(
 
 
 @per_adapter(supports={Capability.FILES}, **FILES_AGENT)
+@requires_file_transfer
 @flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=120)  # upload -> list -> read is a multi-tool turn
 @pytest.mark.asyncio(loop_scope="session")
@@ -220,8 +231,6 @@ async def test_file_round_trip_across_files_adapters(
     reply_capture: CaptureFactory,
 ) -> None:
     """Each files-capable adapter can send, discover, and read a room file."""
-    if not await file_transfer_enabled(agent, resource_manager.settings):
-        pytest.skip("ff_file_transfer is off on this deployment (on-prem-only flag)")
     marker = unique_marker("file")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-files-{agent.adapter_id}", participants=[agent.id]
@@ -275,6 +284,7 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
 
 
 @per_adapter(*IMAGE_PASSTHROUGH_ADAPTERS, **FILES_AGENT)
+@requires_file_transfer
 @flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=120)  # upload -> list -> read -> vision reply
 @pytest.mark.asyncio(loop_scope="session")
@@ -295,8 +305,6 @@ async def test_image_vision_passthrough_across_adapters(
     ground truth, so a model can't pass by reflexively guessing a common
     default without actually looking at the pixels.
     """
-    if not await file_transfer_enabled(agent, resource_manager.settings):
-        pytest.skip("ff_file_transfer is off on this deployment (on-prem-only flag)")
     color = random.choice(sorted(IMAGE_COLORS))
     image = solid_color_png(color)
 

@@ -36,7 +36,6 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
-from band.runtime.capabilities import FeatureFlag
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -136,23 +135,6 @@ def agent_rest_client(
     return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
 
 
-async def file_transfer_enabled(
-    agent: ProvisionedAgent, settings: BaselineSettings
-) -> bool:
-    """Whether the connected deployment has ``ff_file_transfer`` on, per
-    ``agent``'s own ``/me`` response.
-
-    On-prem-only flag, off everywhere on SaaS today (see
-    docs/capability-negotiation.md) -- FILES/image E2E tests check this and
-    skip rather than fail loud, since ``Capability.FILES`` gets silently
-    pruned by ``prune_unsupported()`` before any file tool ever reaches the
-    model when it's off, which isn't a code bug to chase.
-    """
-    client = agent_rest_client(agent, settings)
-    me = await client.agent_api_identity.get_agent_me()
-    return bool(me.data.feature_flags.get(FeatureFlag.FILE_TRANSFER))
-
-
 class PeerActor:
     """Drive a provisioned peer agent — the agent-side twin of ``UserOps``.
 
@@ -204,19 +186,8 @@ class PeerActor:
         """Upload ``body`` as an attachment and post it as this peer; return the
         message id.
 
-        Mirrors AgentTools.send_room_file's own upload call
-        (src/band/runtime/tools.py) -- same headers, same attach-then-message
-        two-step -- since the platform's file-upload endpoint is agent-scoped
-        (Agent API only; there is no user-side upload endpoint), so a live
-        vision-passthrough scenario needs a peer agent to play "someone already
-        shared a file here," not the test's own UserOps driver.
-
-        Raises a clear RuntimeError, not a bare band_rest NotFoundError, on a
-        404: the platform returns the identical 404 both when the room truly
-        doesn't exist and when this deployment simply has ``ff_file_transfer``
-        off (an on-prem-only flag -- see CLAUDE.md's Adapter Feature Flags
-        section) -- AgentTools.send_room_file (runtime/tools.py) makes the
-        same translation for exactly this ambiguity.
+        Uploading is Agent-API-only (there is no ``human_api_files``), so a peer
+        agent — never ``UserOps`` — has to play the uploader.
         """
         try:
             upload = await self._client.agent_api_files.upload_agent_chat_file(
@@ -234,11 +205,9 @@ class PeerActor:
             raise RuntimeError(
                 f"Uploading a file to room {room_id} as peer {self._peer.name} "
                 "got 404 Not Found. Either the room doesn't exist, or this "
-                "Band deployment doesn't have ff_file_transfer enabled (an "
-                "on-prem-only feature flag, off on SaaS today -- see "
-                "CLAUDE.md's Adapter Feature Flags section). A file/image "
-                "E2E test can only pass against a deployment with that flag "
-                "on; see the local-platform-testing skill to stand one up."
+                "deployment has ff_file_transfer off (an on-prem-only flag, "
+                "off on SaaS today) — see the local-platform-testing skill to "
+                "stand up a deployment with it on."
             ) from error
         response = await self._client.agent_api_messages.create_agent_chat_message(
             room_id,
