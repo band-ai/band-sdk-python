@@ -31,6 +31,7 @@ from band_rest import (
     AsyncRestClient,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
+    NotFoundError,
 )
 
 from band.agent import Agent
@@ -191,18 +192,36 @@ class PeerActor:
         (Agent API only; there is no user-side upload endpoint), so a live
         vision-passthrough scenario needs a peer agent to play "someone already
         shared a file here," not the test's own UserOps driver.
+
+        Raises a clear RuntimeError, not a bare band_rest NotFoundError, on a
+        404: the platform returns the identical 404 both when the room truly
+        doesn't exist and when this deployment simply has ``ff_file_transfer``
+        off (an on-prem-only flag -- see CLAUDE.md's Adapter Feature Flags
+        section) -- AgentTools.send_room_file (runtime/tools.py) makes the
+        same translation for exactly this ambiguity.
         """
-        upload = await self._client.agent_api_files.upload_agent_chat_file(
-            chat_id=room_id,
-            request=body,
-            request_options={
-                "additional_headers": {
-                    "x-file-name": filename,
-                    "x-file-sha256": hashlib.sha256(body).hexdigest(),
-                    "content-type": content_type,
-                }
-            },
-        )
+        try:
+            upload = await self._client.agent_api_files.upload_agent_chat_file(
+                chat_id=room_id,
+                request=body,
+                request_options={
+                    "additional_headers": {
+                        "x-file-name": filename,
+                        "x-file-sha256": hashlib.sha256(body).hexdigest(),
+                        "content-type": content_type,
+                    }
+                },
+            )
+        except NotFoundError as error:
+            raise RuntimeError(
+                f"Uploading a file to room {room_id} as peer {self._peer.name} "
+                "got 404 Not Found. Either the room doesn't exist, or this "
+                "Band deployment doesn't have ff_file_transfer enabled (an "
+                "on-prem-only feature flag, off on SaaS today -- see "
+                "CLAUDE.md's Adapter Feature Flags section). A file/image "
+                "E2E test can only pass against a deployment with that flag "
+                "on; see the local-platform-testing skill to stand one up."
+            ) from error
         response = await self._client.agent_api_messages.create_agent_chat_message(
             room_id,
             message=ChatMessageRequest(
