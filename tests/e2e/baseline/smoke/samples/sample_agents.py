@@ -166,13 +166,24 @@ def unique_marker(prefix: str) -> str:
 
 
 def file_round_trip_instruction(marker: str) -> str:
-    """Drive one real text-file send, discovery, and read-back in a room."""
+    """Drive one real text-file send, discovery, and read-back in a room.
+
+    Numbered steps plus an explicit anti-shortcut clause: a smaller model
+    otherwise pattern-matches "reply with the exact token" (step 4) as the
+    whole task and jumps straight to a single band_send_message, skipping
+    the file round-trip entirely -- observed live against gpt-5.4-mini and
+    claude-haiku-4-5.
+    """
     return (
-        "Use band_send_room_file to upload a text file named evidence.txt whose "
-        f"entire content is the exact token {marker}. Include at least one room "
-        "participant in its mentions. Then use band_list_room_files to find that "
-        "file and band_read_room_file with its returned id. Finally, use "
-        f"band_send_message to reply with the exact token {marker}."
+        "Complete these four tool calls in order, then stop -- do not reply "
+        "or take any other action until all four are done:\n"
+        f"1. Call band_send_room_file to upload a text file named "
+        f"evidence.txt whose entire content is the exact token {marker}. "
+        "Include at least one room participant in its mentions.\n"
+        "2. Call band_list_room_files to find that file.\n"
+        "3. Call band_read_room_file with its returned id.\n"
+        f"4. Only after steps 1-3 are done, call band_send_message to reply "
+        f"with the exact token {marker}."
     )
 
 

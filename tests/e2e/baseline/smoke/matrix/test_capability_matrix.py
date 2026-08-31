@@ -209,6 +209,7 @@ async def test_list_contacts_across_contacts_adapters(
 
 
 @per_adapter(supports={Capability.FILES}, **FILES_AGENT)
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=120)  # upload -> list -> read is a multi-tool turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_file_round_trip_across_files_adapters(
@@ -271,6 +272,7 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
 
 
 @per_adapter(*IMAGE_PASSTHROUGH_ADAPTERS, **FILES_AGENT)
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=120)  # upload -> list -> read -> vision reply
 @pytest.mark.asyncio(loop_scope="session")
 async def test_image_vision_passthrough_across_adapters(
