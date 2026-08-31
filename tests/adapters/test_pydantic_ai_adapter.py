@@ -697,6 +697,138 @@ class TestAdvertisedToolSchemas:
         assert blurbs == {name: get_tool_description(name).strip() for name in blurbs}
 
 
+class TestFileTools:
+    """band_list_room_files/band_read_room_file/band_send_room_file, the
+    hand-written wrappers gated behind Capability.FILES.
+
+    Drives each tool function directly (grabbed off the real, started agent's
+    function toolset) rather than through a full mocked agent run, since the
+    behavior under test is each wrapper's own argument plumbing to
+    AgentToolsProtocol -- not pydantic-ai's tool-calling loop.
+    """
+
+    @pytest.fixture
+    def file_tools(self):
+        """Mock AgentToolsProtocol with the three room-file methods."""
+        tools = MagicMock()
+        tools.list_room_files = AsyncMock(
+            return_value={"data": [{"id": "file-1", "name": "report.txt"}]}
+        )
+        tools.read_room_file = AsyncMock(
+            return_value={"name": "report.txt", "text": "hello world"}
+        )
+        tools.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        return tools
+
+    async def _tool_functions(self) -> dict[str, Any]:
+        adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
+        await adapter.on_started(agent_name="Probe", agent_description="probe")
+        return {
+            name: tool.function
+            for name, tool in adapter._agent._function_toolset.tools.items()
+        }
+
+    @pytest.mark.asyncio
+    async def test_agent_has_file_tools_registered_only_with_capability(self):
+        without_files = PydanticAIAdapter(model="test")
+        await without_files.on_started(agent_name="Probe", agent_description="probe")
+        names = set(without_files._agent._function_toolset.tools)
+
+        assert "band_list_room_files" not in names
+        assert "band_read_room_file" not in names
+        assert "band_send_room_file" not in names
+
+        with_files = await self._tool_functions()
+
+        assert "band_list_room_files" in with_files
+        assert "band_read_room_file" in with_files
+        assert "band_send_room_file" in with_files
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_forwards_cursor(self, file_tools):
+        functions = await self._tool_functions()
+
+        result = await functions["band_list_room_files"](
+            SimpleNamespace(deps=file_tools), cursor="cursor-1"
+        )
+
+        file_tools.list_room_files.assert_called_once_with("cursor-1")
+        assert result == {"data": [{"id": "file-1", "name": "report.txt"}]}
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_handles_exception(self, file_tools):
+        file_tools.list_room_files.side_effect = Exception("backend unavailable")
+        functions = await self._tool_functions()
+
+        result = await functions["band_list_room_files"](
+            SimpleNamespace(deps=file_tools), cursor=None
+        )
+
+        assert "Error listing room files" in result
+        assert "backend unavailable" in result
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_forwards_file_id(self, file_tools):
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="file-1"
+        )
+
+        file_tools.read_room_file.assert_called_once_with("file-1")
+        assert result == {"name": "report.txt", "text": "hello world"}
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_handles_exception(self, file_tools):
+        file_tools.read_room_file.side_effect = Exception("not found")
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="missing"
+        )
+
+        assert "Error reading room file" in result
+        assert "not found" in result
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_forwards_args_in_protocol_order(self, file_tools):
+        """Regression pin: the wrapper's own signature order (content, filename,
+        mentions, caption) differs from the positional order AgentToolsProtocol
+        wants (content, filename, caption, mentions) -- assert the call site
+        reorders correctly rather than passing mentions where caption goes."""
+        functions = await self._tool_functions()
+
+        result = await functions["band_send_room_file"](
+            SimpleNamespace(deps=file_tools),
+            content="file body",
+            filename="notes.txt",
+            mentions=["Alice", "Bob"],
+            caption="here's a file",
+        )
+
+        file_tools.send_room_file.assert_called_once_with(
+            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
+        )
+        assert result == {"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_handles_exception(self, file_tools):
+        file_tools.send_room_file.side_effect = Exception("upload failed")
+        functions = await self._tool_functions()
+
+        result = await functions["band_send_room_file"](
+            SimpleNamespace(deps=file_tools),
+            content="body",
+            filename="notes.txt",
+            mentions=["Alice"],
+        )
+
+        assert "Error sending room file 'notes.txt'" in result
+        assert "upload failed" in result
+
+
 class TestOnMessage:
     """Tests for on_message() method."""
 

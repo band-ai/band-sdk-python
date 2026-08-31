@@ -121,7 +121,8 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     from band.core.types import Capability
 
     adapter = PydanticAIAdapter(
-        model="test", capabilities=Capability.CONTACTS | Capability.MEMORY
+        model="test",
+        capabilities=Capability.CONTACTS | Capability.MEMORY | Capability.FILES,
     )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
