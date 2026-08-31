@@ -40,6 +40,7 @@ from band.runtime.tools import (
     SEND_MESSAGE_TOOL_NAME,
     ToolDefinition,
     append_mention_handles_hint,
+    is_mcp_content_result,
     iter_tool_definitions,
     mcp_tool_names,
     serialize_tool_result,
@@ -76,24 +77,6 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _is_mcp_content_result(data: Any) -> bool:
-    """True when ``data`` is already MCP-content-shaped (``{"content": [...]}``).
-
-    ``band_read_room_file``'s image branch returns exactly this shape (a real
-    MCP image content block) so ``claude_agent_sdk`` can hand it to the model
-    as vision input. Everything else this module produces (status payloads,
-    error payloads) is a plain dict that still needs json-encoding into a
-    text block.
-    """
-    return (
-        isinstance(data, dict)
-        and isinstance(data.get("content"), list)
-        and all(
-            isinstance(block, dict) and "type" in block for block in data["content"]
-        )
-    )
-
-
 def _make_result(data: Any) -> dict[str, Any]:
     """Format tool result for Claude SDK MCP responses.
 
@@ -104,7 +87,7 @@ def _make_result(data: Any) -> dict[str, Any]:
     misfire on an unrelated custom tool whose own return value happens to
     have a "content" list of dicts each carrying a "type" key. The
     band_read_room_file passthrough is instead decided by the one caller that
-    actually needs it -- see ``_is_mcp_content_result`` at the
+    actually needs it -- see ``is_mcp_content_result`` at the
     ``_build_builtin_sdk_tool`` call site.
     """
     return {"content": [{"type": "text", "text": json.dumps(data, default=str)}]}
@@ -148,7 +131,7 @@ def _format_success_payload(
     result: Any,
 ) -> dict[str, Any]:
     """Keep tool result payloads stable across Claude integrations."""
-    if tool_name == "band_read_room_file" and _is_mcp_content_result(result):
+    if tool_name == "band_read_room_file" and is_mcp_content_result(result):
         # Pass the image content block through bare -- wrapping it in
         # {"status": "success", **result} would bury "content" behind an
         # extra key, and _make_result would no longer recognize the shape.
@@ -249,7 +232,7 @@ def _build_builtin_sdk_tool(
             # content block (see _format_success_payload) -- pass it through
             # bare instead of json-encoding it into a text block, which is
             # what _make_result would otherwise do to any dict.
-            if definition.name == "band_read_room_file" and _is_mcp_content_result(
+            if definition.name == "band_read_room_file" and is_mcp_content_result(
                 payload
             ):
                 return payload

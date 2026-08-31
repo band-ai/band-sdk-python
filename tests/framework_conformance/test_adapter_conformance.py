@@ -261,3 +261,51 @@ class TestFilesCapabilityMatrix:
         else:
             adapter = adapter_config.adapter_factory(capabilities=Capability.FILES)
             assert Capability.FILES in adapter.features.capabilities
+
+
+# Of the adapters that support Capability.FILES at all (i.e. NOT in
+# FILES_CAPABILITY_PENDING_FRAMEWORK_IDS above), only these have been verified
+# end-to-end to pass an image band_read_room_file result through as real MCP
+# vision/image content instead of degrading it to a json.dumps'd text block:
+# - claude_sdk: tests/integrations/claude_sdk/test_tools.py
+#   (_is_mcp_content_result / _make_result passthrough)
+# - anthropic: tests/adapters/test_anthropic_adapter.py
+#   (_image_tool_result_content, real Anthropic ImageBlockParam content)
+# - opencode: shares the MCP engine's fix (band.integrations.mcp.engine
+#   is_mcp_content_result / _mcp_content_blocks), verified in
+#   tests/mcp/test_engine.py -- the ACP client adapter and the published
+#   band-mcp CLI share the same engine fix but are not adapters in
+#   ADAPTER_CONFIGS, so they don't get their own row here.
+# Every other Capability.FILES adapter (langgraph, gemini, google_adk, agno,
+# strands, codex, copilot_sdk) still degrades an image to text -- verifying
+# and fixing each one is real per-SDK research, tracked as follow-up, not yet
+# done. Add a framework_id here only once it has a real passthrough test like
+# the ones cited above.
+IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
+    {"claude_sdk", "anthropic", "opencode"}
+)
+
+
+class TestImagePassthroughMatrix:
+    """Registry-consistency guard for IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS.
+
+    The real behavioral proof for each entry lives in that framework's own
+    test file (cited above), since the passthrough mechanism differs per
+    adapter (Anthropic's ImageBlockParam vs. the MCP engine's ImageContent)
+    and can't be exercised generically through ADAPTER_CONFIGS. This matrix
+    instead guards the *bookkeeping*: every listed framework_id must be a
+    real registered adapter, and none of them may also be on the
+    Capability.FILES pending list -- a framework can't have verified image
+    passthrough for a capability it doesn't even support.
+    """
+
+    def test_every_entry_actually_supports_files(self) -> None:
+        assert IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS.isdisjoint(
+            FILES_CAPABILITY_PENDING_FRAMEWORK_IDS
+        )
+
+    def test_every_entry_is_a_registered_adapter(self) -> None:
+        from tests.framework_configs.adapters import ADAPTER_CONFIGS
+
+        known_ids = {config.framework_id for config in ADAPTER_CONFIGS}
+        assert IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS <= known_ids

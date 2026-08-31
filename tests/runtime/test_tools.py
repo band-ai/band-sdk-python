@@ -50,8 +50,32 @@ from band.runtime.tools import (
     available_mention_handles,
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
+    is_mcp_content_result,
     is_room_posting_tool,
 )
+
+
+class TestIsMcpContentResult:
+    """``is_mcp_content_result`` recognizes ``read_room_file``'s image-branch
+    shape so a consumer that supports real MCP content (claude_sdk, the MCP
+    engine) can pass it through instead of json.dumps-ing it into text."""
+
+    _IMAGE_RESULT = {
+        "content": [{"type": "image", "data": "YmFzZTY0", "mimeType": "image/png"}]
+    }
+    _TEXT_RESULT = {"name": "notes.txt", "content_type": "text/plain", "text": "hi"}
+
+    def test_true_for_image_content_block(self) -> None:
+        assert is_mcp_content_result(self._IMAGE_RESULT)
+
+    def test_false_for_plain_dict(self) -> None:
+        assert not is_mcp_content_result(self._TEXT_RESULT)
+
+    def test_false_for_non_dict(self) -> None:
+        assert not is_mcp_content_result("just a string")
+
+    def test_false_for_content_list_without_type_keys(self) -> None:
+        assert not is_mcp_content_result({"content": [{"no_type": 1}]})
 
 
 @pytest.fixture

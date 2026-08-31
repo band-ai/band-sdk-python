@@ -1782,6 +1782,28 @@ def serialize_tool_result(result: Any) -> Any:
     return result
 
 
+def is_mcp_content_result(data: Any) -> bool:
+    """True when ``data`` is already MCP-content-shaped (``{"content": [...]}``).
+
+    ``read_room_file``'s image branch returns exactly this shape (a real MCP
+    image content block), so a consumer that can pass MCP content through to
+    its model verbatim needs to recognize it instead of ``json.dumps``-ing it
+    into a text block like every other tool result. Single source of truth
+    for that recognition -- scope any use of it to the one call site that
+    actually knows it's looking at a ``band_read_room_file`` result; a bare
+    structural check applied to every tool result would misfire on an
+    unrelated tool (built-in or custom) whose own return value happens to
+    have a "content" list of dicts each carrying a "type" key.
+    """
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("content"), list)
+        and all(
+            isinstance(block, dict) and "type" in block for block in data["content"]
+        )
+    )
+
+
 class AttachmentCache(Protocol):
     """The subset of async_lru's wrapper object AgentTools relies on.
 

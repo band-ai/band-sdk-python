@@ -34,8 +34,31 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import is_mcp_content_result
 
 logger = logging.getLogger(__name__)
+
+
+def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert an MCP-content-shaped ``band_read_room_file`` result into
+    Anthropic ``ImageBlockParam`` dicts for a ``tool_result``'s content list.
+
+    Anthropic's ``media_type`` (jpeg/png/gif/webp) is exactly
+    ``PREVIEWABLE_IMAGE_CONTENT_TYPES`` -- the only content types
+    ``AgentTools.read_room_file`` ever inlines as an image -- so every
+    ``mimeType`` this sees is already a valid ``media_type``.
+    """
+    return [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": block["mimeType"],
+                "data": block["data"],
+            },
+        }
+        for block in result["content"]
+    ]
 
 
 class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
@@ -445,14 +468,18 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                result_str = (
-                    json.dumps(result, default=str)
-                    if not isinstance(result, str)
-                    else result
-                )
+                if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+                    content = _image_tool_result_content(result)
+                    result_str = f"<{len(content)} image content block(s)>"
+                else:
+                    content = result_str = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                 is_error = False
             except Exception as e:
-                result_str = f"Error: {e}"
+                content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
 
@@ -480,7 +507,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": result_str,
+                    "content": content,
                     "is_error": is_error,
                 }
             )

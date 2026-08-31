@@ -34,6 +34,7 @@ from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ImageContent
 from pydantic import AliasChoices, BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
@@ -54,6 +55,7 @@ from band.runtime.tools import (
     Surface,
     ToolDefinition,
     append_available_mention_handles,
+    is_mcp_content_result,
     iter_tool_definitions,
     serialize_tool_result,
     validate_tool_arguments,
@@ -77,6 +79,14 @@ class MCPToolRegistration:
     description: str
     input_model: type[BaseModel]
     execute: MCPToolExecutor
+    # Passed straight through to FastMCP's add_tool(structured_output=...).
+    # None (default) preserves today's auto-inferred behavior for every
+    # tool. False is for band_read_room_file only: its image branch returns
+    # real MCP content blocks (see _mcp_content_blocks), and a declared
+    # structured-output schema would validate that non-str return value
+    # against the model FastMCP infers from the dispatch function's return
+    # annotation and reject it.
+    structured_output: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -468,6 +478,8 @@ def build_tool_registration(
             else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
+        if definition.name == "band_read_room_file" and is_mcp_content_result(result):
+            return _mcp_content_blocks(result)
         return _serialize(result)
 
     return MCPToolRegistration(
@@ -475,6 +487,7 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
+        structured_output=False if definition.name == "band_read_room_file" else None,
     )
 
 
@@ -606,6 +619,21 @@ def build_resolved_band_mcp_tool_registrations(
     return registrations
 
 
+def _mcp_content_blocks(result: dict[str, Any]) -> list[ImageContent]:
+    """Convert an MCP-content-shaped tool result into real MCP content blocks.
+
+    ``is_mcp_content_result`` already confirmed ``result["content"]`` is a
+    list of MCP content block dicts. FastMCP's own result conversion
+    recognizes an actual ``ContentBlock`` instance (or a list of them) and
+    passes it through to the client verbatim -- a plain dict does not match
+    and would otherwise fall through to JSON-text encoding, same as any
+    other tool result. Only "image" blocks exist today (the sole structured
+    branch of ``AgentTools.read_room_file``); a block of any other shape
+    fails Pydantic validation here rather than silently being dropped.
+    """
+    return [ImageContent(**block) for block in result["content"]]
+
+
 def _serialize(result: Any) -> str:
     """Serialize a tool method's return value to a JSON string for the wire.
 
@@ -686,6 +714,9 @@ def build_engine(
     for registration in spec.tools:
         handler = _make_dispatch_function(registration)
         mcp.add_tool(
-            handler, name=registration.name, description=registration.description
+            handler,
+            name=registration.name,
+            description=registration.description,
+            structured_output=registration.structured_output,
         )
     return mcp
