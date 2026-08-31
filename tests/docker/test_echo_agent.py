@@ -15,6 +15,7 @@ import yaml
 from dotenv import dotenv_values
 
 from band.docker.launcher import CredentialName, CredentialSource, WorkspaceConfig
+from band.docker.provision import PLACEHOLDER_AGENT_ID
 from tests.paths import KIT_DIR
 
 ECHO_AGENT_DIR = KIT_DIR / "echo-agent"
@@ -23,6 +24,14 @@ ECHO_AGENT_DIR = KIT_DIR / "echo-agent"
 def load_workspace_config() -> WorkspaceConfig:
     raw = yaml.safe_load((ECHO_AGENT_DIR / "band.yaml").read_text(encoding="utf-8"))
     return WorkspaceConfig.model_validate(raw)
+
+
+def test_starter_ships_the_placeholder_id_provision_detects() -> None:
+    """``band.docker.provision.PLACEHOLDER_AGENT_ID`` mirrors this literal --
+    provision.py can't import this starter kit at runtime (it isn't packaged
+    with the installed SDK), so this is the tripwire that catches the two
+    drifting apart."""
+    assert load_workspace_config().agent.id == PLACEHOLDER_AGENT_ID
 
 
 def test_starter_ships_a_complete_locked_workspace() -> None:

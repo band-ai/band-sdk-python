@@ -50,9 +50,22 @@ from band_rest.types import ChatMessageRequestMentionsItem
 # We set max_retries=3 to handle transient rate limit errors gracefully.
 DEFAULT_REQUEST_OPTIONS: RequestOptions = {"max_retries": 3}
 
+
+async def aclose_rest_client(client: AsyncRestClient) -> None:
+    """Close ``client``'s underlying httpx client.
+
+    Fern's generated wrapper buries the real httpx client three attributes
+    deep (``_client_wrapper.httpx_client.httpx_client``) -- one place to
+    reach through that chain so a future ``band_rest`` upgrade only needs
+    updating here.
+    """
+    await client._client_wrapper.httpx_client.httpx_client.aclose()
+
+
 __all__ = [
     "RestClient",
     "AsyncRestClient",
+    "aclose_rest_client",
     "AgentContact",
     "AgentMe",
     "AgentMemory",

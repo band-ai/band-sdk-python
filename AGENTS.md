@@ -607,6 +607,24 @@ scoped to `0.0.10`. `0.0.15` already dropped the `id` field from
 further), deleted the workaround — no version guard needed once the fix is
 already upstream.
 
+## Comment Style
+
+Comments state facts about the code as it is now, not narration of how it
+got there — never "extracted from X", "ported from Y", "changed from Z",
+no session/PR/ticket/line-number history. Git already owns that history.
+
+A comment earns its place only by saying something a reader can't get
+from the code itself: a non-obvious invariant, a race/ordering guarantee,
+a workaround for a specific external bug, a scope boundary that looks
+like it should be wider than it is. Never restate what the code already
+says in prose.
+
+If a function needs a long comment to be understood, that's a signal the
+function itself is doing too much — split it into named sub-functions
+whose names carry the "what," and keep the comment for the one "why" that
+can't be named away. Prefer trimming/removing this class of comment
+outright over compressing it.
+
 ## Code Structure
 
 ```
@@ -896,6 +914,36 @@ CI markdown-docs step does **not** set it. So a `python` block in an E2E doc sil
 `notest`; if you want a runnable check of E2E-adjacent symbols (e.g. "these registry
 helpers still exist"), put it in a doc **outside** `tests/e2e/**` or in a real unit
 test, where the markdown-docs run actually executes it.
+
+## External Research & Code Reuse
+
+Before implementing a nontrivial mechanism from scratch (a bounded cache,
+retry/backoff, rate limiting, etc.), search the web for an existing library or
+established solution first. Do not reinvent the wheel.
+
+When evaluating a third-party package for integration, check:
+
+- **Provenance**: official, verified, or well-known org repos (e.g. `aio-libs`)
+  with clear licensing and transparent ownership over an unknown solo repo.
+- **Community trust**: a strong track record, real GitHub star counts, and
+  actual adoption — not just a plausible-sounding name.
+- **Maintainability**: recent commit activity, steady issue resolution, and
+  clear documentation. Commits still landing on `master` while the last
+  tagged release sits a year-plus old is a real red flag, not noise — it means
+  fixes exist that nothing you can `pip install` actually has.
+
+Then, before committing to it: verify the specific capability you need is in
+the *released* version you'd actually install, not just documented on the
+project's `latest`/`master` docs — `pip install` it and exercise the real call
+in this repo's venv. This is the same verify-before-relying discipline as any
+other external behavior (see engineering guidance above), applied to library
+selection specifically. Live example: `aiocache`'s docs describe a `maxsize`
+bounded-eviction option that only exists on its unreleased `master` branch —
+the installed `0.12.3` package raises `TypeError` on that kwarg.
+
+If no released library both fits the actual access pattern and survives that
+check, a small hand-rolled version beats a dependency that only looks like it
+solves the problem.
 
 ## Coding Standards
 

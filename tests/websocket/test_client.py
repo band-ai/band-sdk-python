@@ -8,6 +8,7 @@ errors and skipping malformed events, rather than crashing the connection.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -16,12 +17,15 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from band_sdk_core import SessionPolicy
 from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
+
+import band_sdk_core
 
 from band.credentials import PROXY_MANAGED_API_KEY
 import band.client.streaming.wire as wire_module
@@ -372,6 +376,9 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
         async def __aenter__(self):
             return self
 
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
     monkeypatch.setattr(
         "band.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
     )
@@ -381,6 +388,11 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
 
     assert init_kwargs["auto_reconnect"] is False
     assert client.client.auto_reconnect is True
+
+    # A successful __aenter__ starts the watchdog against this double, which
+    # has no real `.connection` -- __aexit__ stops it before returning so it
+    # can never fire `_force_close_if_stale` against a torn-down test.
+    await client.__aexit__(None, None, None)
 
 
 async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch):
@@ -398,6 +410,9 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
             if attempts < 3:
                 raise PHXConnectionError("temporary network failure")
             return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
 
     async def no_upgrade_error(exc, websocket_url):
         return None
@@ -420,6 +435,10 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
     assert attempts == 3
     assert len(sleep_delays) == 2
     assert client.client.auto_reconnect is True
+
+    # fake_sleep never advances the clock; an un-stopped watchdog's
+    # deadline-check loop would spin on it with no real yield point.
+    await client.__aexit__(None, None, None)
 
 
 async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
@@ -581,6 +600,19 @@ def test_delivery_status_enum_matches_backend_values():
         "processed",
         "failed",
     }
+
+
+def test_wire_event_matches_band_sdk_core_event_type():
+    """Drift guard: WireEvent's members through AGENT_CONTROL are meant to
+    mirror band_sdk_core.EventType's wire-name vocabulary exactly (they're
+    kept as separate literals, not derived, since EventType is an opaque
+    PyO3 type that can't be a StrEnum member's value)."""
+    core_wire_names = {
+        getattr(band_sdk_core.EventType, name).wire_name
+        for name in dir(band_sdk_core.EventType)
+        if isinstance(getattr(band_sdk_core.EventType, name), band_sdk_core.EventType)
+    }
+    assert core_wire_names <= {member.value for member in WireEvent}
 
 
 async def test_ignores_message_updated_when_no_handler_registered(caplog):
@@ -984,3 +1016,133 @@ async def test_cancelled_error_propagates_through_callback():
         await client._handle_events(
             MockMessage(), {"message_created": cancelling_callback}
         )
+
+
+# --- Heartbeat dead-threshold watchdog tests (INT-1323) ---
+
+
+def _fast_session_policy(
+    *, heartbeat_interval_s: float, dead_threshold_s: float
+) -> SessionPolicy:
+    """A SessionPolicy with real reconnect-backoff defaults (mirroring
+    SessionPolicy.default()) but a fast heartbeat/dead-threshold pair, so
+    watchdog tests run in real fractional seconds instead of production's
+    30s/60s."""
+    return SessionPolicy(
+        {
+            "base_delay_s": 1.0,
+            "factor": 2.0,
+            "max_delay_s": 30.0,
+            "stable_reset_s": 60.0,
+            "rapid_disconnect_uptime_s": 10.0,
+            "rapid_window_s": 300.0,
+            "rapid_first_min_delay_s": 1.0,
+            "rapid_second_min_delay_s": 5.0,
+            "rapid_cooldown_base_s": 10.0,
+            "rapid_cooldown_step_s": 10.0,
+            "rapid_cooldown_max_s": 60.0,
+            "rapid_threshold": 10,
+            "heartbeat_interval_s": heartbeat_interval_s,
+            "dead_threshold_s": dead_threshold_s,
+        }
+    )
+
+
+@asynccontextmanager
+async def phoenix_peer(*, ack_heartbeats: bool = True):
+    """In-process peer that completes the WS upgrade and, when
+    ack_heartbeats, replies to every V2 heartbeat frame (topic "phoenix")
+    with a matching phx_reply -- a real wire heartbeat round-trip drives
+    on_heartbeat_ack, nothing about it is mocked. Yields ``(ws_url,
+    connected)``, where ``connected`` resolves with the first accepted
+    ServerConnection.
+    """
+    connected: asyncio.Future[ServerConnection] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    async def handler(conn: ServerConnection) -> None:
+        if not connected.done():
+            connected.set_result(conn)
+        async for raw in conn:
+            if not ack_heartbeats:
+                continue
+            join_ref, ref, topic, _event, _payload = json.loads(raw)
+            if topic == "phoenix":
+                await conn.send(
+                    json.dumps(
+                        [
+                            join_ref,
+                            ref,
+                            "phoenix",
+                            "phx_reply",
+                            {"status": "ok", "response": {}},
+                        ]
+                    )
+                )
+
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        yield f"ws://127.0.0.1:{port}/socket/websocket", connected
+
+
+async def test_watchdog_ack_keeps_connection_alive_across_heartbeat_cycles():
+    """A real heartbeat/ack round-trip resets the watchdog deadline each
+    cycle, so the connection survives well past a single dead_threshold_s
+    window without the watchdog ever tripping."""
+    policy = _fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
+    async with phoenix_peer() as (ws_url, connected):
+        async with WebSocketClient(
+            ws_url, "test-key", "agent-123", session_policy=policy
+        ) as client:
+            await asyncio.wait_for(connected, timeout=5)
+            await asyncio.sleep(1.0)
+            assert client.client is not None
+            assert client.client.connection is not None
+            assert client.client.connection.close_code is None
+
+
+async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
+    """A withheld ack forces close_connection at (approximately)
+    dead_threshold_s, and the forced close flows into the client's own
+    reconnect path -- on_reconnect fires once the new connection lands."""
+    policy = _fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
+    reconnected = asyncio.Event()
+
+    async def on_reconnect() -> None:
+        reconnected.set()
+
+    async with phoenix_peer(ack_heartbeats=False) as (ws_url, connected):
+        async with WebSocketClient(
+            ws_url,
+            "test-key",
+            "agent-123",
+            on_reconnect=on_reconnect,
+            session_policy=policy,
+        ):
+            await asyncio.wait_for(connected, timeout=5)
+            start = asyncio.get_running_loop().time()
+            await asyncio.wait_for(reconnected.wait(), timeout=5)
+            elapsed = asyncio.get_running_loop().time() - start
+
+    assert elapsed >= policy.dead_threshold_s * 0.5
+
+
+async def test_watchdog_task_cancelled_cleanly_on_aexit():
+    """__aexit__ stops the watchdog -- no dangling task survives shutdown.
+
+    (HeartbeatWatchdog's own cancellation behavior is covered directly in
+    test_watchdog.py; this test only checks WebSocketClient wires __aexit__
+    to it.)"""
+    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=5.0)
+    async with phoenix_peer() as (ws_url, connected):
+        client = WebSocketClient(ws_url, "test-key", "agent-123", session_policy=policy)
+        async with client:
+            await asyncio.wait_for(connected, timeout=5)
+            watchdog_task = client._watchdog._task
+            assert watchdog_task is not None
+            assert not watchdog_task.done()
+
+    assert watchdog_task.done()
+    assert watchdog_task.cancelled()
+    assert client._watchdog._task is None

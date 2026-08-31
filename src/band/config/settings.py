@@ -25,3 +25,20 @@ class PlatformSettings(BaseSettings):
 
     BAND_WS_URL: str = DEFAULT_WS_URL
     BAND_REST_URL: str = DEFAULT_REST_URL
+
+
+class RuntimeSettings(BaseSettings):
+    """Process-wide runtime tuning knobs, overridable via environment
+    variables. Distinct from ``SessionConfig`` (``band.runtime.types``),
+    which holds per-agent-instance tunables.
+    """
+
+    model_config = SettingsConfigDict(
+        extra="ignore",
+        case_sensitive=False,
+        env_ignore_empty=True,
+    )
+
+    # AgentTools._attachment_cache's size (band.runtime.tools) -- one
+    # process-wide budget, not "N per room".
+    BAND_ATTACHMENT_CACHE_MAXSIZE: int = 1000

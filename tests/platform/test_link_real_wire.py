@@ -10,8 +10,12 @@ fake exists to prove.
 
 from __future__ import annotations
 
+import asyncio
+
 from band.platform.link import BandLink
 from band.testing import JoinOutcome, fake_phoenix_server
+
+from tests.conftest import spy_on_reconciliation_drain
 
 
 def make_link(server_url: str) -> BandLink:
@@ -44,3 +48,85 @@ async def test_room_participants_rejection_rolls_back_chat_room_over_the_real_wi
         # not just that BandLink called a mocked leave method.
         assert "chat_room:room-1" not in server.joined_topics
         assert "room_participants:room-1" not in server.joined_topics
+
+
+async def test_room_participants_rejoin_failure_marks_room_unsubscribed() -> None:
+    """A topic that joined fine once but genuinely fails to REJOIN after a
+    reconnect (not an initial-join failure -- subscribe_room's own rollback
+    path already covers that) must flip is_room_subscribed() to False, not
+    leave it silently stale forever."""
+    async with fake_phoenix_server(
+        join_outcomes={
+            "room_participants:room-1": [JoinOutcome.OK, JoinOutcome.REJECTED],
+        }
+    ) as server:
+        link = make_link(server.url)
+        await link.connect()
+        await link.subscribe_room("room-1")
+        assert link.is_room_subscribed("room-1") is True
+
+        reconnect_handled = spy_on_reconciliation_drain(link)
+        await server.abort_connection()
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
+
+        assert link.is_room_subscribed("room-1") is False
+        assert "room_participants:room-1" not in server.joined_topics
+        assert (
+            "chat_room:room-1" not in server.joined_topics
+        )  # forced clean of both topics
+
+
+async def test_agent_control_rejoin_failure_is_recovered_on_reconnect() -> None:
+    """agent_control is joined directly in connect(), outside
+    SubscriptionTracker, so it is invisible to
+    _detect_agent_topic_rejoin_failures -- a rejected rejoin must instead be
+    repaired by _recover_agent_control, or later STOP/INTERRUPT/PLAY control
+    pushes are silently lost for the rest of the process."""
+    async with fake_phoenix_server(
+        join_outcomes={
+            "agent_control:agent-123": [
+                JoinOutcome.OK,
+                JoinOutcome.REJECTED,
+                JoinOutcome.OK,
+            ],
+        }
+    ) as server:
+        link = make_link(server.url)
+        await link.connect()
+        assert "agent_control:agent-123" in server.joined_topics
+
+        reconnect_handled = spy_on_reconciliation_drain(link)
+        await server.abort_connection()
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
+
+        # The recovery rejoin (the third declared outcome) actually reached
+        # the server and was acked -- not just that BandLink attempted it.
+        assert "agent_control:agent-123" in server.joined_topics
+
+
+async def test_agent_rooms_rejoin_failure_marks_topic_unjoined() -> None:
+    """Same rejoin-failure detection as the room test, for the single-topic
+    agent channels. No public BandLink-level read exists for agent-topic
+    membership (only ``is_room_subscribed`` does), so this reaches into
+    ``link._subscriptions`` -- justified since adding a public accessor with
+    no real caller besides this test would be speculative surface."""
+    async with fake_phoenix_server(
+        join_outcomes={
+            "agent_rooms:agent-123": [JoinOutcome.OK, JoinOutcome.REJECTED],
+        }
+    ) as server:
+        link = make_link(server.url)
+        await link.connect()
+        await link.subscribe_agent_rooms("agent-123")
+        assert (
+            link._subscriptions.is_agent_topic_joined("agent_rooms:agent-123") is True
+        )
+
+        reconnect_handled = spy_on_reconciliation_drain(link)
+        await server.abort_connection()
+        await asyncio.wait_for(reconnect_handled.wait(), timeout=5.0)
+
+        assert (
+            link._subscriptions.is_agent_topic_joined("agent_rooms:agent-123") is False
+        )
+        assert "agent_rooms:agent-123" not in server.joined_topics

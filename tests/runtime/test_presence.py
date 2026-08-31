@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
+
+from band_sdk_core import RoomMembership
 
 from band.runtime.presence import RoomPresence
 
@@ -17,6 +20,8 @@ from tests.conftest import (
     make_room_deleted_event,
     make_room_removed_event,
 )
+from tests.platform.conftest import cancelled_mid_await, gated_coroutine
+from tests.runtime.conftest import admit_room, chat_row
 
 
 @pytest.fixture
@@ -122,9 +127,49 @@ class TestRoomPresenceStart:
         presence = presences(auto_subscribe_existing=True)
         await presence.start()
 
-        assert "room-1" in presence.rooms
-        assert "room-2" in presence.rooms
+        assert presence.roster.room_membership("room-1") is RoomMembership.Admitted
+        assert presence.roster.room_membership("room-2") is RoomMembership.Admitted
         assert mock_link.subscribe_room.call_count == 2
+
+    async def test_start_while_running_raises_without_orphaning_the_task(
+        self, mock_link, presences
+    ):
+        """A second start() call while the event task is still running must
+        raise, not silently overwrite ``_event_task`` and orphan the first
+        one (stop() would then only ever cancel the second)."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        first_task = presence._event_task
+
+        with pytest.raises(RuntimeError):
+            await presence.start()
+
+        assert presence._event_task is first_task
+
+        await presence.stop()
+        assert first_task.done()
+
+    async def test_concurrent_start_calls_only_one_wins(self, mock_link, presences):
+        """Two start() calls racing before the first has a chance to assign
+        _event_task must not both proceed to create a consumer task -- the
+        second must raise, mirroring the sequential case above."""
+        side_effect, started, release = gated_coroutine()
+        mock_link.connect.side_effect = side_effect
+        mock_link.is_connected = False
+        presence = presences(auto_subscribe_existing=False)
+
+        first_call = asyncio.create_task(presence.start())
+        await started.wait()
+
+        with pytest.raises(RuntimeError):
+            await presence.start()
+
+        release.set()
+        await first_call
+
+        assert presence._event_task is not None
+        await presence.stop()
+        assert presence._event_task.done()
 
 
 class TestRoomPresenceStop:
@@ -133,18 +178,18 @@ class TestRoomPresenceStop:
     async def test_stop_clears_rooms(self, mock_link, presences):
         """stop() should clear tracked rooms."""
         presence = presences(auto_subscribe_existing=False)
-        presence.rooms.add("room-1")
-        presence.rooms.add("room-2")
+        admit_room(presence, "room-1")
+        admit_room(presence, "room-2")
 
         await presence.stop()
 
-        assert presence.rooms == set()
+        assert presence.roster.tracked_room_ids() == []
 
     async def test_stop_calls_on_room_left(self, mock_link, presences):
         """stop() should call on_room_left for each room."""
         presence = presences(auto_subscribe_existing=False)
-        presence.rooms.add("room-1")
-        presence.rooms.add("room-2")
+        admit_room(presence, "room-1")
+        admit_room(presence, "room-2")
 
         left_rooms = []
 
@@ -156,6 +201,46 @@ class TestRoomPresenceStop:
         await presence.stop()
 
         assert set(left_rooms) == {"room-1", "room-2"}
+
+    async def test_stop_does_not_notify_for_a_room_still_admitting(
+        self, mock_link, presences
+    ):
+        """A room that never reached Admitted was never announced as
+        joined, so stop() must not announce it as left either."""
+        presence = presences(auto_subscribe_existing=False)
+        presence.roster.begin_room_admission("room-1", passes_filter=True)
+        on_left = AsyncMock()
+        presence.on_room_left = on_left
+
+        await presence.stop()
+
+        on_left.assert_not_called()
+
+    async def test_stop_waits_for_an_in_progress_start_before_tearing_down(
+        self, mock_link, presences
+    ):
+        """stop() racing an in-flight start() must not return before the
+        instance is actually stopped: it has to wait for start() to finish
+        creating _event_task and then tear it down, rather than finding
+        nothing to cancel and returning while start() is still running."""
+        side_effect, started, release = gated_coroutine()
+        mock_link.connect.side_effect = side_effect
+        mock_link.is_connected = False
+        presence = presences(auto_subscribe_existing=False)
+
+        start_task = asyncio.create_task(presence.start())
+        await started.wait()
+
+        stop_task = asyncio.create_task(presence.stop())
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+
+        release.set()
+        await start_task
+        await stop_task
+
+        assert presence._event_task is not None
+        assert presence._event_task.done()
 
 
 class TestRoomPresenceRoomAdded:
@@ -179,7 +264,7 @@ class TestRoomPresenceRoomAdded:
         )
 
         mock_link.subscribe_room.assert_called_with("room-123")
-        assert presence.rooms == {"room-123"}
+        assert presence.roster.tracked_room_ids() == ["room-123"]
         assert joined == [("room-123", ANY)]
         assert joined[0][1]["title"] == "Test", "the payload reaches the callback"
 
@@ -196,16 +281,8 @@ class TestRoomPresenceRoomAdded:
         event = make_room_added_event(room_id="room-123", type="direct")
         await presence._handle_room_added(event)
 
-        assert "room-123" not in presence.rooms
+        assert presence.roster.room_membership("room-123") is RoomMembership.Unadmitted
         mock_link.subscribe_room.assert_not_called()
-
-
-def chat_row(room_id):
-    """One room as the chats listing returns it."""
-    room = MagicMock()
-    room.id = room_id
-    room.model_dump.return_value = {"id": room_id}
-    return room
 
 
 def listing(*pages):
@@ -241,6 +318,22 @@ class TestJoiningOnce:
         assert joined == ["room-1"], "the callback ran again for a room already joined"
         assert mock_link.subscribe_room.call_count == 1
 
+    async def test_subscribe_rooms_skips_a_room_already_admitted(
+        self, mock_link, presences
+    ):
+        """A room a concurrent room_added event already admitted before
+        _subscribe_rooms ran must be skipped, not re-attempted and counted
+        as a failed admission -- _join_room's own no-op for an already-
+        admitted room would otherwise misreport an already-successful join
+        as a failure in the admission-results log."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        admit_room(presence, "room-1")
+
+        await presence._subscribe_rooms({"room-1": {}}, context="startup")
+
+        mock_link.subscribe_room.assert_not_called()
+
     async def test_a_room_on_two_pages_of_one_snapshot_joins_once(
         self, mock_link, presences
     ):
@@ -272,7 +365,7 @@ class TestJoiningOnce:
 
         await presence.start()
 
-        assert presence.rooms == {"room-1"}
+        assert presence.roster.tracked_room_ids() == ["room-1"]
 
     async def test_a_room_that_never_actually_subscribed_is_untracked(
         self, mock_link, presences
@@ -281,8 +374,8 @@ class TestJoiningOnce:
         real join/rollback failure never raises up to _join_room's except
         block. is_room_subscribed() must be checked instead of assuming
         "no exception" means "subscribed" — otherwise the room stays
-        (wrongly) in self.rooms forever, treated as surviving on every
-        future reconnect."""
+        (wrongly) tracked forever, treated as surviving on every future
+        reconnect."""
         mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
         mock_link.is_room_subscribed = MagicMock(return_value=False)
         joined = []
@@ -291,7 +384,7 @@ class TestJoiningOnce:
 
         await presence.start()
 
-        assert presence.rooms == set()
+        assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
         assert joined == []
 
     async def test_a_room_that_never_subscribed_is_rejoined_on_reconnect(
@@ -304,14 +397,85 @@ class TestJoiningOnce:
         mock_link.is_room_subscribed = MagicMock(return_value=False)
         presence = presences(auto_subscribe_existing=True)
         await presence.start()
-        assert presence.rooms == set()
+        assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
 
         mock_link.is_room_subscribed = MagicMock(return_value=True)
         mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
         await presence._handle_reconnect()
 
-        assert presence.rooms == {"room-1"}
+        assert presence.roster.tracked_room_ids() == ["room-1"]
         assert mock_link.subscribe_room.call_count == 2  # startup attempt + reconnect
+
+
+class TestAdmissionRaces:
+    """Regression coverage for the admission ticket's concurrency guarantees."""
+
+    async def test_cancellation_mid_subscribe_rolls_back_to_unadmitted(
+        self, mock_link, presences
+    ):
+        """Cancelling _join_room while subscribe_room() is in flight must not
+        leave the room stuck Admitting forever — record_room_admission's
+        bare finally always resolves the ticket, even on cancellation. The
+        join may have already reached the server by the time the
+        cancellation lands, so this must also attempt a best-effort
+        unsubscribe rather than leave a transport subscription nothing in
+        the roster will ever target for cleanup."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+
+        async with cancelled_mid_await(
+            mock_link.subscribe_room,
+            presence._join_room("room-1", {}, context="room_added"),
+        ):
+            pass
+
+        assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
+        mock_link.unsubscribe_room.assert_called_once_with("room-1")
+
+    async def test_concurrent_join_room_only_one_admits(self, mock_link, presences):
+        """Two concurrent _join_room calls for the same room must not both
+        subscribe: begin_room_admission's synchronous pre-await claim makes
+        the loser a no-op, deterministically under asyncio.gather."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        joined = []
+        presence.on_room_joined = AsyncMock(side_effect=lambda *a: joined.append(a))
+
+        results = await asyncio.gather(
+            presence._join_room("room-1", {}, context="room_added"),
+            presence._join_room("room-1", {}, context="room_added"),
+        )
+
+        assert sorted(results) == [False, True]
+        assert mock_link.subscribe_room.call_count == 1
+        assert len(joined) == 1
+
+    async def test_stale_ticket_after_concurrent_clear_does_not_notify(
+        self, mock_link, presences
+    ):
+        """A ticket invalidated mid-flight (e.g. stop()'s roster.clear()
+        racing an in-flight admission before self._event_task exists to be
+        cancelled) must not announce the room as joined, even though
+        subscribe_room() itself succeeded — record_room_admission's return
+        value is the roster's own authority on whether the ticket still
+        counted. The real transport subscription it just made must also be
+        torn down: the roster no longer tracks the room, so no later cleanup
+        pass (stop()/reconcile()) will ever target it by room_id."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        ticket = presence.roster.begin_room_admission("room-1", passes_filter=True)
+        presence.roster.clear()
+
+        presence.on_room_joined = AsyncMock()
+
+        result = await presence._complete_room_admission(
+            "room-1", ticket, {}, context="room_added"
+        )
+
+        assert result is False
+        presence.on_room_joined.assert_not_called()
+        assert presence.roster.room_membership("room-1") is RoomMembership.Unadmitted
+        mock_link.unsubscribe_room.assert_called_once_with("room-1")
 
 
 class TestRoomPresenceRoomRemoved:
@@ -321,7 +485,7 @@ class TestRoomPresenceRoomRemoved:
         """room_removed should unsubscribe from room."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         event = make_room_removed_event(room_id="room-123")
         await presence._handle_room_removed(event)
@@ -329,21 +493,21 @@ class TestRoomPresenceRoomRemoved:
         mock_link.unsubscribe_room.assert_called_with("room-123")
 
     async def test_room_removed_untracks_room(self, mock_link, presences):
-        """room_removed should remove from presence.rooms."""
+        """room_removed should untrack the room from presence.roster."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         event = make_room_removed_event(room_id="room-123")
         await presence._handle_room_removed(event)
 
-        assert "room-123" not in presence.rooms
+        assert presence.roster.room_membership("room-123") is RoomMembership.Unadmitted
 
     async def test_room_removed_calls_callback(self, mock_link, presences):
         """room_removed should call on_room_left callback."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         left_rooms = []
 
@@ -363,19 +527,19 @@ class TestRoomPresenceRoomRemoved:
         """room_deleted should reuse room cleanup behavior."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         event = make_room_deleted_event(room_id="room-123")
         await presence._on_platform_event(event)
 
         mock_link.unsubscribe_room.assert_called_with("room-123")
-        assert "room-123" not in presence.rooms
+        assert presence.roster.room_membership("room-123") is RoomMembership.Unadmitted
 
     async def test_room_deleted_calls_callback(self, mock_link, presences):
         """room_deleted should call on_room_left callback once."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         left_rooms = []
 
@@ -389,63 +553,63 @@ class TestRoomPresenceRoomRemoved:
 
         assert left_rooms == ["room-123"]
 
+    async def test_room_removed_for_a_never_admitted_room_does_not_notify(
+        self, mock_link, presences
+    ):
+        """A room_removed/room_deleted for a room we never actually admitted
+        must not fire on_room_left — record_room_removed's was_tracked
+        return exists specifically to gate this."""
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+        presence.on_room_left = AsyncMock()
+
+        event = make_room_removed_event(room_id="room-never-joined")
+        await presence._handle_room_removed(event)
+
+        presence.on_room_left.assert_not_called()
+        mock_link.unsubscribe_room.assert_called_once_with("room-never-joined")
+
 
 class TestRoomPresenceReconnect:
     """Test reconnect reconciliation behavior."""
 
     async def test_reconnect_unsubscribes_gone_rooms(self, mock_link, presences):
         """Reconnect should unsubscribe rooms missing from the API."""
-        room = MagicMock()
-        room.id = "room-2"
-        room.model_dump.return_value = {"id": "room-2"}
-        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
-            data=[room],
-            metadata=MagicMock(total_pages=1),
+        mock_link.rest.agent_api_chats.list_agent_chats = listing(
+            [chat_row("room-1"), chat_row("room-2")]
         )
-
         presence = presences(auto_subscribe_existing=True)
         await presence.start()
         mock_link.subscribe_room.reset_mock()
-        presence.rooms = {"room-1", "room-2"}
 
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-2")])
         event = ReconnectedEvent()
         await presence._on_platform_event(event)
 
         mock_link.unsubscribe_room.assert_called_once_with("room-1")
-        assert presence.rooms == {"room-2"}
+        assert presence.roster.tracked_room_ids() == ["room-2"]
 
     async def test_reconnect_subscribes_only_new_rooms(self, mock_link, presences):
         """Reconnect should only join rooms that are new from the API."""
-        room1 = MagicMock()
-        room1.id = "room-1"
-        room1.model_dump.return_value = {"id": "room-1"}
-        room2 = MagicMock()
-        room2.id = "room-2"
-        room2.model_dump.return_value = {"id": "room-2"}
-        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
-            data=[room1, room2],
-            metadata=MagicMock(total_pages=1),
-        )
-
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
         presence = presences(auto_subscribe_existing=True)
         await presence.start()
         mock_link.subscribe_room.reset_mock()
         mock_link.unsubscribe_room.reset_mock()
-        presence.rooms = {"room-1"}
 
+        mock_link.rest.agent_api_chats.list_agent_chats = listing(
+            [chat_row("room-1"), chat_row("room-2")]
+        )
         event = ReconnectedEvent()
         await presence._on_platform_event(event)
 
         mock_link.subscribe_room.assert_called_once_with("room-2")
         mock_link.unsubscribe_room.assert_not_called()
-        assert presence.rooms == {"room-1", "room-2"}
+        assert set(presence.roster.tracked_room_ids()) == {"room-1", "room-2"}
 
     async def test_reconnect_notifies_left_for_gone_rooms(self, mock_link, presences):
         """Reconnect should fire on_room_left for rooms removed while offline."""
-        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
-            data=[],
-            metadata=MagicMock(total_pages=1),
-        )
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
         left_rooms = []
 
         async def on_left(room_id):
@@ -454,27 +618,21 @@ class TestRoomPresenceReconnect:
         presence = presences(auto_subscribe_existing=True)
         presence.on_room_left = on_left
         await presence.start()
-        presence.rooms = {"room-1"}
         mock_link.unsubscribe_room.reset_mock()
 
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([])
         event = ReconnectedEvent()
         await presence._on_platform_event(event)
 
         assert left_rooms == ["room-1"]
         mock_link.unsubscribe_room.assert_called_once_with("room-1")
-        assert presence.rooms == set()
+        assert presence.roster.tracked_room_ids() == []
 
     async def test_reconnect_forwards_event_to_surviving_rooms(
         self, mock_link, presences
     ):
         """Reconnect should notify surviving rooms even when no rooms are newly joined."""
-        room = MagicMock()
-        room.id = "room-1"
-        room.model_dump.return_value = {"id": "room-1"}
-        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
-            data=[room],
-            metadata=MagicMock(total_pages=1),
-        )
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
         received = []
 
         async def on_event(room_id, event):
@@ -485,8 +643,8 @@ class TestRoomPresenceReconnect:
         await presence.start()
         mock_link.subscribe_room.reset_mock()
         mock_link.unsubscribe_room.reset_mock()
-        presence.rooms = {"room-1"}
 
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
         await presence._on_platform_event(ReconnectedEvent())
 
         assert mock_link.subscribe_room.call_count == 0
@@ -494,6 +652,83 @@ class TestRoomPresenceReconnect:
         assert len(received) == 1
         assert received[0][0] == "room-1"
         assert isinstance(received[0][1], ReconnectedEvent)
+
+    async def test_a_failed_reconnect_admission_is_not_tracked_or_resynced(
+        self, mock_link, presences
+    ):
+        """An admitting-list entry whose subscribe fails during reconnect
+        must not end up tracked, and must not receive an on_room_event
+        resync — it never became Admitted."""
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([chat_row("room-1")])
+        mock_link.is_room_subscribed = MagicMock(return_value=False)
+        received = []
+
+        async def on_event(room_id, event):
+            received.append(room_id)
+
+        presence = presences(auto_subscribe_existing=True)
+        presence.on_room_event = on_event
+        await presence.start()
+
+        await presence._handle_reconnect()
+
+        assert presence.roster.tracked_room_ids() == []
+        assert received == []
+
+    async def test_a_stale_room_added_after_reconnect_admission_is_a_noop(
+        self, mock_link, presences
+    ):
+        """A room_added delivered after reconcile() already admitted the
+        same room must be a no-op, not a second subscribe or announce —
+        proves the ticket-dedup self-healing the design doc describes."""
+        mock_link.rest.agent_api_chats.list_agent_chats = listing([])
+        joined = []
+        presence = presences(auto_subscribe_existing=True)
+        presence.on_room_joined = AsyncMock(side_effect=lambda *a: joined.append(a))
+        await presence.start()
+        assert presence.roster.tracked_room_ids() == []
+
+        mock_link.rest.agent_api_chats.list_agent_chats = listing(
+            [chat_row("room-new")]
+        )
+        await presence._handle_reconnect()
+
+        assert mock_link.subscribe_room.call_count == 1
+        assert len(joined) == 1
+
+        await presence._handle_room_added(make_room_added_event(room_id="room-new"))
+
+        assert mock_link.subscribe_room.call_count == 1
+        assert len(joined) == 1
+
+    async def test_auto_subscribe_false_leaves_a_new_reconnect_room_unadmitted(
+        self, mock_link, presences
+    ):
+        """With auto_subscribe_existing=False, a reconnect snapshot naming a
+        room never seen before must leave it Unadmitted, not stuck
+        Admitting forever: reconcile() atomically claims a ticket for every
+        Unadmitted room it's given, with no partial-apply to undo that
+        claim afterward, so the snapshot must exclude the room up front."""
+        mock_link.rest.agent_api_chats.list_agent_chats = listing(
+            [chat_row("room-new")]
+        )
+        presence = presences(auto_subscribe_existing=False)
+        await presence.start()
+
+        await presence._handle_reconnect()
+
+        assert presence.roster.room_membership("room-new") is RoomMembership.Unadmitted
+        mock_link.subscribe_room.assert_not_called()
+
+        # A real room_added for it afterward must succeed normally, not
+        # silently no-op as if a ticket were already claimed.
+        joined = []
+        presence.on_room_joined = AsyncMock(side_effect=lambda *a: joined.append(a))
+        await presence._handle_room_added(make_room_added_event(room_id="room-new"))
+
+        assert presence.roster.room_membership("room-new") is RoomMembership.Admitted
+        mock_link.subscribe_room.assert_called_once_with("room-new")
+        assert len(joined) == 1
 
 
 class TestRoomPresenceRoomEvents:
@@ -503,7 +738,7 @@ class TestRoomPresenceRoomEvents:
         """Room events should be forwarded to on_room_event."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         received_events = []
 
@@ -549,24 +784,24 @@ class TestRoomPresenceEventRouting:
         event = make_room_added_event(room_id="room-123")
         await presence._on_platform_event(event)
 
-        assert "room-123" in presence.rooms
+        assert presence.roster.room_membership("room-123") is RoomMembership.Admitted
 
     async def test_routes_room_removed(self, mock_link, presences):
         """Should route room_removed events correctly."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         event = make_room_removed_event(room_id="room-123")
         await presence._on_platform_event(event)
 
-        assert "room-123" not in presence.rooms
+        assert presence.roster.room_membership("room-123") is RoomMembership.Unadmitted
 
     async def test_routes_message_to_room_event(self, mock_link, presences):
         """Should route message events to on_room_event."""
         presence = presences(auto_subscribe_existing=False)
         await presence.start()
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         received = []
 

@@ -7,7 +7,9 @@ from enum import StrEnum
 
 class MemorySystem(StrEnum):
     """Memory tier; constrains valid ``type`` values via
-    ``band_sdk_core.validate_memory_type_for_system``."""
+    ``band_sdk_core.validate_memory_type_for_system``. Mirrors
+    ``band_sdk_core.MemorySystem``, kept locally only because the core class
+    isn't Pydantic-schema-generatable."""
 
     SENSORY = "sensory"  # Brief sensory inputs (iconic/echoic/haptic)
     WORKING = "working"  # Short-term session context (episodic/semantic/procedural)
@@ -17,7 +19,9 @@ class MemorySystem(StrEnum):
 
 
 class MemoryType(StrEnum):
-    """Types passed as ``type`` on store/list; must match the chosen system."""
+    """Types passed as ``type`` on store/list; must match the chosen system.
+    Mirrors ``band_sdk_core.MemoryType``, kept locally only because the core
+    class isn't Pydantic-schema-generatable."""
 
     ICONIC = "iconic"  # Visual input
     ECHOIC = "echoic"  # Auditory input

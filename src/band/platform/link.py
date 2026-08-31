@@ -1,8 +1,8 @@
 """
 BandLink - Live link to Band platform.
 
-Extracted from core/agent.py BandAgent - WebSocket management only.
-REST client exposed directly for API calls.
+WebSocket connection and event dispatch. REST client exposed directly
+for API calls.
 """
 
 from __future__ import annotations
@@ -18,7 +18,14 @@ from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from band.core.types import PlatformConnection
 from band.platform.message_lifecycle import MessageLifecycle
 from band.runtime.types import PlatformMessage
-from band_sdk_core import LeaveOutcome, RoomSubscribeResult, SubscriptionTracker
+from band_sdk_core import (
+    AgentTopicKind,
+    LeaveOutcome,
+    RoomSubscribeResult,
+    SubscriptionTracker,
+    chat_room_topic,
+    room_participants_topic,
+)
 
 from band.platform.event import (
     MessageEvent,
@@ -55,28 +62,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Single source of truth for the two single-topic agent-channel kinds: every
-# site that builds a topic string (_agent_*_topic) or parses one back apart
-# (_drain_reconciliation) reads these, so a typo in one can't silently
-# diverge from the other.
-_AGENT_ROOMS_KIND = "agent_rooms"
-_AGENT_CONTACTS_KIND = "agent_contacts"
-
-
-def _agent_rooms_topic(agent_id: str) -> str:
-    return f"{_AGENT_ROOMS_KIND}:{agent_id}"
-
-
-def _agent_contacts_topic(agent_id: str) -> str:
-    return f"{_AGENT_CONTACTS_KIND}:{agent_id}"
-
-
 class BandLink:
     """
     Live link to Band platform.
 
-    Extracted from BandAgent - handles WebSocket connection and event dispatch.
-    REST client exposed directly via self.rest for API calls.
+    Handles WebSocket connection and event dispatch. REST client exposed
+    directly via self.rest for API calls.
 
     Example:
         import logging
@@ -106,7 +97,7 @@ class BandLink:
         self.ws_url = ws_url
         self.rest_url = rest_url
 
-        # REST client - exposed directly (from BandAgent._api_client)
+        # REST client - exposed directly
         self.rest = AsyncRestClient(api_key=api_key, base_url=rest_url)
 
         # Pure REST message-lifecycle operations (mark_*/report_activity/
@@ -114,9 +105,12 @@ class BandLink:
         # state, so it lives in its own class rather than this one.
         self._messages = MessageLifecycle()
 
-        # WebSocket client (from BandAgent._ws_client)
+        # WebSocket client
         self._ws: WebSocketClient | None = None
         self._is_connected = False
+        # True for the span of connect() before _ws is assigned, so a second
+        # concurrent connect() sees it even mid-handshake (see connect()).
+        self._connecting = False
 
         # Subscription tracking (band_sdk_core.SubscriptionTracker) plus local
         # bookkeeping for claims whose real-world outcome is ambiguous (a
@@ -171,46 +165,46 @@ class BandLink:
         """Get next event from the queue. Blocks until an event is available."""
         return await self._event_queue.get()
 
-    # --- Connection lifecycle (from BandAgent.start/stop/run) ---
+    # --- Connection lifecycle ---
 
     async def connect(self) -> None:
-        """
-        Connect WebSocket.
-
-        Extracted from BandAgent.start() lines 158-164.
-        """
-        if self._ws is not None:
+        if self._connecting or self._ws is not None:
             logger.warning("Already connected or connecting")
             return
 
-        self._last_disconnect_reason = None
-        self._ws = WebSocketClient(
-            self.ws_url,
-            self.api_key,
-            self.agent_id,
-            on_reconnect=self._on_reconnected,
-            on_disconnect=self._on_disconnected,
-        )
-        await self._ws.__aenter__()
+        # Set synchronously, before the first await below, so a second
+        # concurrent connect() sees it immediately -- _ws alone can't do
+        # that job, since it's only assigned once fully connected below
+        # (never a half-connected client a caller could act on).
+        self._connecting = True
         try:
-            await self._ws.join_agent_control_channel(
+            self._last_disconnect_reason = None
+            ws = WebSocketClient(
+                self.ws_url,
+                self.api_key,
                 self.agent_id,
-                on_supersede=self._on_supersede,
-                on_control=self._on_control,
+                on_reconnect=self._on_reconnected,
+                on_disconnect=self._on_disconnected,
             )
-        except Exception:
-            await self._ws.__aexit__(None, None, None)
-            self._ws = None
-            raise
-        self._is_connected = True
-        logger.info("Connected to platform")
+            try:
+                await ws.__aenter__()
+                await self._join_agent_control_channel(ws)
+            except BaseException:
+                # BaseException, not Exception: a cancellation reaching one
+                # of these awaits (e.g. the caller's own task being
+                # cancelled) must still close the half-opened client, or it
+                # leaks -- _ws itself was never assigned, so there's nothing
+                # to roll back on that side.
+                await ws.__aexit__(None, None, None)
+                raise
+
+            self._ws = ws
+            self._is_connected = True
+            logger.info("Connected to platform")
+        finally:
+            self._connecting = False
 
     async def disconnect(self) -> None:
-        """
-        Disconnect WebSocket.
-
-        Extracted from BandAgent.stop() lines 193-195.
-        """
         if not self._ws:
             return
 
@@ -228,16 +222,21 @@ class BandLink:
         logger.info("Disconnected from platform")
 
     async def run_forever(self) -> None:
-        """
-        Run until interrupted.
-
-        From BandAgent.run() lines 208-209.
-        """
         if not self._ws:
             raise RuntimeError("Not connected")
         await self._ws.run_forever()
 
-    # --- Subscription management (from BandAgent) ---
+    async def _join_agent_control_channel(self, ws: WebSocketClient) -> None:
+        """Shared join call for agent_control -- used by both the initial
+        ``connect()`` join and ``_recover_agent_control``'s rejoin repair,
+        so the callback wiring only needs to be kept in sync in one place."""
+        await ws.join_agent_control_channel(
+            self.agent_id,
+            on_supersede=self._on_supersede,
+            on_control=self._on_control,
+        )
+
+    # --- Subscription management ---
 
     def _blocked_by_reconciliation(
         self, key: str, pending: set[str], *, noun: str
@@ -255,16 +254,19 @@ class BandLink:
         )
         return True
 
+    def _is_current_session(self, ws: WebSocketClient) -> bool:
+        """False once ``ws``'s connection has been torn down or replaced --
+        its own pending entries are either already cleared or will never
+        drain, so acting through it further would leak into a session that
+        never touched this room/topic."""
+        return self._ws is ws
+
     def _mark_needing_reconciliation(
         self, key: str, pending: set[str], ws: WebSocketClient
     ) -> None:
-        """Block ``key`` from resubscribe until reconciled — but only within
-        the connection session (``ws``) that produced the ambiguity. A
-        session that has since been torn down or replaced (``self._ws`` no
-        longer ``ws``) has already cleared, or will never drain, this entry
-        on its own; adding it here would instead wrongly carry the block
-        into a session that never touched this room/topic."""
-        if self._ws is ws:
+        """Block ``key`` from resubscribe until reconciled, within ``ws``'s
+        session only."""
+        if self._is_current_session(ws):
             pending.add(key)
 
     async def _leave_channel(
@@ -286,17 +288,13 @@ class BandLink:
             return False
 
     async def subscribe_agent_rooms(self, agent_id: str) -> None:
-        """
-        Subscribe to agent room events (room_added/removed).
-
-        From BandAgent.start() lines 167-171.
-        """
+        """Subscribe to agent room events (room_added/removed)."""
         if not self._ws:
             raise RuntimeError("Not connected")
         ws = self._ws
 
         await self._subscribe_agent_topic(
-            _agent_rooms_topic(agent_id),
+            AgentTopicKind.Rooms.topic(agent_id),
             lambda: ws.join_agent_rooms_channel(
                 agent_id,
                 on_room_added=self._on_room_added,
@@ -306,18 +304,13 @@ class BandLink:
         )
 
     async def subscribe_room(self, room_id: str) -> None:
-        """
-        Subscribe to room messages and participants.
-
-        Extracted from BandAgent._subscribe_to_room() lines 724-746.
-        Wraps each channel join so a single room failure doesn't crash
-        the entire subscription sequence.
+        """Subscribe to room messages and participants.
 
         Blocked (a no-op, logged) while ``room_id`` is in
-        ``_rooms_needing_reconciliation`` — the room's outcome from a prior
-        cancelled/ambiguous attempt is unresolved and must not be retried on
-        the same socket. It stays blocked until the next reconnect drains it
-        (see ``_drain_reconciliation``); see the design doc for why.
+        ``_rooms_needing_reconciliation`` — a prior cancelled/ambiguous
+        attempt's outcome is unresolved and must not be retried on the same
+        socket. Stays blocked until the next reconnect drains it (see
+        ``_drain_reconciliation``); see the design doc for why.
         """
         if not self._ws:
             raise RuntimeError("Not connected")
@@ -335,7 +328,7 @@ class BandLink:
         settled = False
         try:
             try:
-                # Subscribe to messages (from lines 733-736)
+                # Subscribe to messages
                 await ws.join_chat_room_channel(
                     room_id,
                     on_message_created=lambda msg: self._on_message_created(
@@ -351,7 +344,7 @@ class BandLink:
                 return
 
             try:
-                # Subscribe to participant updates (from lines 739-743)
+                # Subscribe to participant updates
                 await ws.join_room_participants_channel(
                     room_id,
                     on_participant_added=lambda p: self._on_participant_added(
@@ -396,15 +389,17 @@ class BandLink:
         finally:
             # Cancellation (or any other unexpected escape) leaves the ticket
             # unresolved: force it into the one outcome that can express
-            # ambiguity to core (see design doc), and block local resubscribe
-            # until the next reconnect regardless of what core reports back.
+            # ambiguity to core (see design doc). Only block local resubscribe
+            # if this ticket was still current when it applied -- a stale
+            # ticket (already resolved another way) must not mark reconciliation.
             if not settled:
-                self._subscriptions.record_room_participants_join_failed(
+                result = self._subscriptions.record_room_participants_join_failed(
                     room_id=room_id, ticket=ticket, chat_room_left=False
                 )
-                self._mark_needing_reconciliation(
-                    room_id, self._rooms_needing_reconciliation, ws
-                )
+                if result is RoomSubscribeResult.RollbackFailed:
+                    self._mark_needing_reconciliation(
+                        room_id, self._rooms_needing_reconciliation, ws
+                    )
 
     async def subscribe_agent_contacts(self, agent_id: str) -> None:
         """
@@ -418,7 +413,7 @@ class BandLink:
         ws = self._ws
 
         await self._subscribe_agent_topic(
-            _agent_contacts_topic(agent_id),
+            AgentTopicKind.Contacts.topic(agent_id),
             lambda: ws.join_agent_contacts_channel(
                 agent_id,
                 on_contact_request_received=self._on_contact_request_received,
@@ -461,23 +456,19 @@ class BandLink:
             )
             settled = True
         finally:
-            # record_agent_topic_join(joined=False) never reaches core's own
-            # NeedsReconciliation (see design doc) — the local set is the
-            # only thing that blocks a same-socket retry here.
+            # An unresolved ticket means the real transport outcome is
+            # unknown (e.g. cancelled after PHX's own join call started) --
+            # record_agent_topic_join_ambiguous resolves core straight to
+            # NeedsReconciliation instead of Absent.
             if not settled:
-                self._subscriptions.record_agent_topic_join(
-                    topic=topic, ticket=ticket, joined=False
-                )
-                self._mark_needing_reconciliation(
-                    topic, self._agent_topics_needing_reconciliation, ws
-                )
+                if self._subscriptions.record_agent_topic_join_ambiguous(
+                    topic=topic, ticket=ticket
+                ):
+                    self._mark_needing_reconciliation(
+                        topic, self._agent_topics_needing_reconciliation, ws
+                    )
 
     async def unsubscribe_room(self, room_id: str) -> None:
-        """
-        Unsubscribe from room.
-
-        Extracted from BandAgent._unsubscribe_from_room() lines 748-769.
-        """
         if not self._ws:
             return
         ws = self._ws
@@ -526,7 +517,7 @@ class BandLink:
         ws = self._ws
 
         await self._leave_agent_topic(
-            _agent_contacts_topic(self.agent_id),
+            AgentTopicKind.Contacts.topic(self.agent_id),
             lambda: ws.leave_agent_contacts_channel(self.agent_id),
             ws,
         )
@@ -560,25 +551,117 @@ class BandLink:
         """Whether ``room_id`` is currently fully subscribed (both topics)."""
         return self._subscriptions.is_room_subscribed(room_id=room_id)
 
-    # --- Event handlers (from BandAgent, unified into PlatformEvent) ---
+    def _connected_ws(self) -> WebSocketClient:
+        """The active WebSocket client -- only ever called from the client's
+        own reconnect hook (``_on_reconnected``) or something it calls
+        synchronously from there, where a live connection is guaranteed."""
+        if self._ws is None:
+            raise RuntimeError("Not connected")
+        return self._ws
+
+    def _detect_room_rejoin_failures(
+        self, ws: WebSocketClient, joined: frozenset[str]
+    ) -> None:
+        """PHXChannelsClient has no per-topic rejoin callback, so this
+        compares its settled post-rejoin registry against the tracker's
+        belief instead -- safe with no race, since PHX's own rejoin pass
+        for every topic completes before this hook fires.
+
+        Only catches an explicit rejoin rejection: a topic hit by a
+        transient failure stays in PHX's own registry ("will retry on next
+        reconnect"), so it still reads as joined here and is caught later
+        if it ever fails for real.
+
+        Reports each candidate's own generation ticket, so a room that was
+        unsubscribed and re-subscribed between the failure and this check
+        is left alone: the tracker rejects the stale ticket as a no-op.
+
+        ``joined`` is a single ``ws.joined_topics()`` snapshot shared across
+        this whole reconnect pass by ``_on_reconnected`` -- never taken here
+        directly, so all detection in the pass sees the same registry state.
+        """
+        candidates = self._subscriptions.room_rejoin_candidates()
+        if not candidates:
+            return
+        dropped = [
+            (room_id, ticket)
+            for room_id, ticket in candidates
+            if not (
+                chat_room_topic(room_id) in joined
+                and room_participants_topic(room_id) in joined
+            )
+        ]
+        for room_id, ticket in dropped:
+            if self._subscriptions.mark_room_rejoin_failed(
+                room_id=room_id, ticket=ticket
+            ):
+                self._mark_needing_reconciliation(
+                    room_id, self._rooms_needing_reconciliation, ws
+                )
+
+    def _detect_agent_topic_rejoin_failures(
+        self, ws: WebSocketClient, joined: frozenset[str]
+    ) -> None:
+        """Same rejoin-failure detection as ``_detect_room_rejoin_failures``,
+        for the single-topic agent channels. ``joined`` is the same shared
+        snapshot ``_detect_room_rejoin_failures`` receives."""
+        candidates = self._subscriptions.agent_topic_rejoin_candidates()
+        if not candidates:
+            return
+        dropped = [
+            (topic, ticket) for topic, ticket in candidates if topic not in joined
+        ]
+        for topic, ticket in dropped:
+            if self._subscriptions.mark_agent_topic_rejoin_failed(
+                topic=topic, ticket=ticket
+            ):
+                self._mark_needing_reconciliation(
+                    topic, self._agent_topics_needing_reconciliation, ws
+                )
+
+    async def _recover_agent_control(
+        self, ws: WebSocketClient, joined: frozenset[str]
+    ) -> None:
+        """agent_control is joined once in connect() and lives for the whole
+        session, outside SubscriptionTracker entirely -- unlike the
+        tracker-owned channels, there is no consumer-facing resubscribe call
+        waiting to be unblocked, so a rejoin PHX itself rejected is repaired
+        here directly instead of only flagged for later.
+
+        ``joined`` is the same shared ``ws.joined_topics()`` snapshot
+        ``_on_reconnected`` passes to the tracker-owned detection helpers.
+        """
+        topic = AgentTopicKind.Control.topic(self.agent_id)
+        if topic in joined:
+            return
+        logger.warning("agent_control rejoin failed, attempting recovery")
+        try:
+            await self._join_agent_control_channel(ws)
+            logger.info("Recovered agent_control after a rejected rejoin")
+        except Exception as e:
+            logger.warning("Failed to recover agent_control: %s", e)
+
+    # --- Event handlers ---
 
     async def _on_reconnected(self) -> None:
-        """Handle PHX client reconnection.
+        """Handle PHX client reconnection: PHXChannelsClient has already
+        re-subscribed previously joined topics by the time this fires, so
+        tracked rooms/topics can be reconciled against real server state
+        here without replaying duplicate joins.
 
-        PHXChannelsClient re-subscribes previously joined topics before calling
-        this hook, so room subscription tracking must stay intact here.
-        RoomPresence can then reconcile tracked rooms against the server state
-        without leaking channels or replaying duplicate room joins.
-
-        Also drains anything left in the local reconciliation sets: the
-        transport's own auto-rejoin above can silently succeed for a room/
-        topic whose prior join or leave was ambiguous (cancelled, or a
-        failed rollback), so ``_drain_reconciliation`` forces a clean leave
-        before acknowledging the tracker — this is the only point where that
-        ambiguity is safely resolvable (see design doc).
+        Runs rejoin-failure detection before draining so a rejoin failure
+        gets the same best-effort clean leave as every other ambiguous
+        outcome (a cancelled join, a failed rollback) already queued for
+        ``_drain_reconciliation`` -- this reconnect is the only point where
+        that ambiguity is safely resolvable (see design doc).
         """
         logger.info("WebSocket reconnected — reconciling room state")
         self._subscriptions.on_reconnected()
+        ws = self._connected_ws()
+        joined = ws.joined_topics()
+        await self._recover_agent_control(ws, joined)
+        self._detect_room_rejoin_failures(ws, joined)
+        self._detect_agent_topic_rejoin_failures(ws, joined)
         await self._drain_reconciliation()
         self._queue_event(ReconnectedEvent())
 
@@ -586,25 +669,17 @@ class BandLink:
         """Force a clean transport + tracker state for every room/topic left
         ambiguous since the last reconnect, then release the local block.
         """
-        assert (
-            self._ws is not None
-        )  # only called from the ws client's own reconnect hook
-        ws = self._ws
+        ws = self._connected_ws()
 
         await self._drain_room_reconciliation(ws)
         await self._drain_agent_topic_reconciliation(ws)
 
     async def _drain_room_reconciliation(self, ws: WebSocketClient) -> None:
-        """``ws`` is the client captured at the start of the drain, not
-        re-read from ``self._ws``: a concurrent disconnect()/reconnect() can
-        swap or clear it while this is mid-await, and bailing out as soon as
-        that's detected avoids both acting through a stale client (whose
-        channels this session no longer owns) and further pointless work —
-        never a correctness issue on its own, since every leave here is
-        already best-effort, just needless.
-        """
+        """Stops as soon as ``ws``'s session ends mid-await -- never a
+        correctness issue (every leave here is already best-effort), just
+        pointless work through a client this session no longer owns."""
         for room_id in list(self._rooms_needing_reconciliation):
-            if self._ws is not ws:
+            if not self._is_current_session(ws):
                 return
             await self._leave_channel(
                 lambda: ws.leave_chat_room_channel(room_id),
@@ -622,14 +697,17 @@ class BandLink:
             self._rooms_needing_reconciliation.discard(room_id)
 
     async def _drain_agent_topic_reconciliation(self, ws: WebSocketClient) -> None:
-        """Same stale-``ws``-detection rationale as ``_drain_room_reconciliation``."""
+        """Same stale-session handling as ``_drain_room_reconciliation``."""
         for topic in list(self._agent_topics_needing_reconciliation):
-            if self._ws is not ws:
+            if not self._is_current_session(ws):
                 return
             kind, _, agent_id = topic.partition(":")
+            topic_kind = AgentTopicKind.from_wire_name(kind)
+            if topic_kind is None:
+                raise RuntimeError(f"Unrecognized agent topic kind: {topic!r}")
             leave = (
                 ws.leave_agent_rooms_channel
-                if kind == _AGENT_ROOMS_KIND
+                if topic_kind == AgentTopicKind.Rooms
                 else ws.leave_agent_contacts_channel
             )
             await self._leave_channel(
@@ -697,12 +775,6 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_room_added(self, payload: "RoomAddedPayload") -> None:
-        """
-        Handle room_added from WebSocket.
-
-        From BandAgent._on_room_added() lines 619-630.
-        Now creates RoomAddedEvent and queues it for async iteration.
-        """
         event = RoomAddedEvent(
             room_id=payload.id,
             payload=payload,
@@ -710,11 +782,6 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_room_removed(self, payload: "RoomRemovedPayload") -> None:
-        """
-        Handle room_removed from WebSocket.
-
-        From BandAgent._on_room_removed() lines 632-643.
-        """
         event = RoomRemovedEvent(
             room_id=payload.id,
             payload=payload,
@@ -724,12 +791,6 @@ class BandLink:
     async def _on_message_created(
         self, room_id: str, payload: "MessageCreatedPayload"
     ) -> None:
-        """
-        Handle message_created from WebSocket.
-
-        From BandAgent._on_message_created() lines 645-682.
-        Now creates MessageEvent and queues it for async iteration.
-        """
         event = MessageEvent(
             room_id=room_id,
             payload=payload,
@@ -753,12 +814,7 @@ class BandLink:
     async def _on_participant_added(
         self, room_id: str, payload: "ParticipantAddedPayload"
     ) -> None:
-        """
-        Handle participant_added from WebSocket.
-
-        From BandAgent._on_participant_added() lines 771-786.
-        Payload is already validated by WebSocketClient._handle_events().
-        """
+        """Payload is already validated by WebSocketClient._handle_events()."""
         event = ParticipantAddedEvent(
             room_id=room_id,
             payload=payload,
@@ -768,12 +824,7 @@ class BandLink:
     async def _on_participant_removed(
         self, room_id: str, payload: "ParticipantRemovedPayload"
     ) -> None:
-        """
-        Handle participant_removed from WebSocket.
-
-        From BandAgent._on_participant_removed() lines 788-805.
-        Payload is already validated by WebSocketClient._handle_events().
-        """
+        """Payload is already validated by WebSocketClient._handle_events()."""
         event = ParticipantRemovedEvent(
             room_id=room_id,
             payload=payload,

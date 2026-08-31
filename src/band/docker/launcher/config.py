@@ -35,6 +35,11 @@ DEFAULT_CONFIG_FILENAME = "band.yaml"
 DEFAULT_REST_URL = "https://app.band.ai"
 DEFAULT_WS_URL = "wss://app.band.ai/api/v1/socket/websocket"
 DEFAULT_SDK_HOME = "/opt/band"
+# The echo-agent starter's shipped-but-unset marker (docker/band_python_kit/
+# echo-agent/band.yaml); a workspace still carrying it has never been
+# provisioned even though `agent.id` is non-empty. `band.docker.provision`
+# imports this rather than defining its own copy.
+PLACEHOLDER_AGENT_ID = "replace-with-agent-id"
 # The startup chain inherits root's HOME across the privilege drop; every
 # process the launcher starts must see the agent user's home instead.
 AGENT_HOME = "/home/agent"
@@ -253,5 +258,12 @@ def resolve_agent_id(config: WorkspaceConfig, env: LauncherEnv) -> str:
         raise LaunchError(
             "config",
             "agent id missing: set agent.id in band.yaml or BAND_AGENT_ID",
+        )
+    if agent_id == PLACEHOLDER_AGENT_ID:
+        raise LaunchError(
+            "config",
+            f"agent id is still the starter kit placeholder ({agent_id!r}); "
+            "run `band-kit provision` (or set agent.id/BAND_AGENT_ID to a "
+            "real agent id) before launching",
         )
     return agent_id

@@ -8,11 +8,12 @@ protocol BandLink's real WebSocketClient/PHXChannelsClient stack accepts.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
 
 from band.platform.event import RoomAddedEvent
 from band.platform.link import BandLink
 from band.testing import JoinOutcome, fake_phoenix_server
+
+from tests.conftest import spy_on_reconciliation_drain
 
 
 def make_link(server_url: str) -> BandLink:
@@ -117,11 +118,11 @@ async def test_abort_triggers_real_reconnect_and_drain() -> None:
         link = make_link(server.url)
         await link.connect()
         await link.subscribe_room("room-1")
-        drain_spy = AsyncMock(wraps=link._drain_reconciliation)
-        link._drain_reconciliation = drain_spy
+
+        drain_handled = spy_on_reconciliation_drain(link)
 
         await server.abort_connection()
         await wait_until(lambda: server.connection_count == 2)
-        await wait_until(lambda: drain_spy.await_count > 0)
+        await asyncio.wait_for(drain_handled.wait(), timeout=5.0)
 
         assert link.is_room_subscribed("room-1") is True

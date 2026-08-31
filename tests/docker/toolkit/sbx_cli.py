@@ -20,13 +20,15 @@ import shlex
 import shutil
 import subprocess
 import uuid
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from band.docker.sbx_process import run_sbx_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -139,21 +141,14 @@ def remove_custom_secret_command(*, sandbox: str, host: str) -> list[str]:
 def run_redacting_secret(argv: list[str], *, secret: str, timeout: int = 60) -> str:
     """Run a secret-bearing command, redacting ``secret`` from any error.
 
-    ``subprocess`` renders the failing argv into ``CalledProcessError``, so a
-    routine failure (daemon down, auth, a dead sandbox) would spill the
-    credential into the traceback and captured test logs — whether the secret is
-    a whole argument (``--value <secret>``) or embedded inside one (a grep
-    command quoting it). Run unchecked and raise a redacted error instead;
-    stdout is returned on success, so the secret is never surfaced either way.
+    A routine failure (daemon down, auth, a dead sandbox) would otherwise spill
+    the credential into the raised error and captured test logs — whether the
+    secret is a whole argument (``--value <secret>``) or embedded inside one (a
+    grep command quoting it). ``run_sbx_subprocess`` does the run-and-redact;
+    this just adapts its stdout-on-success/CompletedProcess shape to the
+    stdout-only return every caller here wants.
     """
-    result = subprocess.run(
-        argv, capture_output=True, text=True, check=False, timeout=timeout
-    )
-    if result.returncode == 0:
-        return result.stdout
-    redacted = " ".join(shlex.quote(arg).replace(secret, "***") for arg in argv)
-    detail = (result.stderr or result.stdout or "").replace(secret, "***").strip()
-    raise RuntimeError(f"{redacted} failed (exit {result.returncode}): {detail}")
+    return run_sbx_subprocess(argv, timeout=timeout, redact=secret).stdout
 
 
 @contextmanager
@@ -255,6 +250,24 @@ def allow_network(host: str) -> Iterator[None]:
                 removal.returncode,
                 host,
             )
+
+
+@contextmanager
+def allow_network_for_hosts(hosts: Iterable[str], *, kit: Path | str) -> Iterator[None]:
+    """Grant sbx network access, for the block, to any of ``hosts`` not already
+    covered by ``kit``'s baseline allowlist (e.g. a non-prod Band deployment).
+
+    Factors out the "for host not in baseline: allow_network(host)" loop that
+    every caller pointing a sandbox at a non-prod deployment needs — takes
+    plain hostnames rather than a settings/endpoints object, so this module
+    stays free of a dependency on the E2E baseline toolkit.
+    """
+    baseline = kit_baseline_hosts(kit)
+    with ExitStack() as stack:
+        for host in hosts:
+            if host not in baseline:
+                stack.enter_context(allow_network(host))
+        yield
 
 
 NAME_PREFIX = "band-nevervm"
