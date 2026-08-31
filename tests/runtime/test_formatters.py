@@ -333,11 +333,31 @@ class TestReplaceUuidMentions:
         result = replace_uuid_mentions(content, participants)
         assert result == "@[[unknown-uuid]] hello"
 
-    def test_handles_missing_handle(self):
+    def test_falls_back_to_name_when_handle_missing(self):
+        # ChatParticipant.handle is omitted when unavailable (e.g. a room's
+        # implicit human owner) -- a bare @[[uuid]] left for the LLM is
+        # unreadable and gets echoed back verbatim, so name is the fallback.
         content = "@[[uuid1]] hello"
         participants = [{"id": "uuid1", "name": "John"}]  # No handle
         result = replace_uuid_mentions(content, participants)
-        assert result == "@[[uuid1]] hello"  # Preserved
+        assert result == "@John hello"
+
+    def test_preserves_uuid_when_neither_handle_nor_name_available(self):
+        content = "@[[uuid1]] hello"
+        participants = [{"id": "uuid1"}]  # Neither handle nor name
+        result = replace_uuid_mentions(content, participants)
+        assert result == "@[[uuid1]] hello"  # Nothing to fall back to
+
+    def test_collapses_whitespace_in_multi_word_name_fallback(self):
+        # A display name fallback must stay whitespace-free like a real handle
+        # -- strip_leading_mentions()'s @\S+ matching assumes no embedded space.
+        content = "@[[uuid1]] approve REQ-1"
+        participants = [{"id": "uuid1", "name": "Jane Doe"}]  # No handle
+        result = replace_uuid_mentions(content, participants)
+        assert result == "@Jane-Doe approve REQ-1"
+        # The invariant this exists to protect: stripping the mention must
+        # never eat into the command that follows it.
+        assert strip_leading_mentions(result) == "approve REQ-1"
 
     def test_handles_empty_content(self):
         result = replace_uuid_mentions("", [{"id": "uuid1", "handle": "john"}])
