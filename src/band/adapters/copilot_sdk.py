@@ -44,7 +44,7 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
-    READ_ROOM_FILE_TOOL_NAME,
+    BandTool,
     get_band_tool_category,
     image_block_placeholder,
     is_mcp_content_result,
@@ -753,7 +753,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             )
 
         binary_results: list[ToolBinaryResult] | None = None
-        if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(result):
+        if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result):
             binary_results = [
                 ToolBinaryResult(
                     data=block["data"], mime_type=block["mimeType"], type="image"

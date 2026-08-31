@@ -50,8 +50,7 @@ from band.runtime.custom_tools import (
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
-    READ_ROOM_FILE_TOOL_NAME,
-    SEND_MESSAGE_TOOL_NAME,
+    BandTool,
     SendEventInput,
     Surface,
     ToolDefinition,
@@ -80,13 +79,8 @@ class MCPToolRegistration:
     description: str
     input_model: type[BaseModel]
     execute: MCPToolExecutor
-    # Passed straight through to FastMCP's add_tool(structured_output=...).
-    # None (default) preserves today's auto-inferred behavior for every
-    # tool. False is for band_read_room_file only: its image branch returns
-    # real MCP content blocks (see _mcp_content_blocks), and a declared
-    # structured-output schema would validate that non-str return value
-    # against the model FastMCP infers from the dispatch function's return
-    # annotation and reject it.
+    # False only for band_read_room_file: its image branch returns MCP content
+    # blocks, which the schema FastMCP infers from ``-> str`` would reject.
     structured_output: bool | None = None
 
 
@@ -215,7 +209,7 @@ def enrich_send_message_error(
     ``EmbeddedResolver`` above and the CLI's ``StandaloneResolver`` can call
     this with whatever tools instance they hold.
     """
-    if definition.name != SEND_MESSAGE_TOOL_NAME:
+    if definition.name != BandTool.SEND_MESSAGE:
         return error
     message = append_available_mention_handles(
         str(error),
@@ -468,7 +462,7 @@ def build_tool_registration(
       when set (CLI-only feature; the embedded door never pins).
     """
 
-    is_read_room_file = definition.name == READ_ROOM_FILE_TOOL_NAME
+    is_read_room_file = definition.name == BandTool.READ_ROOM_FILE
 
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
@@ -623,16 +617,10 @@ def build_resolved_band_mcp_tool_registrations(
 
 
 def _mcp_content_blocks(result: dict[str, Any]) -> list[ImageContent]:
-    """Convert an MCP-content-shaped tool result into real MCP content blocks.
+    """Rebuild an MCP-content-shaped tool result as real ``ContentBlock``s.
 
-    ``is_mcp_content_result`` already confirmed ``result["content"]`` is a
-    list of MCP content block dicts. FastMCP's own result conversion
-    recognizes an actual ``ContentBlock`` instance (or a list of them) and
-    passes it through to the client verbatim -- a plain dict does not match
-    and would otherwise fall through to JSON-text encoding, same as any
-    other tool result. Only "image" blocks exist today (the sole structured
-    branch of ``AgentTools.read_room_file``); a block of any other shape
-    fails Pydantic validation here rather than silently being dropped.
+    FastMCP passes a ``ContentBlock`` instance through to the client verbatim;
+    the equivalent plain dict falls through to JSON-text encoding instead.
     """
     return [ImageContent(**block) for block in result["content"]]
 

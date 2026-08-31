@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from band.runtime.tools import READ_ROOM_FILE_TOOL_NAME, TOOL_DEFINITIONS
+from band.runtime.tools import BandTool, TOOL_DEFINITIONS
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
 )
@@ -71,10 +71,8 @@ _EXPECTED_BYTES: bytes = base64.b64decode(_EXPECTED_BASE64)
 def _is_expected_image(data: bytes | str, mime_type: str) -> bool:
     """Whether a framework's outgoing image block carries the probe's image.
 
-    ``data`` is whichever encoding that framework's SDK uses -- raw bytes
-    (gemini, agno, pydantic_ai) or the base64 string as-is (anthropic,
-    opencode, copilot_sdk) -- so each probe passes what it found without
-    first normalising it.
+    ``data`` arrives in whichever encoding that framework's SDK uses, so a
+    probe passes what it found rather than normalising first.
     """
     expected = _EXPECTED_BYTES if isinstance(data, bytes) else _EXPECTED_BASE64
     return data == expected and mime_type == _EXPECTED_MIME_TYPE
@@ -106,11 +104,11 @@ async def _probe_claude_sdk() -> bool:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
 
     sdk_tools = build_band_sdk_tools(
-        tool_definitions=[TOOL_DEFINITIONS[READ_ROOM_FILE_TOOL_NAME]],
+        tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
         get_tools=lambda _room_id: _StubReadRoomFileTools(),
         include_room_id=False,
     )
-    handler = _tool_named(sdk_tools, READ_ROOM_FILE_TOOL_NAME).handler
+    handler = _tool_named(sdk_tools, BandTool.READ_ROOM_FILE).handler
 
     result = await handler({"file_id": "file-1"})
 
@@ -132,7 +130,7 @@ async def _probe_anthropic() -> bool:
         ToolUseBlock(
             type="tool_use",
             id="tool-1",
-            name=READ_ROOM_FILE_TOOL_NAME,
+            name=BandTool.READ_ROOM_FILE,
             input={"file_id": "file-1"},
         )
     ]
@@ -160,7 +158,7 @@ async def _probe_opencode() -> bool:
     )
 
     resolver = EmbeddedResolver(get_tools=lambda _chat_id: _StubReadRoomFileTools())
-    definition = TOOL_DEFINITIONS[READ_ROOM_FILE_TOOL_NAME]
+    definition = TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]
     registration = build_tool_registration(
         definition,
         extend_with_chat_id(definition.input_model, None),
@@ -171,7 +169,7 @@ async def _probe_opencode() -> bool:
 
     async with create_connected_server_and_client_session(mcp) as session:
         result = await session.call_tool(
-            READ_ROOM_FILE_TOOL_NAME, {"chat_id": "room-1", "file_id": "file-1"}
+            BandTool.READ_ROOM_FILE, {"chat_id": "room-1", "file_id": "file-1"}
         )
 
     if result.isError or len(result.content) != 1:
@@ -192,7 +190,7 @@ async def _probe_gemini() -> bool:
     tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
     function_calls = [
         types.FunctionCall(
-            name=READ_ROOM_FILE_TOOL_NAME, args={"file_id": "file-1"}, id="c1"
+            name=BandTool.READ_ROOM_FILE, args={"file_id": "file-1"}, id="c1"
         )
     ]
 
@@ -224,7 +222,7 @@ async def _probe_langgraph() -> bool:
         )
     }
 
-    result = await wrapped[READ_ROOM_FILE_TOOL_NAME].ainvoke({"file_id": "file-1"})
+    result = await wrapped[BandTool.READ_ROOM_FILE].ainvoke({"file_id": "file-1"})
 
     if not isinstance(result, list) or len(result) != 1:
         return False
@@ -239,7 +237,7 @@ async def _probe_agno() -> bool:
 
     from band.adapters.agno import _bind_room_tools, _make_band_entrypoint
 
-    entry = _make_band_entrypoint(READ_ROOM_FILE_TOOL_NAME)
+    entry = _make_band_entrypoint(BandTool.READ_ROOM_FILE)
     with _bind_room_tools(_StubReadRoomFileTools()):
         result = await entry(file_id="file-1")
 
@@ -254,7 +252,7 @@ async def _probe_agno() -> bool:
 async def _probe_strands() -> bool:
     from band.adapters.strands import _tool_result
 
-    tool_use = {"toolUseId": "t1", "name": READ_ROOM_FILE_TOOL_NAME, "input": {}}
+    tool_use = {"toolUseId": "t1", "name": BandTool.READ_ROOM_FILE, "input": {}}
 
     result = _tool_result(tool_use, value=_IMAGE_RESULT, ok=True)
 
@@ -287,7 +285,7 @@ async def _probe_copilot_sdk() -> bool:
     result = await adapter._execute_bridged_tool(
         "room-1",
         ToolInvocation(
-            tool_call_id="c1", tool_name=READ_ROOM_FILE_TOOL_NAME, arguments={}
+            tool_call_id="c1", tool_name=BandTool.READ_ROOM_FILE, arguments={}
         ),
     )
 
@@ -314,7 +312,7 @@ async def _probe_pydantic_ai() -> bool:
 
     adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
     await adapter.on_started(agent_name="Probe", agent_description="probe")
-    read_room_file = adapter._agent._function_toolset.tools[READ_ROOM_FILE_TOOL_NAME]
+    read_room_file = adapter._agent._function_toolset.tools[BandTool.READ_ROOM_FILE]
 
     result = await read_room_file.function(
         SimpleNamespace(deps=_StubReadRoomFileTools()), file_id="file-1"
@@ -341,7 +339,7 @@ async def _probe_crewai() -> bool:
         reporter=NoopReporter(),
         capabilities=frozenset({Capability.FILES}),
     )
-    read_room_file = _tool_named(tools, READ_ROOM_FILE_TOOL_NAME)
+    read_room_file = _tool_named(tools, BandTool.READ_ROOM_FILE)
 
     result = read_room_file._run(file_id="file-1")
 
@@ -366,9 +364,7 @@ IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
 
 
 def test_probe_registry_matches_supported_framework_ids() -> None:
-    """The probe set is the live proof behind
-    IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS -- the two must name exactly
-    the same frameworks, or one of them has drifted from the other."""
+    """The probes are the live proof behind the supported-framework set."""
     assert set(IMAGE_PASSTHROUGH_PROBES) == IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS
 
 

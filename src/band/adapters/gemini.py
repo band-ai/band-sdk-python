@@ -45,7 +45,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    READ_ROOM_FILE_TOOL_NAME,
+    BandTool,
     decode_image_block,
     image_block_placeholder,
     is_mcp_content_result,
@@ -538,7 +538,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+                if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
                     result
                 ):
                     response_parts = _image_function_response_parts(result)

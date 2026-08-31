@@ -29,8 +29,7 @@ from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    READ_ROOM_FILE_TOOL_NAME,
-    SEND_MESSAGE_TOOL_NAME,
+    BandTool,
     decode_image_block,
     get_band_tool_category,
     image_block_placeholder,
@@ -103,7 +102,7 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
         result = await active.execute_tool_call(tool_name, kwargs)
-        if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(result):
+        if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result):
             images = [
                 Image(content=data, mime_type=mime_type)
                 for data, mime_type in (
@@ -349,7 +348,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._persist_turn(room_id, response)
 
         if not any(
-            _tool_name(execution) == SEND_MESSAGE_TOOL_NAME
+            _tool_name(execution) == BandTool.SEND_MESSAGE
             for execution in _tool_executions(response)
         ):
             logger.debug(

@@ -11,6 +11,7 @@ import logging
 import warnings
 from typing import Any
 
+from langchain_core.messages import ImageContentBlock
 from langchain_core.tools import StructuredTool
 
 from band.core.exceptions import BandToolError
@@ -24,7 +25,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.tools import (
-    READ_ROOM_FILE_TOOL_NAME,
+    BandTool,
     format_tool_validation_error,
     get_band_tool_category,
     get_tool_description,
@@ -40,6 +41,16 @@ def _with_capability(
 ) -> frozenset[Capability]:
     """``capabilities`` with ``capability`` forced on or off per ``enabled``."""
     return capabilities | {capability} if enabled else capabilities - {capability}
+
+
+def _image_content_blocks(result: dict[str, Any]) -> list[ImageContentBlock]:
+    """LangChain image content blocks for an MCP-content-shaped tool result."""
+    return [
+        ImageContentBlock(
+            type="image", mime_type=block["mimeType"], base64=block["data"]
+        )
+        for block in result["content"]
+    ]
 
 
 def agent_tools_to_langchain(
@@ -108,6 +119,8 @@ def agent_tools_to_langchain(
             definition.name
         )
 
+        # ``execute_tool_call`` is typed ``Any`` by ``AgentToolsProtocol``, so the
+        # pass-through branch below cannot honestly be narrowed here.
         async def execute_definition(
             *,
             _tool_name: str = definition.name,
@@ -115,17 +128,10 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 result = await tools.execute_tool_call(_tool_name, kwargs)
-                if _tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+                if _tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
                     result
                 ):
-                    return [
-                        {
-                            "type": "image",
-                            "mime_type": block["mimeType"],
-                            "base64": block["data"],
-                        }
-                        for block in result["content"]
-                    ]
+                    return _image_content_blocks(result)
                 return result
             except (BandToolError, ValueError) as e:
                 return str(e)

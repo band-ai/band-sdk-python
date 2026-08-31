@@ -211,11 +211,7 @@ def _event_request(request_id: int, method: str, params: dict[str, Any]) -> RpcE
 
 
 def _turn_completed(turn_id: str = "turn-1") -> RpcEvent:
-    """The notification that ends a scripted turn.
-
-    Single source of the completed-turn envelope, which nearly every scripted
-    event list closes with -- a shape change lands here, not in ~80 literals.
-    """
+    """The notification that ends a scripted turn."""
     return _event_notification(
         "turn/completed",
         {"turn": {"id": turn_id, "status": "completed", "items": [], "error": None}},

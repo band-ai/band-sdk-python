@@ -54,7 +54,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
-    READ_ROOM_FILE_TOOL_NAME,
+    BandTool,
     image_block_placeholder,
     is_mcp_content_result,
     is_room_posting_tool,
@@ -65,11 +65,11 @@ logger = logging.getLogger(__name__)
 
 
 def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert an MCP-content-shaped band_read_room_file result into Codex
-    app-server ``inputImage`` content items, via a data: URI -- the protocol's
-    ``imageUrl`` field is a bare string with no inline-data-vs-http distinction
-    documented in its JSON schema, but data: URIs are the standard way to embed
-    inline image bytes in a URL field."""
+    """An image tool result as Codex app-server ``inputImage`` content items.
+
+    Inlined as a data: URI -- the protocol's ``imageUrl`` is a bare string with
+    no documented inline-vs-http distinction.
+    """
     return [
         {
             "type": "inputImage",
@@ -1401,7 +1401,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     success = outcome.ok
                 if (
                     success
-                    and tool_name == READ_ROOM_FILE_TOOL_NAME
+                    and tool_name == BandTool.READ_ROOM_FILE
                     and is_mcp_content_result(result)
                 ):
                     content_items = _image_content_items(result)

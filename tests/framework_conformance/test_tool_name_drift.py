@@ -33,6 +33,8 @@ from band.runtime.tools import (
     iter_tool_definitions,
 )
 
+from band.integrations.crewai.tools import PLATFORM_TOOLS
+
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
 
@@ -161,30 +163,19 @@ class TestLangGraphToolDrift:
 
 
 class TestCrewAIToolDrift:
-    """CrewAI tool classes (integrations/crewai/tools.py).
+    """CrewAI platform tools (integrations/crewai/tools.py).
 
-    The BaseTool subclasses were moved out of ``adapters/crewai.py`` into the
-    shared ``integrations/crewai/tools.py`` module so that both the legacy
-    ``CrewAIAdapter`` and the new ``CrewAIFlowAdapter`` consume one set of
-    wrappers. The drift check now scans the shared module.
+    Both ``CrewAIAdapter`` and ``CrewAIFlowAdapter`` consume one set of
+    wrappers, declared as ``@band_tool`` bodies rather than string literals,
+    so the drift check reads the registry those decorators build.
     """
 
-    _FILE = SRC_ROOT / "integrations" / "crewai" / "tools.py"
-
     def test_all_tools_registered(self):
-        """Every non-file tool in TOOL_MODELS has a CrewAI tool class.
-
-        File tools are excluded: CrewAI hand-wraps each Band tool as its own
-        ``BaseTool`` subclass, so exposing ``Capability.FILES`` here needs a
-        real new wrapper per tool, not just a capability declaration -- not
-        yet done.
-        """
-        source = self._FILE.read_text()
-        found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - FILE_TOOL_NAMES - found
+        """Every tool in TOOL_MODELS has a CrewAI ``@band_tool`` body."""
+        missing = ALL_TOOL_NAMES - {spec.name for spec in PLATFORM_TOOLS}
         assert not missing, (
-            f"CrewAI adapter is missing tool classes for: {sorted(missing)}. "
-            f"Add tool classes in _register_tools()."
+            f"CrewAI adapter is missing tool bodies for: {sorted(missing)}. "
+            "Add a @band_tool body in integrations/crewai/tools.py."
         )
 
 

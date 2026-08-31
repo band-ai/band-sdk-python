@@ -115,9 +115,8 @@ class NoSessionTools(Exception):
 def require_session_tools(context: Any) -> Any:
     """The room's ``AgentTools`` for this Parlant session, or refuse to run.
 
-    Raising (rather than returning ``None``) is what lets every tool body open
-    with one intent-revealing line instead of repeating the same guard —
-    ``band_tool`` turns the refusal into the model-visible error.
+    Raising rather than returning ``None`` is what lets ``band_tool`` turn the
+    refusal into the model-visible error from one place.
     """
     tools = get_session_tools(context.session_id)
     if not tools:
@@ -126,16 +125,14 @@ def require_session_tools(context: Any) -> Any:
 
 
 def with_mention_handles(message: str, tools: Any) -> str:
-    """``message`` plus the handles this room actually offers, so a failed
-    mention tells the model what it could have said instead."""
+    """``message`` plus the handles this room offers, so a bad mention can retry."""
     return append_available_mention_handles(
         message, tools.participants, getattr(tools, "agent_id", None)
     )
 
 
 def split_mentions(mentions: str) -> list[str]:
-    """Parlant hands mentions over as one comma-separated string (see
-    ``SEND_MESSAGE_MENTIONS_NOTE``); the platform wants a list of handles."""
+    """Parlant's one comma-separated mentions string, as the platform's handle list."""
     return [mention.strip() for mention in mentions.split(",") if mention.strip()]
 
 
@@ -150,8 +147,7 @@ def _logged_arguments(call: inspect.BoundArguments) -> str:
 
 
 def or_none(value: str) -> str | None:
-    """Parlant has no optional-string parameter, so ``""`` is how the model
-    omits one — and the platform wants that absence as ``None``."""
+    """``""`` is how a Parlant model omits a string; the platform wants ``None``."""
     return value or None
 
 
@@ -240,25 +236,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
     ) -> None:
         """Give *func* its tool and per-argument text from the master model.
 
-        The tool name is never retyped as a string — it's ``func.__name__``,
-        which is always written to match its ``TOOL_MODELS`` entry (e.g. the
-        function below is literally named ``band_send_message``). ``extra_doc``
-        appends prose the master tool description can't express (a
-        Parlant-only argument shape); ``param_overrides`` does the same per
-        argument, keyed by parameter name. Neither ever replaces master text —
-        only appends — so a master model edit keeps propagating.
-
-        Parlant's own schema builder never reads a docstring's ``Args:``
-        section (unlike pydantic-ai's griffe parser) — a parameter only gets a
-        description if its type annotation is
-        ``Annotated[T, ToolParameterOptions(description=...)]``. So this also
-        wraps each parameter's annotation from the master model's
-        ``Field(description=...)``, skipping ``context`` (must stay exactly
-        ``ToolContext``) and any parameter with no master description. A master
-        field typed ``Literal[...]`` has its string choices folded into that
-        same description text (see ``_literal_choices``) — the function keeps
-        its own ``str`` annotation, since handing Parlant the ``Literal``
-        itself crashes registration.
+        Parlant's schema builder never reads a docstring's ``Args:`` section —
+        a parameter is described only via
+        ``Annotated[T, ToolParameterOptions(description=...)]``, so every
+        annotation is rewrapped here, skipping ``context`` (must stay exactly
+        ``ToolContext``). ``extra_doc`` and ``param_overrides`` only append to
+        master text, so a master model edit keeps propagating.
         """
         func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
 
@@ -284,20 +267,13 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
     def guard_failures(
         func: Callable[..., Any], failure: str, mention_hints: bool
     ) -> Callable[..., Any]:
-        """Wrap *func* so every tool body can be just its own job.
+        """Wrap *func* with the logging and failure handling every tool shares.
 
-        Handles what all of them share: logging the call, turning a missing
-        session into ``NO_SESSION_TOOLS_ERROR``, and rendering any exception as
-        a model-readable ``ToolResult`` rather than crashing the turn.
-        ``failure`` is the phrase completing ``"Error {failure}: {exc}"`` and may
-        reference the call's own arguments (e.g. ``"adding participant
-        '{identifier}'"``). ``mention_hints`` adds the room's available handles
-        to a mention-related failure.
-
-        ``functools.wraps`` keeps ``__wrapped__`` pointing at *func*, so the
-        signature Parlant introspects (first parameter ``context: ToolContext``,
-        return ``ToolResult``, plus every ``Annotated`` argument) stays exactly
-        the one written below.
+        ``failure`` completes ``"Error {failure}: {exc}"`` and may template the
+        call's own arguments (e.g. ``"adding participant '{identifier}'"``);
+        ``mention_hints`` appends the room's available handles to a
+        mention-related failure. ``functools.wraps`` is load-bearing: Parlant
+        introspects ``__wrapped__``, so the registered signature is *func*'s own.
         """
 
         @functools.wraps(func)
@@ -606,11 +582,8 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                     note = result.get("description")
                     return ToolResult(data=f"{text}\n\n({note})" if note else text)
                 case _ if is_mcp_content_result(result):
-                    # This tool's result is text-only, so an inline-previewable
-                    # image is described instead of shown -- other frameworks
-                    # (anthropic, gemini, ...) pass the same result through as
-                    # real vision content; Parlant tool results have no such
-                    # multimodal channel.
+                    # A Parlant ToolResult has no multimodal channel, so the
+                    # image is described rather than passed through as vision.
                     mime_type = result["content"][0].get("mimeType", "image")
                     return ToolResult(
                         data=(

@@ -35,7 +35,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    READ_ROOM_FILE_TOOL_NAME,
+    BandTool,
     image_block_placeholder,
     is_mcp_content_result,
 )
@@ -44,13 +44,10 @@ logger = logging.getLogger(__name__)
 
 
 def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert an MCP-content-shaped ``band_read_room_file`` result into
-    Anthropic ``ImageBlockParam`` dicts for a ``tool_result``'s content list.
+    """An image tool result as Anthropic ``ImageBlockParam`` dicts.
 
-    Anthropic's ``media_type`` (jpeg/png/gif/webp) is exactly
-    ``PREVIEWABLE_IMAGE_CONTENT_TYPES`` -- the only content types
-    ``AgentTools.read_room_file`` ever inlines as an image -- so every
-    ``mimeType`` this sees is already a valid ``media_type``.
+    No media_type validation: Anthropic's accepted set is exactly
+    ``PREVIEWABLE_IMAGE_CONTENT_TYPES``, the only types read_room_file inlines.
     """
     return [
         {
@@ -472,7 +469,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+                if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
                     result
                 ):
                     content = _image_tool_result_content(result)

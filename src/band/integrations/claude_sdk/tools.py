@@ -37,8 +37,7 @@ from band.runtime.tools import (
     BASE_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,
     CHAT_TOOL_NAMES,
-    READ_ROOM_FILE_TOOL_NAME,
-    SEND_MESSAGE_TOOL_NAME,
+    BandTool,
     ToolDefinition,
     append_mention_handles_hint,
     is_mcp_content_result,
@@ -132,7 +131,7 @@ def _format_success_payload(
     result: Any,
 ) -> dict[str, Any]:
     """Keep tool result payloads stable across Claude integrations."""
-    if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(result):
+    if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result):
         # Pass the image content block through bare -- wrapping it in
         # {"status": "success", **result} would bury "content" behind an
         # extra key, and _make_result would no longer recognize the shape.
@@ -233,14 +232,14 @@ def _build_builtin_sdk_tool(
             # content block (see _format_success_payload) -- pass it through
             # bare instead of json-encoding it into a text block, which is
             # what _make_result would otherwise do to any dict.
-            if definition.name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+            if definition.name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
                 payload
             ):
                 return payload
             return _make_result(payload)
         except (ValueError, BandToolError) as error:
             if (
-                definition.name == SEND_MESSAGE_TOOL_NAME
+                definition.name == BandTool.SEND_MESSAGE
                 and get_participant_handles is not None
             ):
                 available = get_participant_handles(room_id)
