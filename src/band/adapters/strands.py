@@ -57,6 +57,7 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
+    READ_ROOM_FILE_TOOL_NAME,
     ToolDefinition,
     ToolCallOutcome,
     band_tool_errored,
@@ -87,7 +88,7 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
     content: list[ToolResultContent]
     if (
         ok
-        and tool_use["name"] == "band_read_room_file"
+        and tool_use["name"] == READ_ROOM_FILE_TOOL_NAME
         and is_mcp_content_result(value)
     ):
         content = [

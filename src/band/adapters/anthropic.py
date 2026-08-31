@@ -34,7 +34,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import is_mcp_content_result
+from band.runtime.tools import READ_ROOM_FILE_TOOL_NAME, is_mcp_content_result
 
 logger = logging.getLogger(__name__)
 
@@ -468,7 +468,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+                if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+                    result
+                ):
                     content = _image_tool_result_content(result)
                     result_str = f"<{len(content)} image content block(s)>"
                 else:

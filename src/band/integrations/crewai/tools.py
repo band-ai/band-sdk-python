@@ -57,6 +57,7 @@ from band.runtime.tools import (
     SEND_MESSAGE_TOOL_NAME,
     append_available_mention_handles,
     get_tool_description,
+    is_mcp_content_result,
     is_terminal_success,
     platform_args_schema,
     serialize_tool_result,
@@ -237,6 +238,23 @@ def serialize_success_result(result: Any) -> str:
             response["result_status"] = result_status
         return json.dumps(response, default=str)
     return json.dumps({"status": "success", "result": result}, default=str)
+
+
+def vision_sentinel(result: dict[str, Any]) -> str:
+    """Encode an MCP-content-shaped image result as CrewAI's native vision
+    sentinel string, so the model gets real image content instead of a
+    JSON-stringified blob.
+
+    CrewAI's own StepExecutor (crewai/agents/step_executor.py, on the default
+    native-tool-calling execution path) recognizes a tool result string
+    shaped ``VISION_IMAGE:<media_type>:<base64_data>`` and rewrites it into a
+    real ``image_url`` content block before the LLM ever sees it -- verified
+    against the installed crewai package, not documented publicly. Only the
+    first content block is encoded: the sentinel carries one image, and
+    AgentTools.read_room_file() only ever returns one for a previewable image.
+    """
+    block = result["content"][0]
+    return f"VISION_IMAGE:{block['mimeType']}:{block['data']}"
 
 
 def _execute_tool(
@@ -879,6 +897,8 @@ def _make_platform_tools(
                 )
                 result = await tools.read_room_file(file_id)
                 await reporter.report_result(tools, "band_read_room_file", result)
+                if is_mcp_content_result(result):
+                    return vision_sentinel(result)
                 return serialize_success_result(result)
 
             return _exec("band_read_room_file", execute)
@@ -1093,4 +1113,5 @@ __all__ = [
     "NoopReporter",
     "build_band_crewai_tools",
     "serialize_success_result",
+    "vision_sentinel",
 ]

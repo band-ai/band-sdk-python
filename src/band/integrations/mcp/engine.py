@@ -50,6 +50,7 @@ from band.runtime.custom_tools import (
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
+    READ_ROOM_FILE_TOOL_NAME,
     SEND_MESSAGE_TOOL_NAME,
     SendEventInput,
     Surface,
@@ -478,7 +479,9 @@ def build_tool_registration(
             else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
-        if definition.name == "band_read_room_file" and is_mcp_content_result(result):
+        if definition.name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+            result
+        ):
             return _mcp_content_blocks(result)
         return _serialize(result)
 
@@ -487,7 +490,9 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
-        structured_output=False if definition.name == "band_read_room_file" else None,
+        structured_output=False
+        if definition.name == READ_ROOM_FILE_TOOL_NAME
+        else None,
     )
 
 

@@ -295,12 +295,27 @@ class TestFilesCapabilityMatrix:
 #   a data: URI -- whether the Rust-side codex-rs binary actually accepts a data:
 #   URI (vs. only fetching http(s)) isn't verifiable from this repo's installed
 #   Python packages, so this is wire-shape-verified, not live-behavior-confirmed.
+# - pydantic_ai: tests/adapters/test_pydantic_ai_adapter.py::TestFileTools
+#   (real pydantic_ai.messages.BinaryContent(data=bytes, media_type=str),
+#   returned directly from the tool -- pydantic-ai's own documented
+#   multimodal-tool-result channel, ToolReturnPart.content).
+# - crewai / crewai_flow: tests/integrations/test_crewai_tools.py::TestFileTools
+#   (CrewAI's own "VISION_IMAGE:<media_type>:<base64_data>" sentinel string,
+#   parsed by StepExecutor._execute_native_tool_calls -- the default
+#   native-tool-calling execution path -- into a real image_url content block
+#   before the LLM sees it; verified against the installed crewai package,
+#   not documented publicly). Both adapters share integrations/crewai/tools.py,
+#   so one fix (vision_sentinel()) covers both.
 # google_adk stays out for the reason above. letta needs no adapter-side row: it
 # routes tool execution entirely through the already-fixed MCP engine (it never
 # calls execute_tool_call), so the image fix is already live for it via the
 # opencode/ACP-client row -- the one unverifiable hop is Letta's own backend
 # turning an MCP ImageContent into its ToolReturn.tool_return image part, which
-# isn't observable from the installed letta_client package.
+# isn't observable from the installed letta_client package. parlant stays out:
+# verified that parlant.core.tools.ToolResult has no multimodal field, and
+# Parlant's own MCP integration (mcp_result_to_tool_result_data()) discards
+# image content blocks before they ever reach ToolResult.data -- a confirmed
+# framework limitation, not an adapter gap.
 IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
     {
         "claude_sdk",
@@ -312,6 +327,9 @@ IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
         "strands",
         "copilot_sdk",
         "codex",
+        "pydantic_ai",
+        "crewai",
+        "crewai_flow",
     }
 )
 

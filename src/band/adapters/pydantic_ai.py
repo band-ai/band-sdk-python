@@ -6,6 +6,7 @@ Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
 
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import logging
@@ -25,6 +26,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -60,6 +62,7 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
+    is_mcp_content_result,
     is_terminal_success,
     missing_reply_error,
     platform_tool,
@@ -658,9 +661,18 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             async def band_read_room_file(
                 ctx: RunContext[AgentToolsProtocol],
                 file_id: str,
-            ) -> dict[str, Any] | str:
+            ) -> dict[str, Any] | str | list[BinaryContent]:
                 try:
-                    return await ctx.deps.read_room_file(file_id)
+                    result = await ctx.deps.read_room_file(file_id)
+                    if is_mcp_content_result(result):
+                        return [
+                            BinaryContent(
+                                data=base64.b64decode(block["data"]),
+                                media_type=block["mimeType"],
+                            )
+                            for block in result["content"]
+                        ]
+                    return result
                 except Exception as e:
                     return f"Error reading room file: {e}"
 

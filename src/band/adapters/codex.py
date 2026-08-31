@@ -53,7 +53,11 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools import is_mcp_content_result, is_room_posting_tool
+from band.runtime.tools import (
+    READ_ROOM_FILE_TOOL_NAME,
+    is_mcp_content_result,
+    is_room_posting_tool,
+)
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -1394,7 +1398,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+                if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
+                    result
+                ):
                     content_items = _image_content_items(result)
                     text_result = f"<{len(content_items)} image content block(s)>"
                 else:

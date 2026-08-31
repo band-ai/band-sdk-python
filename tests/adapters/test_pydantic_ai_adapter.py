@@ -781,6 +781,29 @@ class TestFileTools:
         assert result == {"name": "report.txt", "text": "hello world"}
 
     @pytest.mark.asyncio
+    async def test_read_room_file_image_result_becomes_binary_content(self, file_tools):
+        from pydantic_ai.messages import BinaryContent
+
+        file_tools.read_room_file = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="file-1"
+        )
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], BinaryContent)
+        assert result[0].data == b"fake"
+        assert result[0].media_type == "image/png"
+
+    @pytest.mark.asyncio
     async def test_read_room_file_handles_exception(self, file_tools):
         file_tools.read_room_file.side_effect = Exception("not found")
         functions = await self._tool_functions()

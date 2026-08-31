@@ -851,6 +851,12 @@ BAND_MCP_SERVER_NAME = "band"
 # Single source of truth so none of those re-type the literal independently.
 SEND_MESSAGE_TOOL_NAME = "band_send_message"
 
+# Every adapter's image-vision-passthrough branch gates on this exact tool
+# name (is_mcp_content_result(result) only means anything for this one tool's
+# result shape). Single source of truth so none of those re-type the literal
+# independently -- same rationale as SEND_MESSAGE_TOOL_NAME above.
+READ_ROOM_FILE_TOOL_NAME = "band_read_room_file"
+
 # Tool names whose successful call posts a visible message into the room.
 # Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
 # fallback text relay once the turn has already replied in the room, so the

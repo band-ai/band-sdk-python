@@ -534,6 +534,29 @@ class TestFileTools:
         assert result["status"] == "success"
         tools_obj.read_room_file.assert_awaited_once_with("file-1")
 
+    def test_read_room_file_image_result_becomes_vision_sentinel(self, builder_mod):
+        """CrewAI's own StepExecutor rewrites a VISION_IMAGE:<media_type>:<b64>
+        tool-result string into a real image_url content block -- pin that
+        band_read_room_file emits exactly that sentinel for an image result."""
+        from band.core.types import Capability
+
+        image_result = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+        tools_obj = MagicMock()
+        tools_obj.read_room_file = AsyncMock(return_value=image_result)
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+        result = read_room_file._run(file_id="file-1")
+
+        assert result == builder_mod.vision_sentinel(image_result)
+
     def test_send_room_file_forwards_args_in_protocol_order(self, builder_mod):
         """AgentToolsProtocol.send_room_file wants (content, filename, caption,
         mentions) positionally -- pin the reorder from the tool's own kwargs."""

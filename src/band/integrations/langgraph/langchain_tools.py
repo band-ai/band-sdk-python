@@ -24,6 +24,7 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.tools import (
+    READ_ROOM_FILE_TOOL_NAME,
     format_tool_validation_error,
     get_band_tool_category,
     get_tool_description,
@@ -114,7 +115,7 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 result = await tools.execute_tool_call(_tool_name, kwargs)
-                if _tool_name == "band_read_room_file" and is_mcp_content_result(
+                if _tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
                     result
                 ):
                     return [

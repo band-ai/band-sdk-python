@@ -30,6 +30,31 @@ from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
 )
 
+try:
+    import crewai  # noqa: F401
+
+    _CREWAI_AVAILABLE = True
+except ImportError:
+    _CREWAI_AVAILABLE = False
+
+try:
+    import pydantic_ai  # noqa: F401
+
+    _PYDANTIC_AI_AVAILABLE = True
+except ImportError:
+    _PYDANTIC_AI_AVAILABLE = False
+
+# crewai and pydantic-ai aren't both installed in every lane's venv (a
+# three-way conflict group with parlant -- see docs/dependency-conflicts.md):
+# dev-crewai lacks pydantic-ai, dev-parlant lacks both. These framework_ids
+# need a per-lane skip the other probes (all in every lane's `dev` baseline)
+# don't.
+_SOMETIMES_MISSING: dict[str, bool] = {
+    "crewai": _CREWAI_AVAILABLE,
+    "crewai_flow": _CREWAI_AVAILABLE,
+    "pydantic_ai": _PYDANTIC_AI_AVAILABLE,
+}
+
 _IMAGE_RESULT: dict[str, Any] = {
     "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
 }
@@ -259,6 +284,48 @@ async def _probe_codex() -> bool:
     ]
 
 
+async def _probe_pydantic_ai() -> bool:
+    from band.adapters.pydantic_ai import PydanticAIAdapter
+    from band.core.types import Capability
+
+    adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
+    await adapter.on_started(agent_name="Probe", agent_description="probe")
+    read_room_file = adapter._agent._function_toolset.tools["band_read_room_file"]
+
+    from types import SimpleNamespace
+
+    result = await read_room_file.function(
+        SimpleNamespace(deps=_StubReadRoomFileTools()), file_id="file-1"
+    )
+
+    if not isinstance(result, list) or len(result) != 1:
+        return False
+    binary = result[0]
+    return binary.data == b"fake" and binary.media_type == "image/png"
+
+
+async def _probe_crewai() -> bool:
+    from band.integrations.crewai.tools import (
+        CrewAIToolContext,
+        NoopReporter,
+        build_band_crewai_tools,
+        vision_sentinel,
+    )
+    from band.core.types import Capability
+
+    context = CrewAIToolContext(room_id="room-1", tools=_StubReadRoomFileTools())
+    tools = build_band_crewai_tools(
+        get_context=lambda: context,
+        reporter=NoopReporter(),
+        capabilities=frozenset({Capability.FILES}),
+    )
+    read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+    result = read_room_file._run(file_id="file-1")
+
+    return result == vision_sentinel(_IMAGE_RESULT)
+
+
 IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "claude_sdk": _probe_claude_sdk,
     "anthropic": _probe_anthropic,
@@ -269,6 +336,10 @@ IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "strands": _probe_strands,
     "copilot_sdk": _probe_copilot_sdk,
     "codex": _probe_codex,
+    "pydantic_ai": _probe_pydantic_ai,
+    "crewai": _probe_crewai,
+    # crewai_flow shares integrations/crewai/tools.py with crewai -- same probe.
+    "crewai_flow": _probe_crewai,
 }
 
 
@@ -279,8 +350,21 @@ def test_probe_registry_matches_supported_framework_ids() -> None:
     assert set(IMAGE_PASSTHROUGH_PROBES) == IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS
 
 
+def _framework_param(framework_id: str) -> Any:
+    available = _SOMETIMES_MISSING.get(framework_id, True)
+    if not available:
+        return pytest.param(
+            framework_id,
+            marks=pytest.mark.skip(reason=f"{framework_id} not installed in this venv"),
+        )
+    return pytest.param(framework_id)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("framework_id", sorted(IMAGE_PASSTHROUGH_PROBES))
+@pytest.mark.parametrize(
+    "framework_id",
+    [_framework_param(fid) for fid in sorted(IMAGE_PASSTHROUGH_PROBES)],
+)
 async def test_image_result_passes_through_as_real_content(framework_id: str) -> None:
     probe = IMAGE_PASSTHROUGH_PROBES[framework_id]
 
