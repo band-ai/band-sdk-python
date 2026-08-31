@@ -42,6 +42,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
+    file_transfer_enabled,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -219,6 +220,8 @@ async def test_file_round_trip_across_files_adapters(
     reply_capture: CaptureFactory,
 ) -> None:
     """Each files-capable adapter can send, discover, and read a room file."""
+    if not await file_transfer_enabled(agent, resource_manager.settings):
+        pytest.skip("ff_file_transfer is off on this deployment (on-prem-only flag)")
     marker = unique_marker("file")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-files-{agent.adapter_id}", participants=[agent.id]
@@ -292,6 +295,8 @@ async def test_image_vision_passthrough_across_adapters(
     ground truth, so a model can't pass by reflexively guessing a common
     default without actually looking at the pixels.
     """
+    if not await file_transfer_enabled(agent, resource_manager.settings):
+        pytest.skip("ff_file_transfer is off on this deployment (on-prem-only flag)")
     color = random.choice(sorted(IMAGE_COLORS))
     image = solid_color_png(color)
 

@@ -36,6 +36,7 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
+from band.runtime.capabilities import FeatureFlag
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -133,6 +134,23 @@ def agent_rest_client(
     ``ReplyCapture`` reuses one client per agent to bound how many are opened.
     """
     return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
+
+
+async def file_transfer_enabled(
+    agent: ProvisionedAgent, settings: BaselineSettings
+) -> bool:
+    """Whether the connected deployment has ``ff_file_transfer`` on, per
+    ``agent``'s own ``/me`` response.
+
+    On-prem-only flag, off everywhere on SaaS today (see
+    docs/capability-negotiation.md) -- FILES/image E2E tests check this and
+    skip rather than fail loud, since ``Capability.FILES`` gets silently
+    pruned by ``prune_unsupported()`` before any file tool ever reaches the
+    model when it's off, which isn't a code bug to chase.
+    """
+    client = agent_rest_client(agent, settings)
+    me = await client.agent_api_identity.get_agent_me()
+    return bool(me.data.feature_flags.get(FeatureFlag.FILE_TRANSFER))
 
 
 class PeerActor:
