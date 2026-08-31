@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
@@ -16,10 +17,12 @@ try:
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
     from strands.models.openai import OpenAIModel
+    from strands.types.media import ImageFormat
     from strands.types.tools import (
         AgentTool,
         ToolGenerator,
         ToolResult,
+        ToolResultContent,
         ToolSpec,
         ToolUse,
     )
@@ -58,6 +61,7 @@ from band.runtime.tools import (
     ToolCallOutcome,
     band_tool_errored,
     get_band_tool_category,
+    is_mcp_content_result,
     is_terminal_success,
     iter_tool_definitions,
     missing_reply_error,
@@ -80,10 +84,29 @@ def _format_tool_output(value: object) -> str:
 
 def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
     """Build the framework's typed result envelope at the Strands boundary."""
+    content: list[ToolResultContent]
+    if (
+        ok
+        and tool_use["name"] == "band_read_room_file"
+        and is_mcp_content_result(value)
+    ):
+        content = [
+            {
+                "image": {
+                    "format": cast(
+                        ImageFormat, block["mimeType"].removeprefix("image/")
+                    ),
+                    "source": {"bytes": base64.b64decode(block["data"])},
+                }
+            }
+            for block in cast(dict[str, Any], value)["content"]
+        ]
+    else:
+        content = [{"text": _format_tool_output(value)}]
     return {
         "toolUseId": tool_use["toolUseId"],
         "status": "success" if ok else "error",
-        "content": [{"text": _format_tool_output(value)}],
+        "content": content,
     }
 
 

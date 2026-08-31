@@ -282,13 +282,39 @@ class TestFilesCapabilityMatrix:
 #   own __build_response_event() calls Part.from_function_response() without a
 #   parts= kwarg, so no tool return value can reach a multimodal FunctionResponse
 #   through ADK's normal flow -- a framework limitation, not an adapter gap.
-# Every other Capability.FILES adapter (langgraph, google_adk, agno, strands,
-# codex, copilot_sdk) still degrades an image to text -- verifying and fixing
-# each one is real per-SDK research, tracked as follow-up, not yet done. Add a
-# framework_id here only once it has a real passthrough test like the ones
-# cited above.
+# - langgraph: tests/integrations/langgraph/test_langchain_tools.py (real
+#   langchain_core ImageContentBlock, {"type": "image", "mime_type", "base64"}).
+# - agno: tests/adapters/agno/test_adapter.py::TestBandEntrypointBinding (real
+#   agno.tools.function.ToolResult(images=[agno.media.Image(...)])).
+# - strands: tests/adapters/test_strands_adapter.py::TestReadRoomFileImagePassthrough
+#   (real strands.types.tools.ToolResultContent image block, Bedrock-native shape).
+# - copilot_sdk: tests/adapters/copilot_sdk/test_tool_bridging.py::
+#   TestReadRoomFileImagePassthrough (real copilot.tools.ToolBinaryResult via
+#   ToolResult.binary_results_for_llm, the SDK's own MCP-image-result shape).
+# - codex: tests/adapters/test_codex_adapter.py::TestReadRoomFileImagePassthrough
+#   (real DynamicToolCallOutputContentItem "inputImage" variant, verified from the
+#   installed codex-cli's own generated JSON schema). One caveat: imageUrl carries
+#   a data: URI -- whether the Rust-side codex-rs binary actually accepts a data:
+#   URI (vs. only fetching http(s)) isn't verifiable from this repo's installed
+#   Python packages, so this is wire-shape-verified, not live-behavior-confirmed.
+# google_adk stays out for the reason above. letta needs no adapter-side row: it
+# routes tool execution entirely through the already-fixed MCP engine (it never
+# calls execute_tool_call), so the image fix is already live for it via the
+# opencode/ACP-client row -- the one unverifiable hop is Letta's own backend
+# turning an MCP ImageContent into its ToolReturn.tool_return image part, which
+# isn't observable from the installed letta_client package.
 IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
-    {"claude_sdk", "anthropic", "opencode", "gemini"}
+    {
+        "claude_sdk",
+        "anthropic",
+        "opencode",
+        "gemini",
+        "langgraph",
+        "agno",
+        "strands",
+        "copilot_sdk",
+        "codex",
+    }
 )
 
 

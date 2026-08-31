@@ -19,6 +19,7 @@ from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import CodexSessionState
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools
 
 
@@ -7332,3 +7333,108 @@ class TestConfigEnvSourcing:
         config = CodexAdapterConfig(codex_command=("explicit", "--kwarg"))
 
         assert config.codex_command == ("explicit", "--kwarg")
+
+
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_becomes_input_image_content_item(self) -> None:
+        class _ImageTools(ToolSchemaFakeTools):
+            async def execute_tool_call_structured(
+                self, tool_name: str, arguments: dict[str, Any]
+            ) -> ToolCallOutcome:
+                return ToolCallOutcome(
+                    value={
+                        "content": [
+                            {
+                                "type": "image",
+                                "data": "ZmFrZQ==",
+                                "mimeType": "image/png",
+                            }
+                        ]
+                    },
+                    ok=True,
+                )
+
+        events = [
+            _event_request(
+                42,
+                "item/tool/call",
+                {"tool": "band_read_room_file", "arguments": {"file_id": "f1"}},
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = _ImageTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        response_id, response_payload = fake_client.responses[0]
+        assert response_id == 42
+        assert response_payload["success"] is True
+        assert response_payload["contentItems"] == [
+            {"type": "inputImage", "imageUrl": "data:image/png;base64,ZmFrZQ=="}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_input_text(self) -> None:
+        events = [
+            _event_request(
+                42,
+                "item/tool/call",
+                {"tool": "band_read_room_file", "arguments": {"file_id": "f1"}},
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        response_id, response_payload = fake_client.responses[0]
+        assert response_payload["contentItems"][0]["type"] == "inputText"

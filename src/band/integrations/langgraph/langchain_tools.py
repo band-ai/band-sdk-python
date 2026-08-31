@@ -27,6 +27,7 @@ from band.runtime.tools import (
     format_tool_validation_error,
     get_band_tool_category,
     get_tool_description,
+    is_mcp_content_result,
     iter_tool_definitions,
 )
 
@@ -112,7 +113,19 @@ def agent_tools_to_langchain(
             **kwargs: Any,
         ) -> Any:
             try:
-                return await tools.execute_tool_call(_tool_name, kwargs)
+                result = await tools.execute_tool_call(_tool_name, kwargs)
+                if _tool_name == "band_read_room_file" and is_mcp_content_result(
+                    result
+                ):
+                    return [
+                        {
+                            "type": "image",
+                            "mime_type": block["mimeType"],
+                            "base64": block["data"],
+                        }
+                        for block in result["content"]
+                    ]
+                return result
             except (BandToolError, ValueError) as e:
                 return str(e)
             except Exception:

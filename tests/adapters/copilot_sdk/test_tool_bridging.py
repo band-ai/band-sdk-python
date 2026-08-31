@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.core.types import Emit
+from band.runtime.tools import ToolCallOutcome
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -195,3 +198,86 @@ class TestToolBridging:
 
         assert not first_tools.tool_calls
         assert second_tools.tool_calls
+
+
+class _ReadRoomFileFakeTools(ToolSchemaFakeTools):
+    """ToolSchemaFakeTools plus band_read_room_file, which the base fake
+    doesn't expose (it only hardcodes send_message/get_participants)."""
+
+    def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            *super().get_openai_tool_schemas(**kwargs),
+            {
+                "type": "function",
+                "function": {
+                    "name": "band_read_room_file",
+                    "description": "Read a room file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"file_id": {"type": "string"}},
+                        "required": ["file_id"],
+                    },
+                },
+            },
+        ]
+
+
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_passes_through_as_binary_result(self):
+        class _ImageTools(_ReadRoomFileFakeTools):
+            async def execute_tool_call_structured(
+                self, tool_name: str, arguments: dict
+            ) -> ToolCallOutcome:
+                return ToolCallOutcome(
+                    value={
+                        "content": [
+                            {
+                                "type": "image",
+                                "data": "ZmFrZQ==",
+                                "mimeType": "image/png",
+                            }
+                        ]
+                    },
+                    ok=True,
+                )
+
+        client = FakeCopilotClient()
+        adapter = await make_started_adapter(client, emit=Emit.TOOL_CALLS)
+        tools = _ImageTools()
+        await run_message(adapter, tools)
+
+        handler = client.sessions[0].find_tool("band_read_room_file").handler
+        result = await handler(
+            ToolInvocation(
+                tool_call_id="c1",
+                tool_name="band_read_room_file",
+                arguments={"file_id": "f1"},
+            )
+        )
+
+        assert result.result_type == "success"
+        assert result.binary_results_for_llm is not None
+        assert len(result.binary_results_for_llm) == 1
+        binary = result.binary_results_for_llm[0]
+        assert binary.data == "ZmFrZQ=="
+        assert binary.mime_type == "image/png"
+        assert binary.type == "image"
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_text_only(self):
+        client = FakeCopilotClient()
+        adapter = await make_started_adapter(client, emit=Emit.TOOL_CALLS)
+        tools = _ReadRoomFileFakeTools()
+        await run_message(adapter, tools)
+
+        handler = client.sessions[0].find_tool("band_read_room_file").handler
+        result = await handler(
+            ToolInvocation(
+                tool_call_id="c1",
+                tool_name="band_read_room_file",
+                arguments={"file_id": "f1"},
+            )
+        )
+
+        assert result.binary_results_for_llm is None

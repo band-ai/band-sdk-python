@@ -36,11 +36,19 @@ _IMAGE_RESULT: dict[str, Any] = {
 
 
 class _StubReadRoomFileTools:
-    """Minimal AgentToolsProtocol double whose read_room_file always returns
-    the fixed image result -- only what each probe's dispatch path calls."""
+    """Minimal AgentToolsProtocol double whose read_room_file/execute_tool_call
+    always return the fixed image result -- only what each probe's dispatch
+    path calls (MCP-based probes call read_room_file; generic-dispatch probes
+    like agno call execute_tool_call)."""
 
     async def read_room_file(self, file_id: str) -> dict[str, Any]:
         del file_id
+        return _IMAGE_RESULT
+
+    async def execute_tool_call(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        del tool_name, arguments
         return _IMAGE_RESULT
 
 
@@ -153,11 +161,114 @@ async def _probe_gemini() -> bool:
     )
 
 
+async def _probe_langgraph() -> bool:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from band.core.types import AdapterFeatures, Capability
+    from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
+
+    tools = MagicMock()
+    tools.is_hub_room = False
+    tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
+    wrapped = {
+        tool.name: tool
+        for tool in agent_tools_to_langchain(
+            tools,
+            features=AdapterFeatures(capabilities=frozenset({Capability.FILES})),
+        )
+    }
+
+    result = await wrapped["band_read_room_file"].ainvoke({"file_id": "file-1"})
+
+    return result == [{"type": "image", "mime_type": "image/png", "base64": "ZmFrZQ=="}]
+
+
+async def _probe_agno() -> bool:
+    from agno.tools.function import ToolResult
+
+    from band.adapters.agno import _bind_room_tools, _make_band_entrypoint
+
+    entry = _make_band_entrypoint("band_read_room_file")
+    with _bind_room_tools(_StubReadRoomFileTools()):
+        result = await entry(file_id="file-1")
+
+    return (
+        isinstance(result, ToolResult)
+        and result.images is not None
+        and len(result.images) == 1
+        and result.images[0].content == b"fake"
+        and result.images[0].mime_type == "image/png"
+    )
+
+
+async def _probe_strands() -> bool:
+    from band.adapters.strands import _tool_result
+
+    tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+
+    result = _tool_result(tool_use, value=_IMAGE_RESULT, ok=True)
+
+    return result["content"] == [
+        {"image": {"format": "png", "source": {"bytes": b"fake"}}}
+    ]
+
+
+async def _probe_copilot_sdk() -> bool:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from copilot import ToolInvocation
+
+    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from band.runtime.tools import ToolCallOutcome
+
+    room_tools = MagicMock()
+    room_tools.execute_tool_call_structured = AsyncMock(
+        return_value=ToolCallOutcome(value=_IMAGE_RESULT, ok=True)
+    )
+    adapter = CopilotSDKAdapter.__new__(CopilotSDKAdapter)
+    adapter.features = SimpleNamespace(emit=())
+    adapter._custom_tools = []
+    adapter._turn_state = {}
+    adapter._room_tools = {"room-1": room_tools}
+
+    result = await adapter._execute_bridged_tool(
+        "room-1",
+        ToolInvocation(
+            tool_call_id="c1", tool_name="band_read_room_file", arguments={}
+        ),
+    )
+
+    binary = result.binary_results_for_llm
+    return (
+        binary is not None
+        and len(binary) == 1
+        and binary[0].data == "ZmFrZQ=="
+        and binary[0].mime_type == "image/png"
+        and binary[0].type == "image"
+    )
+
+
+async def _probe_codex() -> bool:
+    from band.adapters.codex import _image_content_items
+
+    content_items = _image_content_items(_IMAGE_RESULT)
+
+    return content_items == [
+        {"type": "inputImage", "imageUrl": "data:image/png;base64,ZmFrZQ=="}
+    ]
+
+
 IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "claude_sdk": _probe_claude_sdk,
     "anthropic": _probe_anthropic,
     "opencode": _probe_opencode,
     "gemini": _probe_gemini,
+    "langgraph": _probe_langgraph,
+    "agno": _probe_agno,
+    "strands": _probe_strands,
+    "copilot_sdk": _probe_copilot_sdk,
+    "codex": _probe_codex,
 }
 
 

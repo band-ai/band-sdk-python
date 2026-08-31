@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import warnings
@@ -10,6 +11,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from agno.media import Image
+from agno.tools.function import ToolResult
 from typing_extensions import Unpack
 
 from band.core.protocols import AgentToolsProtocol
@@ -26,7 +29,11 @@ from band.core.types import (
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import SEND_MESSAGE_TOOL_NAME, get_band_tool_category
+from band.runtime.tools import (
+    SEND_MESSAGE_TOOL_NAME,
+    get_band_tool_category,
+    is_mcp_content_result,
+)
 
 try:
     from agno.models.message import Message
@@ -88,12 +95,23 @@ def _tool_name(execution: Any) -> str:
     return getattr(execution, "tool_name", None) or ""
 
 
-def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
-    async def _entrypoint(**kwargs: Any) -> str:
+def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[Any]]:
+    async def _entrypoint(**kwargs: Any) -> Any:
         active = _current_tools.get()
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
         result = await active.execute_tool_call(tool_name, kwargs)
+        if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+            images = [
+                Image(
+                    content=base64.b64decode(block["data"]),
+                    mime_type=block["mimeType"],
+                )
+                for block in result["content"]
+            ]
+            return ToolResult(
+                content=f"<{len(images)} image content block(s)>", images=images
+            )
         return result if isinstance(result, str) else json.dumps(result, default=str)
 
     _entrypoint.__name__ = tool_name

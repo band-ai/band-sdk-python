@@ -21,6 +21,7 @@ from agno.agent import Agent as AgnoAgent
 from agno.models.message import Message
 from agno.run import RunStatus
 from agno.run.agent import RunErrorEvent, RunOutput
+from agno.tools.function import ToolResult
 
 from band.adapters.agno import (
     AgnoAdapter,
@@ -300,6 +301,36 @@ class TestBandEntrypointBinding:
 
         assert "no active Band context" in result
         assert tools.tool_calls == []
+
+    async def test_read_room_file_image_result_passes_through_as_agno_image(self):
+        class _ImageTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {
+                    "content": [
+                        {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                    ]
+                }
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_ImageTools()):
+            result = await entry(file_id="f1")
+
+        assert isinstance(result, ToolResult)
+        assert result.images is not None
+        assert len(result.images) == 1
+        assert result.images[0].content == b"fake"
+        assert result.images[0].mime_type == "image/png"
+
+    async def test_read_room_file_non_image_result_stays_json(self):
+        class _TextTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {"name": "notes.txt", "content_type": "text/plain"}
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_TextTools()):
+            result = await entry(file_id="f1")
+
+        assert result == '{"name": "notes.txt", "content_type": "text/plain"}'
 
 
 class TestReply:

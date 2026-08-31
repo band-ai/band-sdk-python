@@ -45,11 +45,18 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     get_band_tool_category,
+    is_mcp_content_result,
     is_room_posting_tool,
 )
 
 try:
-    from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
+    from copilot import (
+        CopilotClient,
+        PermissionHandler,
+        Tool,
+        ToolBinaryResult,
+        ToolResult,
+    )
     from copilot.generated.session_events import (
         AssistantReasoningData,
         AssistantUsageData,
@@ -743,14 +750,26 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 room_tools, invocation, f"Error: {exc}", report=should_report
             )
 
-        text_result = (
-            result if isinstance(result, str) else json.dumps(result, default=str)
-        )
+        binary_results: list[ToolBinaryResult] | None = None
+        if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+            binary_results = [
+                ToolBinaryResult(
+                    data=block["data"], mime_type=block["mimeType"], type="image"
+                )
+                for block in result["content"]
+            ]
+            text_result = f"<{len(binary_results)} image content block(s)>"
+        else:
+            text_result = (
+                result if isinstance(result, str) else json.dumps(result, default=str)
+            )
         if is_room_posting_tool(tool_name) and turn is not None:
             self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)
-        return ToolResult(text_result_for_llm=text_result)
+        return ToolResult(
+            text_result_for_llm=text_result, binary_results_for_llm=binary_results
+        )
 
     async def _fail_tool_call(
         self,

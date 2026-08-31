@@ -27,7 +27,7 @@ from strands.types.exceptions import EventLoopException  # noqa: E402
 from strands.types.streaming import StreamEvent  # noqa: E402
 from strands.types.tools import ToolChoice, ToolSpec  # noqa: E402
 
-from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
+from band.adapters.strands import CustomToolBridge, StrandsAdapter, _tool_result  # noqa: E402
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
@@ -672,3 +672,38 @@ class TestCleanup:
         await adapter.on_cleanup(ROOM)
 
         assert ROOM not in adapter._message_history
+
+
+class TestReadRoomFileImagePassthrough:
+    def test_image_result_becomes_image_content_block(self):
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert result["content"] == [
+            {"image": {"format": "png", "source": {"bytes": b"fake"}}}
+        ]
+
+    def test_non_image_result_stays_text(self):
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {"name": "notes.txt", "content_type": "text/plain"}
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert result["content"] == [
+            {"text": '{"name": "notes.txt", "content_type": "text/plain"}'}
+        ]
+
+    def test_image_shaped_value_on_error_stays_text(self):
+        """An error path (ok=False) must never be treated as an image result,
+        even if the error value happens to look MCP-content-shaped."""
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {"content": [{"type": "image", "data": "x", "mimeType": "image/png"}]}
+
+        result = _tool_result(tool_use, value=value, ok=False)
+
+        assert result["status"] == "error"
+        assert "text" in result["content"][0]

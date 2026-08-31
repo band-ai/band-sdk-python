@@ -53,10 +53,26 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools import is_room_posting_tool
+from band.runtime.tools import is_mcp_content_result, is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert an MCP-content-shaped band_read_room_file result into Codex
+    app-server ``inputImage`` content items, via a data: URI -- the protocol's
+    ``imageUrl`` field is a bare string with no inline-data-vs-http distinction
+    documented in its JSON schema, but data: URIs are the standard way to embed
+    inline image bytes in a URL field."""
+    return [
+        {
+            "type": "inputImage",
+            "imageUrl": f"data:{block['mimeType']};base64,{block['data']}",
+        }
+        for block in result["content"]
+    ]
+
 
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -1378,15 +1394,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                text_result = (
-                    result
-                    if isinstance(result, str)
-                    else json.dumps(result, default=str)
-                )
+                if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+                    content_items = _image_content_items(result)
+                    text_result = f"<{len(content_items)} image content block(s)>"
+                else:
+                    text_result = (
+                        result
+                        if isinstance(result, str)
+                        else json.dumps(result, default=str)
+                    )
+                    content_items = [{"type": "inputText", "text": text_result}]
                 await self._client.respond(
                     event.id,
                     {
-                        "contentItems": [{"type": "inputText", "text": text_result}],
+                        "contentItems": content_items,
                         "success": success,
                     },
                 )
