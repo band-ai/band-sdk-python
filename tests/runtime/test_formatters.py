@@ -348,6 +348,17 @@ class TestReplaceUuidMentions:
         result = replace_uuid_mentions(content, participants)
         assert result == "@[[uuid1]] hello"  # Nothing to fall back to
 
+    def test_collapses_whitespace_in_multi_word_name_fallback(self):
+        # A display name fallback must stay whitespace-free like a real handle
+        # -- strip_leading_mentions()'s @\S+ matching assumes no embedded space.
+        content = "@[[uuid1]] approve REQ-1"
+        participants = [{"id": "uuid1", "name": "Jane Doe"}]  # No handle
+        result = replace_uuid_mentions(content, participants)
+        assert result == "@Jane-Doe approve REQ-1"
+        # The invariant this exists to protect: stripping the mention must
+        # never eat into the command that follows it.
+        assert strip_leading_mentions(result) == "approve REQ-1"
+
     def test_handles_empty_content(self):
         result = replace_uuid_mentions("", [{"id": "uuid1", "handle": "john"}])
         assert result == ""
