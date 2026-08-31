@@ -22,6 +22,7 @@ from band.core.exceptions import BandConnectionError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
+    AdapterFeatures,
     Capability,
     Emit,
     FeatureKwargs,
@@ -56,7 +57,6 @@ from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
-    ToolDefinition,
     is_room_posting_tool,
     iter_tool_definitions,
 )
@@ -251,15 +251,21 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # names eagerly keeps the "is this our own band tool?" auto-approve
         # check (and room-posting detection) independent of MCP-registration
         # timing, so a second room's first turn can't race an empty set.
-        self._tool_definitions: list[ToolDefinition] = list(
-            iter_tool_definitions(
-                capabilities=self.features.capabilities,
-            )
+        self._refresh_tool_definitions()
+
+    def _refresh_tool_definitions(self) -> None:
+        self._tool_definitions = list(
+            iter_tool_definitions(capabilities=self.features.capabilities)
         )
-        self._own_tool_names: frozenset[str] = frozenset(
+        self._own_tool_names = frozenset(
             {definition.name for definition in self._tool_definitions}
             | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
         )
+
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Keep the MCP registration aligned with negotiated capabilities."""
+        super().apply_effective_features(features)
+        self._refresh_tool_definitions()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)

@@ -18,7 +18,13 @@ from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    FeatureKwargs,
+    PlatformMessage,
+)
 from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
@@ -183,6 +189,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # _band_mcp_backend None and start a fresh one that outlives shutdown
         # and is never stopped -- a real leaked server, not just a failed turn.
         self._stopped = False
+
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Rebuild the lazy MCP registration after capability negotiation."""
+        super().apply_effective_features(features)
+        self._tool_definitions, self._own_tool_names = self._registered_tools()
 
     @staticmethod
     def _shape_command(command: str | list[str] | None, host: str | None) -> list[str]:

@@ -15,6 +15,7 @@ from band.converters.letta import LettaHistoryConverter, LettaSessionState
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
+    AdapterFeatures,
     Capability,
     Emit,
     FeatureKwargs,
@@ -139,7 +140,17 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self._shared_agent_id: str | None = None
 
         # The Band MCP tool path: self-hosted server + Letta registration.
-        self._mcp = LettaMCPBridge(
+        self._mcp = self._build_mcp_bridge()
+
+        # Protects agent creation and MCP (re)registration only — not held
+        # during message handling, so concurrent rooms process in parallel.
+        self._rpc_lock = asyncio.Lock()
+
+        # Built during on_started
+        self._system_prompt: str = ""
+
+    def _build_mcp_bridge(self) -> LettaMCPBridge:
+        return LettaMCPBridge(
             self.config.mcp,
             tool_definitions=iter_tool_definitions(
                 capabilities=self.features.capabilities,
@@ -148,12 +159,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             teardown_timeout_s=self.config.teardown_timeout_s,
         )
 
-        # Protects agent creation and MCP (re)registration only — not held
-        # during message handling, so concurrent rooms process in parallel.
-        self._rpc_lock = asyncio.Lock()
-
-        # Built during on_started
-        self._system_prompt: str = ""
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Rebuild the unstarted MCP bridge with negotiated capabilities."""
+        super().apply_effective_features(features)
+        self._mcp = self._build_mcp_bridge()
 
     def _get_room_tools(self, room_id: str) -> AgentToolsProtocol | None:
         """Resolve room-scoped tools for the self-hosted MCP server."""

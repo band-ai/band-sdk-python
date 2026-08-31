@@ -54,6 +54,11 @@ def contacts_features() -> AdapterFeatures:
     return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.TOOL_CALLS})
 
 
+def files_features() -> AdapterFeatures:
+    """Expose room-file tools and persist their calls for capability smokes."""
+    return AdapterFeatures(capabilities={Capability.FILES}, emit={Emit.TOOL_CALLS})
+
+
 def usage_features() -> AdapterFeatures:
     """Features for the cost/token smokes: emit each turn's token usage as a
     ``usage`` event so the ``Usage`` observation layer is populated."""
@@ -103,6 +108,7 @@ MEMORY_SECRETARY_PROMPT = (
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
 CONTACTS_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": contacts_features()}
+FILES_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": files_features()}
 MEMORY_SECRETARY_AGENT = {
     "prompt": MEMORY_SECRETARY_PROMPT,
     "features": memory_features(),
@@ -155,6 +161,17 @@ def liveness_probe(marker: str) -> str:
 def unique_marker(prefix: str) -> str:
     """A high-entropy token to assert verbatim in event/memory content."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def file_round_trip_instruction(marker: str) -> str:
+    """Drive one real text-file send, discovery, and read-back in a room."""
+    return (
+        "Use band_send_room_file to upload a text file named evidence.txt whose "
+        f"entire content is the exact token {marker}. Include at least one room "
+        "participant in its mentions. Then use band_list_room_files to find that "
+        "file and band_read_room_file with its returned id. Finally, use "
+        f"band_send_message to reply with the exact token {marker}."
+    )
 
 
 def emit_event_instruction(event_type: MessageType, marker: str) -> str:
