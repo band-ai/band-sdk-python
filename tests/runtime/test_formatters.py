@@ -333,11 +333,20 @@ class TestReplaceUuidMentions:
         result = replace_uuid_mentions(content, participants)
         assert result == "@[[unknown-uuid]] hello"
 
-    def test_handles_missing_handle(self):
+    def test_falls_back_to_name_when_handle_missing(self):
+        # ChatParticipant.handle is omitted when unavailable (e.g. a room's
+        # implicit human owner) -- a bare @[[uuid]] left for the LLM is
+        # unreadable and gets echoed back verbatim, so name is the fallback.
         content = "@[[uuid1]] hello"
         participants = [{"id": "uuid1", "name": "John"}]  # No handle
         result = replace_uuid_mentions(content, participants)
-        assert result == "@[[uuid1]] hello"  # Preserved
+        assert result == "@John hello"
+
+    def test_preserves_uuid_when_neither_handle_nor_name_available(self):
+        content = "@[[uuid1]] hello"
+        participants = [{"id": "uuid1"}]  # Neither handle nor name
+        result = replace_uuid_mentions(content, participants)
+        assert result == "@[[uuid1]] hello"  # Nothing to fall back to
 
     def test_handles_empty_content(self):
         result = replace_uuid_mentions("", [{"id": "uuid1", "handle": "john"}])

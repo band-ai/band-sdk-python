@@ -36,23 +36,26 @@ def strip_leading_mentions(content: str, *, only_first: bool = False) -> str:
 
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
     """
-    Replace UUID mentions in content with @handle format using participants list.
+    Replace UUID mentions in content with @handle (or @name) using participants list.
 
     Args:
         content: Message content potentially containing @[[uuid]] patterns
         participants: List of participants with {id, handle, name, type}
 
     Returns:
-        Content with UUID mentions replaced by @handle
+        Content with UUID mentions replaced by @handle, falling back to @name --
+        the platform's own ChatParticipant.handle is documented as omitted when
+        unavailable (e.g. a room's implicit human owner), and a bare @[[uuid]]
+        left in an LLM's context is unreadable and gets echoed back verbatim.
     """
     if not participants or not content:
         return content
 
     for p in participants:
         participant_id = p.get("id")
-        handle = p.get("handle")
-        if participant_id and handle:
-            content = content.replace(f"@[[{participant_id}]]", f"@{handle}")
+        label = p.get("handle") or p.get("name")
+        if participant_id and label:
+            content = content.replace(f"@[[{participant_id}]]", f"@{label}")
 
     return content
 
