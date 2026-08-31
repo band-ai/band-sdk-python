@@ -144,7 +144,7 @@ def _build_langgraph(
     )
 
 
-@adapter(Adapter.PYDANTIC_AI, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
+@adapter(Adapter.PYDANTIC_AI, requires=[Dep.OPENAI], supports=_FILE_CAPABLE)
 def _build_pydantic_ai(
     s: BaselineSettings,
     *,
@@ -232,7 +232,7 @@ def _build_google_adk(
     )
 
 
-@adapter(Adapter.CREWAI, requires=[Dep.OPENAI, Dep.CREWAI], supports=_LLM_TOOL_LOOP)
+@adapter(Adapter.CREWAI, requires=[Dep.OPENAI, Dep.CREWAI], supports=_FILE_CAPABLE)
 def _build_crewai(
     s: BaselineSettings,
     *,
