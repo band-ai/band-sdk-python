@@ -63,20 +63,37 @@ adapter is a `SimpleAdapter` (a bare `FrameworkAdapter` has no
 place). `apply_effective_features` is a `SimpleAdapter` hook whose default
 body just reassigns `self.features`; an adapter that caches something
 derived from capabilities at construction time (`OpencodeAdapter`,
-`ACPClientAdapter`, `LettaAdapter`) would need to override it to rebuild that
-cache too — none do yet, since none of them declare `Capability.FILES`.
-`SlackAdapter` overrides it to also delegate into the wrapped inner adapter,
-since its own `_resolve_features()` only mirrors features into the inner
-adapter once, at construction.
+`ACPClientAdapter`, `LettaAdapter` — each builds its MCP tool registration
+from `self.features.capabilities` at `__init__` time) overrides it to
+rebuild that cache from the negotiated features too — otherwise a
+deployment that negotiates FILES *off* would keep serving the file tools
+anyway. `SlackAdapter` overrides it to also delegate into the wrapped inner
+adapter, since its own `_resolve_features()` only mirrors features into the
+inner adapter once, at construction.
 
-**First (and only) adapter wired to `Capability.FILES`: `claude_sdk`.** It's
-also the only adapter with the vision-passthrough fix that lets
-`band_read_room_file`'s image branch reach the model as real vision input
-(`{"content": [{"type": "image", ...}]}`) instead of being `json.dumps`'d
-into a text block — see `_is_mcp_content_result`/`_make_result` in
-`src/band/integrations/claude_sdk/tools.py`. Every other adapter, and the
-published `band-mcp` CLI (whose `--tools` vocabulary has no `files` group),
-stays out of scope until a later pass gives it the same treatment.
+**Every registered adapter now declares `Capability.FILES`** —
+`claude_sdk`, `anthropic`, `langgraph`, `gemini`, `google_adk`, `agno`,
+`strands`, `codex`, `copilot_sdk`, `opencode`, the ACP client adapter,
+`letta`, `parlant`, `pydantic_ai`, `crewai`, and `crewai_flow`. The
+registry-driven ones (schemas built generically from
+`iter_tool_definitions`) needed only the declaration; `parlant`,
+`pydantic_ai`, and `crewai`/`crewai_flow` hand-roll one wrapper per
+platform tool, so each grew three new hand-written wrappers instead.
+
+Real image vision passthrough for `band_read_room_file` (a small
+previewable image reaches the model as actual image content instead of a
+`json.dumps`'d text block) is verified for `claude_sdk`, `anthropic`,
+`opencode` (and the ACP client adapter / published `band-mcp` CLI, which
+share its MCP-engine fix), `gemini`, `langgraph`, `agno`, `strands`,
+`copilot_sdk`, `codex`, `pydantic_ai`, and `crewai`/`crewai_flow` — see
+`IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS` in
+`tests/framework_conformance/test_adapter_conformance.py` for the
+up-to-date list and per-adapter mechanism citations. `google_adk` and
+`parlant` are confirmed **not** supportable: `google_adk` because
+installed google-adk's own tool-response builder drops multimodal content
+before it reaches the model (an upstream framework limitation), `parlant`
+because its `ToolResult` has no multimodal field and its own MCP
+integration discards image content blocks the same way.
 
 `AgentTools.get_tool_schemas`/`get_anthropic_tool_schemas`/
 `get_openai_tool_schemas` and `iter_tool_definitions` take a single

@@ -36,6 +36,7 @@ from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
     append_available_mention_handles,
     get_tool_description,
+    is_mcp_content_result,
     resolve_tool_model,
     serialize_tool_result,
 )
@@ -724,7 +725,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 text = result["text"]
                 note = result.get("description")
                 return ToolResult(data=text if not note else f"{text}\n\n({note})")
-            if "content" in result:
+            if is_mcp_content_result(result):
                 # This tool's result is text-only, so an inline-previewable
                 # image is described instead of shown -- other frameworks
                 # (anthropic, gemini, ...) pass the same result through as

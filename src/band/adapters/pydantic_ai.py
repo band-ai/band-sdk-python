@@ -6,7 +6,6 @@ Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
 
 from __future__ import annotations
 
-import base64
 import inspect
 import json
 import logging
@@ -62,6 +61,7 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
+    decode_image_block,
     is_mcp_content_result,
     is_terminal_success,
     missing_reply_error,
@@ -666,11 +666,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     result = await ctx.deps.read_room_file(file_id)
                     if is_mcp_content_result(result):
                         return [
-                            BinaryContent(
-                                data=base64.b64decode(block["data"]),
-                                media_type=block["mimeType"],
+                            BinaryContent(data=data, media_type=mime_type)
+                            for data, mime_type in (
+                                decode_image_block(block) for block in result["content"]
                             )
-                            for block in result["content"]
                         ]
                     return result
                 except Exception as e:

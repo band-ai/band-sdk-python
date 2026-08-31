@@ -77,6 +77,11 @@ class TestIsMcpContentResult:
     def test_false_for_content_list_without_type_keys(self) -> None:
         assert not is_mcp_content_result({"content": [{"no_type": 1}]})
 
+    def test_false_for_empty_content_list(self) -> None:
+        """An empty list is vacuously all()-true; every consumer indexes
+        content[0] right after this check, so an empty list must not pass."""
+        assert not is_mcp_content_result({"content": []})
+
 
 @pytest.fixture
 def participants():

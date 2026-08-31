@@ -1399,8 +1399,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
-                    result
+                if (
+                    success
+                    and tool_name == READ_ROOM_FILE_TOOL_NAME
+                    and is_mcp_content_result(result)
                 ):
                     content_items = _image_content_items(result)
                     text_result = image_block_placeholder(len(content_items))

@@ -896,9 +896,11 @@ def _make_platform_tools(
                     tools, "band_read_room_file", {"file_id": file_id}
                 )
                 result = await tools.read_room_file(file_id)
-                await reporter.report_result(tools, "band_read_room_file", result)
                 if is_mcp_content_result(result):
-                    return vision_sentinel(result)
+                    sentinel = vision_sentinel(result)
+                    await reporter.report_result(tools, "band_read_room_file", sentinel)
+                    return sentinel
+                await reporter.report_result(tools, "band_read_room_file", result)
                 return serialize_success_result(result)
 
             return _exec("band_read_room_file", execute)

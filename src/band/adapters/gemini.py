@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import warnings
@@ -47,6 +46,7 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     READ_ROOM_FILE_TOOL_NAME,
+    decode_image_block,
     image_block_placeholder,
     is_mcp_content_result,
 )
@@ -60,15 +60,15 @@ def _image_function_response_parts(
     """Convert an MCP-content-shaped band_read_room_file result into Gemini
     FunctionResponsePart inline_data blocks, so the model receives real image
     content instead of a JSON-stringified blob."""
-    return [
-        types.FunctionResponsePart(
-            inline_data=types.FunctionResponseBlob(
-                mime_type=block["mimeType"],
-                data=base64.b64decode(block["data"]),
+    parts: list[types.FunctionResponsePart] = []
+    for block in result["content"]:
+        data, mime_type = decode_image_block(block)
+        parts.append(
+            types.FunctionResponsePart(
+                inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=data)
             )
         )
-        for block in result["content"]
-    ]
+    return parts
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):

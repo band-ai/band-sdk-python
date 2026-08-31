@@ -1804,6 +1804,7 @@ def is_mcp_content_result(data: Any) -> bool:
     return (
         isinstance(data, dict)
         and isinstance(data.get("content"), list)
+        and bool(data["content"])
         and all(
             isinstance(block, dict) and "type" in block for block in data["content"]
         )
@@ -1816,6 +1817,16 @@ def image_block_placeholder(block_count: int) -> str:
     they build separately. Single source of truth so every adapter's image
     branch reports the same wording instead of re-typing this f-string."""
     return f"<{block_count} image content block(s)>"
+
+
+def decode_image_block(block: dict[str, Any]) -> tuple[bytes, str]:
+    """Decode one MCP image content block into (raw bytes, mime type).
+
+    Every adapter whose target SDK wants raw bytes (as opposed to the
+    base64 string as-is) needs this exact decode -- single source of truth
+    so a rename/reshape of the block's keys only needs updating here.
+    """
+    return base64.b64decode(block["data"]), block["mimeType"]
 
 
 class AttachmentCache(Protocol):

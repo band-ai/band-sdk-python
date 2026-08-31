@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import pytest
 
+from band.core.exceptions import BandConfigError
+from band.core.types import Capability
+
 
 class TestAdapterConfigIntegrity:
     """Validate that AdapterConfig registries stay in sync with adapter source."""
@@ -182,7 +185,6 @@ class TestAdapterFeaturesContract:
 
     def test_supported_capabilities_declared(self, adapter_config):
         """Every adapter class must define SUPPORTED_CAPABILITIES as a frozenset."""
-        from band.core.types import Capability
 
         adapter = adapter_config.adapter_factory()
         cls = type(adapter)
@@ -249,9 +251,6 @@ class TestFilesCapabilityMatrix:
     """
 
     def test_supports_or_is_pending(self, adapter_config):
-        from band.core.exceptions import BandConfigError
-        from band.core.types import Capability
-
         pending = adapter_config.framework_id in FILES_CAPABILITY_PENDING_FRAMEWORK_IDS
         if pending:
             with pytest.raises(BandConfigError):

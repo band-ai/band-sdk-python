@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import warnings
@@ -32,6 +31,7 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     READ_ROOM_FILE_TOOL_NAME,
     SEND_MESSAGE_TOOL_NAME,
+    decode_image_block,
     get_band_tool_category,
     image_block_placeholder,
     is_mcp_content_result,
@@ -105,11 +105,10 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
         result = await active.execute_tool_call(tool_name, kwargs)
         if tool_name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(result):
             images = [
-                Image(
-                    content=base64.b64decode(block["data"]),
-                    mime_type=block["mimeType"],
+                Image(content=data, mime_type=mime_type)
+                for data, mime_type in (
+                    decode_image_block(block) for block in result["content"]
                 )
-                for block in result["content"]
             ]
             return ToolResult(
                 content=image_block_placeholder(len(images)), images=images

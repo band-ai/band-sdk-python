@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
@@ -61,7 +60,9 @@ from band.runtime.tools import (
     ToolDefinition,
     ToolCallOutcome,
     band_tool_errored,
+    decode_image_block,
     get_band_tool_category,
+    image_block_placeholder,
     is_mcp_content_result,
     is_terminal_success,
     iter_tool_definitions,
@@ -91,17 +92,17 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
         and tool_use["name"] == READ_ROOM_FILE_TOOL_NAME
         and is_mcp_content_result(value)
     ):
-        content = [
-            {
-                "image": {
-                    "format": cast(
-                        ImageFormat, block["mimeType"].removeprefix("image/")
-                    ),
-                    "source": {"bytes": base64.b64decode(block["data"])},
+        content = []
+        for block in cast(dict[str, Any], value)["content"]:
+            data, mime_type = decode_image_block(block)
+            content.append(
+                {
+                    "image": {
+                        "format": cast(ImageFormat, mime_type.removeprefix("image/")),
+                        "source": {"bytes": data},
+                    }
                 }
-            }
-            for block in cast(dict[str, Any], value)["content"]
-        ]
+            )
     else:
         content = [{"text": _format_tool_output(value)}]
     return {
@@ -120,6 +121,8 @@ def _result_text(result: ToolResult) -> str:
                 parts.append(text)
             case {"json": value}:
                 parts.append(_format_tool_output(value))
+            case {"image": _}:
+                parts.append(image_block_placeholder(1))
     return "\n".join(parts)
 
 
