@@ -19,7 +19,9 @@ way to produce it -- so a precise instruction is the only way to comply.
 
 from __future__ import annotations
 
+import struct
 import uuid
+import zlib
 
 
 from band.core.types import AdapterFeatures, Capability, Emit, MessageType
@@ -171,6 +173,64 @@ def file_round_trip_instruction(marker: str) -> str:
         "participant in its mentions. Then use band_list_room_files to find that "
         "file and band_read_room_file with its returned id. Finally, use "
         f"band_send_message to reply with the exact token {marker}."
+    )
+
+
+# Visually distinct, single-word-nameable colors for the image vision-passthrough
+# smoke. Randomizing per run (see IMAGE_COLORS usage) means a model can't pass by
+# reflexively guessing a common default (e.g. "blue") without actually seeing the
+# uploaded pixels -- the judge is told the true color as ground truth.
+IMAGE_COLORS: dict[str, tuple[int, int, int]] = {
+    "red": (220, 20, 20),
+    "green": (20, 180, 20),
+    "orange": (240, 140, 20),
+    "purple": (140, 20, 200),
+    "yellow": (230, 210, 20),
+    "cyan": (20, 200, 210),
+}
+
+
+def solid_color_png(color_name: str, *, size: int = 64) -> bytes:
+    """A minimal, real, valid solid-color PNG -- pure stdlib (no Pillow, which
+    is only a crewai-extra dependency, not available in every lane's venv).
+
+    ``color_name`` must be a key of ``IMAGE_COLORS``. Encodes an 8-bit RGB
+    image (color type 2, no filtering) with a single IDAT chunk -- the
+    smallest structure a real PNG decoder (and a real vision model) accepts.
+    """
+    rgb = IMAGE_COLORS[color_name]
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data))
+        )
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    raw_row = b"\x00" + bytes(rgb) * size  # filter-type-0 byte + RGB pixels
+    raw = raw_row * size
+    idat = zlib.compress(raw)
+    return signature + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+def image_round_trip_instruction() -> str:
+    """Drive discovery and vision passthrough of an image a peer already
+    shared in the room: list, read, then report what color it saw.
+
+    No marker/color hint in the wording -- the whole point is that the model
+    must actually look at the image, not echo a string. The judge checks the
+    reply against the real uploaded color (known to the test, not the model)
+    as ground truth.
+    """
+    return (
+        "A peer already shared an image file in this room. Use "
+        "band_list_room_files to find it, then band_read_room_file with its "
+        "returned id to view it. Look at the image and identify its single "
+        "dominant color in one word. Then use band_send_message to reply "
+        "with just that color word."
     )
 
 

@@ -11,6 +11,9 @@ regression.
 
 from __future__ import annotations
 
+import random
+from collections.abc import Awaitable, Callable
+
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
@@ -21,15 +24,19 @@ from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     CONTACTS_AGENT,
     FILES_AGENT,
+    IMAGE_COLORS,
     MEMORY_AGENT,
     file_round_trip_instruction,
+    image_round_trip_instruction,
     list_contacts_instruction,
     recall_memory_instruction,
     retrieve_memory_instruction,
+    solid_color_png,
     store_memory_instruction,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.observations import ContactTool, FileTool
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
@@ -37,6 +44,8 @@ from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+JudgeFn = Callable[..., Awaitable[Verdict]]
 
 
 @per_adapter(supports={Capability.MEMORY}, **MEMORY_AGENT)
@@ -231,6 +240,99 @@ async def test_file_round_trip_across_files_adapters(
     results.assert_succeeded(FileTool.LIST.value)
     results.assert_succeeded(FileTool.READ.value, output_contains=marker)
     replies.assert_contains_any([marker])
+
+
+# Adapters with a verified real image-vision-passthrough fix -- keep this in
+# sync with IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS in
+# tests/framework_conformance/test_adapter_conformance.py (that's the unit-level
+# source of truth; this list exists only because @per_adapter selects from the
+# separate tests.baseline.adapter.Adapter enum, a different registry). Differs
+# from that set by: -crewai_flow (its E2E builder is a hardcoded echo flow with
+# no Band tool loop, so there's no tool call for this to drive), -parlant (not
+# in Adapter at all -- confirmed unsupportable, no matrix cell), +copilot_acp
+# (wraps ACPClientAdapter, which shares the same already-fixed MCP engine as
+# opencode but isn't tracked in the unit-level set since it's not its own
+# ADAPTER_CONFIGS entry there).
+IMAGE_PASSTHROUGH_ADAPTERS = (
+    Adapter.CLAUDE_SDK,
+    Adapter.ANTHROPIC,
+    Adapter.OPENCODE,
+    Adapter.GEMINI,
+    Adapter.LANGGRAPH,
+    Adapter.AGNO,
+    Adapter.STRANDS,
+    Adapter.COPILOT_SDK,
+    Adapter.COPILOT_ACP,
+    Adapter.CODEX,
+    Adapter.PYDANTIC_AI,
+    Adapter.CREWAI,
+    Adapter.LETTA,
+)
+
+
+@per_adapter(*IMAGE_PASSTHROUGH_ADAPTERS, **FILES_AGENT)
+@pytest.mark.timeout(extra=120)  # upload -> list -> read -> vision reply
+@pytest.mark.asyncio(loop_scope="session")
+async def test_image_vision_passthrough_across_adapters(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    reply_capture: CaptureFactory,
+    judge: JudgeFn,
+) -> None:
+    """Each adapter with a verified image-passthrough fix can actually SEE an
+    image a peer shared in the room, not just degrade it to descriptive text.
+
+    The platform's file-upload endpoint is agent-scoped (no user-side upload),
+    so a peer agent -- not UserOps -- plays "someone already shared a file
+    here": PeerActor.send_file uploads a solid-color PNG built by
+    solid_color_png() (pure stdlib, no Pillow dependency) and mentions the
+    agent under test. The color is randomized per run and judged against
+    ground truth, so a model can't pass by reflexively guessing a common
+    default without actually looking at the pixels.
+    """
+    color = random.choice(sorted(IMAGE_COLORS))
+    image = solid_color_png(color)
+
+    bystander = await resource_manager.provision_agent(
+        f"image-sender-{agent.adapter_id}"
+    )
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-image-{agent.adapter_id}",
+        participants=[agent.id, bystander.id],
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await resource_manager.peer(bystander).send_file(
+            room_id,
+            image,
+            filename="swatch.png",
+            content_type="image/png",
+            caption=image_round_trip_instruction(),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        replies = await capture.wait_for_reply(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+        results = await capture.tool_results(sender_id=agent.id)
+
+    calls.assert_fired(FileTool.LIST.value)
+    calls.assert_fired(FileTool.READ.value)
+    results.assert_succeeded(FileTool.LIST.value)
+    results.assert_succeeded(FileTool.READ.value)
+
+    verdict = await judge(
+        criteria=(
+            f"An agent was shown an image whose single dominant color is "
+            f"{color} (RGB {IMAGE_COLORS[color]}). It was asked to identify "
+            "that color in one word and reply with just it. Pass if the "
+            "reply names that exact color or an unambiguous close synonym "
+            "(e.g. 'crimson' for red, 'violet' for purple). Fail if the "
+            "reply names a clearly different color, describes the image as "
+            "unreadable or inaccessible, or otherwise shows it did not "
+            "actually see the image content."
+        ),
+        transcript=replies,
+    )
+    assert verdict.passed, f"{verdict.reasoning}\n{format_transcript(replies)}"
 
 
 @per_adapter(without={Capability.MEMORY})

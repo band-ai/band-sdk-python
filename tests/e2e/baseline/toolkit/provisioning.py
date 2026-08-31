@@ -12,6 +12,7 @@ recognise its own resources by prefix and never touch a non-test agent.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from collections.abc import AsyncGenerator, Iterator, Sequence
@@ -166,6 +167,50 @@ class PeerActor:
                 mentions=[
                     ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
                 ],
+            ),
+        )
+        return response.data.id
+
+    async def send_file(
+        self,
+        room_id: str,
+        body: bytes,
+        *,
+        filename: str,
+        content_type: str,
+        caption: str,
+        mention_id: str,
+        mention_name: str,
+    ) -> str:
+        """Upload ``body`` as an attachment and post it as this peer; return the
+        message id.
+
+        Mirrors AgentTools.send_room_file's own upload call
+        (src/band/runtime/tools.py) -- same headers, same attach-then-message
+        two-step -- since the platform's file-upload endpoint is agent-scoped
+        (Agent API only; there is no user-side upload endpoint), so a live
+        vision-passthrough scenario needs a peer agent to play "someone already
+        shared a file here," not the test's own UserOps driver.
+        """
+        upload = await self._client.agent_api_files.upload_agent_chat_file(
+            chat_id=room_id,
+            request=body,
+            request_options={
+                "additional_headers": {
+                    "x-file-name": filename,
+                    "x-file-sha256": hashlib.sha256(body).hexdigest(),
+                    "content-type": content_type,
+                }
+            },
+        )
+        response = await self._client.agent_api_messages.create_agent_chat_message(
+            room_id,
+            message=ChatMessageRequest(
+                content=caption,
+                mentions=[
+                    ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
+                ],
+                attachment_ids=[upload.data.id],
             ),
         )
         return response.data.id
