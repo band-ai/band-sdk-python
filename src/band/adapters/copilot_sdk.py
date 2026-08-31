@@ -46,6 +46,7 @@ from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     READ_ROOM_FILE_TOOL_NAME,
     get_band_tool_category,
+    image_block_placeholder,
     is_mcp_content_result,
     is_room_posting_tool,
 )
@@ -759,7 +760,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 )
                 for block in result["content"]
             ]
-            text_result = f"<{len(binary_results)} image content block(s)>"
+            text_result = image_block_placeholder(len(binary_results))
         else:
             text_result = (
                 result if isinstance(result, str) else json.dumps(result, default=str)

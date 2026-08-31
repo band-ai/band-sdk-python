@@ -34,7 +34,11 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import READ_ROOM_FILE_TOOL_NAME, is_mcp_content_result
+from band.runtime.tools import (
+    READ_ROOM_FILE_TOOL_NAME,
+    image_block_placeholder,
+    is_mcp_content_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -472,7 +476,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result
                 ):
                     content = _image_tool_result_content(result)
-                    result_str = f"<{len(content)} image content block(s)>"
+                    result_str = image_block_placeholder(len(content))
                 else:
                     content = result_str = (
                         json.dumps(result, default=str)

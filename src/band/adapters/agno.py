@@ -33,6 +33,7 @@ from band.runtime.tools import (
     READ_ROOM_FILE_TOOL_NAME,
     SEND_MESSAGE_TOOL_NAME,
     get_band_tool_category,
+    image_block_placeholder,
     is_mcp_content_result,
 )
 
@@ -111,7 +112,7 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[Any]]:
                 for block in result["content"]
             ]
             return ToolResult(
-                content=f"<{len(images)} image content block(s)>", images=images
+                content=image_block_placeholder(len(images)), images=images
             )
         return result if isinstance(result, str) else json.dumps(result, default=str)
 

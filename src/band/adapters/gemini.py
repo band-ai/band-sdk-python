@@ -45,7 +45,11 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import READ_ROOM_FILE_TOOL_NAME, is_mcp_content_result
+from band.runtime.tools import (
+    READ_ROOM_FILE_TOOL_NAME,
+    image_block_placeholder,
+    is_mcp_content_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -538,7 +542,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     result
                 ):
                     response_parts = _image_function_response_parts(result)
-                    result_str = f"<{len(response_parts)} image content block(s)>"
+                    result_str = image_block_placeholder(len(response_parts))
                 else:
                     result_str = (
                         json.dumps(result, default=str)

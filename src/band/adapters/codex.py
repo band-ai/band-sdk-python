@@ -55,6 +55,7 @@ from band.runtime.custom_tools import (
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     READ_ROOM_FILE_TOOL_NAME,
+    image_block_placeholder,
     is_mcp_content_result,
     is_room_posting_tool,
 )
@@ -1402,7 +1403,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     result
                 ):
                     content_items = _image_content_items(result)
-                    text_result = f"<{len(content_items)} image content block(s)>"
+                    text_result = image_block_placeholder(len(content_items))
                 else:
                     text_result = (
                         result

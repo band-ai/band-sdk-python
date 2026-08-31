@@ -468,6 +468,8 @@ def build_tool_registration(
       when set (CLI-only feature; the embedded door never pins).
     """
 
+    is_read_room_file = definition.name == READ_ROOM_FILE_TOOL_NAME
+
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         if pinned_room_id is not None:
@@ -479,9 +481,7 @@ def build_tool_registration(
             else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
-        if definition.name == READ_ROOM_FILE_TOOL_NAME and is_mcp_content_result(
-            result
-        ):
+        if is_read_room_file and is_mcp_content_result(result):
             return _mcp_content_blocks(result)
         return _serialize(result)
 
@@ -490,9 +490,7 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
-        structured_output=False
-        if definition.name == READ_ROOM_FILE_TOOL_NAME
-        else None,
+        structured_output=False if is_read_room_file else None,
     )
 
 

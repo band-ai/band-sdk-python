@@ -938,7 +938,7 @@ AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
         "band_get_participants",
         "band_lookup_peers",
         "band_list_room_files",
-        "band_read_room_file",
+        READ_ROOM_FILE_TOOL_NAME,
         "band_send_room_file",
     }
 )
@@ -1078,7 +1078,7 @@ _TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
         method_name="list_room_files",
     ),
     ToolDefinition(
-        name="band_read_room_file",
+        name=READ_ROOM_FILE_TOOL_NAME,
         input_model=ReadRoomFileInput,
         method_name="read_room_file",
     ),
@@ -1305,7 +1305,7 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 FILE_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_list_room_files",
-        "band_read_room_file",
+        READ_ROOM_FILE_TOOL_NAME,
         "band_send_room_file",
     }
 )
@@ -1365,7 +1365,7 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
         "band_list_memories",
         "band_get_memory",
         "band_list_room_files",
-        "band_read_room_file",
+        READ_ROOM_FILE_TOOL_NAME,
     }
 )
 
@@ -1808,6 +1808,14 @@ def is_mcp_content_result(data: Any) -> bool:
             isinstance(block, dict) and "type" in block for block in data["content"]
         )
     )
+
+
+def image_block_placeholder(block_count: int) -> str:
+    """Text stand-in for an image tool result, for adapters that also log/emit
+    a text summary of the tool output alongside the real multimodal content
+    they build separately. Single source of truth so every adapter's image
+    branch reports the same wording instead of re-typing this f-string."""
+    return f"<{block_count} image content block(s)>"
 
 
 class AttachmentCache(Protocol):

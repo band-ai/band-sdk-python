@@ -352,12 +352,12 @@ def test_probe_registry_matches_supported_framework_ids() -> None:
 
 def _framework_param(framework_id: str) -> Any:
     available = _SOMETIMES_MISSING.get(framework_id, True)
-    if not available:
-        return pytest.param(
-            framework_id,
-            marks=pytest.mark.skip(reason=f"{framework_id} not installed in this venv"),
-        )
-    return pytest.param(framework_id)
+    return pytest.param(
+        framework_id,
+        marks=pytest.mark.skipif(
+            not available, reason=f"{framework_id} not installed in this venv"
+        ),
+    )
 
 
 @pytest.mark.asyncio
