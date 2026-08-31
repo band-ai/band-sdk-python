@@ -68,7 +68,9 @@ def platform_args_schemas(builder_mod):
     tools = builder_mod.build_band_crewai_tools(
         get_context=lambda: None,
         reporter=builder_mod.NoopReporter(),
-        capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
+        capabilities=frozenset(
+            {Capability.CONTACTS, Capability.MEMORY, Capability.FILES}
+        ),
     )
     return {tool.name: tool.args_schema for tool in tools}
 
@@ -133,6 +135,23 @@ class TestToolSetComposition:
         assert memory_names.issubset(names)
         assert len(tools) == 12
 
+    def test_capability_files_adds_three(self, builder_mod):
+        from band.core.types import Capability
+
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: None,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        names = {t.name for t in tools}
+        file_names = {
+            "band_list_room_files",
+            "band_read_room_file",
+            "band_send_room_file",
+        }
+        assert file_names.issubset(names)
+        assert len(tools) == 10
+
     def test_both_capabilities(self, builder_mod):
         from band.core.types import Capability
 
@@ -142,6 +161,18 @@ class TestToolSetComposition:
             capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
         )
         assert len(tools) == 17  # 7 base + 5 contacts + 5 memory
+
+    def test_all_three_capabilities(self, builder_mod):
+        from band.core.types import Capability
+
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: None,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(
+                {Capability.CONTACTS, Capability.MEMORY, Capability.FILES}
+            ),
+        )
+        assert len(tools) == 20  # 7 base + 5 contacts + 5 memory + 3 files
 
     def test_custom_tools_appended(self, builder_mod):
         from pydantic import BaseModel
@@ -440,6 +471,146 @@ class TestToolSetComposition:
         assert "@john" in result["message"]
         # The agent's own handle is excluded from the available options.
         assert "@john/weather-agent" not in result["message"]
+
+
+# --- File tools ---
+
+
+class TestFileTools:
+    def test_list_room_files_forwards_cursor(self, builder_mod):
+        from band.core.types import Capability
+
+        tools_obj = MagicMock()
+        tools_obj.list_room_files = AsyncMock(
+            return_value={"data": [{"id": "file-1"}], "next_cursor": None}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        list_room_files = next(t for t in tools if t.name == "band_list_room_files")
+
+        result = json.loads(list_room_files._run(cursor="cursor-1"))
+
+        assert result["status"] == "success"
+        tools_obj.list_room_files.assert_awaited_once_with("cursor-1")
+
+    def test_list_room_files_default_cursor_is_none(self, builder_mod):
+        from band.core.types import Capability
+
+        tools_obj = MagicMock()
+        tools_obj.list_room_files = AsyncMock(return_value={"data": []})
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        list_room_files = next(t for t in tools if t.name == "band_list_room_files")
+
+        list_room_files._run()
+
+        tools_obj.list_room_files.assert_awaited_once_with(None)
+
+    def test_read_room_file_forwards_file_id(self, builder_mod):
+        from band.core.types import Capability
+
+        tools_obj = MagicMock()
+        tools_obj.read_room_file = AsyncMock(
+            return_value={"name": "report.txt", "text": "hello"}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+        result = json.loads(read_room_file._run(file_id="file-1"))
+
+        assert result["status"] == "success"
+        tools_obj.read_room_file.assert_awaited_once_with("file-1")
+
+    def test_send_room_file_forwards_args_in_protocol_order(self, builder_mod):
+        """AgentToolsProtocol.send_room_file wants (content, filename, caption,
+        mentions) positionally -- pin the reorder from the tool's own kwargs."""
+        from band.core.types import Capability
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        result = json.loads(
+            send_room_file._run(
+                content="file body",
+                filename="notes.txt",
+                mentions=["Alice", "Bob"],
+                caption="here's a file",
+            )
+        )
+
+        assert result["status"] == "success"
+        tools_obj.send_room_file.assert_awaited_once_with(
+            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
+        )
+
+    def test_send_room_file_mentions_accepts_lenient_string_shape(self, builder_mod):
+        """Smaller models emit mentions as a JSON-string or bracketed string,
+        same leniency need as band_send_message -- see normalize_mentions_lenient."""
+        from band.core.types import Capability
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(
+            return_value={"attachment": {}, "message_id": "msg-1"}
+        )
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        send_room_file._run(
+            content="body", filename="notes.txt", mentions="@alice, @bob"
+        )
+
+        tools_obj.send_room_file.assert_awaited_once_with(
+            "body", "notes.txt", "", ["@alice", "@bob"]
+        )
+
+    def test_send_room_file_failure_returns_error_status(self, builder_mod):
+        from band.core.types import Capability
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(side_effect=RuntimeError("upload failed"))
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        result = json.loads(
+            send_room_file._run(
+                content="body", filename="notes.txt", mentions=["Alice"]
+            )
+        )
+
+        assert result["status"] == "error"
+        assert "upload failed" in result["message"]
 
 
 # --- Reporter behavior ---

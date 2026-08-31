@@ -226,16 +226,15 @@ class TestAdapterFeaturesContract:
         assert adapter.features.capabilities == cls.SUPPORTED_CAPABILITIES
 
 
-# Adapters that still hand-roll one wrapper function/class per platform tool
-# (CrewAI's BaseTool subclasses) instead of deriving their tool surface from
-# the central registry (iter_tool_definitions/get_openai_tool_schemas/
-# get_anthropic_tool_schemas). Capability.FILES needs three new hand-written
-# wrappers there, not just a capability declaration -- not yet done. Parlant
-# and pydantic_ai each grew their own three hand-written wrappers
-# (band_list_room_files/band_read_room_file/band_send_room_file, in
-# integrations/parlant/tools.py and adapters/pydantic_ai.py respectively) and
-# are no longer pending. Remove a framework_id here once it grows the same.
-FILES_CAPABILITY_PENDING_FRAMEWORK_IDS = frozenset({"crewai", "crewai_flow"})
+# Every adapter used to hand-roll one wrapper function/class per platform
+# tool instead of deriving its tool surface from the central registry
+# (iter_tool_definitions/get_openai_tool_schemas/get_anthropic_tool_schemas).
+# Capability.FILES needed three new hand-written wrappers on each --
+# claude_sdk-style adapters get it generically, but parlant, pydantic_ai, and
+# crewai/crewai_flow (which share integrations/crewai/tools.py) all grew real
+# band_list_room_files/band_read_room_file/band_send_room_file wrappers.
+# Empty now; kept as the seam a genuinely new hand-rolled adapter joins.
+FILES_CAPABILITY_PENDING_FRAMEWORK_IDS: frozenset[str] = frozenset()
 
 
 class TestFilesCapabilityMatrix:

@@ -83,6 +83,9 @@ _CREWAI_TOOL_CATEGORIES = {
     "band_get_memory": "memory",
     "band_supersede_memory": "memory",
     "band_archive_memory": "memory",
+    "band_list_room_files": "files",
+    "band_read_room_file": "files",
+    "band_send_room_file": "files",
 }
 
 
@@ -347,6 +350,17 @@ SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
     },
 )
 
+# band_send_room_file's mentions field is the same shape/purpose as
+# band_send_message's -- smaller models hit the same leniency need here.
+SEND_ROOM_FILE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
+    "band_send_room_file",
+    validators={
+        "normalize_mentions": field_validator("mentions", mode="before")(
+            staticmethod(normalize_mentions_lenient)
+        ),
+    },
+)
+
 
 # --- Tool factory ---
 
@@ -358,12 +372,12 @@ def _make_platform_tools(
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
-    """Build the 7 base + 5 contact + 5 memory platform tools.
+) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool], list[BaseTool]]:
+    """Build the 7 base + 5 contact + 5 memory + 3 file platform tools.
 
-    Returns a (base, contacts, memory) triple. ``build_band_crewai_tools``
-    is responsible for stitching them together based on the requested
-    capabilities.
+    Returns a (base, contacts, memory, files) quadruple.
+    ``build_band_crewai_tools`` is responsible for stitching them together
+    based on the requested capabilities.
     """
     from crewai.tools import BaseTool
 
@@ -831,6 +845,77 @@ def _make_platform_tools(
 
             return _exec("band_archive_memory", execute)
 
+    class ListRoomFilesTool(BaseTool):
+        name: str = "band_list_room_files"
+        description: str = get_tool_description("band_list_room_files")
+        args_schema: type[BaseModel] = platform_args_schema("band_list_room_files")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            cursor: str | None = kwargs.get("cursor")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools, "band_list_room_files", {"cursor": cursor}
+                )
+                result = await tools.list_room_files(cursor)
+                await reporter.report_result(tools, "band_list_room_files", result)
+                return serialize_success_result(result)
+
+            return _exec("band_list_room_files", execute)
+
+    class ReadRoomFileTool(BaseTool):
+        name: str = "band_read_room_file"
+        description: str = get_tool_description("band_read_room_file")
+        args_schema: type[BaseModel] = platform_args_schema("band_read_room_file")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            file_id: str = kwargs.get("file_id", "")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools, "band_read_room_file", {"file_id": file_id}
+                )
+                result = await tools.read_room_file(file_id)
+                await reporter.report_result(tools, "band_read_room_file", result)
+                return serialize_success_result(result)
+
+            return _exec("band_read_room_file", execute)
+
+    class SendRoomFileTool(BaseTool):
+        name: str = "band_send_room_file"
+        description: str = get_tool_description("band_send_room_file")
+        args_schema: type[BaseModel] = SEND_ROOM_FILE_ARGS_SCHEMA
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            content: str = kwargs.get("content", "")
+            filename: str = kwargs.get("filename", "")
+            caption: str = kwargs.get("caption") or ""
+            # Normalized here too, not just in the schema: _run is also called
+            # directly, bypassing args_schema validation.
+            mention_list = normalize_mentions_lenient(kwargs.get("mentions"))
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_send_room_file",
+                    {
+                        "content": content,
+                        "filename": filename,
+                        "caption": caption,
+                        "mentions": mention_list,
+                    },
+                )
+                result = await tools.send_room_file(
+                    content, filename, caption, mention_list
+                )
+                await reporter.report_result(tools, "band_send_room_file", result)
+                return serialize_success_result(result)
+
+            return _exec("band_send_room_file", execute)
+
     base_tools: list[BaseTool] = [
         SendMessageTool(),
         SendEventTool(),
@@ -854,8 +939,13 @@ def _make_platform_tools(
         SupersedeMemoryTool(),
         ArchiveMemoryTool(),
     ]
+    file_tools: list[BaseTool] = [
+        ListRoomFilesTool(),
+        ReadRoomFileTool(),
+        SendRoomFileTool(),
+    ]
 
-    return base_tools, contact_tools, memory_tools
+    return base_tools, contact_tools, memory_tools, file_tools
 
 
 def _make_custom_tools(
@@ -954,13 +1044,14 @@ def build_band_crewai_tools(
       - 7 base tools always.
       - +5 contact tools when Capability.CONTACTS is in `capabilities`.
       - +5 memory tools when Capability.MEMORY is in `capabilities`.
+      - +3 file tools when Capability.FILES is in `capabilities`.
       - +N custom tools after platform tools.
 
     The returned tools close over `get_context`, `reporter`, and `fallback_loop`.
     Each adapter passes its own getter/reporter so the wrappers stay
     framework-agnostic.
     """
-    base, contacts, memories = _make_platform_tools(
+    base, contacts, memories, files = _make_platform_tools(
         get_context=get_context,
         reporter=reporter,
         fallback_loop=fallback_loop,
@@ -972,6 +1063,8 @@ def build_band_crewai_tools(
         selected.extend(contacts)
     if Capability.MEMORY in active_features.capabilities:
         selected.extend(memories)
+    if Capability.FILES in active_features.capabilities:
+        selected.extend(files)
 
     selected = filter_tool_schemas(
         selected,
