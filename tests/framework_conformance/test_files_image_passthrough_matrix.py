@@ -20,12 +20,14 @@ fails loudly if the two ever name different frameworks.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import base64
+from collections.abc import Awaitable, Callable, Iterable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from band.runtime.tools import TOOL_DEFINITIONS
+from band.runtime.tools import READ_ROOM_FILE_TOOL_NAME, TOOL_DEFINITIONS
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
 )
@@ -59,6 +61,29 @@ _IMAGE_RESULT: dict[str, Any] = {
     "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
 }
 
+# Derived, never re-typed: a probe asserting on a hand-written "ZmFrZQ==" would
+# still pass if _IMAGE_RESULT changed underneath it.
+_EXPECTED_BASE64: str = _IMAGE_RESULT["content"][0]["data"]
+_EXPECTED_MIME_TYPE: str = _IMAGE_RESULT["content"][0]["mimeType"]
+_EXPECTED_BYTES: bytes = base64.b64decode(_EXPECTED_BASE64)
+
+
+def _is_expected_image(data: bytes | str, mime_type: str) -> bool:
+    """Whether a framework's outgoing image block carries the probe's image.
+
+    ``data`` is whichever encoding that framework's SDK uses -- raw bytes
+    (gemini, agno, pydantic_ai) or the base64 string as-is (anthropic,
+    opencode, copilot_sdk) -- so each probe passes what it found without
+    first normalising it.
+    """
+    expected = _EXPECTED_BYTES if isinstance(data, bytes) else _EXPECTED_BASE64
+    return data == expected and mime_type == _EXPECTED_MIME_TYPE
+
+
+def _tool_named(tools: Iterable[Any], name: str) -> Any:
+    """The one tool a framework built for ``name``."""
+    return next(tool for tool in tools if tool.name == name)
+
 
 class _StubReadRoomFileTools:
     """Minimal AgentToolsProtocol double whose read_room_file/execute_tool_call
@@ -81,11 +106,11 @@ async def _probe_claude_sdk() -> bool:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
 
     sdk_tools = build_band_sdk_tools(
-        tool_definitions=[TOOL_DEFINITIONS["band_read_room_file"]],
+        tool_definitions=[TOOL_DEFINITIONS[READ_ROOM_FILE_TOOL_NAME]],
         get_tools=lambda _room_id: _StubReadRoomFileTools(),
         include_room_id=False,
     )
-    handler = next(t for t in sdk_tools if t.name == "band_read_room_file").handler
+    handler = _tool_named(sdk_tools, READ_ROOM_FILE_TOOL_NAME).handler
 
     result = await handler({"file_id": "file-1"})
 
@@ -107,7 +132,7 @@ async def _probe_anthropic() -> bool:
         ToolUseBlock(
             type="tool_use",
             id="tool-1",
-            name="band_read_room_file",
+            name=READ_ROOM_FILE_TOOL_NAME,
             input={"file_id": "file-1"},
         )
     ]
@@ -115,11 +140,11 @@ async def _probe_anthropic() -> bool:
     results = await adapter._process_tool_calls(response, tools)
 
     content = results[0]["content"]
-    return (
-        isinstance(content, list)
-        and len(content) == 1
-        and content[0]["type"] == "image"
-        and content[0]["source"]["data"] == "ZmFrZQ=="
+    if not isinstance(content, list) or len(content) != 1:
+        return False
+    block = content[0]
+    return block["type"] == "image" and _is_expected_image(
+        block["source"]["data"], block["source"]["media_type"]
     )
 
 
@@ -135,7 +160,7 @@ async def _probe_opencode() -> bool:
     )
 
     resolver = EmbeddedResolver(get_tools=lambda _chat_id: _StubReadRoomFileTools())
-    definition = TOOL_DEFINITIONS["band_read_room_file"]
+    definition = TOOL_DEFINITIONS[READ_ROOM_FILE_TOOL_NAME]
     registration = build_tool_registration(
         definition,
         extend_with_chat_id(definition.input_model, None),
@@ -146,15 +171,13 @@ async def _probe_opencode() -> bool:
 
     async with create_connected_server_and_client_session(mcp) as session:
         result = await session.call_tool(
-            "band_read_room_file", {"chat_id": "room-1", "file_id": "file-1"}
+            READ_ROOM_FILE_TOOL_NAME, {"chat_id": "room-1", "file_id": "file-1"}
         )
 
-    return (
-        not result.isError
-        and len(result.content) == 1
-        and result.content[0].type == "image"
-        and result.content[0].data == "ZmFrZQ=="
-    )
+    if result.isError or len(result.content) != 1:
+        return False
+    block = result.content[0]
+    return block.type == "image" and _is_expected_image(block.data, block.mimeType)
 
 
 async def _probe_gemini() -> bool:
@@ -169,7 +192,7 @@ async def _probe_gemini() -> bool:
     tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
     function_calls = [
         types.FunctionCall(
-            name="band_read_room_file", args={"file_id": "file-1"}, id="c1"
+            name=READ_ROOM_FILE_TOOL_NAME, args={"file_id": "file-1"}, id="c1"
         )
     ]
 
@@ -179,10 +202,8 @@ async def _probe_gemini() -> bool:
     if function_response is None or not function_response.parts:
         return False
     inline_data = function_response.parts[0].inline_data
-    return (
-        inline_data is not None
-        and inline_data.mime_type == "image/png"
-        and inline_data.data == b"fake"
+    return inline_data is not None and _is_expected_image(
+        inline_data.data, inline_data.mime_type
     )
 
 
@@ -203,9 +224,14 @@ async def _probe_langgraph() -> bool:
         )
     }
 
-    result = await wrapped["band_read_room_file"].ainvoke({"file_id": "file-1"})
+    result = await wrapped[READ_ROOM_FILE_TOOL_NAME].ainvoke({"file_id": "file-1"})
 
-    return result == [{"type": "image", "mime_type": "image/png", "base64": "ZmFrZQ=="}]
+    if not isinstance(result, list) or len(result) != 1:
+        return False
+    block = result[0]
+    return block["type"] == "image" and _is_expected_image(
+        block["base64"], block["mime_type"]
+    )
 
 
 async def _probe_agno() -> bool:
@@ -213,28 +239,29 @@ async def _probe_agno() -> bool:
 
     from band.adapters.agno import _bind_room_tools, _make_band_entrypoint
 
-    entry = _make_band_entrypoint("band_read_room_file")
+    entry = _make_band_entrypoint(READ_ROOM_FILE_TOOL_NAME)
     with _bind_room_tools(_StubReadRoomFileTools()):
         result = await entry(file_id="file-1")
 
-    return (
-        isinstance(result, ToolResult)
-        and result.images is not None
-        and len(result.images) == 1
-        and result.images[0].content == b"fake"
-        and result.images[0].mime_type == "image/png"
+    if not isinstance(result, ToolResult) or not result.images:
+        return False
+    image = result.images[0]
+    return len(result.images) == 1 and _is_expected_image(
+        image.content, image.mime_type
     )
 
 
 async def _probe_strands() -> bool:
     from band.adapters.strands import _tool_result
 
-    tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+    tool_use = {"toolUseId": "t1", "name": READ_ROOM_FILE_TOOL_NAME, "input": {}}
 
     result = _tool_result(tool_use, value=_IMAGE_RESULT, ok=True)
 
+    # Strands names the format bare ("png"), not as a mime type.
+    expected_format = _EXPECTED_MIME_TYPE.removeprefix("image/")
     return result["content"] == [
-        {"image": {"format": "png", "source": {"bytes": b"fake"}}}
+        {"image": {"format": expected_format, "source": {"bytes": _EXPECTED_BYTES}}}
     ]
 
 
@@ -260,17 +287,15 @@ async def _probe_copilot_sdk() -> bool:
     result = await adapter._execute_bridged_tool(
         "room-1",
         ToolInvocation(
-            tool_call_id="c1", tool_name="band_read_room_file", arguments={}
+            tool_call_id="c1", tool_name=READ_ROOM_FILE_TOOL_NAME, arguments={}
         ),
     )
 
     binary = result.binary_results_for_llm
-    return (
-        binary is not None
-        and len(binary) == 1
-        and binary[0].data == "ZmFrZQ=="
-        and binary[0].mime_type == "image/png"
-        and binary[0].type == "image"
+    if not binary or len(binary) != 1:
+        return False
+    return binary[0].type == "image" and _is_expected_image(
+        binary[0].data, binary[0].mime_type
     )
 
 
@@ -279,9 +304,8 @@ async def _probe_codex() -> bool:
 
     content_items = _image_content_items(_IMAGE_RESULT)
 
-    return content_items == [
-        {"type": "inputImage", "imageUrl": "data:image/png;base64,ZmFrZQ=="}
-    ]
+    data_uri = f"data:{_EXPECTED_MIME_TYPE};base64,{_EXPECTED_BASE64}"
+    return content_items == [{"type": "inputImage", "imageUrl": data_uri}]
 
 
 async def _probe_pydantic_ai() -> bool:
@@ -290,9 +314,7 @@ async def _probe_pydantic_ai() -> bool:
 
     adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
     await adapter.on_started(agent_name="Probe", agent_description="probe")
-    read_room_file = adapter._agent._function_toolset.tools["band_read_room_file"]
-
-    from types import SimpleNamespace
+    read_room_file = adapter._agent._function_toolset.tools[READ_ROOM_FILE_TOOL_NAME]
 
     result = await read_room_file.function(
         SimpleNamespace(deps=_StubReadRoomFileTools()), file_id="file-1"
@@ -301,7 +323,7 @@ async def _probe_pydantic_ai() -> bool:
     if not isinstance(result, list) or len(result) != 1:
         return False
     binary = result[0]
-    return binary.data == b"fake" and binary.media_type == "image/png"
+    return _is_expected_image(binary.data, binary.media_type)
 
 
 async def _probe_crewai() -> bool:
@@ -319,7 +341,7 @@ async def _probe_crewai() -> bool:
         reporter=NoopReporter(),
         capabilities=frozenset({Capability.FILES}),
     )
-    read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+    read_room_file = _tool_named(tools, READ_ROOM_FILE_TOOL_NAME)
 
     result = read_room_file._run(file_id="file-1")
 

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from band.core.exceptions import BandConfigError
 from band.core.types import Capability
+from tests.baseline.adapter import Adapter
+from tests.e2e.baseline.agents import ExcludedAdapter
 
 
 class TestAdapterConfigIntegrity:
@@ -228,131 +229,98 @@ class TestAdapterFeaturesContract:
         assert adapter.features.capabilities == cls.SUPPORTED_CAPABILITIES
 
 
-# Every adapter used to hand-roll one wrapper function/class per platform
-# tool instead of deriving its tool surface from the central registry
-# (iter_tool_definitions/get_openai_tool_schemas/get_anthropic_tool_schemas).
-# Capability.FILES needed three new hand-written wrappers on each --
-# claude_sdk-style adapters get it generically, but parlant, pydantic_ai, and
-# crewai/crewai_flow (which share integrations/crewai/tools.py) all grew real
-# band_list_room_files/band_read_room_file/band_send_room_file wrappers.
-# Empty now; kept as the seam a genuinely new hand-rolled adapter joins.
-FILES_CAPABILITY_PENDING_FRAMEWORK_IDS: frozenset[str] = frozenset()
-
-
 class TestFilesCapabilityMatrix:
-    """Capability.FILES adoption matrix across every registered adapter.
+    """Every registered adapter accepts Capability.FILES.
 
-    Turns Capability.FILES on for every adapter in ADAPTER_CONFIGS: an
-    adapter not in FILES_CAPABILITY_PENDING_FRAMEWORK_IDS must accept it
-    (schema exposure is generic there -- see the shared registry in
-    band.runtime.tools); one still pending must reject it with
-    BandConfigError until it grows real tool wrappers. Adding a new adapter
-    to ADAPTER_CONFIGS without a decision either way fails this test.
+    Registry-driven adapters get the file tools generically (the shared
+    registry in band.runtime.tools); parlant, pydantic_ai and
+    crewai/crewai_flow hand-roll one wrapper per platform tool and grew real
+    band_list_room_files/band_read_room_file/band_send_room_file wrappers to
+    match. A new adapter that skips that work fails here.
     """
 
-    def test_supports_or_is_pending(self, adapter_config):
-        pending = adapter_config.framework_id in FILES_CAPABILITY_PENDING_FRAMEWORK_IDS
-        if pending:
-            with pytest.raises(BandConfigError):
-                adapter_config.adapter_factory(capabilities=Capability.FILES)
-        else:
-            adapter = adapter_config.adapter_factory(capabilities=Capability.FILES)
-            assert Capability.FILES in adapter.features.capabilities
+    def test_accepts_files_capability(self, adapter_config):
+        adapter = adapter_config.adapter_factory(capabilities=Capability.FILES)
+
+        assert Capability.FILES in adapter.features.capabilities
 
 
-# Of the adapters that support Capability.FILES at all (i.e. NOT in
-# FILES_CAPABILITY_PENDING_FRAMEWORK_IDS above), only these have been verified
-# end-to-end to pass an image band_read_room_file result through as real MCP
-# vision/image content instead of degrading it to a json.dumps'd text block:
-# - claude_sdk: tests/integrations/claude_sdk/test_tools.py
-#   (_is_mcp_content_result / _make_result passthrough)
-# - anthropic: tests/adapters/test_anthropic_adapter.py
-#   (_image_tool_result_content, real Anthropic ImageBlockParam content)
-# - opencode: shares the MCP engine's fix (band.integrations.mcp.engine
-#   is_mcp_content_result / _mcp_content_blocks), verified in
-#   tests/mcp/test_engine.py -- the ACP client adapter and the published
-#   band-mcp CLI share the same engine fix but are not adapters in
-#   ADAPTER_CONFIGS, so they don't get their own row here.
-# - gemini: tests/adapters/test_gemini_adapter.py (TestReadRoomFileImagePassthrough,
-#   real google.genai FunctionResponsePart/FunctionResponseBlob inline_data content).
-#   google_adk is NOT here despite sharing google.genai types: google-adk 1.10.0's
-#   own __build_response_event() calls Part.from_function_response() without a
-#   parts= kwarg, so no tool return value can reach a multimodal FunctionResponse
-#   through ADK's normal flow -- a framework limitation, not an adapter gap.
-# - langgraph: tests/integrations/langgraph/test_langchain_tools.py (real
-#   langchain_core ImageContentBlock, {"type": "image", "mime_type", "base64"}).
-# - agno: tests/adapters/agno/test_adapter.py::TestBandEntrypointBinding (real
-#   agno.tools.function.ToolResult(images=[agno.media.Image(...)])).
-# - strands: tests/adapters/test_strands_adapter.py::TestReadRoomFileImagePassthrough
-#   (real strands.types.tools.ToolResultContent image block, Bedrock-native shape).
-# - copilot_sdk: tests/adapters/copilot_sdk/test_tool_bridging.py::
-#   TestReadRoomFileImagePassthrough (real copilot.tools.ToolBinaryResult via
-#   ToolResult.binary_results_for_llm, the SDK's own MCP-image-result shape).
-# - codex: tests/adapters/test_codex_adapter.py::TestReadRoomFileImagePassthrough
-#   (real DynamicToolCallOutputContentItem "inputImage" variant, verified from the
-#   installed codex-cli's own generated JSON schema). One caveat: imageUrl carries
-#   a data: URI -- whether the Rust-side codex-rs binary actually accepts a data:
-#   URI (vs. only fetching http(s)) isn't verifiable from this repo's installed
-#   Python packages, so this is wire-shape-verified, not live-behavior-confirmed.
-# - pydantic_ai: tests/adapters/test_pydantic_ai_adapter.py::TestFileTools
-#   (real pydantic_ai.messages.BinaryContent(data=bytes, media_type=str),
-#   returned directly from the tool -- pydantic-ai's own documented
-#   multimodal-tool-result channel, ToolReturnPart.content).
-# - crewai / crewai_flow: tests/integrations/test_crewai_tools.py::TestFileTools
-#   (CrewAI's own "VISION_IMAGE:<media_type>:<base64_data>" sentinel string,
-#   parsed by StepExecutor._execute_native_tool_calls -- the default
-#   native-tool-calling execution path -- into a real image_url content block
-#   before the LLM sees it; verified against the installed crewai package,
-#   not documented publicly). Both adapters share integrations/crewai/tools.py,
-#   so one fix (vision_sentinel()) covers both.
-# google_adk stays out for the reason above. letta needs no adapter-side row: it
-# routes tool execution entirely through the already-fixed MCP engine (it never
-# calls execute_tool_call), so the image fix is already live for it via the
-# opencode/ACP-client row -- the one unverifiable hop is Letta's own backend
-# turning an MCP ImageContent into its ToolReturn.tool_return image part, which
-# isn't observable from the installed letta_client package. parlant stays out:
-# verified that parlant.core.tools.ToolResult has no multimodal field, and
-# Parlant's own MCP integration (mcp_result_to_tool_result_data()) discards
-# image content blocks before they ever reach ToolResult.data -- a confirmed
-# framework limitation, not an adapter gap.
-IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
-    {
-        "claude_sdk",
-        "anthropic",
-        "opencode",
-        "gemini",
-        "langgraph",
-        "agno",
-        "strands",
-        "copilot_sdk",
-        "codex",
-        "pydantic_ai",
-        "crewai",
-        "crewai_flow",
-    }
+# Image passthrough (a band_read_room_file image result reaching the model as
+# real vision content, not a json.dumps'd text block) is the default
+# expectation; these are the adapters that deliberately don't have it, and
+# why. Stating the exceptions rather than the 12 that comply means a newly
+# registered adapter is expected to comply, and the probe-registry guard in
+# test_files_image_passthrough_matrix fails loudly until it does.
+#
+# Two distinct kinds of exception, deliberately not flattened together:
+#   - a framework that *cannot* carry image content at all, and
+#   - one that gets passthrough elsewhere, so has no adapter-local path to probe.
+IMAGE_PASSTHROUGH_EXCLUSIONS = (
+    ExcludedAdapter(
+        Adapter.GOOGLE_ADK,
+        "google-adk's own __build_response_event() calls "
+        "Part.from_function_response() without a parts= kwarg, so no tool "
+        "return value can reach a multimodal FunctionResponse -- a framework "
+        "limitation, not an adapter gap",
+    ),
+    ExcludedAdapter(
+        Adapter.LETTA,
+        "routes tool execution through the shared MCP engine rather than "
+        "execute_tool_call, so it inherits opencode's fix and has no "
+        "adapter-local path to probe",
+    ),
+    ExcludedAdapter(
+        Adapter.COPILOT_ACP,
+        "wraps the ACP client adapter, which shares the same MCP engine fix; "
+        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
+    ),
 )
+
+# parlant is absent from the Adapter enum entirely (NON_AGENT_ADAPTERS), so it
+# can't be listed above -- but it is equally unsupportable:
+# parlant.core.tools.ToolResult has no multimodal field, and Parlant's own MCP
+# integration (mcp_result_to_tool_result_data()) discards image content blocks
+# before they ever reach ToolResult.data.
+#
+# Derived from the Adapter enum, not ADAPTER_CONFIGS: the enum is a plain
+# StrEnum that every lane sees identically, while ADAPTER_CONFIGS silently
+# drops configs whose framework isn't installed (9 of 15 under dev-crewai /
+# dev-parlant), which would make this constant mean different things per lane.
+IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
+    adapter.value for adapter in Adapter
+) - {excluded.adapter.value for excluded in IMAGE_PASSTHROUGH_EXCLUSIONS}
+
+# Where each supported adapter's behavioural proof lives. The mechanism differs
+# per framework, so it can't be exercised generically through ADAPTER_CONFIGS --
+# test_files_image_passthrough_matrix drives one probe per adapter instead.
+#   claude_sdk    tests/integrations/claude_sdk/test_tools.py (MCP passthrough)
+#   anthropic     test_anthropic_adapter.py (ImageBlockParam)
+#   opencode      tests/mcp/test_engine.py (the shared MCP engine's ImageContent)
+#   gemini        test_gemini_adapter.py (FunctionResponseBlob inline_data)
+#   langgraph     test_langchain_tools.py (langchain_core ImageContentBlock)
+#   agno          tests/adapters/agno/test_adapter.py (agno.media.Image)
+#   strands       test_strands_adapter.py (ToolResultContent image block)
+#   copilot_sdk   copilot_sdk/test_tool_bridging.py (ToolBinaryResult)
+#   codex         test_codex_adapter.py ("inputImage" content item -- wire-shape
+#                 verified against codex-cli's generated schema; whether
+#                 codex-rs accepts the data: URI isn't checkable from Python)
+#   pydantic_ai   test_pydantic_ai_adapter.py (messages.BinaryContent)
+#   crewai(_flow) test_crewai_tools.py (CrewAI's VISION_IMAGE: sentinel, parsed
+#                 by StepExecutor; both adapters share one vision_sentinel())
 
 
 class TestImagePassthroughMatrix:
-    """Registry-consistency guard for IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS.
+    """Registry-consistency guard for the image-passthrough expectation.
 
-    The real behavioral proof for each entry lives in that framework's own
-    test file (cited above), since the passthrough mechanism differs per
-    adapter (Anthropic's ImageBlockParam vs. the MCP engine's ImageContent)
-    and can't be exercised generically through ADAPTER_CONFIGS. This matrix
-    instead guards the *bookkeeping*: every listed framework_id must be a
-    real registered adapter, and none of them may also be on the
-    Capability.FILES pending list -- a framework can't have verified image
-    passthrough for a capability it doesn't even support.
+    Guards the bookkeeping only -- that every adapter expected to support
+    image passthrough is a real registered adapter. The behavioural proof
+    lives in the per-framework probes (see the citations above).
     """
 
-    def test_every_entry_actually_supports_files(self) -> None:
-        assert IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS.isdisjoint(
-            FILES_CAPABILITY_PENDING_FRAMEWORK_IDS
-        )
+    def test_every_supported_id_is_a_registered_adapter(self) -> None:
+        known_ids = {adapter.value for adapter in Adapter}
 
-    def test_every_entry_is_a_registered_adapter(self) -> None:
-        from tests.framework_configs.adapters import ADAPTER_CONFIGS
-
-        known_ids = {config.framework_id for config in ADAPTER_CONFIGS}
         assert IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS <= known_ids
+
+    def test_every_exclusion_carries_a_reason(self) -> None:
+        assert all(excluded.reason for excluded in IMAGE_PASSTHROUGH_EXCLUSIONS)

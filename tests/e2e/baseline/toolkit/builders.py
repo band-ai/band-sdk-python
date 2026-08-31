@@ -35,11 +35,14 @@ from tests.e2e.baseline.toolkit.adapters import (
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
-_LLM_TOOL_LOOP = (Capability.MEMORY, Capability.CONTACTS)
-_FILE_CAPABLE = (*_LLM_TOOL_LOOP, Capability.FILES)
+# Spelled out rather than derived from the Capability enum: an adapter's
+# `supports` is a claim the capability-scoped matrices select on, so a newly
+# added capability should be a deliberate per-adapter decision, not one every
+# adapter here silently starts claiming.
+_EVERY_CAPABILITY = (Capability.MEMORY, Capability.CONTACTS, Capability.FILES)
 
 
-@adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_FILE_CAPABLE)
+@adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)
 def _build_anthropic(
     s: BaselineSettings,
     *,
@@ -58,7 +61,7 @@ def _build_anthropic(
     )
 
 
-@adapter(Adapter.CLAUDE_SDK, requires=[Dep.ANTHROPIC], supports=_FILE_CAPABLE)
+@adapter(Adapter.CLAUDE_SDK, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)
 def _build_claude_sdk(
     s: BaselineSettings,
     *,
@@ -81,7 +84,7 @@ def _build_claude_sdk(
     # Singular BYOK replaces Copilot-hosted inference and needs only the
     # Anthropic provider key; GitHub auth is deliberately disabled below.
     requires=[Dep.ANTHROPIC],
-    supports=_FILE_CAPABLE,
+    supports=_EVERY_CAPABILITY,
 )
 def _build_copilot_sdk(
     s: BaselineSettings,
@@ -113,7 +116,7 @@ def _build_copilot_sdk(
     )
 
 
-@adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_FILE_CAPABLE)
+@adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
 def _build_langgraph(
     s: BaselineSettings,
     *,
@@ -144,7 +147,7 @@ def _build_langgraph(
     )
 
 
-@adapter(Adapter.PYDANTIC_AI, requires=[Dep.OPENAI], supports=_FILE_CAPABLE)
+@adapter(Adapter.PYDANTIC_AI, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
 def _build_pydantic_ai(
     s: BaselineSettings,
     *,
@@ -168,7 +171,7 @@ def _build_pydantic_ai(
     )
 
 
-@adapter(Adapter.STRANDS, requires=[Dep.OPENAI], supports=_FILE_CAPABLE)
+@adapter(Adapter.STRANDS, requires=[Dep.OPENAI], supports=_EVERY_CAPABILITY)
 def _build_strands(
     s: BaselineSettings,
     *,
@@ -194,7 +197,7 @@ def _build_strands(
     )
 
 
-@adapter(Adapter.GEMINI, requires=[Dep.GOOGLE], supports=_FILE_CAPABLE)
+@adapter(Adapter.GEMINI, requires=[Dep.GOOGLE], supports=_EVERY_CAPABILITY)
 def _build_gemini(
     s: BaselineSettings,
     *,
@@ -213,7 +216,7 @@ def _build_gemini(
     )
 
 
-@adapter(Adapter.GOOGLE_ADK, requires=[Dep.GOOGLE], supports=_FILE_CAPABLE)
+@adapter(Adapter.GOOGLE_ADK, requires=[Dep.GOOGLE], supports=_EVERY_CAPABILITY)
 def _build_google_adk(
     s: BaselineSettings,
     *,
@@ -232,7 +235,7 @@ def _build_google_adk(
     )
 
 
-@adapter(Adapter.CREWAI, requires=[Dep.OPENAI, Dep.CREWAI], supports=_FILE_CAPABLE)
+@adapter(Adapter.CREWAI, requires=[Dep.OPENAI, Dep.CREWAI], supports=_EVERY_CAPABILITY)
 def _build_crewai(
     s: BaselineSettings,
     *,
@@ -253,7 +256,7 @@ def _build_crewai(
     )
 
 
-@adapter(Adapter.AGNO, requires=[Dep.ANTHROPIC], supports=_FILE_CAPABLE)
+@adapter(Adapter.AGNO, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)
 def _build_agno(
     s: BaselineSettings,
     *,
@@ -364,7 +367,7 @@ def _build_codex(
 @adapter(
     Adapter.OPENCODE,
     requires=[Dep.OPENCODE_SERVER],
-    supports=_FILE_CAPABLE,
+    supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
 )
 def _build_opencode(
@@ -431,7 +434,7 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
 @adapter(
     Adapter.COPILOT_ACP,
     requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
-    supports=_FILE_CAPABLE,
+    supports=_EVERY_CAPABILITY,
     runs_tool_loop=False,
 )
 def _build_copilot_acp(
