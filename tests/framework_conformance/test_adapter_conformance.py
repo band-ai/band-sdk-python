@@ -276,13 +276,19 @@ class TestFilesCapabilityMatrix:
 #   tests/mcp/test_engine.py -- the ACP client adapter and the published
 #   band-mcp CLI share the same engine fix but are not adapters in
 #   ADAPTER_CONFIGS, so they don't get their own row here.
-# Every other Capability.FILES adapter (langgraph, gemini, google_adk, agno,
-# strands, codex, copilot_sdk) still degrades an image to text -- verifying
-# and fixing each one is real per-SDK research, tracked as follow-up, not yet
-# done. Add a framework_id here only once it has a real passthrough test like
-# the ones cited above.
+# - gemini: tests/adapters/test_gemini_adapter.py (TestReadRoomFileImagePassthrough,
+#   real google.genai FunctionResponsePart/FunctionResponseBlob inline_data content).
+#   google_adk is NOT here despite sharing google.genai types: google-adk 1.10.0's
+#   own __build_response_event() calls Part.from_function_response() without a
+#   parts= kwarg, so no tool return value can reach a multimodal FunctionResponse
+#   through ADK's normal flow -- a framework limitation, not an adapter gap.
+# Every other Capability.FILES adapter (langgraph, google_adk, agno, strands,
+# codex, copilot_sdk) still degrades an image to text -- verifying and fixing
+# each one is real per-SDK research, tracked as follow-up, not yet done. Add a
+# framework_id here only once it has a real passthrough test like the ones
+# cited above.
 IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS = frozenset(
-    {"claude_sdk", "anthropic", "opencode"}
+    {"claude_sdk", "anthropic", "opencode", "gemini"}
 )
 
 

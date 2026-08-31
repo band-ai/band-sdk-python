@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import warnings
@@ -44,8 +45,26 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import is_mcp_content_result
 
 logger = logging.getLogger(__name__)
+
+
+def _image_function_response_parts(
+    result: dict[str, Any],
+) -> list[types.FunctionResponsePart]:
+    """Convert an MCP-content-shaped band_read_room_file result into Gemini
+    FunctionResponsePart inline_data blocks, so the model receives real image
+    content instead of a JSON-stringified blob."""
+    return [
+        types.FunctionResponsePart(
+            inline_data=types.FunctionResponseBlob(
+                mime_type=block["mimeType"],
+                data=base64.b64decode(block["data"]),
+            )
+        )
+        for block in result["content"]
+    ]
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -508,17 +527,22 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 except Exception as e:
                     logger.warning("Failed to send tool_call event: %s", e)
 
+            response_parts: list[types.FunctionResponsePart] | None = None
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                result_str = (
-                    json.dumps(result, default=str)
-                    if not isinstance(result, str)
-                    else result
-                )
+                if tool_name == "band_read_room_file" and is_mcp_content_result(result):
+                    response_parts = _image_function_response_parts(result)
+                    result_str = f"<{len(response_parts)} image content block(s)>"
+                else:
+                    result_str = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                 is_error = False
             except ValidationError as exc:
                 errors = format_validation_error(exc)
@@ -555,6 +579,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         id=tool_call_id,
                         name=tool_name,
                         response=response_payload,
+                        parts=response_parts,
                     )
                 )
             )

@@ -299,6 +299,56 @@ class TestCustomTools:
         mock_tools.execute_tool_call.assert_not_called()
 
 
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_passes_through_as_inline_data(self, mock_tools):
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        adapter = GeminiAdapter(provider_key="test-key")
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.parts is not None
+        assert len(function_response.parts) == 1
+        inline_data = function_response.parts[0].inline_data
+        assert inline_data is not None
+        assert inline_data.mime_type == "image/png"
+        assert inline_data.data == b"fake"
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_text(self, mock_tools):
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={"name": "notes.txt", "content_type": "text/plain"}
+        )
+        adapter = GeminiAdapter(provider_key="test-key")
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.parts is None
+        assert function_response.response == {
+            "output": '{"name": "notes.txt", "content_type": "text/plain"}'
+        }
+
+
 class TestOnCleanup:
     @pytest.mark.asyncio
     async def test_removes_room_history(self):

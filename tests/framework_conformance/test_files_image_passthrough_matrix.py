@@ -124,10 +124,40 @@ async def _probe_opencode() -> bool:
     )
 
 
+async def _probe_gemini() -> bool:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from google.genai import types
+
+    from band.adapters.gemini import GeminiAdapter
+
+    adapter = GeminiAdapter(provider_key="test-key")
+    tools = MagicMock()
+    tools.execute_tool_call = AsyncMock(return_value=_IMAGE_RESULT)
+    function_calls = [
+        types.FunctionCall(
+            name="band_read_room_file", args={"file_id": "file-1"}, id="c1"
+        )
+    ]
+
+    parts = await adapter._process_function_calls(function_calls, tools)
+
+    function_response = parts[0].function_response
+    if function_response is None or not function_response.parts:
+        return False
+    inline_data = function_response.parts[0].inline_data
+    return (
+        inline_data is not None
+        and inline_data.mime_type == "image/png"
+        and inline_data.data == b"fake"
+    )
+
+
 IMAGE_PASSTHROUGH_PROBES: dict[str, Callable[[], Awaitable[bool]]] = {
     "claude_sdk": _probe_claude_sdk,
     "anthropic": _probe_anthropic,
     "opencode": _probe_opencode,
+    "gemini": _probe_gemini,
 }
 
 
