@@ -97,8 +97,8 @@ def _tool_name(execution: Any) -> str:
     return getattr(execution, "tool_name", None) or ""
 
 
-def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[Any]]:
-    async def _entrypoint(**kwargs: Any) -> Any:
+def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolResult]]:
+    async def _entrypoint(**kwargs: Any) -> str | ToolResult:
         active = _current_tools.get()
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
