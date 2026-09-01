@@ -29,7 +29,7 @@ from typing import (
     runtime_checkable,
 )
 
-from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker
+from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker, is_self_echo
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import ControlMode, DeliveryStatus
@@ -1415,10 +1415,10 @@ class ExecutionContext:
         msg_id = msg.id
 
         # Skip messages from self (agent's own messages) to avoid infinite loops
-        if (
-            self._agent_id
-            and msg.sender_type == "Agent"
-            and msg.sender_id == self._agent_id
+        if self._agent_id and is_self_echo(
+            sender_id=msg.sender_id,
+            sender_type=msg.sender_type,
+            agent_id=self._agent_id,
         ):
             logger.debug("Skipping self-message %s", msg_id)
             return BacklogProcessResult.ADVANCED
@@ -1812,10 +1812,10 @@ class ExecutionContext:
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
             # Skip messages from self (agent's own messages) to avoid infinite loops
-            if (
-                self._agent_id
-                and payload.sender_type == "Agent"
-                and payload.sender_id == self._agent_id
+            if self._agent_id and is_self_echo(
+                sender_id=payload.sender_id,
+                sender_type=payload.sender_type,
+                agent_id=self._agent_id,
             ):
                 logger.debug("Skipping self-message %s", msg_id)
                 return True

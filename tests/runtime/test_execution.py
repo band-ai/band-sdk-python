@@ -919,6 +919,71 @@ class TestCrashRecoverySync:
 
         await ctx.stop()
 
+    async def test_ws_skips_self_authored_message(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The live-event self-echo guard (band_sdk_core.is_self_echo) must
+        never reach the handler or mark anything."""
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        await ctx.start()
+        await asyncio.sleep(0.05)
+
+        event = make_message_event(
+            room_id="room-123",
+            msg_id="msg-self-echo",
+            sender_id="agent-123",
+            sender_type="Agent",
+        )
+        await ctx.on_event(event)
+        await asyncio.sleep(0.1)
+
+        mock_handler.assert_not_called()
+        mock_link_with_next.mark_processing.assert_not_called()
+        assert "msg-self-echo" not in ctx.claims.completed_ids(ctx.room_id)
+
+        await ctx.stop()
+
+    async def test_backlog_skips_self_authored_message(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The backlog self-echo guard (band_sdk_core.is_self_echo) must
+        never reach the handler or mark anything."""
+        from band.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-backlog-self-echo",
+            room_id="room-123",
+            content="echo",
+            sender_id="agent-123",
+            sender_type="Agent",
+            sender_name=None,
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == BacklogProcessResult.ADVANCED
+        mock_handler.assert_not_awaited()
+        mock_link_with_next.mark_processing.assert_not_awaited()
+        mock_link_with_next.mark_processed.assert_not_awaited()
+
+        await ctx.stop()
+
     async def test_pending_next_message_present_in_context_still_executes(
         self, mock_link_with_next, mock_handler
     ):
