@@ -36,6 +36,12 @@ ExecutorFactory = Callable[[str], AgentExecutor]
 # only thing that keeps stop() from hanging once that happens.
 SERVER_STOP_TIMEOUT_S = 5
 
+# How long start() waits for uvicorn to report ready before giving up. Without
+# this wait, start() returns as soon as serve() is merely scheduled -- a caller
+# (e.g. an A2A client dialing in immediately after on_started()) can then race
+# a socket that isn't listening yet.
+SERVER_START_TIMEOUT_S = 5
+
 # The REST endpoints the gateway serves per peer: the messaging binding and
 # the compat card. The upstream factory also returns task read/cancel/list
 # and push-config routes — an unauthenticated window into past conversations.
@@ -251,11 +257,23 @@ class GatewayServer:
             )
         )
         self._server_task = asyncio.create_task(self._uvicorn.serve())
+        await self._wait_until_started()
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
             self.port,
             len(self.peers),
         )
+
+    async def _wait_until_started(self) -> None:
+        assert self._uvicorn is not None
+        deadline = asyncio.get_running_loop().time() + SERVER_START_TIMEOUT_S
+        while not self._uvicorn.started:
+            if asyncio.get_running_loop().time() > deadline:
+                raise RuntimeError(
+                    f"A2A Gateway server did not start within "
+                    f"{SERVER_START_TIMEOUT_S}s on port {self.port}"
+                )
+            await asyncio.sleep(0.05)
 
     async def stop(self) -> None:
         if self._uvicorn is None or self._server_task is None:

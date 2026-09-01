@@ -410,6 +410,25 @@ async def test_v03_jsonrpc_stream_accepts_legacy_payload(
     assert "text/event-stream" in response.headers["content-type"]
 
 
+async def test_start_returns_only_once_the_server_is_listening() -> None:
+    """A caller dialing in right after ``on_started()`` returns (e.g. a real
+    A2A client, or one of the E2E smokes) must not race a socket that isn't
+    accepting connections yet."""
+    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
+    server = GatewayServer(
+        peers={"weather-agent": peer},
+        gateway_url="http://localhost:0",
+        port=0,
+        executor_factory=lambda _slug: FakeExecutor(),
+    )
+
+    await server.start()
+    try:
+        assert server._uvicorn.started
+    finally:
+        await server.stop()
+
+
 class NeverFinishingExecutor(AgentExecutor):
     """Enqueues one event, then never returns -- holding the SSE response
     open indefinitely, the way a real long-running agent task would."""
@@ -451,13 +470,6 @@ async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
         executor_factory=lambda _slug: NeverFinishingExecutor(),
     )
     await server.start()
-    # start() doesn't wait for uvicorn's own startup phase to finish -- it
-    # only schedules serve() as a background task. Poll for it directly
-    # since GatewayServer exposes no readiness signal of its own.
-    for _ in range(50):
-        if server._uvicorn.started:
-            break
-        await asyncio.sleep(0.05)
     port = server._uvicorn.servers[0].sockets[0].getsockname()[1]
 
     connection_ready = asyncio.Event()
