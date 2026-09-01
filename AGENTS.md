@@ -28,20 +28,6 @@ never enable it in an example or default config. See
 [docs/capability-negotiation.md](docs/capability-negotiation.md) for the full
 emit/capabilities API and how requests get pruned against `AgentMe.feature_flags`.
 
-## band-sdk-core
-
-`band-sdk-core` (Rust, PyO3-bound, shared with band-sdk-typescript) is the
-decision layer underneath both the WebSocket and REST paths: inbound
-event-payload validation (`validate_event_payload`), delivery/retry/session
-state (`ClaimRegistry`/`RetryTracker`/`ParticipantRoster`/`Session`), the
-shared `is_self_echo` predicate, and the one-shot delivery lifecycle
-(`evaluate_delivery_event`/`evaluate_next_message`/`evaluate_drain_candidate`/
-`evaluate_adapter_result`) that `OneShotInvoker` is a thin wrapper around —
-see [docs/websocket-events.md](docs/websocket-events.md). Whenever code here
-starts calling a core symbol it didn't use before, extend
-`.github/workflows/ci.yml`'s wheel-smoke step to prove that symbol is
-*callable* from the isolated pinned wheel, not just importable.
-
 ## REST Client
 
 The SDK uses a Fern-generated REST client with a property-based namespace API
@@ -56,8 +42,11 @@ validation; build a `kwargs` dict and omit the key instead. See
 The SDK subscribes to Phoenix Channels (agent/chat/user rooms, participants,
 tasks) and hydrates each event's payload into a typed, rule-free
 `WirePayload` projection without re-validating. See
-[docs/websocket-events.md](docs/websocket-events.md) for the channel table
-and payload field reference.
+[docs/websocket-events.md](docs/websocket-events.md) for the channel table,
+payload field reference, and `band-sdk-core`'s delivery-lifecycle decisions.
+Whenever code here starts calling a `band_sdk_core` symbol it didn't use
+before, extend `.github/workflows/ci.yml`'s wheel-smoke step to prove that
+symbol is callable from the isolated pinned wheel, not just importable.
 
 ## Contact Event Handling
 

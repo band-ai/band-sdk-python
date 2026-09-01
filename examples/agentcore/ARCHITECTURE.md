@@ -158,7 +158,7 @@ Inside `OneShotInvoker.handle_event`, each invocation:
 
 When weather invocation B starts (after A finishes), B's
 `get_next_message` returns `204 No Content` — A drained it. B exits with
-`{"status": OneShotStatus.NO_PENDING}` without an LLM call.
+`{"status": "no_pending"}` (`OneShotStatus.NO_PENDING`) without an LLM call.
 
 This is the same in-band claim/process semantics the SDK's
 `ExecutionContext` uses in the normal long-running Agent flow;
