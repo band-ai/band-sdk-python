@@ -8,7 +8,7 @@ import logging
 import random
 from typing import Any, Literal
 
-from band_sdk_core import SessionPolicy
+from band_sdk_core import Session, SessionPolicy
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
@@ -352,6 +352,7 @@ class WebSocketClient:
         self._validation_error_count: int = 0
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
         self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
+        self._session = Session(self._watchdog.policy)
 
     @property
     def validation_error_count(self) -> int:
@@ -447,6 +448,7 @@ class WebSocketClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""
         await self._watchdog.stop()
+        self._session.end()
         if self.client:
             await self.client.__aexit__(exc_type, exc_val, exc_tb)
 
