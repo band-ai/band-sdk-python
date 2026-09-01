@@ -264,7 +264,9 @@ class SupersedePayload(WirePayload):
     target_socket_id: str | None = None
     correlation_id: str | None = None
 
-    def to_disconnect_reason(self) -> WebSocketDisconnectReason:
+    def to_disconnect_reason(
+        self, outcome: SessionOutcome | None = None
+    ) -> WebSocketDisconnectReason:
         return WebSocketDisconnectReason(
             reason=self.reason,
             message=self.message,
@@ -272,6 +274,8 @@ class SupersedePayload(WirePayload):
             retry_after=self.retry_after,
             target_socket_id=self.target_socket_id,
             correlation_id=self.correlation_id,
+            dead_reason=outcome.dead_reason if outcome is not None else None,
+            stale_reason=outcome.stale_reason if outcome is not None else None,
         )
 
 
@@ -661,6 +665,18 @@ class WebSocketClient:
         """Disable PHX auto-reconnect for a terminal platform disconnect."""
         if self.client:
             self.client.auto_reconnect = False
+
+    def handle_supersede(
+        self, retryable: bool, retry_after_s: float | None
+    ) -> SessionOutcome:
+        """Arbitrate an agent_control supersede event through Session --
+        whether it's actually current (not a stale notification about an
+        epoch this connection has already moved past) and, in principle,
+        whether a retryable supersede should keep reconnecting."""
+        now = asyncio.get_running_loop().time()
+        return self._session.on_supersede(
+            now, retryable, retry_after_s, random.random()
+        )
 
     async def join_agent_control_channel(
         self,

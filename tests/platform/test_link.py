@@ -38,7 +38,7 @@ from band.platform.event import (
     WebSocketDisconnectedEvent,
 )
 from band.platform.link import BandLink
-from band_sdk_core import AgentTopicStatus, DeadReason, chat_room_topic
+from band_sdk_core import AgentTopicStatus, DeadReason, SessionState, chat_room_topic
 
 from tests.conftest import make_message_event
 from tests.platform.conftest import cancelled_mid_await
@@ -91,6 +91,19 @@ def mock_ws_client():
         ws.last_disconnect_reason = reason
 
     ws.record_terminal_disconnect.side_effect = record_terminal_disconnect
+
+    # Documented "every real-world supersede is terminal" default (the
+    # platform hardcodes retryable=False today) -- an unconfigured autospec
+    # call would otherwise return a bare MagicMock whose `.state` is not
+    # SessionState.Dead, silently skipping record_terminal_disconnect in
+    # _on_supersede and breaking every existing supersede test using this
+    # fixture.
+    ws.handle_supersede.return_value = MagicMock(
+        state=SessionState.Dead,
+        dead_reason=DeadReason.Classified,
+        stale_reason=None,
+        retry_after_s=None,
+    )
 
     return ws
 
@@ -357,6 +370,38 @@ class TestBandLinkConnection:
         event = await link.__anext__()
         assert isinstance(event, WebSocketDisconnectedEvent)
         assert event.payload == link.last_disconnect_reason
+
+    async def test_retryable_supersede_leaves_connection_non_terminal(
+        self, mock_ws_client
+    ):
+        """A supersede Session classifies as still-Reconnecting (not Dead)
+        must not disable reconnect, set last_disconnect_reason, or queue a
+        terminal event -- unlike every real-world supersede today, which the
+        platform always sends retryable=False (so this has no real-world
+        trigger yet, only this synthetic regression guard for if that ever
+        changes)."""
+        mock_ws_client.handle_supersede.return_value = MagicMock(
+            state=SessionState.Reconnecting,
+            dead_reason=None,
+            stale_reason=None,
+            retry_after_s=1.0,
+        )
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link._ws = mock_ws_client
+        link._is_connected = True
+        payload = SupersedePayload(
+            reason="session.already_connected",
+            message="This connection has been superseded by a newer session for this agent.",
+            retryable=True,
+            correlation_id="evict-123",
+        )
+
+        await link._on_supersede(payload)
+
+        mock_ws_client.record_terminal_disconnect.assert_not_called()
+        assert link.is_connected is True
+        assert link.last_disconnect_reason is None
+        assert link._event_queue.empty()
 
     async def test_disconnect_after_supersede_still_cleans_up_websocket(
         self, mock_ws_client

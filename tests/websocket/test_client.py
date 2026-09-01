@@ -209,7 +209,8 @@ async def test_supersede_event_records_terminal_reason_and_disables_reconnect():
     async def on_supersede(payload: SupersedePayload):
         nonlocal received_payload
         received_payload = payload
-        client.record_terminal_disconnect(payload.to_disconnect_reason())
+        outcome = client.handle_supersede(payload.retryable, payload.retry_after)
+        client.record_terminal_disconnect(payload.to_disconnect_reason(outcome))
 
     class MockMessage:
         event = "supersede"
@@ -233,6 +234,7 @@ async def test_supersede_event_records_terminal_reason_and_disables_reconnect():
         retry_after=15,
         target_socket_id="agent_socket:agent-123",
         correlation_id="evict-123",
+        dead_reason=DeadReason.Classified,
     )
 
 

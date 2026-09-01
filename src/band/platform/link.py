@@ -22,6 +22,7 @@ from band_sdk_core import (
     AgentTopicKind,
     LeaveOutcome,
     RoomSubscribeResult,
+    SessionState,
     SubscriptionTracker,
     chat_room_topic,
     room_participants_topic,
@@ -725,12 +726,37 @@ class BandLink:
             self._agent_topics_needing_reconciliation.discard(topic)
 
     async def _on_supersede(self, payload: "SupersedePayload") -> None:
-        """Handle terminal supersede event before the platform closes the socket."""
-        reason = payload.to_disconnect_reason()
+        """Handle an agent_control supersede event before the platform closes
+        the socket. Session arbitrates whether this specific supersede is
+        actually current (not a stale notification about an epoch this
+        connection has already moved past) and, in principle, whether a
+        retryable supersede should keep the connection reconnecting --
+        though the platform hardcodes retryable=False today, so in practice
+        this still always resolves to Dead.
+        """
+        if self._ws is not None:
+            outcome = self._ws.handle_supersede(payload.retryable, payload.retry_after)
+            reason = payload.to_disconnect_reason(outcome)
+            if outcome.state is not SessionState.Dead:
+                # outcome.retry_after_s is computed but intentionally not
+                # applied here: enforcing it would mean this SDK taking over
+                # firing the actual reconnect attempt, which is the vendored
+                # PHXChannelsClient auto_reconnect loop's job today (see the
+                # design doc's out-of-scope boundary) -- untouched reconnect
+                # keeps working exactly as it does for any other disconnect.
+                logger.info(
+                    "Supersede reported retryable=True; Session kept the "
+                    "connection reconnecting (state=%s, retry_after_s=%s), "
+                    "not treating it as terminal.",
+                    outcome.state,
+                    outcome.retry_after_s,
+                )
+                return
+            self._ws.record_terminal_disconnect(reason)
+        else:
+            reason = payload.to_disconnect_reason()
         self._last_disconnect_reason = reason
         self._is_connected = False
-        if self._ws:
-            self._ws.record_terminal_disconnect(reason)
         logger.warning(
             "WebSocket connection superseded: reason=%s retryable=%s correlation_id=%s",
             reason.reason,
