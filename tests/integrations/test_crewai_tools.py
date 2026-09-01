@@ -557,6 +557,39 @@ class TestFileTools:
 
         assert result == builder_mod.vision_sentinel(image_result)
 
+    def test_read_room_file_image_result_reports_placeholder_not_base64(
+        self, builder_mod
+    ):
+        """The full base64 sentinel must reach CrewAI's StepExecutor, but the
+        platform tool_result event must not carry that same base64 blob."""
+        from band.core.types import AdapterFeatures, Capability, Emit
+        from band.runtime.tools import image_block_placeholder
+
+        image_result = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+        tools_obj = MagicMock()
+        tools_obj.read_room_file = AsyncMock(return_value=image_result)
+        tools_obj.send_event = AsyncMock()
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        reporter = builder_mod.EmitToolCallsReporter(
+            AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=reporter,
+            capabilities=frozenset({Capability.FILES}),
+        )
+        read_room_file = next(t for t in tools if t.name == "band_read_room_file")
+
+        result = read_room_file._run(file_id="file-1")
+
+        assert result == builder_mod.vision_sentinel(image_result)
+        result_event = tools_obj.send_event.call_args_list[-1].kwargs
+        reported_output = json.loads(result_event["content"])["output"]
+        assert reported_output == image_block_placeholder(1)
+        assert "ZmFrZQ==" not in reported_output
+
     def test_send_room_file_forwards_args_in_protocol_order(self, builder_mod):
         """AgentToolsProtocol.send_room_file wants (content, filename, caption,
         mentions) positionally -- pin the reorder from the tool's own kwargs."""

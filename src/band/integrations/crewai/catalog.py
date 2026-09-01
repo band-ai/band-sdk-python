@@ -20,6 +20,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.integrations.crewai.reporting import CrewAIToolReporter
 from band.runtime.tools import (
     BandTool,
+    image_block_placeholder,
     is_mcp_content_result,
     platform_args_schema,
     serialize_tool_result,
@@ -444,12 +445,24 @@ async def _list_room_files(call: Invocation, *, cursor: str | None = None) -> An
     return await call.tools.list_room_files(cursor)
 
 
-@band_tool(BandTool.READ_ROOM_FILE, render=text_or_success)
+@band_tool(BandTool.READ_ROOM_FILE, render=text_or_success, reports=False)
 async def _read_room_file(call: Invocation, *, file_id: str = "") -> Any:
+    # reports=False: an image result must still return the full VISION_IMAGE
+    # sentinel (StepExecutor needs the real base64 to build vision content),
+    # but reporting that same string would put the raw base64 blob in a
+    # tool_result event -- huge on the wire and worthless to a reader. Report
+    # a bounded placeholder instead, independent of what's returned.
+    await call.reporter.report_call(
+        call.tools, BandTool.READ_ROOM_FILE, {"file_id": file_id}
+    )
     result = await call.tools.read_room_file(file_id)
-    # The sentinel is reported as well as returned: a tool_result carrying the
-    # raw base64 blob is worthless to a reader and huge on the wire.
-    return vision_sentinel(result) if is_mcp_content_result(result) else result
+    if is_mcp_content_result(result):
+        reported: Any = image_block_placeholder(len(result["content"]))
+        sentinel = vision_sentinel(result)
+        await call.reporter.report_result(call.tools, BandTool.READ_ROOM_FILE, reported)
+        return sentinel
+    await call.reporter.report_result(call.tools, BandTool.READ_ROOM_FILE, result)
+    return result
 
 
 @band_tool(
