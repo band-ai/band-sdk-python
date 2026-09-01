@@ -83,17 +83,22 @@ platform tool, so each grew three new hand-written wrappers instead.
 Real image vision passthrough for `band_read_room_file` (a small
 previewable image reaches the model as actual image content instead of a
 `json.dumps`'d text block) is verified for `claude_sdk`, `anthropic`,
-`opencode` (and the ACP client adapter / published `band-mcp` CLI, which
-share its MCP-engine fix), `gemini`, `langgraph`, `agno`, `strands`,
-`copilot_sdk`, `codex`, `pydantic_ai`, and `crewai`/`crewai_flow` — see
+`opencode`, `gemini`, `langgraph`, `agno`, `strands`, `copilot_sdk`,
+`codex`, `pydantic_ai`, and `crewai`/`crewai_flow` — see
 `IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS` in
 `tests/framework_conformance/test_adapter_conformance.py` for the
-up-to-date list and per-adapter mechanism citations. `google_adk` and
+up-to-date list and per-adapter mechanism citations. Three adapters are
+excluded from that list, for two different reasons. `google_adk` and
 `parlant` are confirmed **not** supportable: `google_adk` because
 installed google-adk's own tool-response builder drops multimodal content
 before it reaches the model (an upstream framework limitation), `parlant`
 because its `ToolResult` has no multimodal field and its own MCP
-integration discards image content blocks the same way.
+integration discards image content blocks the same way. `letta` and
+`copilot_acp` (which wraps the ACP client adapter) are excluded for an
+unrelated reason: both route tool execution through the shared MCP
+engine rather than calling `execute_tool_call` directly, so they inherit
+`opencode`'s fix transitively and have no adapter-local code path to
+probe — not unsupportable, just unverifiable in isolation.
 
 `AgentTools.get_tool_schemas`/`get_anthropic_tool_schemas`/
 `get_openai_tool_schemas` and `iter_tool_definitions` take a single

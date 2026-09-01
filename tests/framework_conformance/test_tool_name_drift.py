@@ -163,7 +163,7 @@ class TestLangGraphToolDrift:
 
 
 class TestCrewAIToolDrift:
-    """CrewAI platform tools (integrations/crewai/tools.py).
+    """CrewAI platform tools (integrations/crewai/catalog.py).
 
     Both ``CrewAIAdapter`` and ``CrewAIFlowAdapter`` consume one set of
     wrappers, declared as ``@band_tool`` bodies rather than string literals,
@@ -175,7 +175,7 @@ class TestCrewAIToolDrift:
         missing = ALL_TOOL_NAMES - {spec.name for spec in PLATFORM_TOOLS}
         assert not missing, (
             f"CrewAI adapter is missing tool bodies for: {sorted(missing)}. "
-            "Add a @band_tool body in integrations/crewai/tools.py."
+            "Add a @band_tool body in integrations/crewai/catalog.py."
         )
 
 
