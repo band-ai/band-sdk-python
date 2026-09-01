@@ -342,7 +342,6 @@ class OneShotInvoker:
         """
         msg_id = payload["id"]
 
-        # 1. Verify the triggering message is the next open one for this agent.
         # The platform's ``/next`` returns the oldest actionable message —
         # anything not yet in ``processed`` state, including ones stuck in
         # ``processing`` from a previous crash — so a single call covers both
@@ -371,12 +370,10 @@ class OneShotInvoker:
             case {"decision": "ready_to_claim"}:
                 pass
 
-        # 2. Claim.
         logger.info("Claiming msg %s in room %s", msg_id, room_id)
         await self._link.mark_processing(room_id, msg_id)
 
         try:
-            # 3. Build AgentInput and run the adapter.
             participants = await self._fetch_participants(room_id)
             sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
 
@@ -410,10 +407,8 @@ class OneShotInvoker:
 
             await self._adapter.on_event(inp)
 
-            # 4. Mark the triggering message processed.
             await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
         except Exception as exc:
-            # 6. Mark failed so the platform can surface the error.
             logger.exception(
                 "Adapter failed for message %s in room %s", msg_id, room_id
             )
@@ -425,7 +420,7 @@ class OneShotInvoker:
             )
             raise
 
-        # 5. Drain — scoped to what the LLM saw (seen_ids). A message that
+        # Drain is scoped to what the LLM saw (seen_ids). A message that
         # arrived after the history snapshot is NOT swallowed; it's left open
         # so the next invocation processes it with fresh context.
         drained: list[str] = []
