@@ -69,12 +69,10 @@ SERVER_STOP_TIMEOUT_S = 5
 # something threaded through LocalMCPServer's API.
 #
 # Cost of that global scope: any *other* sse_starlette consumer in the same
-# process -- e.g. the A2A gateway's own message:stream responses
-# (src/band/integrations/a2a/gateway/server.py) -- loses this same
-# cooperative-drain signal too, permanently, the moment this module is
-# imported anywhere in the process. That server's own uvicorn.Config sets
-# timeout_graceful_shutdown precisely so its stop() still bounds how long it
-# waits on a live stream, rather than relying on the now-disabled signal.
+# process loses this same signal too, the moment this module is imported.
+# The A2A gateway (src/band/integrations/a2a/gateway/server.py) hits the
+# identical bug independently and disables this itself; the call here is
+# redundant with that one but harmless (idempotent, process-wide).
 AppStatus.disable_automatic_graceful_drain()
 
 

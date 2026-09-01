@@ -16,6 +16,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.compat.v0_3.conversions import to_compat_agent_card
 from a2a.utils.constants import PROTOCOL_VERSION_0_3, PROTOCOL_VERSION_CURRENT
+from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -27,13 +28,18 @@ logger = logging.getLogger(__name__)
 
 ExecutorFactory = Callable[[str], AgentExecutor]
 
-# uvicorn's own default (None) waits forever for existing connections to close
-# on stop() -- and a live message:stream SSE response has no other way to end
-# on its own. sse_starlette normally closes it cooperatively on shutdown, but
-# that mechanism is a process-global switch any co-located
-# band.integrations.mcp.local_server permanently disables (see that module's
-# AppStatus.disable_automatic_graceful_drain() call) -- so this bound is the
-# only thing that keeps stop() from hanging once that happens.
+# sse_starlette's shutdown watcher polls whichever uvicorn.Server owns the
+# process's SIGTERM slot and promotes its should_exit to the process-global
+# AppStatus.should_exit -- so a GatewayServer.stop() (which sets should_exit
+# directly, not via a signal) can poison every later GatewayServer's SSE
+# streams in the same process. band.integrations.mcp.local_server disables
+# this for the same reason; calling it here too avoids depending on that
+# import (idempotent, process-wide).
+AppStatus.disable_automatic_graceful_drain()
+
+# The automatic drain above is disabled, so a live message:stream response
+# has no other way to end on stop() -- uvicorn's own default (None) would
+# wait forever for it to close on its own.
 SERVER_STOP_TIMEOUT_S = 5
 
 # How long start() waits for uvicorn to report ready before giving up. Without

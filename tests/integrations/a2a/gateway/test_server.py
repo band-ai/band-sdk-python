@@ -16,15 +16,8 @@ from a2a.helpers import new_task_from_user_message
 from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
+from sse_starlette.sse import AppStatus
 
-# Side effect, not used directly: importing this module disables
-# sse_starlette's automatic graceful drain process-wide (see its own
-# AppStatus.disable_automatic_graceful_drain() call) -- the exact real-world
-# coexistence (an ACP/opencode backend in the same process as this gateway)
-# that test_stop_returns_promptly_with_a_still_open_message_stream guards
-# against. Imported explicitly so the test is deterministic regardless of
-# whether some other test file happened to import it first.
-import band.integrations.mcp.local_server  # noqa: F401
 from band.integrations.a2a.gateway.server import SERVER_STOP_TIMEOUT_S, GatewayServer
 from tests.integrations.a2a.gateway.helpers import make_peer
 
@@ -429,6 +422,108 @@ async def test_start_returns_only_once_the_server_is_listening() -> None:
         await server.stop()
 
 
+def test_disables_sse_starlette_automatic_graceful_drain() -> None:
+    """AppStatus.should_exit is process-global with no notion of "which
+    server" -- a GatewayServer.stop() sets its own uvicorn.Server.should_exit
+    directly, and sse_starlette's shutdown watcher promotes that to the
+    global flag, cancelling every later GatewayServer's SSE streams in the
+    same process. Importing this module must disable that."""
+    assert AppStatus.enable_automatic_graceful_drain is False
+
+    original_should_exit = AppStatus.should_exit
+    original_handler = AppStatus.original_handler
+    AppStatus.original_handler = None
+    try:
+        AppStatus.handle_exit(0, None)
+        assert AppStatus.should_exit is False
+    finally:
+        AppStatus.should_exit = original_should_exit
+        AppStatus.original_handler = original_handler
+
+
+class DelayedTwoStepExecutor(AgentExecutor):
+    """Task, then a working update, then (after a pause) completion -- three
+    distinct SSE events, so a stream cut short is distinguishable from a
+    healthy one."""
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        if context.message is None:
+            raise ValueError("A2A request is missing its message")
+        task = new_task_from_user_message(context.message)
+        await event_queue.enqueue_event(task)
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task.id,
+                context_id=task.context_id,
+                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+            )
+        )
+        await asyncio.sleep(0.3)
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task.id,
+                context_id=task.context_id,
+                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+            )
+        )
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+
+async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> None:
+    """Regression, reproducing the real failure directly rather than just
+    the flag from test_disables_sse_starlette_automatic_graceful_drain: a
+    second GatewayServer's live stream, opened only after a first one has
+    stopped in the same process, must still deliver every event."""
+    first = GatewayServer(
+        peers={"weather-agent": make_peer("uuid-weather", "Weather Agent", "")},
+        gateway_url="http://localhost:0",
+        port=0,
+        executor_factory=lambda _slug: FakeExecutor(),
+    )
+    await first.start()
+    port1 = first._uvicorn.servers[0].sockets[0].getsockname()[1]
+    async with httpx.AsyncClient(timeout=None) as client:
+        async with client.stream(
+            "POST",
+            f"http://127.0.0.1:{port1}/agents/weather-agent/message:stream",
+            headers={"A2A-Version": "1.0"},
+            json=hello_message_body(),
+        ) as response:
+            async for _ in response.aiter_bytes():
+                pass
+    await first.stop()
+
+    second = GatewayServer(
+        peers={"other-agent": make_peer("uuid-other", "Other Agent", "")},
+        gateway_url="http://localhost:0",
+        port=0,
+        executor_factory=lambda _slug: DelayedTwoStepExecutor(),
+    )
+    await second.start()
+    try:
+        port2 = second._uvicorn.servers[0].sockets[0].getsockname()[1]
+        events: list[str] = []
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"http://127.0.0.1:{port2}/agents/other-agent/message:stream",
+                headers={"A2A-Version": "1.0"},
+                json=hello_message_body(),
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        events.append(line)
+
+        assert len(events) >= 3, (
+            f"got {len(events)} events, expected 3 (task, working, completed) -- "
+            "the second server's stream was cut short by the first server's shutdown"
+        )
+    finally:
+        await second.stop()
+
+
 class NeverFinishingExecutor(AgentExecutor):
     """Enqueues one event, then never returns -- holding the SSE response
     open indefinitely, the way a real long-running agent task would."""
@@ -449,13 +544,10 @@ class NeverFinishingExecutor(AgentExecutor):
 
 @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
 async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
-    """Regression: sse_starlette's cooperative shutdown drain is a process-
-    global switch that band.integrations.mcp.local_server permanently
-    disables the moment it's imported anywhere in the process -- a real
-    coexistence scenario (an ACP/opencode backend sharing the process with
-    this gateway). A live message:stream connection then has no other way
-    to end on its own, so stop() must bound its wait via
-    timeout_graceful_shutdown instead of hanging forever.
+    """Regression: gateway/server.py disables sse_starlette's cooperative
+    shutdown drain, so a live message:stream connection has no other way to
+    end on its own -- stop() must bound its wait via timeout_graceful_shutdown
+    instead of hanging forever.
 
     Measures wall-clock time around a bare ``await server.stop()`` (no
     wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
