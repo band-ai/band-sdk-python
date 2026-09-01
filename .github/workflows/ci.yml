@@ -255,7 +255,13 @@ jobs:
         /tmp/test-install/bin/python <<'PYEOF'
         from band import Agent, BandLink, AgentRuntime
         from band.config import load_agent_config
-        from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker
+        from band_sdk_core import (
+            ClaimRegistry,
+            ParticipantRoster,
+            RetryTracker,
+            evaluate_drain_candidate,
+            is_self_echo,
+        )
 
         # Prove the pinned band_sdk_core wheel is callable, not just importable,
         # from this isolated install -- not only from the dev checkout via uv sync.
@@ -265,6 +271,8 @@ jobs:
         assert tracker.max_retries == 1
         roster = ParticipantRoster()
         assert roster.list() == []
+        assert is_self_echo("agent-1", "Agent", "agent-1") is True
+        assert evaluate_drain_candidate(None, [], "agent-1") == {"decision": "no_candidate"}
         print('Core imports successful')
         PYEOF
 

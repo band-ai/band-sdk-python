@@ -23,7 +23,7 @@ classifiers = [
 
 dependencies = [
     "band-client-rest==0.0.27",
-    "band-sdk-core==2.0.0",
+    "band-sdk-core==2.2.0",
     "phoenix-channels-python-client>=0.2.4",
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
