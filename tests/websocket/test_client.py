@@ -25,6 +25,7 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 import band_sdk_core
+from band_sdk_core import DeadReason
 
 from band.credentials import PROXY_MANAGED_API_KEY
 import band.client.streaming.wire as wire_module
@@ -319,23 +320,45 @@ async def test_aenter_wraps_upgrade_error(monkeypatch):
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "connection_conflict"
     assert exc_info.value.request_id == "req-409"
+    # WebSocketUpgradeError is a new object distinct from the raw exception
+    # PHXChannelsClient raised -- explicit chaining keeps that link visible
+    # in tracebacks and error trackers.
+    assert exc_info.value.__cause__ is upgrade_exc
 
 
-async def test_aenter_probes_initial_phx_connection_error(monkeypatch):
+async def test_aenter_probes_initial_phx_connection_error_then_retries_and_succeeds(
+    monkeypatch,
+):
+    """A 429 upgrade rejection -- recovered via classify_initial_upgrade_error's
+    probe fallback, since the raw PHXConnectionError carries no HTTP status
+    itself -- classifies as Retry (classify_upgrade marks only 400/403/409
+    Terminal), so it retries using Retry-After as a delay floor instead of
+    raising on the first attempt, then succeeds once the rate limit clears."""
     upgrade_exc = _upgrade_exception(
         429,
         b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429"}}',
-        {"Retry-After": "30"},
+        {"Retry-After": "5"},
     )
     probed_urls = []
+    attempts = 0
 
-    class FailingPHXClient:
+    class RecoveringPHXClient:
         def __init__(self, *args, **kwargs):
             assert kwargs["auto_reconnect"] is False
             self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
 
         async def __aenter__(self):
-            raise PHXConnectionError("Connection supervisor stopped before connecting")
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PHXConnectionError(
+                    "Connection supervisor stopped before connecting"
+                )
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
 
     class FailingProbe:
         async def __aenter__(self):
@@ -348,20 +371,30 @@ async def test_aenter_probes_initial_phx_connection_error(monkeypatch):
         probed_urls.append((url, open_timeout))
         return FailingProbe()
 
+    sleep_delays = []
+
+    async def fake_sleep(delay):
+        sleep_delays.append(delay)
+
     monkeypatch.setattr(
-        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
+        "band.client.streaming.client.PHXChannelsClient", RecoveringPHXClient
     )
     monkeypatch.setattr("band.client.streaming.errors.connect", fake_connect)
+    monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
 
-    with pytest.raises(WebSocketUpgradeError) as exc_info:
-        await client.__aenter__()
-
+    assert attempts == 2
     assert probed_urls == [("wss://test/socket&agent_id=agent-123", 5)]
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.code == "too_many_requests"
-    assert exc_info.value.retry_after == 30
+    # retry_after_s is a lower bound (Retry-After) with an upper bound of
+    # max(max_delay_s, retry_after_s) -- see the design doc's "on_upgrade_rejected"
+    # semantics -- rather than asserting one exact jittered value.
+    assert len(sleep_delays) == 1
+    assert 5.0 <= sleep_delays[0] <= 30.0
+    assert client.client.auto_reconnect is True
+
+    await client.__aexit__(None, None, None)
 
 
 async def test_aenter_restores_reconnect_after_successful_initial_connect(monkeypatch):
@@ -429,16 +462,77 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
     )
     monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
 
-    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    client = WebSocketClient(
+        "ws://localhost",
+        "test-key",
+        "agent-123",
+        session_policy=fast_session_policy(
+            heartbeat_interval_s=0.15, dead_threshold_s=0.4
+        ),
+    )
     await client.__aenter__()
 
     assert attempts == 3
-    assert len(sleep_delays) == 2
+    # Both retries are the first two rapid disconnects (never having reached
+    # Up) -- their delay floors (rapid_first_min_delay_s/rapid_second_min_delay_s)
+    # are policy-driven and not jitter-scaled, so this is deterministic.
+    assert sleep_delays == [1.0, 5.0]
     assert client.client.auto_reconnect is True
 
     # fake_sleep never advances the clock; an un-stopped watchdog's
     # deadline-check loop would spin on it with no real yield point.
     await client.__aexit__(None, None, None)
+
+
+async def test_aenter_trips_dead_after_rapid_disconnect_threshold(monkeypatch):
+    """A burst of fast-repeating initial-connect failures trips Session
+    straight to Dead(RapidDisconnect) once the rolling rapid-disconnect
+    window's threshold is reached. Uses SessionPolicy.default() (not
+    fast_session_policy, which only fast-forwards heartbeat/dead-threshold,
+    not reconnect-backoff fields) since asyncio.sleep is mocked below, so
+    the real default rapid_threshold=10 costs no wall-clock time."""
+    attempts = 0
+
+    class AlwaysFailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            nonlocal attempts
+            attempts += 1
+            raise PHXConnectionError("temporary network failure")
+
+    async def no_upgrade_error(exc, websocket_url):
+        return None
+
+    async def fake_sleep(delay):
+        return None
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.PHXChannelsClient", AlwaysFailingPHXClient
+    )
+    monkeypatch.setattr(
+        "band.client.streaming.client.classify_initial_upgrade_error",
+        no_upgrade_error,
+    )
+    monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(
+        PHXConnectionError, match="temporary network failure"
+    ) as exc_info:
+        await client.__aenter__()
+
+    # SessionPolicy.default()'s rapid_threshold is 10 -- the 10th rapid
+    # disconnect trips Dead(RapidDisconnect) instead of computing another delay.
+    assert attempts == 10
+    assert client.last_disconnect_reason is not None
+    assert client.last_disconnect_reason.dead_reason == DeadReason.RapidDisconnect
+    # PHXConnectionError is re-raised as itself (no new exception object),
+    # so no `from` chaining applies -- self-referential __cause__ would be
+    # incorrect (and misleading) here.
+    assert exc_info.value.__cause__ is None
 
 
 async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):

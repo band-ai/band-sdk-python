@@ -8,15 +8,24 @@ import logging
 import random
 from typing import Any, Literal
 
-from band_sdk_core import Session, SessionPolicy
+from band_sdk_core import (
+    DeadReason,
+    Session,
+    SessionOutcome,
+    SessionPolicy,
+    SessionState,
+    StaleReason,
+)
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
 )
-from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
-from band.client.streaming.errors import classify_initial_upgrade_error
+from band.client.streaming.errors import (
+    WebSocketUpgradeError,
+    classify_initial_upgrade_error,
+)
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
@@ -35,6 +44,8 @@ class WebSocketDisconnectReason:
     retry_after: int | None = None
     target_socket_id: str | None = None
     correlation_id: str | None = None
+    dead_reason: DeadReason | None = None
+    stale_reason: StaleReason | None = None
 
 
 # WebSocket message payloads (based on actual backend messages)
@@ -324,13 +335,32 @@ _PAYLOAD_MODELS: dict[WireEvent, type[WirePayload]] = {
 KNOWN_UNHANDLED_EVENTS = frozenset({WireEvent.EVENT_CREATED})
 
 
-def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
-    delay = min(
-        policy.max_delay_s, policy.base_delay_s * (policy.factor ** max(attempt, 0))
+def _disconnect_reason_from_exception(
+    exc: Exception, outcome: SessionOutcome
+) -> WebSocketDisconnectReason:
+    """Synthesize a WebSocketDisconnectReason for an initial-connect failure
+    Session has classified as terminal. Unlike the supersede path, there is
+    no platform wire payload here -- reason/message are derived from the
+    raised exception itself, not a server-supplied constant."""
+    session_fields = {
+        "dead_reason": outcome.dead_reason,
+        "stale_reason": outcome.stale_reason,
+    }
+    if isinstance(exc, WebSocketUpgradeError):
+        return WebSocketDisconnectReason(
+            reason=exc.code or f"http_{exc.status_code}",
+            message=exc.message,
+            retryable=False,
+            retry_after=exc.retry_after,
+            correlation_id=exc.request_id,
+            **session_fields,
+        )
+    return WebSocketDisconnectReason(
+        reason="connection_failed",
+        message=str(exc),
+        retryable=False,
+        **session_fields,
     )
-    if delay <= 0:
-        return 0.0
-    return (delay / 2) + (random.random() * (delay / 2))
 
 
 class WebSocketClient:
@@ -396,54 +426,135 @@ class WebSocketClient:
         if self._on_reconnect is not None:
             await self._on_reconnect()
 
-    async def __aenter__(self):
-        """Create and enter the PHXChannelsClient context"""
-        policy = ReconnectPolicy()
-        for attempt in range(policy.rapid_suppress_disconnect_count + 1):
-            self.client = PHXChannelsClient(
-                self.ws_url,
-                self.api_key,
-                protocol_version=PhoenixChannelsProtocolVersion.V2,
-                auto_reconnect=False,
-                heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
-                on_reconnect=self._handle_reconnect,
-                on_disconnect=self._on_disconnect,
-                on_heartbeat_ack=self._watchdog.reset_deadline,
-                # Also send the key as an x-api-key handshake header. Under
-                # proxy-managed sandbox custody the host-side proxy replaces the
-                # sentinel in this header (it can't touch the URL query), and the
-                # platform authenticates off the header (precedence over the
-                # query) — so the WS upgrade works with the real key never in the
-                # VM. Harmless elsewhere: same value the query already carries.
-                additional_headers={"x-api-key": self.api_key},
+    def _build_phx_client(self) -> PHXChannelsClient:
+        """Construct a fresh PHXChannelsClient for one connection attempt --
+        a new instance is required per attempt; the vendored client has no
+        reconnect-from-here primitive."""
+        client = PHXChannelsClient(
+            self.ws_url,
+            self.api_key,
+            protocol_version=PhoenixChannelsProtocolVersion.V2,
+            auto_reconnect=False,
+            heartbeat_interval_s=self._watchdog.policy.heartbeat_interval_s,
+            on_reconnect=self._handle_reconnect,
+            on_disconnect=self._on_disconnect,
+            on_heartbeat_ack=self._watchdog.reset_deadline,
+            # Also send the key as an x-api-key handshake header. Under
+            # proxy-managed sandbox custody the host-side proxy replaces the
+            # sentinel in this header (it can't touch the URL query), and the
+            # platform authenticates off the header (precedence over the
+            # query) — so the WS upgrade works with the real key never in the
+            # VM. Harmless elsewhere: same value the query already carries.
+            additional_headers={"x-api-key": self.api_key},
+        )
+        if self.agent_id:
+            client.channel_socket_url += f"&agent_id={self.agent_id}"
+        return client
+
+    async def _resolve_failed_connect_attempt(
+        self, exc: Exception, epoch: int
+    ) -> float:
+        """Classify one failed initial-connect attempt through Session and
+        resolve it to a retry delay, or raise if Session now considers the
+        session Dead."""
+        upgrade_error = await classify_initial_upgrade_error(
+            exc, self._require_client().channel_socket_url
+        )
+        now = asyncio.get_running_loop().time()
+        match upgrade_error:
+            case WebSocketUpgradeError():
+                outcome = self._session.on_upgrade_rejected(
+                    epoch,
+                    now,
+                    upgrade_error.status_code,
+                    upgrade_error.retry_after,
+                    random.random(),
+                )
+                raise_exc: Exception = upgrade_error
+            case None if isinstance(exc, PHXConnectionError):
+                outcome = self._session.on_socket_close(
+                    epoch, now, None, random.random()
+                )
+                raise_exc = exc
+            case _:
+                raise
+
+        if outcome.state is SessionState.Dead:
+            self.record_terminal_disconnect(
+                _disconnect_reason_from_exception(raise_exc, outcome)
             )
-            if self.agent_id:
-                self.client.channel_socket_url += f"&agent_id={self.agent_id}"
+            logger.warning(
+                "Initial WebSocket connection permanently failed (dead_reason=%s): %s",
+                outcome.dead_reason,
+                raise_exc,
+            )
+            if raise_exc is exc:
+                # Re-raising the exception already being handled -- no new
+                # object, so no chaining to add (bare raise).
+                raise raise_exc
+            # A newly-built WebSocketUpgradeError -- chain it to the
+            # original exception, same as the pre-Session code did.
+            raise raise_exc from exc
+
+        # None only when Dead (handled above) or stale (unreachable here) --
+        # narrows the type for the caller's asyncio.sleep.
+        assert outcome.retry_after_s is not None
+        logger.warning(
+            "Initial WebSocket connection failed; retrying in %.2fs: %s",
+            outcome.retry_after_s,
+            raise_exc,
+        )
+        return outcome.retry_after_s
+
+    def _finalize_successful_connect(self, epoch: int) -> None:
+        """Confirm a successful connect with Session, then hand ongoing
+        reconnect timing to the vendored client's own auto_reconnect loop --
+        untouched by Session (see the out-of-scope note in the design doc)."""
+        now = asyncio.get_running_loop().time()
+        connected = self._session.on_connected(epoch, now)
+        if connected.stale_reason is not None:
+            # Session's contract allows a stale outcome here even though it
+            # can't occur on a synchronous success -- log, nothing to do
+            # (the connect already succeeded).
+            logger.warning(
+                "Session.on_connected reported a stale outcome "
+                "(stale_reason=%s) for a synchronously-successful connect; "
+                "proceeding anyway.",
+                connected.stale_reason,
+            )
+        client = self._require_client()
+        client.auto_reconnect = True
+        self._watchdog.start(client)
+
+    async def __aenter__(self):
+        """Create and enter the PHXChannelsClient context.
+
+        Backoff/retry timing for this *initial*-connect loop is driven by
+        ``self._session``: it decides, on every failure, whether to sleep and
+        retry (``Reconnecting``) or give up for good (``Dead``). Once this
+        loop returns successfully, ongoing reconnect timing passes to the
+        vendored PHXChannelsClient's own ``auto_reconnect`` loop -- untouched
+        by ``Session`` (see the out-of-scope note in the design doc).
+        """
+        while True:
+            now = asyncio.get_running_loop().time()
+            epoch = self._session.begin_attempt(now)
+            if epoch is None:
+                # Unreachable given this loop's own control flow, but
+                # Session's signature allows it -- fail loudly rather than
+                # silently proceed with a None epoch.
+                raise RuntimeError("WebSocket session is no longer connectable")
+
+            self.client = self._build_phx_client()
+
             try:
                 await self.client.__aenter__()
             except Exception as exc:
-                upgrade_error = await classify_initial_upgrade_error(
-                    exc, self.client.channel_socket_url
-                )
-                if upgrade_error is not None:
-                    raise upgrade_error from exc
-                if not isinstance(exc, PHXConnectionError):
-                    raise
-                if attempt >= policy.rapid_suppress_disconnect_count:
-                    raise
-                delay = _initial_reconnect_delay(policy, attempt)
-                logger.warning(
-                    "Initial WebSocket connection failed; retrying in %.2fs: %s",
-                    delay,
-                    exc,
-                )
+                delay = await self._resolve_failed_connect_attempt(exc, epoch)
                 await asyncio.sleep(delay)
             else:
-                self.client.auto_reconnect = True
-                self._watchdog.start(self.client)
+                self._finalize_successful_connect(epoch)
                 return self
-
-        raise RuntimeError("WebSocket client failed to connect")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""

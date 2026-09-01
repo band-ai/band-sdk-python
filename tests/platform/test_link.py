@@ -14,6 +14,7 @@ from band_rest import (
     UnprocessableEntityError,
 )
 from band_rest.core.api_error import ApiError
+from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -25,6 +26,7 @@ from band.client.streaming import (
     RoomRemovedPayload,
     SupersedePayload,
     WebSocketClient,
+    WebSocketDisconnectReason,
 )
 from band.platform.event import (
     MessageEvent,
@@ -36,7 +38,7 @@ from band.platform.event import (
     WebSocketDisconnectedEvent,
 )
 from band.platform.link import BandLink
-from band_sdk_core import AgentTopicStatus, chat_room_topic
+from band_sdk_core import AgentTopicStatus, DeadReason, chat_room_topic
 
 from tests.conftest import make_message_event
 from tests.platform.conftest import cancelled_mid_await
@@ -214,6 +216,39 @@ class TestBandLinkConnection:
         await link.connect()
 
         assert link.is_connected is True
+
+    @patch("band.platform.link.WebSocketClient")
+    async def test_connect_propagates_terminal_reason_from_failed_initial_connect(
+        self, mock_ws_class, mock_ws_client
+    ):
+        """A Session-classified terminal initial-connect failure must set
+        last_disconnect_reason even though self._ws is never assigned for
+        this failure -- real WebSocketClient.__aenter__ already calls
+        record_terminal_disconnect on itself before raising, and connect()
+        must read that off the local `ws` it still holds."""
+        mock_ws_class.return_value = mock_ws_client
+        reason = WebSocketDisconnectReason(
+            reason="connection_failed",
+            message="temporary network failure",
+            retryable=False,
+            dead_reason=DeadReason.RapidDisconnect,
+        )
+
+        def fail_after_recording_terminal_disconnect():
+            mock_ws_client.last_disconnect_reason = reason
+            raise PHXConnectionError("temporary network failure")
+
+        mock_ws_client.__aenter__.side_effect = fail_after_recording_terminal_disconnect
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+
+        with pytest.raises(PHXConnectionError):
+            await link.connect()
+
+        assert link._ws is None
+        assert link.is_connected is False
+        assert link.last_disconnect_reason == reason
+        mock_ws_client.__aexit__.assert_called_once()
 
     @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_exits_websocket_context(

@@ -195,6 +195,12 @@ class BandLink:
                 # cancelled) must still close the half-opened client, or it
                 # leaks -- _ws itself was never assigned, so there's nothing
                 # to roll back on that side.
+                if ws.last_disconnect_reason is not None:
+                    # A Session-classified terminal initial-connect failure
+                    # (__aenter__ already called record_terminal_disconnect)
+                    # -- surface it the same way a terminal supersede does,
+                    # even though self._ws was never assigned.
+                    self._last_disconnect_reason = ws.last_disconnect_reason
                 await ws.__aexit__(None, None, None)
                 raise
 
