@@ -284,6 +284,32 @@ class TestA2AAdapterMessageFlow:
         assert adapter._task_senders == {}
 
     @pytest.mark.asyncio
+    async def test_auth_required_task_is_posted_as_error_event(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(
+                make_task(
+                    TaskState.TASK_STATE_AUTH_REQUIRED,
+                    status_message="Please authenticate",
+                )
+            ),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        error_events = [
+            event for event in tools.events_sent if event["message_type"] == "error"
+        ]
+        assert error_events, "an auth-required task must produce an error event"
+        assert error_events[-1]["content"] == "Please authenticate"
+        assert error_events[-1]["metadata"]["a2a_state"] == "TASK_STATE_AUTH_REQUIRED"
+
+    @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(
         self, adapter: A2AAdapter
     ) -> None:
@@ -438,6 +464,28 @@ class TestA2AAdapterShutdown:
         await adapter.cleanup_all()
 
         assert http_client.is_closed, "owned httpx client must be closed"
+        assert adapter._client is None
+        assert adapter._http_client is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_closes_http_transport_even_if_client_close_fails(
+        self,
+    ) -> None:
+        """A broken remote client must not leak the owned httpx transport."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.close = AsyncMock(
+            side_effect=RuntimeError("client close failed")
+        )
+        adapter._http_client = httpx.AsyncClient()
+        http_client = adapter._http_client
+
+        with pytest.raises(RuntimeError, match="client close failed"):
+            await adapter.cleanup_all()
+
+        assert http_client.is_closed, (
+            "http transport must close even if client.close() raises"
+        )
         assert adapter._client is None
         assert adapter._http_client is None
 

@@ -319,12 +319,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def cleanup_all(self) -> None:
         """Close the owned A2A client and its HTTP transport."""
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        client, self._client = self._client, None
+        http_client, self._http_client = self._http_client, None
+        try:
+            if client is not None:
+                await client.close()
+        finally:
+            if http_client is not None:
+                await http_client.aclose()
 
     async def _emit_task_event(
         self, tools: AgentToolsProtocol, task: Task, state: TaskState

@@ -269,6 +269,57 @@ class TestGatewayExecution:
         ), "a timed-out request must not be logged as completed"
 
     @pytest.mark.asyncio
+    async def test_send_failure_publishes_terminal_failure(self) -> None:
+        """A REST failure while posting to Band must not leave the remote
+        A2A caller waiting on a stuck WORKING task."""
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+        adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
+        configure_room_creation(adapter)
+        adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            side_effect=RuntimeError("Band unavailable")
+        )
+        queue = EventQueueLegacy()
+
+        with pytest.raises(RuntimeError, match="Band unavailable"):
+            await BandAgentExecutor(adapter, "weather").execute(make_request(), queue)
+
+        initial = await queue.dequeue_event()
+        terminal = await queue.dequeue_event()
+        assert initial.status.state == TaskState.TASK_STATE_WORKING
+        assert terminal.status.state == TaskState.TASK_STATE_FAILED
+        assert adapter._pending_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_establish_request_raises_when_peer_missing(self) -> None:
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+
+        with pytest.raises(ValueError, match="Peer not found"):
+            await adapter._establish_request(
+                "missing", make_request(), EventQueueLegacy()
+            )
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_peers_accumulates_across_pages(self) -> None:
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+        page1 = MagicMock()
+        page1.data = [make_peer(f"peer-{i}", f"Peer {i}") for i in range(100)]
+        page2 = MagicMock()
+        page2.data = [make_peer("peer-100", "Peer 100")]
+        adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
+            side_effect=[page1, page2]
+        )
+
+        peers = await adapter._fetch_all_peers()
+
+        assert len(peers) == 101
+        assert adapter._rest.agent_api_peers.list_agent_peers.await_count == 2
+        first_call, second_call = (
+            adapter._rest.agent_api_peers.list_agent_peers.call_args_list
+        )
+        assert first_call.kwargs["page"] == 1
+        assert second_call.kwargs["page"] == 2
+
+    @pytest.mark.asyncio
     async def test_cleanup_all_stops_the_hosted_server(self) -> None:
         """Agent.stop() reaches the adapter only via cleanup_all, so the
         self-hosted HTTP server must be stopped there."""
@@ -381,6 +432,23 @@ class TestGatewayRoomState:
         assert (room_a, room_b) == ("room-a", "room-b"), (
             "distinct A2A contexts must not share a Band room"
         )
+
+    @pytest.mark.asyncio
+    async def test_participant_add_failure_leaves_no_partial_room_state(
+        self, adapter: A2AGatewayAdapter
+    ) -> None:
+        """Regression coverage: a REST failure after room creation currently
+        leaves no context/room mapping behind, so a retry creates a brand
+        new room rather than reusing the one that was just orphaned."""
+        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock(
+            side_effect=RuntimeError("participant add failed")
+        )
+
+        with pytest.raises(RuntimeError, match="participant add failed"):
+            await adapter._get_or_create_room("ctx", "weather")
+
+        assert adapter._context_to_room == {}
+        assert adapter._room_participants == {}
 
     def test_rehydrate_merges_without_overwriting_live_context(self) -> None:
         adapter = A2AGatewayAdapter(rest_client=MagicMock())

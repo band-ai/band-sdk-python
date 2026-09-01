@@ -337,13 +337,14 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 request.pending.task.id,
             )
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "A2A request failed: room=%s context=%s task=%s",
                 request.room_id,
                 request.context_id,
                 request.pending.task.id,
             )
+            await request.pending.fail(f"A2A request failed: {exc}")
             raise
         else:
             if completed:

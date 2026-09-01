@@ -182,6 +182,79 @@ async def test_jsonrpc_method_errors_are_upstream_owned(
     assert response.json()["error"]["code"] == -32601
 
 
+async def test_malformed_json_body_falls_through_to_upstream_dispatch(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    """A body ``request.json()`` can't parse degrades ``method`` to ``None``,
+    which skips the closed-method guard entirely -- the upstream dispatcher
+    owns reporting the parse error, same as any other non-blocked method."""
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0", "Content-Type": "application/json"},
+        content=b"{not valid json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32700
+
+
+async def test_non_scalar_request_id_is_normalized_to_null(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": [1, 2, 3],
+            "method": "ListTasks",
+            "params": {},
+        },
+    )
+
+    body = response.json()
+    assert body["id"] is None, "a non-str/int id must not be echoed back verbatim"
+    assert body["error"]["code"] == -32601
+
+
+async def test_send_streaming_message_runs_through_official_handler(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "method": "SendStreamingMessage",
+            "params": {
+                "message": {
+                    "role": "ROLE_USER",
+                    "messageId": "message-1",
+                    "parts": [{"text": "Hello"}],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+
+@pytest.mark.parametrize("method", ["GetTask", "CancelTask"])
+async def test_task_methods_without_id_are_rejected_by_upstream_handler(
+    gateway_client: httpx.AsyncClient, method: str
+) -> None:
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0"},
+        json={"jsonrpc": "2.0", "id": "request-1", "method": method, "params": {}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32602
+
+
 async def test_jsonrpc_send_runs_through_official_handler_and_executor(
     gateway_client: httpx.AsyncClient,
 ) -> None:
