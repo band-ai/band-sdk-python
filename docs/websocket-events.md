@@ -22,6 +22,18 @@ re-validating by `WirePayload.from_wire` (`src/band/client/streaming/wire.py`).
 Every model inherits `WirePayload`, which sets `ConfigDict(extra="allow")`
 once for all of them.
 
+`band-sdk-core` is also where the one-shot delivery-lifecycle *decisions*
+live — `evaluate_delivery_event`/`evaluate_next_message`/
+`evaluate_drain_candidate`/`evaluate_adapter_result` — not just payload
+validation. `OneShotInvoker` (`src/band/runtime/oneshot.py`) is a thin
+caller-owns-the-loop wrapper around those four functions: the
+ignore/cleanup/self-echo/invocation routing, the drain-candidate
+classification, and the ack decision are core's, not the SDK's own logic.
+`ExecutionContext` is a different machine with its own dedup model
+(`metadata.delivery_status`) and does not call `evaluate_delivery_event`/
+`evaluate_next_message`/`evaluate_drain_candidate` — it shares only the
+`is_self_echo` predicate with `OneShotInvoker`.
+
 ```python notest
 MessageCreatedPayload:
   id, content, message_type, sender_id, sender_type,
