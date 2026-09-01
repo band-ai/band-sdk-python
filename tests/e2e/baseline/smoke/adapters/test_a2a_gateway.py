@@ -20,6 +20,7 @@ Run with:
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from a2a.client import ClientConfig, ClientFactory
 from a2a.helpers import get_message_text, new_text_message
@@ -55,7 +56,10 @@ async def test_gateway_serves_a_real_a2a_client(
     async with running_provisioned_agent(gateway, resource_manager, label="a2a-gw"):
         # The Anthropic peer's own id is a stable alias the gateway always
         # serves (alongside its slug), so the client needs no slug lookup.
-        factory = ClientFactory(ClientConfig(streaming=True))
+        # httpx's default 5s read timeout fires on the normal, multi-second
+        # gap between SSE events during a real LLM turn -- not a hang.
+        http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
+        factory = ClientFactory(ClientConfig(streaming=True, httpx_client=http_client))
         client = await factory.create_from_url(
             f"http://127.0.0.1:{port}/agents/{agent.id}"
         )
@@ -71,5 +75,6 @@ async def test_gateway_serves_a_real_a2a_client(
                         reply_text = text
         finally:
             await client.close()
+            await http_client.aclose()
 
     assert reply_text, "expected a reply relayed from the live Band peer over A2A"

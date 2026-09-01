@@ -107,7 +107,13 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         headers = self.auth.to_headers() if self.auth else {}
 
-        self._http_client = httpx.AsyncClient(headers=headers)
+        # httpx's default 5s read timeout fires on the normal, multi-second
+        # gap between SSE events during a real remote turn (a live LLM call,
+        # a tool loop) -- not a hang. Leave read unbounded; connect/write/pool
+        # stay bounded so a genuinely dead peer still fails promptly.
+        self._http_client = httpx.AsyncClient(
+            headers=headers, timeout=httpx.Timeout(10.0, read=None)
+        )
         factory = ClientFactory(
             ClientConfig(streaming=self.streaming, httpx_client=self._http_client)
         )

@@ -142,6 +142,26 @@ class TestA2AAdapterStartup:
         client.close = AsyncMock()
         await adapter.cleanup_all()
 
+    @pytest.mark.asyncio
+    async def test_owned_http_client_has_no_read_timeout(self) -> None:
+        """A real remote turn (a live LLM call, a tool loop) routinely leaves
+        several seconds of silence between SSE events -- httpx's 5s default
+        read timeout would misreport that as a dead connection."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        client = MagicMock()
+
+        with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
+            factory = factory_type.return_value
+            factory.create_from_url = AsyncMock(return_value=client)
+
+            await adapter.on_started("Agent", "Description")
+
+        assert adapter._http_client is not None
+        assert adapter._http_client.timeout.read is None
+
+        client.close = AsyncMock()
+        await adapter.cleanup_all()
+
 
 class TestA2AAdapterMessageFlow:
     @pytest.fixture
