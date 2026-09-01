@@ -1848,6 +1848,11 @@ def image_block_placeholder(block_count: int) -> str:
     return f"<{block_count} image content block(s)>"
 
 
+def file_content_placeholder(byte_count: int) -> str:
+    """The text a tool-call event reports in place of a file's raw content."""
+    return f"<{byte_count} byte file content>"
+
+
 def decode_image_block(block: dict[str, Any]) -> tuple[bytes, str]:
     """Decode one MCP image content block into (raw bytes, mime type)."""
     return base64.b64decode(block["data"]), block["mimeType"]

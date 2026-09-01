@@ -15,7 +15,7 @@ SEND_MESSAGE_TOOL_NAMES: tuple[str, ...] = (
     "create_agent_chat_message",
 )
 SEND_EVENT_TOOL_NAMES: tuple[str, ...] = (
-    "band_send_event",
+    BandTool.SEND_EVENT,
     "create_agent_chat_event",
 )
 

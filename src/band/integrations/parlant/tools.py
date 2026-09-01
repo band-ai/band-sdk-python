@@ -304,9 +304,9 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 )
                 message = str(exc)
                 if mention_hints and isinstance(exc, (ValueError, BandToolError)):
-                    message = with_mention_handles(
-                        message, get_session_tools(context.session_id)
-                    )
+                    session_tools = get_session_tools(context.session_id)
+                    if session_tools:
+                        message = with_mention_handles(message, session_tools)
                 return ToolResult(data=f"Error {context_phrase}: {message}")
 
         return run

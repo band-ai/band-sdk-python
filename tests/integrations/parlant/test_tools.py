@@ -607,6 +607,33 @@ class TestParlantToolFunctions:
         assert "503" in result.data
 
     @pytest.mark.asyncio
+    async def test_send_message_mention_hint_survives_session_teardown_race(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """A room torn down between the tool body's own lookup and the
+        mention-hint failure handler's re-lookup must not crash the call.
+
+        guard_failures re-fetches session tools independently when building
+        the mention hint; if the session vanished in between, that re-fetch
+        returns None and must fall back to the plain error, not attribute
+        error out on None.participants.
+        """
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        def _fail_and_tear_down_session(*args, **kwargs):
+            set_session_tools(mock_context.session_id, None)
+            raise BandToolError("Backend rejected message: 503 Service Unavailable")
+
+        mock_tools.send_message.side_effect = _fail_and_tear_down_session
+
+        send_message = parlant_tools["band_send_message"]
+        # Must NOT raise AttributeError from None.participants
+        result = await send_message(mock_context, "Hello", "Alice")
+
+        assert "Error sending message" in result.data
+        assert "503" in result.data
+
+    @pytest.mark.asyncio
     async def test_send_event_calls_tools_send_event(
         self, parlant_tools, mock_tools, mock_context
     ):

@@ -20,6 +20,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.integrations.crewai.reporting import CrewAIToolReporter
 from band.runtime.tools import (
     BandTool,
+    file_content_placeholder,
     image_block_placeholder,
     is_mcp_content_result,
     platform_args_schema,
@@ -469,6 +470,7 @@ async def _read_room_file(call: Invocation, *, file_id: str = "") -> Any:
     BandTool.SEND_ROOM_FILE,
     args_schema=SEND_ROOM_FILE_ARGS_SCHEMA,
     normalize=_posted_file_args,
+    reports=False,
 )
 async def _send_room_file(
     call: Invocation,
@@ -478,7 +480,22 @@ async def _send_room_file(
     caption: str = "",
     mentions: Any = None,
 ) -> Any:
-    return await call.tools.send_room_file(content, filename, caption, mentions)
+    # reports=False: report_call's default behavior would json.dumps the raw
+    # file content into a tool_call event -- report a bounded placeholder for
+    # content instead, mirroring how _read_room_file bounds its own result.
+    await call.reporter.report_call(
+        call.tools,
+        BandTool.SEND_ROOM_FILE,
+        {
+            "content": file_content_placeholder(len(content.encode("utf-8"))),
+            "filename": filename,
+            "caption": caption,
+            "mentions": mentions,
+        },
+    )
+    result = await call.tools.send_room_file(content, filename, caption, mentions)
+    await call.reporter.report_result(call.tools, BandTool.SEND_ROOM_FILE, result)
+    return result
 
 
 if frozenset(spec.name for spec in PLATFORM_TOOLS) != frozenset(BandTool):

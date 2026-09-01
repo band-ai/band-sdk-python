@@ -62,6 +62,7 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
     decode_image_block,
+    image_block_placeholder,
     is_mcp_content_result,
     is_terminal_success,
     missing_reply_error,
@@ -833,14 +834,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         ):
                             tool_executed = True
                         if Emit.TOOL_CALLS in self.features.emit:
+                            output = event.part.content
+                            if (
+                                isinstance(output, list)
+                                and output
+                                and all(
+                                    isinstance(item, BinaryContent) for item in output
+                                )
+                            ):
+                                # str() on BinaryContent embeds its raw `data`
+                                # bytes -- band_read_room_file's image result
+                                # would otherwise dump the full file into this
+                                # event instead of a bounded placeholder.
+                                output = image_block_placeholder(len(output))
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.OUTPUT: str(
-                                                event.part.content
-                                            ),
+                                            ToolEventKey.OUTPUT: str(output),
                                             ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
                                         }
                                     ),

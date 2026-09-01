@@ -115,6 +115,8 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
 def _result_text(result: ToolResult) -> str:
     """Flatten a tool result for execution events and terminal-state policy."""
     parts: list[str] = []
+    image_count = 0
+    image_index: int | None = None
     for block in result.get("content", []):
         match block:
             case {"text": str() as text}:
@@ -122,7 +124,12 @@ def _result_text(result: ToolResult) -> str:
             case {"json": value}:
                 parts.append(_format_tool_output(value))
             case {"image": _}:
-                parts.append(image_block_placeholder(1))
+                if image_index is None:
+                    image_index = len(parts)
+                    parts.append("")
+                image_count += 1
+    if image_index is not None:
+        parts[image_index] = image_block_placeholder(image_count)
     return "\n".join(parts)
 
 

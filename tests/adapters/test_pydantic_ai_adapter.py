@@ -32,6 +32,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1259,6 +1260,46 @@ class TestExecutionReporting:
         # Verify send_event was called with tool_result
         mock_tools.send_event.assert_any_call(
             content='{"name": "band_send_message", "output": "Message sent successfully", "tool_call_id": "call-123"}',
+            message_type="tool_result",
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_result_event_redacts_binary_content(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """band_read_room_file's image result is a list[BinaryContent]; str()
+        on that embeds the raw image bytes via BinaryContent.__repr__. The
+        tool_result event must report a bounded placeholder instead."""
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            emit=Emit.TOOL_CALLS,
+        )
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        image = BinaryContent(
+            data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, media_type="image/png"
+        )
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_results=[("band_read_room_file", [image], "call-1")],
+            )
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_event.assert_any_call(
+            content='{"name": "band_read_room_file", "output": "<1 image content block(s)>", "tool_call_id": "call-1"}',
             message_type="tool_result",
         )
 

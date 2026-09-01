@@ -27,7 +27,12 @@ from strands.types.exceptions import EventLoopException  # noqa: E402
 from strands.types.streaming import StreamEvent  # noqa: E402
 from strands.types.tools import ToolChoice, ToolSpec  # noqa: E402
 
-from band.adapters.strands import CustomToolBridge, StrandsAdapter, _tool_result  # noqa: E402
+from band.adapters.strands import (  # noqa: E402
+    CustomToolBridge,
+    StrandsAdapter,
+    _result_text,
+    _tool_result,
+)
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
@@ -707,3 +712,35 @@ class TestReadRoomFileImagePassthrough:
 
         assert result["status"] == "error"
         assert "text" in result["content"][0]
+
+    def test_multi_image_result_reports_one_placeholder_with_total_count(self):
+        """A multi-image result must flatten to one placeholder naming the
+        total count, not one placeholder line per image block."""
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {
+            "content": [
+                {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"},
+                {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"},
+                {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"},
+            ]
+        }
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert _result_text(result) == "<3 image content block(s)>"
+
+    def test_result_text_keeps_images_at_their_original_position(self):
+        """A combined image placeholder must appear where the first image
+        block occurred among text/json blocks, not get shoved to the end."""
+        result = {
+            "toolUseId": "t1",
+            "status": "success",
+            "content": [
+                {"text": "before"},
+                {"image": {"format": "png", "source": {"bytes": b"a"}}},
+                {"image": {"format": "png", "source": {"bytes": b"b"}}},
+                {"text": "after"},
+            ],
+        }
+
+        assert _result_text(result) == "before\n<2 image content block(s)>\nafter"

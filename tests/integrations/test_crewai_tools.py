@@ -646,6 +646,46 @@ class TestFileTools:
             "body", "notes.txt", "", ["@alice", "@bob"]
         )
 
+    def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self, builder_mod
+    ):
+        """The full content must still reach send_room_file, but the
+        tool_call event must not carry that same raw payload."""
+        from band.core.types import AdapterFeatures, Capability, Emit
+        from band.runtime.tools import file_content_placeholder
+
+        tools_obj = MagicMock()
+        tools_obj.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        tools_obj.send_event = AsyncMock()
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        reporter = builder_mod.EmitToolCallsReporter(
+            AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=reporter,
+            capabilities=frozenset({Capability.FILES}),
+        )
+        send_room_file = next(t for t in tools if t.name == "band_send_room_file")
+
+        # Multi-byte characters pin that the placeholder reports UTF-8 byte
+        # length (what MAX_SEND_CONTENT_BYTES actually measures), not
+        # len(content)'s character count.
+        content = "raw file body 你好 " * 1000
+        send_room_file._run(content=content, filename="notes.txt", mentions=["Alice"])
+
+        tools_obj.send_room_file.assert_awaited_once_with(
+            content, "notes.txt", "", ["Alice"]
+        )
+        call_event = tools_obj.send_event.call_args_list[0].kwargs
+        reported_args = json.loads(call_event["content"])["args"]
+        assert reported_args["content"] == file_content_placeholder(
+            len(content.encode("utf-8"))
+        )
+        assert content not in json.dumps(reported_args)
+
     def test_send_room_file_failure_returns_error_status(self, builder_mod):
         from band.core.types import Capability
 
