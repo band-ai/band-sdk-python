@@ -71,39 +71,30 @@ anyway. `SlackAdapter` overrides it to also delegate into the wrapped inner
 adapter, since its own `_resolve_features()` only mirrors features into the
 inner adapter once, at construction.
 
-**Every registered adapter now declares `Capability.FILES`** —
-`claude_sdk`, `anthropic`, `langgraph`, `gemini`, `google_adk`, `agno`,
-`strands`, `codex`, `copilot_sdk`, `opencode`, the ACP client adapter,
-`letta`, `parlant`, `pydantic_ai`, `crewai`, and `crewai_flow`. The
-registry-driven ones (schemas built generically from
-`iter_tool_definitions`) needed only the declaration; `parlant`,
-`pydantic_ai`, and `crewai`/`crewai_flow` hand-roll one wrapper per
-platform tool, so each grew three new hand-written wrappers instead.
+Every registered adapter declares `Capability.FILES`. Registry-driven
+adapters (schemas built generically from `iter_tool_definitions`) need
+only the declaration; `parlant`, `pydantic_ai`, and `crewai`/`crewai_flow`
+hand-roll one wrapper per platform tool, so each carries its own
+hand-written wrapper for the three file tools.
 
 Real image vision passthrough for `band_read_room_file` (a small
 previewable image reaches the model as actual image content instead of a
-`json.dumps`'d text block) is verified for `claude_sdk`, `anthropic`,
-`opencode`, `gemini`, `langgraph`, `agno`, `strands`, `copilot_sdk`,
-`codex`, `pydantic_ai`, and `crewai`/`crewai_flow` — see
-`IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS` in
-`tests/framework_conformance/test_adapter_conformance.py` for the
-up-to-date list and per-adapter mechanism citations. Three adapters are
-excluded from that list, for two different reasons. `google_adk` and
-`parlant` are confirmed **not** supportable: `google_adk` because
-installed google-adk's own tool-response builder drops multimodal content
-before it reaches the model (an upstream framework limitation), `parlant`
-because its `ToolResult` has no multimodal field and its own MCP
-integration discards image content blocks the same way. `letta` and
-`copilot_acp` (which wraps the ACP client adapter) are excluded for an
-unrelated reason: both route tool execution through the shared MCP
-engine rather than calling `execute_tool_call` directly, so they inherit
-`opencode`'s fix transitively and have no adapter-local code path to
-probe — not unsupportable, just unverifiable in isolation.
+`json.dumps`'d text block) is supported by every adapter except
+`google_adk` and `parlant`, which cannot carry multimodal tool-result
+content at all: `google_adk`'s own tool-response builder drops it before
+it reaches the model (an upstream framework limitation), `parlant`'s
+`ToolResult` has no multimodal field and its own MCP integration discards
+image content blocks the same way. `letta` and `copilot_acp` (which wraps
+the ACP client adapter) get the fix transitively — both route tool
+execution through the shared MCP engine rather than calling
+`execute_tool_call` directly — so they have no adapter-local code path to
+probe in isolation, but are not excluded from support. See
+`IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS`/`IMAGE_PASSTHROUGH_EXCLUSIONS`
+in `tests/framework_conformance/test_adapter_conformance.py` for the
+enforced, always-current per-adapter list and mechanism citations.
 
 `AgentTools.get_tool_schemas`/`get_anthropic_tool_schemas`/
 `get_openai_tool_schemas` and `iter_tool_definitions` take a single
-`capabilities: frozenset[Capability] | None` parameter — the boolean
-`include_memory`/`include_contacts` pair they used to take is gone
-(breaking change, no back-compat shim). `None` resolves to the pre-existing
-default (contacts only); the hub-room execution path still unions
+`capabilities: frozenset[Capability] | None` parameter. `None` resolves to
+contacts-only; the hub-room execution path always unions
 `Capability.CONTACTS` in regardless of what was requested.
