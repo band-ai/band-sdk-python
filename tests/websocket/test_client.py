@@ -430,6 +430,37 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
     await client.__aexit__(None, None, None)
 
 
+async def test_aenter_reusable_after_aexit_ends_the_session(monkeypatch):
+    """__aexit__ ends self._session (Dead), so a second __aenter__ on the
+    same instance must build a fresh Session rather than resuming the
+    now-Dead one -- otherwise begin_attempt() returns None and __aenter__
+    raises, even though reusing an exited instance across sequential
+    `async with` blocks worked before Session existed (a fresh
+    PHXChannelsClient was always built per entry)."""
+
+    class SuccessfulPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    async with client:
+        pass
+
+    async with client:
+        assert client.client.auto_reconnect is True
+
+
 async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch):
     attempts = 0
     sleep_delays = []

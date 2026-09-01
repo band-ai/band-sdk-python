@@ -539,7 +539,14 @@ class WebSocketClient:
         loop returns successfully, ongoing reconnect timing passes to the
         vendored PHXChannelsClient's own ``auto_reconnect`` loop -- untouched
         by ``Session`` (see the out-of-scope note in the design doc).
+
+        A fresh ``Session`` is built for every entry, mirroring the fresh
+        ``PHXChannelsClient`` built below -- ``__aexit__`` ends the previous
+        one, so reusing this instance across sequential ``async with``
+        blocks (as callers were free to do before ``Session`` existed) must
+        start a new connection lifecycle, not resume a now-Dead one.
         """
+        self._session = Session(self._watchdog.policy)
         while True:
             now = asyncio.get_running_loop().time()
             epoch = self._session.begin_attempt(now)
