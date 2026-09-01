@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from band_sdk_core import SessionPolicy
 from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
@@ -43,6 +42,7 @@ from band.client.streaming import (
     RoomRemovedPayload,
     WebSocketClient,
 )
+from tests.websocket.conftest import fast_session_policy
 
 # Shared valid payload used by multiple tests
 VALID_MESSAGE_CREATED_PAYLOAD: dict = {
@@ -1021,33 +1021,6 @@ async def test_cancelled_error_propagates_through_callback():
 # --- Heartbeat dead-threshold watchdog tests (INT-1323) ---
 
 
-def _fast_session_policy(
-    *, heartbeat_interval_s: float, dead_threshold_s: float
-) -> SessionPolicy:
-    """A SessionPolicy with real reconnect-backoff defaults (mirroring
-    SessionPolicy.default()) but a fast heartbeat/dead-threshold pair, so
-    watchdog tests run in real fractional seconds instead of production's
-    30s/60s."""
-    return SessionPolicy(
-        {
-            "base_delay_s": 1.0,
-            "factor": 2.0,
-            "max_delay_s": 30.0,
-            "stable_reset_s": 60.0,
-            "rapid_disconnect_uptime_s": 10.0,
-            "rapid_window_s": 300.0,
-            "rapid_first_min_delay_s": 1.0,
-            "rapid_second_min_delay_s": 5.0,
-            "rapid_cooldown_base_s": 10.0,
-            "rapid_cooldown_step_s": 10.0,
-            "rapid_cooldown_max_s": 60.0,
-            "rapid_threshold": 10,
-            "heartbeat_interval_s": heartbeat_interval_s,
-            "dead_threshold_s": dead_threshold_s,
-        }
-    )
-
-
 @asynccontextmanager
 async def phoenix_peer(*, ack_heartbeats: bool = True):
     """In-process peer that completes the WS upgrade and, when
@@ -1090,7 +1063,7 @@ async def test_watchdog_ack_keeps_connection_alive_across_heartbeat_cycles():
     """A real heartbeat/ack round-trip resets the watchdog deadline each
     cycle, so the connection survives well past a single dead_threshold_s
     window without the watchdog ever tripping."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
+    policy = fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
     async with phoenix_peer() as (ws_url, connected):
         async with WebSocketClient(
             ws_url, "test-key", "agent-123", session_policy=policy
@@ -1106,7 +1079,7 @@ async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
     """A withheld ack forces close_connection at (approximately)
     dead_threshold_s, and the forced close flows into the client's own
     reconnect path -- on_reconnect fires once the new connection lands."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
+    policy = fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
     reconnected = asyncio.Event()
 
     async def on_reconnect() -> None:
@@ -1134,7 +1107,7 @@ async def test_watchdog_task_cancelled_cleanly_on_aexit():
     (HeartbeatWatchdog's own cancellation behavior is covered directly in
     test_watchdog.py; this test only checks WebSocketClient wires __aexit__
     to it.)"""
-    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=5.0)
+    policy = fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=5.0)
     async with phoenix_peer() as (ws_url, connected):
         client = WebSocketClient(ws_url, "test-key", "agent-123", session_policy=policy)
         async with client:

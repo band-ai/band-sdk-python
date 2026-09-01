@@ -6,36 +6,8 @@ from __future__ import annotations
 
 import asyncio
 
-from band_sdk_core import SessionPolicy
-
 from band.client.streaming.watchdog import HeartbeatWatchdog
-
-
-def _fast_session_policy(
-    *, heartbeat_interval_s: float, dead_threshold_s: float
-) -> SessionPolicy:
-    """A SessionPolicy with real reconnect-backoff defaults (mirroring
-    SessionPolicy.default()) but a fast heartbeat/dead-threshold pair, so
-    watchdog tests run in real fractional seconds instead of production's
-    30s/60s."""
-    return SessionPolicy(
-        {
-            "base_delay_s": 1.0,
-            "factor": 2.0,
-            "max_delay_s": 30.0,
-            "stable_reset_s": 60.0,
-            "rapid_disconnect_uptime_s": 10.0,
-            "rapid_window_s": 300.0,
-            "rapid_first_min_delay_s": 1.0,
-            "rapid_second_min_delay_s": 5.0,
-            "rapid_cooldown_base_s": 10.0,
-            "rapid_cooldown_step_s": 10.0,
-            "rapid_cooldown_max_s": 60.0,
-            "rapid_threshold": 10,
-            "heartbeat_interval_s": heartbeat_interval_s,
-            "dead_threshold_s": dead_threshold_s,
-        }
-    )
+from tests.websocket.conftest import fast_session_policy
 
 
 class FakePHXClient:
@@ -50,7 +22,7 @@ class FakePHXClient:
 async def test_start_cancelled_cleanly_on_stop():
     """stop() cancels the watchdog task cleanly -- no dangling task
     survives shutdown."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=5.0)
+    policy = fast_session_policy(heartbeat_interval_s=0.05, dead_threshold_s=5.0)
     watchdog = HeartbeatWatchdog(policy)
     watchdog.start(FakePHXClient())
 
@@ -72,7 +44,7 @@ async def test_stale_watchdog_cannot_close_a_superseded_connection():
     superseded by the next one in `WebSocketClient.__aenter__`'s retry loop
     -- it must only ever act on its own (stale) instance, never the
     replacement."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
+    policy = fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
     watchdog = HeartbeatWatchdog(policy)
     first, second = FakePHXClient(), FakePHXClient()
 
@@ -104,7 +76,7 @@ async def test_survives_a_close_connection_failure():
             if len(self.close_calls) == 1:
                 raise RuntimeError("close boom")
 
-    policy = _fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
+    policy = fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
     watchdog = HeartbeatWatchdog(policy)
     fake = FlakyThenFakePHXClient()
     watchdog.start(fake)
@@ -119,7 +91,7 @@ async def test_does_not_warn_or_close_while_already_disconnected():
     """No live connection to force-close means nothing to warn about either
     -- an extended reconnect backoff must not spam misleading 'forcing
     reconnect' warnings for a connection that's already down."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
+    policy = fast_session_policy(heartbeat_interval_s=0.01, dead_threshold_s=0.05)
     watchdog = HeartbeatWatchdog(policy)
     fake = FakePHXClient(connection=None)
     watchdog.start(fake)
@@ -135,7 +107,7 @@ async def test_reset_deadline_lets_a_fresh_socket_survive_a_reconnect():
     it can inherit a stale deadline (from the disconnected-state polling
     above) that expires before the fresh socket's first heartbeat cycle,
     force-closing a healthy connection."""
-    policy = _fast_session_policy(heartbeat_interval_s=0.1, dead_threshold_s=0.12)
+    policy = fast_session_policy(heartbeat_interval_s=0.1, dead_threshold_s=0.12)
     watchdog = HeartbeatWatchdog(policy)
     fake = FakePHXClient()
 
