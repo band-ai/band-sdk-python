@@ -325,7 +325,7 @@ class TestNestAsyncioNotInvoked:
     ) -> None:
         # Patch nest_asyncio.apply at the module level.
         try:
-            import nest_asyncio  # type: ignore
+            import nest_asyncio  # type: ignore  # noqa: PLC0415
 
             apply_mock = MagicMock()
             monkeypatch.setattr(nest_asyncio, "apply", apply_mock)

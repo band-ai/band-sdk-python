@@ -379,7 +379,7 @@ async def test_events_api_envelope_routes_through_dispatch_event(monkeypatch):
         for app in apps:
             client = socket_clients[app.slug]
             # Build the real per-app handler.
-            from band.integrations.slack.socket import _make_request_handler
+            from band.integrations.slack.socket import _make_request_handler  # noqa: PLC0415
 
             client.socket_mode_request_listeners.append(
                 _make_request_handler(
@@ -416,7 +416,7 @@ async def test_socket_listener_drops_bot_events(monkeypatch):
     async def fake_start_socket_listeners(
         *, apps, web_client_factory, dispatcher, client_factory=None
     ):
-        from band.integrations.slack.socket import _make_request_handler
+        from band.integrations.slack.socket import _make_request_handler  # noqa: PLC0415
 
         for app in apps:
             fake.socket_mode_request_listeners.append(
@@ -459,9 +459,7 @@ async def test_socket_listener_drops_duplicate_event_id():
     Socket Mode can replay events across reconnects; like the HTTP route,
     the listener dedups on ``event_id`` so the brain isn't invoked twice.
     """
-    from unittest.mock import AsyncMock
-
-    from band.integrations.slack.socket import _make_request_handler
+    from band.integrations.slack.socket import _make_request_handler  # noqa: PLC0415
 
     dispatcher = AsyncMock()
     client = SimpleNamespace(send_socket_mode_response=AsyncMock())

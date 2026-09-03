@@ -189,7 +189,7 @@ class TestIdleTimeout:
         self, mock_link, mock_handler
     ):
         """If events arrive before timeout, resync should not add extra /next calls."""
-        from tests.conftest import make_message_event
+        from tests.conftest import make_message_event  # noqa: PLC0415
 
         config = SessionConfig(idle_resync_seconds=60)  # very long timeout
         ctx = ExecutionContext("room-1", mock_link, mock_handler, config=config)

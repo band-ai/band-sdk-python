@@ -9,7 +9,7 @@ import httpx
 import pytest
 from google.genai import types
 from google.genai.errors import ServerError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from band.adapters.gemini import GeminiAdapter
 from band.core.types import Emit, PlatformMessage
@@ -410,8 +410,6 @@ class TestOnCleanup:
 class TestValidationErrorHandling:
     @pytest.mark.asyncio
     async def test_validation_error_returns_friendly_message(self, mock_tools):
-        from pydantic import ValidationError
-
         adapter = GeminiAdapter(provider_key="test-key")
 
         mock_tools.execute_tool_call = AsyncMock(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import time
 
 import pytest
 
@@ -201,8 +202,6 @@ def test_signature_uses_constant_time_compare():
 def test_signature_uses_real_clock_when_now_not_passed():
     # When no `now` is passed, the function reads time.time(); a fresh
     # signature with a current timestamp should verify.
-    import time
-
     body = b"hello"
     timestamp = str(int(time.time()))
     signature = _sign(SIGNING_SECRET, body, timestamp)

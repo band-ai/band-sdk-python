@@ -32,7 +32,12 @@ from typing import (
 from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.client.streaming import ControlMode, DeliveryStatus
+from band.client.streaming import (
+    ControlMode,
+    DeliveryStatus,
+    MessageCreatedPayload,
+    MessageMetadata,
+)
 from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
@@ -52,6 +57,7 @@ from band.runtime.types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
 from band.runtime.context_serialization import context_item_to_dict
+from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.working_state import WorkingStateReporter
 
@@ -1006,9 +1012,6 @@ class ExecutionContext:
         if not self._context_cache:
             return []
 
-        # Import here to avoid circular dependency
-        from band.runtime.formatters import format_history_for_llm
-
         return format_history_for_llm(
             self._context_cache.messages,
             exclude_id=exclude_message_id,
@@ -1017,8 +1020,6 @@ class ExecutionContext:
 
     def build_participants_message(self) -> str:
         """Build a system message with current participant list for LLM."""
-        from band.runtime.formatters import build_participants_message
-
         return build_participants_message(self._roster.list())
 
     async def _notify_participant_added(self, event: ParticipantAddedEvent) -> None:
@@ -1523,8 +1524,6 @@ class ExecutionContext:
                 metadata["status"] = "sent"
 
             # Create event from message for handler
-            from band.client.streaming import MessageCreatedPayload, MessageMetadata
-
             event = MessageEvent(
                 room_id=self.room_id,
                 payload=MessageCreatedPayload(

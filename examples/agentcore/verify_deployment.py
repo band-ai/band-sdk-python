@@ -132,8 +132,8 @@ async def send_trigger_message(
     Sends with user credentials so the sender is the user (agents skip
     self-authored messages) and @mentions PA so the platform routes it.
     """
-    from band_rest import ChatMessageRequest
-    from band_rest.types import ChatMessageRequestMentionsItem as Mention
+    from band_rest import ChatMessageRequest  # noqa: PLC0415
+    from band_rest.types import ChatMessageRequestMentionsItem as Mention  # noqa: PLC0415
 
     response = await client.human_api_messages.send_my_chat_message(
         room_id,
@@ -220,8 +220,8 @@ async def listening_for_synthesis(
 
 async def create_room_with_pa(user_client: object, pa_agent_id: str, label: str) -> str:
     """Create a fresh chat room and add @personal_assistant to it."""
-    from band_rest import CreateMyChatRoomRequestChat
-    from band_rest.types import ParticipantRequest
+    from band_rest import CreateMyChatRoomRequestChat  # noqa: PLC0415
+    from band_rest.types import ParticipantRequest  # noqa: PLC0415
 
     response = await user_client.human_api_chats.create_my_chat_room(
         chat=CreateMyChatRoomRequestChat(),
@@ -363,9 +363,9 @@ async def verify_parallel_rooms(
 
 
 async def main() -> None:
-    from band_rest import AsyncRestClient
+    from band_rest import AsyncRestClient  # noqa: PLC0415
 
-    from band.client.streaming import WebSocketClient
+    from band.client.streaming import WebSocketClient  # noqa: PLC0415
 
     rest_url = require_env("BAND_REST_URL", "the target platform's REST base URL")
     ws_url = require_env("BAND_WS_URL", "the target platform's WebSocket URL")

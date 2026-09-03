@@ -17,6 +17,7 @@ These tests cover the Phase 1 (INT-349) acceptance criteria:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -332,8 +333,6 @@ class TestLocalMCPServerAgentOnlySnapshot:
         entries (they'd ``AttributeError`` on ``AgentTools`` at call time)
         and logs a warning per dropped entry.
         """
-        import logging
-
         agent_tools = MagicMock(spec=AgentTools)
         mixed = [
             TOOL_DEFINITIONS["band_send_message"],
@@ -367,7 +366,6 @@ class TestLocalMCPServerAgentOnlySnapshot:
     ) -> None:
         """Resolved variant applies the same defense-in-depth filter. This
         is the path the opencode/claude_sdk/acp adapters exercise."""
-        import logging
 
         def _resolver(_room_id: str):
             return None

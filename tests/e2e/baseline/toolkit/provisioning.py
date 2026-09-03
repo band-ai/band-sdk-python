@@ -537,7 +537,7 @@ class AdapterCell:
         """
         # Overrides use None-means-"cell default" (not a sentinel): no test needs to
         # clear a default back to "no prompt", so the sentinel would be dead machinery.
-        from tests.e2e.baseline.toolkit.adapters import build_adapter
+        from tests.e2e.baseline.toolkit.adapters import build_adapter  # noqa: PLC0415
 
         return build_adapter(
             self.adapter_id,

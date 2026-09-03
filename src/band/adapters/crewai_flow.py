@@ -534,7 +534,7 @@ class CrewAIFlowCustomTools:
         tools: AgentToolsProtocol,
         features: AdapterFeatures,
     ) -> None:
-        from band.integrations.crewai import EmitToolCallsReporter
+        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415
 
         self._custom_tools = custom_tools
         self._tools = tools
@@ -758,7 +758,7 @@ class CrewAIFlowRuntimeTools:
         to call platform tools. The returned tools enforce the adapter's
         reserve-send-confirm sequence for visible writes.
         """
-        from band.integrations.crewai.tools import (
+        from band.integrations.crewai.tools import (  # noqa: PLC0415
             CrewAIToolContext,
             build_band_crewai_tools,
         )
@@ -1310,7 +1310,7 @@ class SideEffectExecutor:
         ``buffered_syntheses`` entry. The converter merges entries by
         ``source_message_id``, so multiple turns accumulate into one list.
         """
-        from band.converters.crewai_flow import CrewAIFlowBufferedSynthesis
+        from band.converters.crewai_flow import CrewAIFlowBufferedSynthesis  # noqa: PLC0415
 
         envelope = self._envelope(
             status=CrewAIFlowRunStatus.WAITING,
@@ -2284,7 +2284,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         candidate set, ambiguous matches (which also record a
         ``reply_ambiguous`` event side-effect).
         """
-        from band.converters.crewai_flow import (
+        from band.converters.crewai_flow import (  # noqa: PLC0415
             CrewAIFlowAmbiguousIdentityError,
             normalize_participant_key,
         )

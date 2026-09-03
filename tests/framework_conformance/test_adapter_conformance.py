@@ -7,7 +7,11 @@ remains in the per-framework test files under tests/adapters/.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
+
+from band.core.types import Capability, Emit
 
 
 class TestAdapterConfigIntegrity:
@@ -133,7 +137,6 @@ class TestAdapterOnMessage:
 
     def test_on_message_is_coroutine_function(self, adapter_config):
         """on_message must be an async method."""
-        import inspect
 
         adapter = adapter_config.adapter_factory()
         assert inspect.iscoroutinefunction(adapter.on_message)
@@ -161,7 +164,6 @@ class TestAdapterFeaturesContract:
 
     def test_supported_emit_declared(self, adapter_config):
         """Every adapter class must define SUPPORTED_EMIT as a frozenset."""
-        from band.core.types import Emit
 
         adapter = adapter_config.adapter_factory()
         cls = type(adapter)
@@ -182,7 +184,6 @@ class TestAdapterFeaturesContract:
 
     def test_supported_capabilities_declared(self, adapter_config):
         """Every adapter class must define SUPPORTED_CAPABILITIES as a frozenset."""
-        from band.core.types import Capability
 
         adapter = adapter_config.adapter_factory()
         cls = type(adapter)

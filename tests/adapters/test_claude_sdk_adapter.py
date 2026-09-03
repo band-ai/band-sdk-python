@@ -17,7 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
@@ -32,11 +32,13 @@ from band.adapters.claude_sdk import (
     BAND_MEMORY_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     FILE_TOOL_NAMES,
     MAX_INLINE_IMAGE_BYTES,
     missing_reply_error,
+    mcp_tool_names,
 )
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
 
@@ -357,7 +359,7 @@ class TestOnMessage:
             # By default the adapter wraps tools with DedupingAgentTools so
             # MCP tool calls go through the dedup shim.  The wrapped
             # instance is what gets stored and forwarded.
-            from band.integrations.claude_sdk.dedup_tools import (
+            from band.integrations.claude_sdk.dedup_tools import (  # noqa: PLC0415
                 DedupingAgentTools,
             )
 
@@ -493,7 +495,7 @@ class TestCLIConnectionError:
         self, sample_message, mock_tools
     ):
         """CLIConnectionError should invalidate the dead session and re-raise."""
-        from claude_agent_sdk._errors import CLIConnectionError
+        from claude_agent_sdk._errors import CLIConnectionError  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -533,7 +535,7 @@ class TestCLIConnectionError:
         self, sample_message, mock_tools
     ):
         """CLIConnectionError should report error event to the user."""
-        from claude_agent_sdk._errors import CLIConnectionError
+        from claude_agent_sdk._errors import CLIConnectionError  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -572,7 +574,7 @@ class TestCLIConnectionError:
         self, sample_message, mock_tools
     ):
         """CLIConnectionError should clear cached session ID so resume is not attempted."""
-        from claude_agent_sdk._errors import CLIConnectionError
+        from claude_agent_sdk._errors import CLIConnectionError  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         # Pre-populate a session ID
@@ -760,7 +762,6 @@ class TestBandTools:
     def test_band_all_tools_combines_base_and_memory(self):
         """BAND_ALL_TOOLS should combine base, memory, and file tools without
         duplicates."""
-        from band.runtime.tools import mcp_tool_names
 
         assert set(BAND_ALL_TOOLS) == (
             set(BAND_BASE_TOOLS)
@@ -779,7 +780,6 @@ class TestCustomTools:
 
     def test_accepts_additional_tools_parameter(self):
         """Adapter accepts list of CustomToolDef tuples."""
-        from pydantic import BaseModel, Field
 
         class EchoInput(BaseModel):
             """Echo the message."""
@@ -798,7 +798,6 @@ class TestCustomTools:
 
     def test_multiple_custom_tools(self):
         """Should accept multiple custom tools."""
-        from pydantic import BaseModel
 
         class Tool1Input(BaseModel):
             """Tool 1."""
@@ -825,7 +824,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tools_added_to_allowed_tools(self):
         """Custom tools should be added to allowed_tools list."""
-        from pydantic import BaseModel
 
         class CalculatorInput(BaseModel):
             """Perform calculations."""
@@ -864,7 +862,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tools_registered_in_mcp_server(self):
         """Custom tools should be registered in MCP server (memory tools disabled)."""
-        from pydantic import BaseModel
 
         class EchoInput(BaseModel):
             """Echo tool."""
@@ -907,7 +904,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tools_registered_with_memory_tools_enabled(self):
         """Custom tools should be registered in MCP server (memory tools enabled)."""
-        from pydantic import BaseModel
 
         class EchoInput(BaseModel):
             """Echo tool."""
@@ -948,8 +944,6 @@ class TestCustomTools:
 
     def test_tool_name_derived_from_input_model(self):
         """Tool name should be derived from Pydantic model class name."""
-        from band.runtime.custom_tools import get_custom_tool_name
-        from pydantic import BaseModel
 
         class MyCustomToolInput(BaseModel):
             """A custom tool."""
@@ -2097,7 +2091,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_accept_returns_allow(self, mock_tools):
         """auto_accept mode should return PermissionResultAllow."""
-        from claude_agent_sdk.types import (
+        from claude_agent_sdk.types import (  # noqa: PLC0415
             PermissionResultAllow,
             ToolPermissionContext,
         )
@@ -2114,7 +2108,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_accept_sends_notification(self, mock_tools):
         """auto_accept should send policy notification when enabled."""
-        from claude_agent_sdk.types import ToolPermissionContext
+        from claude_agent_sdk.types import ToolPermissionContext  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter(
             approval_mode="auto_accept", approval_text_notifications=True
@@ -2132,7 +2126,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_decline_returns_deny(self, mock_tools):
         """auto_decline mode should return PermissionResultDeny."""
-        from claude_agent_sdk.types import (
+        from claude_agent_sdk.types import (  # noqa: PLC0415
             PermissionResultDeny,
             ToolPermissionContext,
         )
@@ -2149,7 +2143,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_accept_no_notification_when_disabled(self, mock_tools):
         """Should not send notification when approval_text_notifications=False."""
-        from claude_agent_sdk.types import ToolPermissionContext
+        from claude_agent_sdk.types import ToolPermissionContext  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter(
             approval_mode="auto_accept", approval_text_notifications=False
@@ -2165,7 +2159,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_sends_approval_request(self, mock_tools):
         """Manual mode should send approval message and wait on future."""
-        from claude_agent_sdk.types import (
+        from claude_agent_sdk.types import (  # noqa: PLC0415
             PermissionResultAllow,
             ToolPermissionContext,
         )
@@ -2195,7 +2189,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_timeout_declines(self, mock_tools):
         """Manual mode should decline on timeout when timeout_decision='decline'."""
-        from claude_agent_sdk.types import (
+        from claude_agent_sdk.types import (  # noqa: PLC0415
             PermissionResultDeny,
             ToolPermissionContext,
         )
@@ -2216,7 +2210,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_timeout_accepts(self, mock_tools):
         """Manual mode should accept on timeout when timeout_decision='accept'."""
-        from claude_agent_sdk.types import (
+        from claude_agent_sdk.types import (  # noqa: PLC0415
             PermissionResultAllow,
             ToolPermissionContext,
         )
@@ -2237,7 +2231,7 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_notification_failure_declines(self, mock_tools):
         """If the approval notification can't be delivered, decline immediately."""
-        from claude_agent_sdk.types import (
+        from claude_agent_sdk.types import (  # noqa: PLC0415
             PermissionResultDeny,
             ToolPermissionContext,
         )
@@ -2567,7 +2561,7 @@ class TestPendingApprovalEviction:
     @pytest.mark.asyncio
     async def test_evicts_oldest_when_capacity_reached(self, mock_tools):
         """Should evict oldest pending when max capacity is reached."""
-        from claude_agent_sdk.types import ToolPermissionContext
+        from claude_agent_sdk.types import ToolPermissionContext  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter(
             approval_mode="manual",
@@ -2634,7 +2628,7 @@ class TestSendMessageDedupWiring:
     @pytest.mark.asyncio
     async def test_wraps_tools_by_default(self, sample_message, mock_tools):
         """By default, on_message stores a DedupingAgentTools wrapper."""
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2669,7 +2663,7 @@ class TestSendMessageDedupWiring:
     @pytest.mark.asyncio
     async def test_ttl_zero_disables_wrapping(self, sample_message, mock_tools):
         """ttl=0 keeps the raw tools — no shim — for operators who opt out."""
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter(send_message_dedup_ttl_seconds=0)
         mock_client = MagicMock()
@@ -2759,7 +2753,7 @@ class TestSendMessageDedupWiring:
         and one after the second on_message — and assert the duplicate is
         suppressed across the turn boundary.
         """
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2879,7 +2873,7 @@ class TestSendMessageDedupWiring:
         a per-session or singleton tools cache) cannot silently turn the
         dedup wrapper into a tenant-wide message suppressor.
         """
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2941,7 +2935,7 @@ class TestSendMessageDedupWiring:
         """When the runtime hands the adapter the same tools object twice,
         ``update_inner`` is a no-op and must be skipped — otherwise we'd
         briefly contend on the wrapper's lock for no reason."""
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools  # noqa: PLC0415
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()

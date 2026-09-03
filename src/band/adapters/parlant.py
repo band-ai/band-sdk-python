@@ -353,7 +353,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if self._configure is not None:
             await self._configure(server, agent)
 
-        from parlant.core.application import Application  # type: ignore[missing-import]
+        from parlant.core.application import Application  # type: ignore[missing-import]  # noqa: PLC0415
 
         return agent, server.container[Application]
 
@@ -415,8 +415,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         )
 
         try:
-            from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]
-            from parlant.core.sessions import EventSource  # type: ignore[missing-import]
+            from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]  # noqa: PLC0415
+            from parlant.core.sessions import EventSource  # type: ignore[missing-import]  # noqa: PLC0415
 
             # Create customer message event (triggers processing)
             logger.debug("Room %s: Creating customer message event...", room_id)
@@ -528,8 +528,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return 0
 
         app = self._app
-        from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]
-        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
+        from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]  # noqa: PLC0415
 
         # First, filter to only complete exchanges
         # A user message is only injected if it has a following assistant response
@@ -630,8 +630,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         app = self._app
         session_id_str = str(session_id)
-        from parlant.core.async_utils import Timeout  # type: ignore[missing-import]
-        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
+        from parlant.core.async_utils import Timeout  # type: ignore[missing-import]  # noqa: PLC0415
+        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]  # noqa: PLC0415
 
         current_offset = min_offset
         # Wait up to the total response budget, polling in shorter windows. An empty

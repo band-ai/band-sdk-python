@@ -82,7 +82,7 @@ async def create_band_mcp_backend(
     allowed_tools = _build_allowed_tools(tool_definitions, resolved_tools)
 
     if kind == "sdk":
-        from band.integrations.claude_sdk.tools import (
+        from band.integrations.claude_sdk.tools import (  # noqa: PLC0415
             build_band_sdk_tools,
             create_band_sdk_mcp_server,
         )

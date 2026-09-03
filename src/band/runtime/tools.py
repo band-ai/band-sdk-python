@@ -20,6 +20,11 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, cast
 
 import band_sdk_core
 from async_lru import alru_cache
+from band_rest import (
+    AgentRegisterRequest,
+    CreateContactRequestRequestContactRequest,
+    CreateMyChatRoomRequestChat,
+)
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -30,13 +35,19 @@ from pydantic import (
 )
 
 from band.client.rest import (
+    AgentMemoryCreateRequest,
+    ChatEventRequest,
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
     ChatRoomRequest,
     DEFAULT_REQUEST_OPTIONS,
     NotFoundError,
+    ParticipantRequest,
     UnprocessableEntityError,
 )
 from band.config.settings import RuntimeSettings
 from band.runtime.capabilities import with_hub_room_contacts
+from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.participants import log_roster_call, participant_snapshot
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
@@ -1925,11 +1936,6 @@ class AgentTools(AgentToolsProtocol):
         Raises:
             ValueError: If a mentioned handle is not found in participants
         """
-        from band.client.rest import (
-            ChatMessageRequest,
-            ChatMessageRequestMentionsItem,
-        )
-
         # Deprecation warning for dict-style mentions WITHOUT an id: those
         # lean on name/handle resolution, which list[str] does better.
         # Id-bearing dicts are adapter-supplied ground truth (the message's
@@ -1991,8 +1997,6 @@ class AgentTools(AgentToolsProtocol):
             Fern ChatEvent model (Pydantic). Serialized to dict by
             execute_tool_call() at the adapter boundary.
         """
-        from band.client.rest import ChatEventRequest
-
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
 
         if not content:
@@ -2057,8 +2061,6 @@ class AgentTools(AgentToolsProtocol):
         first. Used by state-reconstruction adapters (e.g. CrewAI Flow) to
         rebuild durable run state from task events.
         """
-        from band.runtime.context_serialization import context_item_to_dict
-
         response = await self.rest.agent_api_context.get_agent_chat_context(
             chat_id=room_id,
             page=page,
@@ -2104,8 +2106,6 @@ class AgentTools(AgentToolsProtocol):
         Raises:
             ValueError: If participant not found
         """
-        from band.client.rest import ParticipantRequest
-
         logger.debug(
             "Adding participant '%s' with role '%s' to room %s",
             identifier,
@@ -2562,8 +2562,6 @@ class AgentTools(AgentToolsProtocol):
             Fern Memory model (Pydantic). Serialized to dict by
             execute_tool_call() at the adapter boundary.
         """
-        from band.client.rest import AgentMemoryCreateRequest
-
         band_sdk_core.validate_memory_type_for_system(system, type)
         validate_subject_scope(MemoryStoreScope(scope), subject_id)
 
@@ -3313,8 +3311,6 @@ class HumanTools:
 
     async def register_my_agent(self, name: str, description: str) -> Any:
         """Register a new remote agent owned by the user."""
-        from band_rest import AgentRegisterRequest
-
         logger.debug("Registering my agent: name=%s", name)
         agent_request = AgentRegisterRequest(name=name, description=description)
         return await self.rest.human_api_agents.register_my_agent(
@@ -3337,8 +3333,6 @@ class HumanTools:
 
     async def create_my_chat_room(self, task_id: str | None = None) -> Any:
         """Create a new chat room with the user as owner."""
-        from band_rest import CreateMyChatRoomRequestChat
-
         logger.debug("Creating my chat room: task_id=%s", task_id)
         chat_request = (
             CreateMyChatRoomRequestChat(task_id=task_id)
@@ -3372,8 +3366,6 @@ class HumanTools:
         self, recipient_handle: str, message: str | None = None
     ) -> Any:
         """Send a contact request to another user."""
-        from band_rest import CreateContactRequestRequestContactRequest
-
         logger.debug("Creating contact request to: %s", recipient_handle)
         kwargs: dict[str, Any] = {"recipient_handle": recipient_handle}
         if message is not None:
@@ -3517,8 +3509,6 @@ class HumanTools:
         MCP handler output verbatim (no exception raised) so the
         observable tool-surface error shape is preserved.
         """
-        from band_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
-
         recipient_names = [
             name.strip().lower() for name in recipients.split(",") if name.strip()
         ]
@@ -3601,8 +3591,6 @@ class HumanTools:
         Returns ``f"Added participant: {participant_id}"`` (discards the
         Fern response body) to match today's MCP handler output verbatim.
         """
-        from band_rest import ParticipantRequest
-
         logger.debug(
             "Adding my chat participant: chat_id=%s, participant_id=%s, role=%s",
             chat_id,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
-from band.runtime.tools import CHAT_ID_FIELD_NAME
+from band.runtime.tools import CHAT_ID_FIELD_NAME, ToolCallOutcome
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     FakeCopilotSession,
@@ -114,7 +114,6 @@ class TestReply:
         """A failed band_send_message (ok=False, no exception) must NOT mark the turn
         replied — the final-text fallback must still fire, else the user gets a silent
         turn."""
-        from band.runtime.tools import ToolCallOutcome
 
         class SendFailsTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(self, tool_name, arguments):

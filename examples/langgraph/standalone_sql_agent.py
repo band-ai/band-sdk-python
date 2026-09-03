@@ -104,9 +104,9 @@ def create_sql_agent(db_path: str = "Chinook.db"):
 
 def download_chinook_db():
     """Download the Chinook sample database if not present."""
-    import logging
-    import os
-    import urllib.request
+    import logging  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
 
     logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ def download_chinook_db():
         logger.info("Creating minimal test database instead...")
 
         # Create minimal test database if download fails
-        import sqlite3
+        import sqlite3  # noqa: PLC0415
 
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()

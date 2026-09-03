@@ -45,7 +45,7 @@ class GatewayHistoryConverter(HistoryConverter["GatewaySessionState"]):
             mappings extracted from the history.
         """
         # Runtime import to avoid circular import at module load time
-        from band.integrations.a2a.gateway.types import GatewaySessionState
+        from band.integrations.a2a.gateway.types import GatewaySessionState  # noqa: PLC0415
 
         context_to_room: dict[str, str] = {}
         room_participants: dict[str, set[str]] = defaultdict(set)

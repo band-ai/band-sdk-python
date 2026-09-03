@@ -38,6 +38,7 @@ from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAME,
+    AgentTools,
     ToolDefinition,
     append_mention_handles_hint,
     iter_tool_definitions,
@@ -343,7 +344,6 @@ def create_band_mcp_server(agent: Any) -> Any:
     The returned server uses room-scoped ``AgentTools`` instances resolved from
     the running agent state at tool-call time.
     """
-    from band.runtime.tools import AgentTools
 
     def _execution_for(room_id: str) -> ExecutionContext | None:
         executions = agent.runtime.executions if agent.runtime else {}

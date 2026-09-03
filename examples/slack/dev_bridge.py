@@ -111,8 +111,8 @@ async def main() -> None:
     if transport == "http":
         # Mount the Slack router into a tiny ASGI app and run uvicorn
         # alongside the Band WS agent loop.
-        import uvicorn
-        from starlette.applications import Starlette
+        import uvicorn  # noqa: PLC0415
+        from starlette.applications import Starlette  # noqa: PLC0415
 
         starlette_app = Starlette()
         starlette_app.mount("/slack", slack.router)

@@ -31,7 +31,7 @@ def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_call_event_uses_bare_name() -> None:
-    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
+    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock  # noqa: PLC0415
 
     adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
 

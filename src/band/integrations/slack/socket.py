@@ -125,7 +125,7 @@ def _default_client_factory(
     app: SlackApp, web_client: AsyncWebClient
 ) -> SocketModeClient:
     try:
-        from slack_sdk.socket_mode.aiohttp import SocketModeClient
+        from slack_sdk.socket_mode.aiohttp import SocketModeClient  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover — import-time guard
         raise ImportError(
             "Socket Mode requires aiohttp. Install with "
@@ -149,7 +149,7 @@ def _make_request_handler(
     avoid retries. Redelivered events (same ``event_id``) are dropped via
     ``seen_events`` so a reconnect can't double-invoke the brain.
     """
-    from slack_sdk.socket_mode.response import SocketModeResponse
+    from slack_sdk.socket_mode.response import SocketModeResponse  # noqa: PLC0415
 
     async def handle(client: SocketModeClient, req: Any) -> None:
         envelope_id = getattr(req, "envelope_id", None)

@@ -57,9 +57,9 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
     bespoke tests don't re-derive it; ``overrides`` layers the one knob each
     test actually cares about (``ask_user=``, ``base_directory=``).
     """
-    from copilot import ProviderConfig
+    from copilot import ProviderConfig  # noqa: PLC0415
 
-    from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
+    from band.adapters.copilot_sdk import CopilotSDKAdapterConfig  # noqa: PLC0415
 
     return CopilotSDKAdapterConfig(
         model=settings.llm_models.anthropic_model,
@@ -99,7 +99,7 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     forwarding (without either, the model cannot ask and the handler never
     fires).
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from band.adapters.copilot_sdk import CopilotSDKAdapter  # noqa: PLC0415
 
     operator_channel = f"channel-{uuid.uuid4().hex[:6]}"
     asked: list[dict[str, Any]] = []
@@ -167,7 +167,7 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
     reply containing it proves the answer flowed through the room round trip —
     not model invention.
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from band.adapters.copilot_sdk import CopilotSDKAdapter  # noqa: PLC0415
 
     secret_channel = f"channel-{uuid.uuid4().hex[:6]}"
     adapter = CopilotSDKAdapter(
@@ -248,7 +248,7 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     replies are its only possible source (the regression case for one-sided
     injected history).
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from band.adapters.copilot_sdk import CopilotSDKAdapter  # noqa: PLC0415
 
     tracking_marker = f"MARKER_{uuid.uuid4().hex[:6]}"
     agent_fact = "blue"
@@ -331,9 +331,9 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
        still-running client — the borrowed client must survive an adapter's
        full cleanup (``owns_client=False`` contract).
     """
-    from copilot import CopilotClient
+    from copilot import CopilotClient  # noqa: PLC0415
 
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from band.adapters.copilot_sdk import CopilotSDKAdapter  # noqa: PLC0415
 
     identity = await resource_manager.provision_agent("copilot-shared-client")
     room_a = await resource_manager.provision_room(

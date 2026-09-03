@@ -288,9 +288,9 @@ class TestOnMessage:
     async def test_real_compiled_graph_emits_tool_events(
         self, sample_message, mock_tools
     ):
-        from langchain_core.tools import tool
-        from langgraph.graph import END, START, MessagesState, StateGraph
-        from langgraph.prebuilt import ToolNode
+        from langchain_core.tools import tool  # noqa: PLC0415
+        from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: PLC0415
+        from langgraph.prebuilt import ToolNode  # noqa: PLC0415
 
         @tool
         async def record_value(value: str) -> str:
@@ -348,7 +348,7 @@ class TestOnMessage:
     async def test_real_compiled_graph_can_opt_into_bootstrap_system_prompt(
         self, sample_message, mock_tools
     ):
-        from langgraph.graph import END, START, MessagesState, StateGraph
+        from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: PLC0415
 
         seen_prompts: list[str] = []
 

@@ -45,7 +45,7 @@ class SlackHistoryConverter(HistoryConverter["SlackSessionState"]):
             contains a Slack bootstrap task event, otherwise the empty
             default state.
         """
-        from band.integrations.slack.types import (
+        from band.integrations.slack.types import (  # noqa: PLC0415
             SlackRoomBinding,
             SlackSessionState,
         )

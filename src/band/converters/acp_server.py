@@ -41,7 +41,7 @@ class ACPServerHistoryConverter(HistoryConverter["ACPSessionState"]):
             from the history.
         """
         # Runtime import to avoid circular import at module load time
-        from band.integrations.acp.types import ACPSessionState
+        from band.integrations.acp.types import ACPSessionState  # noqa: PLC0415
 
         session_to_room: dict[str, str] = {}
         session_cwd: dict[str, str] = {}

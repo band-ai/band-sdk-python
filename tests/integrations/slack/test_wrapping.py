@@ -25,12 +25,13 @@ import warnings
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from httpx import ASGITransport
 
+from band.core.exceptions import BandToolError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -48,7 +49,7 @@ from band.integrations.slack.adapter import (
 )
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
-from band.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools, ToolCallOutcome
 from band.testing.platform import platform_connection_stub
 
 
@@ -961,9 +962,6 @@ async def test_execute_tool_call_delegates_non_slack_tools_to_super():
     it delegates via ``execute_tool_call_structured`` and returns its
     ``value``.
     """
-    from unittest.mock import patch
-
-    from band.runtime.tools import ToolCallOutcome
 
     tools, _, _ = _make_tee_tools()
     super_mock = AsyncMock(return_value=ToolCallOutcome(value="ok", ok=True))
@@ -977,7 +975,6 @@ async def test_execute_tool_call_delegates_non_slack_tools_to_super():
 @pytest.mark.asyncio
 async def test_send_message_no_longer_overridden_uses_real_band_path():
     """The base AgentTools.send_message behavior is restored (mention required)."""
-    from band.core.exceptions import BandToolError
 
     tools, _, slack = _make_tee_tools()
     # Mentionless message hits the platform's "≥1 mention required" guard.

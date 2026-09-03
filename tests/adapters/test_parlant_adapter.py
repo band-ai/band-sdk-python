@@ -991,7 +991,7 @@ class TestResponseWaitBudget:
         """Parlant emits a preamble then stalls the final generation. A preamble is an
         acknowledgment, not an answer, so the adapter must NOT forward it as the reply
         — the turn is given up honestly (no send_message) rather than faking success."""
-        from band.adapters.parlant import PARLANT_PREAMBLE_TAG
+        from band.adapters.parlant import PARLANT_PREAMBLE_TAG  # noqa: PLC0415
 
         adapter = ParlantAdapter(
             server=mock_parlant_server,

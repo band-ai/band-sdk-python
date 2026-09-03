@@ -102,7 +102,7 @@ class TestGraphFactoryMultiRoom:
         right tools to the factory each time, so a correctly-written
         factory has access to the current room's wrappers.
         """
-        from langchain_core.tools import StructuredTool
+        from langchain_core.tools import StructuredTool  # noqa: PLC0415
 
         # Two rooms, two distinct AgentToolsProtocol instances. Wrappers
         # dispatch through ``tools.execute_tool_call(name, kwargs)``, so we

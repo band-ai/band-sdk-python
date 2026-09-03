@@ -81,11 +81,13 @@ async def main(args: argparse.Namespace | None = None) -> None:
     if not args.api_key:
         raise ValueError("API key is required. Use --api-key or set BAND_API_KEY.")
 
-    # Lazy imports to avoid import errors when ACP deps are not installed
-    from band import Agent
-    from band.integrations.acp.push_handler import ACPPushHandler
-    from band.integrations.acp.server import ACPServer, run_acp_server
-    from band.integrations.acp.server_adapter import BandACPServerAdapter
+    # Lazy: band.integrations.acp.server imports the optional `acp` extra
+    # (agent-client-protocol) at its own top level, so importing it eagerly
+    # here would break every venv that doesn't install the `acp` extra.
+    from band import Agent  # noqa: PLC0415
+    from band.integrations.acp.push_handler import ACPPushHandler  # noqa: PLC0415
+    from band.integrations.acp.server import ACPServer, run_acp_server  # noqa: PLC0415
+    from band.integrations.acp.server_adapter import BandACPServerAdapter  # noqa: PLC0415
 
     adapter = BandACPServerAdapter()
 

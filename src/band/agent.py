@@ -148,7 +148,13 @@ class Agent:
             on_participant_removed: Optional callback for participant_removed events.
             preprocessor: Custom event preprocessor (default: DefaultPreprocessor)
         """
-        from band.config.settings import PlatformSettings
+        # Deferred: importing band.config here at module top-level reorders
+        # this module's own band.core.* imports behind it, which reintroduces
+        # a real circular import (band.config -> band.logging_config ->
+        # band.core.exceptions -> band.core.simple_adapter, back into
+        # band.logging_config mid-init) -- verified by moving it and running
+        # `python -c "import band.agent"`.
+        from band.config.settings import PlatformSettings  # noqa: PLC0415
 
         settings = PlatformSettings()
         runtime = PlatformRuntime(
@@ -193,7 +199,10 @@ class Agent:
         Returns:
             Configured Agent instance.
         """
-        from band.config.loader import load_agent_config
+        # Deferred for the same reason as PlatformSettings above: a top-level
+        # band.config import here reorders this module's band.core.* imports
+        # behind it, reintroducing a real circular import.
+        from band.config.loader import load_agent_config  # noqa: PLC0415
 
         agent_id, api_key = load_agent_config(name, config_path=config_path)
         return cls.create(

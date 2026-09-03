@@ -186,7 +186,10 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
         yield
         return
 
-    from band.runtime.single_instance import SingleInstanceGuard
+    # Deferred: this autouse fixture runs for every unit test, so a
+    # top-level import here would cost all 3000+ of them, not just the
+    # few that actually build a guard (see the docstring above).
+    from band.runtime.single_instance import SingleInstanceGuard  # noqa: PLC0415
 
     lock_dir: list = []
     created: list[SingleInstanceGuard] = []

@@ -37,7 +37,7 @@ class A2AHistoryConverter(HistoryConverter["A2ASessionState"]):
             A2ASessionState with extracted context_id, task_id, and task_state
         """
         # Import at runtime to avoid circular import
-        from band.integrations.a2a.types import A2ASessionState
+        from band.integrations.a2a.types import A2ASessionState  # noqa: PLC0415
 
         context_id: str | None = None
         task_id: str | None = None

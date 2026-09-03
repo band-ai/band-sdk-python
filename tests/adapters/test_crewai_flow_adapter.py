@@ -489,7 +489,7 @@ class TestOnCleanup:
 class TestPublicImportPath:
     def test_lazy_import_from_band_adapters(self) -> None:
         # The example imports `from band.adapters import CrewAIFlowAdapter`.
-        from band.adapters import CrewAIFlowAdapter as Imported
+        from band.adapters import CrewAIFlowAdapter as Imported  # noqa: PLC0415
 
         assert Imported is CrewAIFlowAdapter
 

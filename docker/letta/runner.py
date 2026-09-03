@@ -158,8 +158,8 @@ async def main() -> None:
     )
     config = load_config(settings.agent_config, settings.agent_key)
 
-    from band import Agent
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
+    from band import Agent  # noqa: PLC0415
+    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig  # noqa: PLC0415
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]

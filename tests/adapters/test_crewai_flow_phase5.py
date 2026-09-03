@@ -557,7 +557,7 @@ class TestE2ETrace:
 
 class TestIdentityNormalization:
     def test_uuid_handle_displayname_resolve_to_same_key(self) -> None:
-        from band.converters.crewai_flow import normalize_participant_key
+        from band.converters.crewai_flow import normalize_participant_key  # noqa: PLC0415
 
         participants = [
             {

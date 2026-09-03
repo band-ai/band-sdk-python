@@ -40,7 +40,7 @@ class CodexWebSocketClient(BaseJsonRpcClient):
             return
 
         try:
-            from websockets.asyncio.client import connect
+            from websockets.asyncio.client import connect  # noqa: PLC0415
         except ImportError as exc:
             raise RuntimeError(
                 "websockets package is required for CodexWebSocketClient"

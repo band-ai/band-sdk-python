@@ -161,8 +161,8 @@ async def main() -> None:
         lock_timeout_s=lock_timeout_s,
     )
 
-    from band import Agent
-    from band.adapters import ClaudeSDKAdapter
+    from band import Agent  # noqa: PLC0415
+    from band.adapters import ClaudeSDKAdapter  # noqa: PLC0415
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]

@@ -98,7 +98,7 @@ class TestBuildEngineHostForwarding:
         assert mcp.settings.transport_security is None
 
     def test_explicit_transport_security_overrides_host_auto_detection(self) -> None:
-        from mcp.server.transport_security import TransportSecuritySettings
+        from mcp.server.transport_security import TransportSecuritySettings  # noqa: PLC0415
 
         explicit = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,

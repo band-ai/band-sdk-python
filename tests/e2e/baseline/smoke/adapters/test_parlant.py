@@ -72,9 +72,9 @@ async def test_parlant_replies(
     shared toolkit provisions and runs it, and the delivery barrier proves the
     turn completed before we read the reply.
     """
-    import parlant.sdk as p
+    import parlant.sdk as p  # noqa: PLC0415
 
-    from band.adapters.parlant import ParlantAdapter
+    from band.adapters.parlant import ParlantAdapter  # noqa: PLC0415
 
     adapter = ParlantAdapter(
         name="E2E Showcase Agent",

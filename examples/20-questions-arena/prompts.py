@@ -36,7 +36,7 @@ def create_llm() -> BaseChatModel:
 
     if settings.anthropic_api_key:
         try:
-            from langchain_anthropic import ChatAnthropic
+            from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
         except ImportError:
             raise ValueError(
                 "ANTHROPIC_API_KEY is set but langchain-anthropic is not installed. "
@@ -45,7 +45,7 @@ def create_llm() -> BaseChatModel:
 
         return ChatAnthropic(model="claude-sonnet-4-5-20250929")
     elif settings.openai_api_key:
-        from langchain_openai import ChatOpenAI
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
 
         return ChatOpenAI(model="gpt-5.5")
     else:
@@ -73,7 +73,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
         if not settings.anthropic_api_key:
             raise ValueError(f"ANTHROPIC_API_KEY must be set to use model '{model}'")
         try:
-            from langchain_anthropic import ChatAnthropic
+            from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
         except ImportError:
             raise ValueError(
                 "langchain-anthropic is not installed. "
@@ -83,7 +83,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
     else:
         if not settings.openai_api_key:
             raise ValueError(f"OPENAI_API_KEY must be set to use model '{model}'")
-        from langchain_openai import ChatOpenAI
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
 
         return ChatOpenAI(model=model)
 

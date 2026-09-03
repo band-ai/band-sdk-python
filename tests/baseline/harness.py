@@ -186,7 +186,7 @@ class BaselineScenario:
         if isinstance(decision, Exception):
             raise decision
 
-        from anthropic.types import TextBlock, ToolUseBlock
+        from anthropic.types import TextBlock, ToolUseBlock  # noqa: PLC0415
 
         content: list[Any] = []
         for index, call in enumerate(decision.tool_calls, start=1):

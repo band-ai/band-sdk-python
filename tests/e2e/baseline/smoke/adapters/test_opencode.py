@@ -76,7 +76,7 @@ def _handled(messages: list[MessageCreatedPayload], request_id: str) -> bool:
 
 def _manual_opencode_adapter(settings: BaselineSettings):
     """The matrix builder's OpenCode config, but in manual approval mode."""
-    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig  # noqa: PLC0415
 
     return OpencodeAdapter(
         config=OpencodeAdapterConfig(

@@ -20,6 +20,6 @@ def entry_point() -> None:
             "through fcntl file locks and Unix sockets, which Windows does "
             "not provide."
         )
-    from band.integrations.desktop_app.server import entry_point
+    from band.integrations.desktop_app.server import entry_point  # noqa: PLC0415
 
     entry_point()

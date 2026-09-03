@@ -49,8 +49,8 @@ def load_agent_config(filename: str) -> dict:
 
 
 async def main() -> None:
-    from band_rest import AsyncRestClient
-    from band_rest.types import (
+    from band_rest import AsyncRestClient  # noqa: PLC0415
+    from band_rest.types import (  # noqa: PLC0415
         ChatMessageRequest,
         ChatMessageRequestMentionsItem,
         ChatRoomRequest,

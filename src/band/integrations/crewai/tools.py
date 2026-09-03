@@ -365,7 +365,7 @@ def _make_platform_tools(
     is responsible for stitching them together based on the requested
     capabilities.
     """
-    from crewai.tools import BaseTool
+    from crewai.tools import BaseTool  # noqa: PLC0415
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
         return _execute_tool(
@@ -866,7 +866,7 @@ def _make_custom_tools(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> list[BaseTool]:
     """Convert CustomToolDef tuples to CrewAI BaseTool instances."""
-    from crewai.tools import BaseTool
+    from crewai.tools import BaseTool  # noqa: PLC0415
 
     crewai_tools: list[BaseTool] = []
 

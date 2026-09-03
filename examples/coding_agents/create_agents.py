@@ -44,8 +44,8 @@ class Settings(BaseSettings):
 async def main() -> None:
     settings = Settings()
 
-    from band_rest import AsyncRestClient
-    from band_rest.types import AgentRegisterRequest
+    from band_rest import AsyncRestClient  # noqa: PLC0415
+    from band_rest.types import AgentRegisterRequest  # noqa: PLC0415
 
     client = AsyncRestClient(
         api_key=settings.band_api_key, base_url=settings.band_rest_url

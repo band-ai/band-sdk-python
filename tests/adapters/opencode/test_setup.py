@@ -37,7 +37,7 @@ def test_no_leaked_adapter_config_env_vars(
 
 async def test_startup_fails_loudly_when_server_unreachable() -> None:
     """The default (real-server) path must fail at startup naming the fix."""
-    import httpx
+    import httpx  # noqa: PLC0415
 
     adapter = OpencodeAdapter()
     with patch(

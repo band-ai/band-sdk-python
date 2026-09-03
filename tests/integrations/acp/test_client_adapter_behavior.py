@@ -784,7 +784,7 @@ async def test_replay_after_midrun_respawn() -> None:
     the next turn's freshly created session must be re-seeded from the room
     transcript (re-fetched, since the runtime only hands history to bootstrap
     turns), not start amnesiac."""
-    from acp import RequestError
+    from acp import RequestError  # noqa: PLC0415
 
     outcomes = iter(["I noted your favorite color.", "boom", "Blue."])
     agent = FakeACPAgent()

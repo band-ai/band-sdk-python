@@ -30,7 +30,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from band_rest import AsyncRestClient
+from band_rest import (
+    AgentRegisterRequest,
+    AsyncRestClient,
+    ChatMessageRequest,
+    CreateContactRequestRequestContactRequest,
+    CreateMyChatRoomRequestChat,
+    ParticipantRequest,
+)
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, ParsingError
 from band.runtime.tools import HumanTools
@@ -75,7 +82,6 @@ async def test_list_my_agents_forwards_page_args() -> None:
 
 @pytest.mark.asyncio
 async def test_register_my_agent_builds_request_object() -> None:
-    from band_rest import AgentRegisterRequest
 
     rest = _make_rest_fake()
     response = MagicMock()
@@ -109,7 +115,6 @@ async def test_list_my_chats_forwards_pagination() -> None:
 
 @pytest.mark.asyncio
 async def test_create_my_chat_room_with_task_id() -> None:
-    from band_rest import CreateMyChatRoomRequestChat
 
     rest = _make_rest_fake()
     rest.human_api_chats.create_my_chat_room = AsyncMock(return_value=MagicMock())
@@ -123,7 +128,6 @@ async def test_create_my_chat_room_with_task_id() -> None:
 
 @pytest.mark.asyncio
 async def test_create_my_chat_room_without_task_id() -> None:
-    from band_rest import CreateMyChatRoomRequestChat
 
     rest = _make_rest_fake()
     rest.human_api_chats.create_my_chat_room = AsyncMock(return_value=MagicMock())
@@ -161,7 +165,6 @@ async def test_list_my_contacts_forwards_pagination() -> None:
 
 @pytest.mark.asyncio
 async def test_create_contact_request_without_message() -> None:
-    from band_rest import CreateContactRequestRequestContactRequest
 
     rest = _make_rest_fake()
     rest.human_api_contacts.create_contact_request = AsyncMock(return_value=MagicMock())
@@ -178,7 +181,6 @@ async def test_create_contact_request_without_message() -> None:
 
 @pytest.mark.asyncio
 async def test_create_contact_request_with_message() -> None:
-    from band_rest import CreateContactRequestRequestContactRequest
 
     rest = _make_rest_fake()
     rest.human_api_contacts.create_contact_request = AsyncMock(return_value=MagicMock())
@@ -413,7 +415,6 @@ def _mk_participant(**kwargs: Any) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_send_my_chat_message_resolves_recipients_by_name() -> None:
-    from band_rest import ChatMessageRequest
 
     rest = _make_rest_fake()
     alice = _mk_participant(id="u-1", name="Alice")
@@ -494,7 +495,6 @@ async def test_list_my_chat_participants_forwards_filter() -> None:
 
 @pytest.mark.asyncio
 async def test_add_my_chat_participant_builds_request_with_default_role() -> None:
-    from band_rest import ParticipantRequest
 
     rest = _make_rest_fake()
     rest.human_api_participants.add_my_chat_participant = AsyncMock(

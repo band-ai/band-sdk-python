@@ -124,7 +124,7 @@ class TestOnCleanup:
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
         """Should log a warning when _bootstrapped_rooms reaches threshold."""
-        from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD
+        from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD  # noqa: PLC0415
 
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -213,8 +213,8 @@ class TestOnCleanup:
         self, mock_tools
     ):
         """Persistent checkpointer state should suppress duplicate bootstrap history."""
-        from langgraph.checkpoint.memory import InMemorySaver
-        from langgraph.graph import END, START, MessagesState, StateGraph
+        from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
+        from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: PLC0415
 
         checkpointer = InMemorySaver()
         seen_contents: list[list[str]] = []
@@ -284,7 +284,7 @@ class TestOnCleanup:
 
     @pytest.mark.asyncio
     async def test_empty_checkpointer_state_still_allows_bootstrap_hydration(self):
-        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
 
         adapter = LangGraphAdapter(graph=MagicMock(), inject_system_prompt=True)
 

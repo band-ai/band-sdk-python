@@ -77,7 +77,10 @@ def _seed_markdown_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
     """Back `fixture:client` snippets with a generated client and fake HTTP."""
-    from band.client.rest import AsyncRestClient
+    # Deferred: this module is a pytest_plugins entry in the root conftest, so
+    # it loads for every test session -- a top-level import would add band's
+    # full import graph even to runs that never exercise a doc snippet.
+    from band.client.rest import AsyncRestClient  # noqa: PLC0415
 
     # Use the generated client so docs fail if Fern namespaces drift.
     rest_client = AsyncRestClient(
@@ -120,8 +123,10 @@ def _prepare_markdown_docs_runtime(
 @pytest.fixture
 def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Back `fixture:agent_config_path` snippets with temporary credentials."""
-    from band import Agent
-    from band.config import loader
+    # Deferred for the same reason as the `client` fixture above: this module
+    # is always-loaded plugin code, not a per-snippet-only fixture.
+    from band import Agent  # noqa: PLC0415
+    from band.config import loader  # noqa: PLC0415
 
     async def run_noop(self: Agent) -> None:
         return None

@@ -49,7 +49,7 @@ class TestInvalidateSession:
         self, mock_options: ClaudeAgentOptions
     ) -> None:
         """invalidate_session should remove the client without calling disconnect()."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -73,7 +73,7 @@ class TestInvalidateSession:
         self, mock_options: ClaudeAgentOptions
     ) -> None:
         """invalidate_session on a room that doesn't exist should be a safe no-op."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -92,7 +92,7 @@ class TestInvalidateSession:
         self, mock_options: ClaudeAgentOptions
     ) -> None:
         """After invalidation, get_or_create_session should create a new client."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -127,7 +127,7 @@ class TestInvalidateSession:
         self, mock_options: ClaudeAgentOptions
     ) -> None:
         """invalidate_session before start() should return immediately."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -141,7 +141,7 @@ class TestInvalidateSession:
         self, mock_options: ClaudeAgentOptions
     ) -> None:
         """Invalidating one room should leave other rooms' sessions intact."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -166,7 +166,7 @@ class TestBuildOptions:
 
     def test_preserves_all_base_fields(self, real_options: ClaudeAgentOptions) -> None:
         """_build_options should preserve all base_options fields."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -181,7 +181,7 @@ class TestBuildOptions:
 
     def test_always_returns_copy(self, real_options: ClaudeAgentOptions) -> None:
         """_build_options should return a copy even with no overrides."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -192,7 +192,7 @@ class TestBuildOptions:
 
     def test_applies_resume_override(self, real_options: ClaudeAgentOptions) -> None:
         """_build_options should set resume when session_id provided."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -205,7 +205,7 @@ class TestBuildOptions:
         self, real_options: ClaudeAgentOptions
     ) -> None:
         """_build_options should bind can_use_tool from factory."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 
@@ -222,7 +222,7 @@ class TestBuildOptions:
         self, real_options: ClaudeAgentOptions
     ) -> None:
         """_build_options should not mutate the original base_options."""
-        from band.integrations.claude_sdk.session_manager import (
+        from band.integrations.claude_sdk.session_manager import (  # noqa: PLC0415
             ClaudeSessionManager,
         )
 

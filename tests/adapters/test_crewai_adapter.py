@@ -9,8 +9,13 @@ platform tools, tool execution, verbose mode, delegation, and custom tools.
 
 from __future__ import annotations
 
-import importlib
 import asyncio
+import concurrent.futures
+import contextlib
+import importlib
+import sys
+import threading
+import warnings
 import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -20,6 +25,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.core.types import Capability, Emit, PlatformMessage
+from band.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
@@ -35,7 +41,6 @@ class MockBaseTool:
 
 @pytest.fixture
 def crewai_mocks(monkeypatch):
-    import sys
 
     mock_crewai_module = MagicMock()
     mock_crewai_tools_module = MagicMock()
@@ -62,7 +67,6 @@ def crewai_mocks(monkeypatch):
 
 @pytest.fixture
 def CrewAIAdapter(crewai_mocks) -> type["CrewAIAdapterType"]:
-    import importlib
 
     module = importlib.import_module("band.adapters.crewai")
     return module.CrewAIAdapter
@@ -174,8 +178,6 @@ def room_context(crewai_mocks, mock_tools):
         with room_context("room-123"):
             # tool execution code here
     """
-    import contextlib
-    import importlib
 
     module = importlib.import_module("band.adapters.crewai")
 
@@ -195,7 +197,6 @@ class TestCrewAISpecificInitialization:
 
     def test_system_prompt_deprecation_warning(self, CrewAIAdapter):
         """system_prompt parameter should emit DeprecationWarning."""
-        import warnings
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -210,7 +211,6 @@ class TestCrewAISpecificInitialization:
 
     def test_system_prompt_does_not_override_backstory(self, CrewAIAdapter):
         """If both system_prompt and backstory are provided, backstory takes precedence."""
-        import warnings
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
@@ -521,7 +521,6 @@ class TestErrorHandling:
         self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):
         """A turn is not silent when band_send_message already replied."""
-        import importlib
 
         module = importlib.import_module("band.adapters.crewai")
 
@@ -564,7 +563,6 @@ class TestErrorHandling:
         adapter replies through the tool, that fired on essentially every turn,
         posting a spurious error event alongside each (successful) reply.
         """
-        import importlib
 
         module = importlib.import_module("band.adapters.crewai")
 
@@ -608,7 +606,6 @@ class TestErrorHandling:
         a tool already executed successfully this turn, that empty answer is
         benign: no error event, no re-raise.
         """
-        import importlib
 
         module = importlib.import_module("band.adapters.crewai")
 
@@ -659,7 +656,6 @@ class TestErrorHandling:
         even one raised after band_send_message already replied — must still
         post an error event and propagate, so real bugs stay visible.
         """
-        import importlib
 
         module = importlib.import_module("band.adapters.crewai")
 
@@ -979,7 +975,6 @@ class TestContactToolExecution:
     def test_list_contacts_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = self._make_adapter(CrewAIAdapter)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -998,7 +993,6 @@ class TestContactToolExecution:
     def test_add_contact_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = self._make_adapter(CrewAIAdapter)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1018,7 +1012,6 @@ class TestContactToolExecution:
     def test_remove_contact_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = self._make_adapter(CrewAIAdapter)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1037,7 +1030,6 @@ class TestContactToolExecution:
     def test_list_contact_requests_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = self._make_adapter(CrewAIAdapter)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1060,7 +1052,6 @@ class TestContactToolExecution:
     def test_respond_contact_request_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = self._make_adapter(CrewAIAdapter)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1092,7 +1083,6 @@ class TestMemoryToolExecution:
     def test_list_memories_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1129,7 +1119,6 @@ class TestMemoryToolExecution:
     def test_store_memory_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1165,7 +1154,6 @@ class TestMemoryToolExecution:
     def test_get_memory_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1184,7 +1172,6 @@ class TestMemoryToolExecution:
     def test_supersede_memory_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1206,7 +1193,6 @@ class TestMemoryToolExecution:
     def test_archive_memory_tool_executes(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         adapter = CrewAIAdapter(capabilities=Capability.MEMORY)
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
@@ -1227,7 +1213,6 @@ class TestMemoryToolExecution:
 class TestToolExecution:
     def test_tool_returns_error_without_room_context(self, CrewAIAdapter, crewai_mocks):
         """Tools return error when called outside message handling (no context set)."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1328,7 +1313,6 @@ class TestToolExecution:
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Tools work when context variable is set (simulates call during message handling)."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1423,7 +1407,6 @@ class TestExecutionReporting:
     def test_reports_tool_call_when_enabled(
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1444,7 +1427,7 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitToolCallsReporter.report_call should not propagate."""
-        from band.integrations.crewai import EmitToolCallsReporter
+        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         reporter = EmitToolCallsReporter(adapter.features)
@@ -1458,7 +1441,7 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitToolCallsReporter.report_result should not propagate."""
-        from band.integrations.crewai import EmitToolCallsReporter
+        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         reporter = EmitToolCallsReporter(adapter.features)
@@ -1479,8 +1462,6 @@ class TestLazyNestAsyncio:
         pydantic (which looks annotations up through that name) can no longer build
         the tool models.
         """
-        import importlib
-        import sys
 
         nest_mock = sys.modules["nest_asyncio"]
         nest_mock.reset_mock()
@@ -1492,8 +1473,6 @@ class TestLazyNestAsyncio:
     def test_ensure_nest_asyncio_applies_once(
         self, CrewAIAdapter, crewai_mocks, monkeypatch
     ):
-        import importlib
-        import sys
 
         module = importlib.import_module("band.integrations.crewai.runtime")
 
@@ -1510,8 +1489,6 @@ class TestLazyNestAsyncio:
 
     def test_nest_asyncio_lock_exists(self, CrewAIAdapter, crewai_mocks):
         """The integrations.crewai.runtime module owns the threading lock."""
-        import importlib
-        import threading
 
         module = importlib.import_module("band.integrations.crewai.runtime")
 
@@ -1520,9 +1497,6 @@ class TestLazyNestAsyncio:
 
     def test_ensure_nest_asyncio_is_thread_safe(self, CrewAIAdapter, crewai_mocks):
         """Multiple threads calling _ensure_nest_asyncio should only apply patch once."""
-        import concurrent.futures
-        import importlib
-        import sys
 
         module = importlib.import_module("band.integrations.crewai.runtime")
 
@@ -1541,8 +1515,6 @@ class TestLazyNestAsyncio:
 
 class TestRunAsync:
     def test_run_async_with_running_loop(self, crewai_mocks):
-        import importlib
-        import sys
 
         module = importlib.import_module("band.integrations.crewai.runtime")
         module._nest_asyncio_applied = False
@@ -1559,8 +1531,6 @@ class TestRunAsync:
         nest_mock.apply.assert_called_once()
 
     def test_run_async_without_running_loop(self, crewai_mocks):
-        import importlib
-        import sys
 
         module = importlib.import_module("band.integrations.crewai.runtime")
         module._nest_asyncio_applied = True
@@ -1610,7 +1580,6 @@ class TestMentionsValidator:
 class TestPromptRendering:
     def test_backstory_uses_render_system_prompt(self, CrewAIAdapter):
         """CrewAI backstory is now built via render_system_prompt."""
-        from band.runtime.prompts import render_system_prompt
 
         prompt = render_system_prompt(
             agent_name="TestAgent",
@@ -1733,7 +1702,6 @@ class TestCustomTools:
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Async custom tool should execute correctly."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1757,7 +1725,6 @@ class TestCustomTools:
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Sync custom tool should execute correctly."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1781,7 +1748,6 @@ class TestCustomTools:
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Custom tool exception should result in error response."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1805,7 +1771,6 @@ class TestCustomTools:
         self, CrewAIAdapter, crewai_mocks, mock_tools, room_context
     ):
         """Custom tool should report tool_call and tool_result events when enabled."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 
@@ -1827,7 +1792,6 @@ class TestCustomTools:
 
     def test_custom_tool_without_room_context(self, CrewAIAdapter, crewai_mocks):
         """Custom tool should return error when called without room context."""
-        import asyncio
 
         crewai_mocks.Agent.reset_mock()
 

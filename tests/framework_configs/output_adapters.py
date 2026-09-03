@@ -127,7 +127,7 @@ class LangChainOutputAdapter:
         return result[index].content
 
     def get_role(self, result: list, index: int) -> str:
-        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: PLC0415
 
         msg = result[index]
         if isinstance(msg, HumanMessage):
@@ -155,7 +155,7 @@ class LangChainOutputAdapter:
         return False
 
     def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
-        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: PLC0415
 
         msg = result[index]
         type_map: dict[str, type] = {
@@ -216,7 +216,7 @@ class AgnoOutputAdapter:
         return False
 
     def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
-        from agno.models.message import Message
+        from agno.models.message import Message  # noqa: PLC0415
 
         msg = result[index]
         assert isinstance(msg, Message), (
@@ -252,7 +252,7 @@ class PydanticAIOutputAdapter:
             with cls._message_types_lock:
                 # Double-check after acquiring lock.
                 if cls._message_types is None:
-                    from pydantic_ai.messages import (
+                    from pydantic_ai.messages import (  # noqa: PLC0415
                         ModelRequest,
                         ModelResponse,
                         TextPart,
@@ -579,7 +579,7 @@ class ClaudeSDKOutputAdapter(OutputAdapter):
         self._inner = StringOutputAdapter()
 
     def assert_result_type(self, result: Any) -> None:
-        from band.converters.claude_sdk import ClaudeSDKSessionState
+        from band.converters.claude_sdk import ClaudeSDKSessionState  # noqa: PLC0415
 
         assert isinstance(result, ClaudeSDKSessionState), (
             f"Expected ClaudeSDKSessionState, got {type(result).__name__}"
@@ -620,7 +620,7 @@ class CopilotSDKOutputAdapter(ClaudeSDKOutputAdapter):
     """
 
     def assert_result_type(self, result: Any) -> None:
-        from band.converters.copilot_sdk import CopilotSDKSessionState
+        from band.converters.copilot_sdk import CopilotSDKSessionState  # noqa: PLC0415
 
         assert isinstance(result, CopilotSDKSessionState), (
             f"Expected CopilotSDKSessionState, got {type(result).__name__}"

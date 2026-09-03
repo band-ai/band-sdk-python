@@ -265,7 +265,7 @@ async def main() -> None:
 
     # Run gateway in background, orchestrator in foreground
     # Note: uvicorn.run() is blocking, so we run orchestrator in a thread
-    import threading
+    import threading  # noqa: PLC0415
 
     # Start gateway in asyncio
     gateway_task = asyncio.create_task(run_gateway())
