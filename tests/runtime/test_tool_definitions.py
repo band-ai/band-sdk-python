@@ -18,6 +18,7 @@ from band.runtime.tools import (
     LookupPeersInput,
     SendEventInput,
     SendMessageInput,
+    SetBoardInput,
     UpdateTaskInput,
     format_arg_doc,
     get_tool_description,
@@ -117,6 +118,26 @@ class TestUpdateTaskInput:
     def test_one_field_besides_id_is_sufficient(self):
         update = UpdateTaskInput(id="task-1", comment="progress note")
         assert update.comment == "progress note"
+
+    def test_explicit_empty_string_counts_as_set(self):
+        """An explicit "" is a real value, not an omission -- must not trip
+        the at-least-one-field check the same way an unset field does."""
+        update = UpdateTaskInput(id="task-1", comment="")
+        assert update.comment == ""
+
+
+class TestSetBoardInput:
+    """Tests for SetBoardInput model."""
+
+    def test_requires_at_least_one_field(self):
+        """No fields is a no-op write; the model rejects it up front so an
+        agent gets a clear error instead of the call silently doing nothing."""
+        with pytest.raises(ValidationError, match="At least one of"):
+            SetBoardInput()
+
+    def test_one_field_is_sufficient(self):
+        board = SetBoardInput(goal_title="Ship v2")
+        assert board.goal_title == "Ship v2"
 
 
 class TestLookupPeersInput:

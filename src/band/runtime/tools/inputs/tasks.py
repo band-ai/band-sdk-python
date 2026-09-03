@@ -101,8 +101,9 @@ class UpdateTaskInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_at_least_one_field(self) -> "UpdateTaskInput":
-        if not any(
-            (
+        if all(
+            field is None
+            for field in (
                 self.status,
                 self.active_form,
                 self.comment,
@@ -149,7 +150,7 @@ class GetBoardInput(BaseModel):
 
 
 class SetBoardInput(BaseModel):
-    """Set or update this room's goal (upsert).
+    """Set or update this room's goal (upsert) -- at least one field required.
 
     Send goal_title and/or goal_summary; only the fields you send are
     changed. Every change is recorded in the goal-audit trail.
@@ -157,3 +158,9 @@ class SetBoardInput(BaseModel):
 
     goal_title: str | None = Field(None, description="The room's mission title")
     goal_summary: str | None = Field(None, description="The mission paragraph")
+
+    @model_validator(mode="after")
+    def validate_at_least_one_field(self) -> "SetBoardInput":
+        if self.goal_title is None and self.goal_summary is None:
+            raise ValueError("At least one of goal_title or goal_summary must be set")
+        return self
