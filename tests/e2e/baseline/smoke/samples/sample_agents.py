@@ -29,10 +29,11 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
+from band.core.task_types import TaskAssignmentStatus
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
-from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool
+from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool, TaskTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
 # message, exactly like the opaque-tool smokes.
@@ -52,6 +53,11 @@ def memory_features() -> AdapterFeatures:
 def contacts_features() -> AdapterFeatures:
     """Features for contacts smokes: expose contact tools and record their calls."""
     return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.TOOL_CALLS})
+
+
+def tasks_features() -> AdapterFeatures:
+    """Features for the task-board smokes: expose task tools and record calls."""
+    return AdapterFeatures(capabilities={Capability.TASKS}, emit={Emit.TOOL_CALLS})
 
 
 def usage_features() -> AdapterFeatures:
@@ -103,6 +109,7 @@ MEMORY_SECRETARY_PROMPT = (
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
 CONTACTS_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": contacts_features()}
+TASK_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": tasks_features()}
 MEMORY_SECRETARY_AGENT = {
     "prompt": MEMORY_SECRETARY_PROMPT,
     "features": memory_features(),
@@ -203,6 +210,61 @@ def list_contacts_instruction() -> str:
         f"First call {ContactTool.LIST.value} to inspect your contacts. Then use "
         "band_send_message to briefly confirm that you checked them. Do not call "
         "any other tools."
+    )
+
+
+def task_lifecycle_instruction(marker: str) -> str:
+    """User message forcing a full task-board write lifecycle in one turn: create
+    a task whose subject carries ``marker``, claim it (status=in_progress), then
+    complete it (status=completed) -- exercising create and update twice."""
+    return (
+        f"Call {TaskTool.CREATE.value} exactly once with subject including the "
+        f"exact token {marker}. Then call {TaskTool.UPDATE.value} with that "
+        f"task's id and status='{TaskAssignmentStatus.IN_PROGRESS.value}'. Then "
+        f"call {TaskTool.UPDATE.value} again with the same id and "
+        f"status='{TaskAssignmentStatus.COMPLETED.value}' and a brief comment. "
+        "Do not call any other tool."
+    )
+
+
+def task_read_instruction() -> str:
+    """Second-turn user message forcing the four task-board read tools against
+    the task already created earlier in this conversation (the agent has that
+    task's id/number in its own context; no marker is needed to identify it)."""
+    return (
+        f"Now call {TaskTool.LIST.value} to see the board. Then call "
+        f"{TaskTool.GET.value} on the task you created earlier. Then call "
+        f"{TaskTool.GET_HISTORY.value} on that same task. Then call "
+        f"{TaskTool.GET_BOARD.value}. Do not call any other tool."
+    )
+
+
+def task_board_delegation_instruction(
+    lookup_name: str,
+    lookup_id: str,
+    lookup_key: str,
+    weather_name: str,
+    weather_id: str,
+    weather_place: str,
+) -> str:
+    """Coordinator's turn-1 instruction for the task-board delegation flow: set
+    the room goal, create one task per specialist, then hand both off in a
+    single message that states each task's number or id explicitly -- the
+    specialists need it to know which task to claim and update, a real
+    reliability dependency this instruction must not leave implicit."""
+    return (
+        f"First call {TaskTool.SET_BOARD.value} to set this room's goal: a "
+        "short title and summary describing that the team needs an access "
+        f"code and a weather forecast gathered. Then call "
+        f"{TaskTool.CREATE.value} twice to create two tasks: one with subject "
+        f"asking for the access code for key '{lookup_key}', and one with "
+        f"subject asking for the forecast for '{weather_place}'. Then send "
+        "exactly ONE band_send_message that mentions both "
+        f"{lookup_name} (id {lookup_id}) and {weather_name} (id {weather_id}), "
+        "stating the exact task number or id you just created for each of them "
+        "by name, and asking each to claim their task, gather their value, and "
+        "record it on the task board. Do not look anything up yourself, and do "
+        "not call any other tool."
     )
 
 
