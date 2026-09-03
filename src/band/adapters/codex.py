@@ -54,10 +54,10 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
-    BandTool,
     image_block_placeholder,
-    is_mcp_content_result,
+    is_image_passthrough_result,
     is_room_posting_tool,
+    redact_tool_call_args,
 )
 from band.runtime.prompts import render_system_prompt
 
@@ -1378,7 +1378,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     content=json.dumps(
                         {
                             ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: arguments,
+                            ToolEventKey.ARGS: redact_tool_call_args(
+                                tool_name, arguments
+                            ),
                             ToolEventKey.TOOL_CALL_ID: call_id,
                         }
                     ),
@@ -1399,11 +1401,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                if (
-                    success
-                    and tool_name == BandTool.READ_ROOM_FILE
-                    and is_mcp_content_result(result)
-                ):
+                if success and is_image_passthrough_result(tool_name, result):
                     content_items = _image_content_items(result)
                     text_result = image_block_placeholder(len(content_items))
                 else:
@@ -1902,6 +1900,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mcp_args = item.get("arguments", {})
         if not isinstance(mcp_args, dict):
             mcp_args = {}
+        # redact_tool_call_args compares against the bare tool name (e.g.
+        # "band_send_room_file"), not the "mcp:{server}/{tool}" display name
+        # this method returns -- redact before that prefix is applied.
+        mcp_args = redact_tool_call_args(tool, mcp_args)
         output = CodexAdapter._stringify_tool_output(
             item.get("result"),
             item.get("error"),

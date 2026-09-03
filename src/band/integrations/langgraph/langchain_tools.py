@@ -25,11 +25,10 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.tools import (
-    BandTool,
     format_tool_validation_error,
     get_band_tool_category,
     get_tool_description,
-    is_mcp_content_result,
+    is_image_passthrough_result,
     iter_tool_definitions,
 )
 
@@ -128,9 +127,7 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 result = await tools.execute_tool_call(_tool_name, kwargs)
-                if _tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
-                    result
-                ):
+                if is_image_passthrough_result(_tool_name, result):
                     return _image_content_blocks(result)
                 return result
             except (BandToolError, ValueError) as e:

@@ -118,6 +118,13 @@ class ToolSpec:
         if self.reports:
             await call.reporter.report_call(call.tools, self.name, args)
         result = await self.body(call, **args)
+        # Serialize once, before reporting: report_result's json.dumps has no
+        # default=str, so a body that returns a raw Pydantic/Fern model
+        # (bypassing execute_tool_call's own serialization boundary) would
+        # otherwise raise inside report_result and silently drop the
+        # tool_result event -- render() already serializes via this same
+        # helper, so reuse its output instead of serializing twice.
+        result = serialize_tool_result(result)
         if self.reports:
             await call.reporter.report_result(call.tools, self.name, result)
         return self.render(result)

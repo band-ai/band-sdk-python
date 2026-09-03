@@ -161,7 +161,11 @@ def _platform_tool(
     from crewai.tools import BaseTool
 
     class PlatformTool(BaseTool):
-        name: str = spec.name
+        # str(...): pydantic doesn't validate field defaults (no
+        # validate_default here), so an unwrapped BandTool (StrEnum) default
+        # would leave tool.name a BandTool instance at runtime, not the str
+        # the field is typed as.
+        name: str = str(spec.name)
         description: str = get_tool_description(spec.name)
         args_schema: type[BaseModel] = spec.args_schema
         cache_function: Any = _no_cache

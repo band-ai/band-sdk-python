@@ -779,6 +779,40 @@ class TestParlantToolFunctions:
         assert "Error sending message: Connection failed" in result.data
 
     @pytest.mark.asyncio
+    async def test_tool_returns_error_on_malformed_call_arguments(
+        self, parlant_tools, mock_context
+    ):
+        """A signature mismatch in guard_failures's own bind() step -- before
+        the call-handling try starts, so there's no call.arguments yet to
+        build the usual failure message from -- must return a ToolResult,
+        not propagate a raw TypeError out of the tool coroutine."""
+        send_message = parlant_tools["band_send_message"]
+
+        result = await send_message(mock_context)  # missing content/mentions
+
+        assert result.data.startswith("Error calling band_send_message:")
+
+    @pytest.mark.asyncio
+    async def test_tool_logs_result_on_success(
+        self, parlant_tools, mock_tools, mock_context, caplog
+    ):
+        """guard_failures must log a per-call outcome, not just the initial
+        'called' line -- operators grep these logs for tool-level
+        confirmation (e.g. that a specific branch was hit)."""
+        set_session_tools(mock_context.session_id, mock_tools)
+        send_message = parlant_tools["band_send_message"]
+
+        with caplog.at_level("INFO"):
+            await send_message(mock_context, "Hello", "Alice")
+
+        result_logs = [
+            r
+            for r in caplog.records
+            if r.getMessage().startswith("[Parlant Tool] band_send_message ->")
+        ]
+        assert len(result_logs) == 1
+
+    @pytest.mark.asyncio
     async def test_list_room_files_returns_formatted_list(
         self, parlant_tools, mock_tools, mock_context
     ):

@@ -278,8 +278,23 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
 
         @functools.wraps(func)
         async def run(context: Any, *args: Any, **kwargs: Any) -> Any:
-            call = inspect.signature(func).bind(context, *args, **kwargs)
-            call.apply_defaults()
+            # bind() gets its own try: a signature/argument-shape mismatch
+            # raises TypeError here, before the call-handling try below even
+            # starts, and there's no `call.arguments` yet to build the usual
+            # failure message from.
+            try:
+                call = inspect.signature(func).bind(context, *args, **kwargs)
+                call.apply_defaults()
+            except TypeError as exc:
+                logger.error(
+                    "%s %s: malformed call arguments: %s",
+                    LOG_PREFIX,
+                    func.__name__,
+                    exc,
+                    exc_info=True,
+                )
+                return ToolResult(data=f"Error calling {func.__name__}: {exc}")
+
             logger.info(
                 "%s %s called: session=%s%s",
                 LOG_PREFIX,
@@ -288,7 +303,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 _logged_arguments(call),
             )
             try:
-                return await func(context, *args, **kwargs)
+                result = await func(context, *args, **kwargs)
             except NoSessionTools:
                 logger.error(
                     "%s %s: no tools available for session %s",
@@ -308,6 +323,8 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                     if session_tools:
                         message = with_mention_handles(message, session_tools)
                 return ToolResult(data=f"Error {context_phrase}: {message}")
+            logger.info("%s %s -> %s", LOG_PREFIX, func.__name__, result)
+            return result
 
         return run
 

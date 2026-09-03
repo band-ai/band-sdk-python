@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -281,3 +282,61 @@ class TestReadRoomFileImagePassthrough:
         )
 
         assert result.binary_results_for_llm is None
+
+
+class _SendRoomFileFakeTools(ToolSchemaFakeTools):
+    """ToolSchemaFakeTools plus band_send_room_file, which the base fake
+    doesn't expose."""
+
+    def get_openai_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            *super().get_openai_tool_schemas(**kwargs),
+            {
+                "type": "function",
+                "function": {
+                    "name": "band_send_room_file",
+                    "description": "Send a room file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "filename": {"type": "string"},
+                        },
+                        "required": ["content", "filename"],
+                    },
+                },
+            },
+        ]
+
+
+class TestSendRoomFileArgsRedaction:
+    @pytest.mark.asyncio
+    async def test_tool_call_event_redacts_file_content(self):
+        """band_send_room_file's raw content must never reach a tool_call
+        event -- report_tool_call json.dumps's the invocation's raw
+        arguments, and content can carry up to MAX_SEND_CONTENT_BYTES of
+        real file bytes."""
+        client = FakeCopilotClient()
+        adapter = await make_started_adapter(client, emit=Emit.TOOL_CALLS)
+        tools = _SendRoomFileFakeTools()
+        await run_message(adapter, tools)
+
+        handler = client.sessions[0].find_tool("band_send_room_file").handler
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        await handler(
+            ToolInvocation(
+                tool_call_id="c1",
+                tool_name="band_send_room_file",
+                arguments={"content": raw_content, "filename": "notes.txt"},
+            )
+        )
+
+        call_event = next(
+            e for e in tools.events_sent if e["message_type"] == "tool_call"
+        )
+        reported_args = json.loads(call_event["content"])["args"]
+        assert (
+            reported_args["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in call_event["content"]

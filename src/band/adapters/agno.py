@@ -33,7 +33,8 @@ from band.runtime.tools import (
     decode_image_block,
     get_band_tool_category,
     image_block_placeholder,
-    is_mcp_content_result,
+    is_image_passthrough_result,
+    redact_tool_call_args,
 )
 
 try:
@@ -102,13 +103,20 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
         result = await active.execute_tool_call(tool_name, kwargs)
-        if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result):
-            images = [
-                Image(content=data, mime_type=mime_type)
-                for data, mime_type in (
-                    decode_image_block(block) for block in result["content"]
-                )
-            ]
+        if is_image_passthrough_result(tool_name, result):
+            try:
+                images = [
+                    Image(content=data, mime_type=mime_type)
+                    for data, mime_type in (
+                        decode_image_block(block) for block in result["content"]
+                    )
+                ]
+            except Exception as error:
+                # A malformed or future-extended image block (see
+                # is_mcp_content_result's docstring) must degrade to the
+                # adapter's usual error string, not raise uncaught out of
+                # the tool entrypoint Agno invokes directly.
+                return f"Error reading room file: {error}"
             return ToolResult(
                 content=image_block_placeholder(len(images)), images=images
             )
@@ -753,7 +761,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 "tool_call",
                 {
                     ToolEventKey.NAME: ex.tool_name or "",
-                    ToolEventKey.ARGS: ex.tool_args or {},
+                    ToolEventKey.ARGS: redact_tool_call_args(
+                        ex.tool_name or "", ex.tool_args or {}
+                    ),
                     ToolEventKey.TOOL_CALL_ID: ex.tool_call_id or "",
                 },
                 room_id=room_id,

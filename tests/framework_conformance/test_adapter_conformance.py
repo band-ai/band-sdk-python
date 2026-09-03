@@ -324,3 +324,25 @@ class TestImagePassthroughMatrix:
 
     def test_every_exclusion_carries_a_reason(self) -> None:
         assert all(excluded.reason for excluded in IMAGE_PASSTHROUGH_EXCLUSIONS)
+
+    def test_e2e_matrix_list_matches_this_unit_level_set(self) -> None:
+        """IMAGE_PASSTHROUGH_ADAPTERS (the E2E matrix's own adapter list,
+        tests/e2e/baseline/smoke/matrix/test_capability_matrix.py) must stay
+        derived from this set, not hand-maintained separately -- otherwise a
+        future adapter gaining image-passthrough support here could leave
+        the E2E smoke silently never added for it, and CI would stay green
+        while coverage quietly regressed. The two lists differ by design
+        (see the comment above IMAGE_PASSTHROUGH_ADAPTERS): -crewai_flow (no
+        Band tool loop to drive a file round-trip), +copilot_acp and +letta
+        (both share opencode's already-fixed MCP engine, so they're excluded
+        from *this* unit-level set as having no probe of their own, but get
+        a real E2E cell each)."""
+        from tests.e2e.baseline.smoke.matrix.test_capability_matrix import (
+            IMAGE_PASSTHROUGH_ADAPTERS,
+        )
+
+        expected = (
+            IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS - {Adapter.CREWAI_FLOW.value}
+        ) | {Adapter.COPILOT_ACP.value, Adapter.LETTA.value}
+
+        assert {a.value for a in IMAGE_PASSTHROUGH_ADAPTERS} == expected

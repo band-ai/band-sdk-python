@@ -35,9 +35,9 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    BandTool,
     image_block_placeholder,
-    is_mcp_content_result,
+    is_image_passthrough_result,
+    redact_tool_call_args,
 )
 
 logger = logging.getLogger(__name__)
@@ -450,7 +450,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         content=json.dumps(
                             {
                                 ToolEventKey.NAME: tool_name,
-                                ToolEventKey.ARGS: tool_input,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, tool_input
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: tool_use_id,
                             }
                         ),
@@ -469,9 +471,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
-                    result
-                ):
+                if is_image_passthrough_result(tool_name, result):
                     content = _image_tool_result_content(result)
                     result_str = image_block_placeholder(len(content))
                 else:

@@ -1826,21 +1826,39 @@ def serialize_tool_result(result: Any) -> Any:
 
 
 def is_mcp_content_result(data: Any) -> bool:
-    """True when ``data`` is already MCP-content-shaped (``{"content": [...]}``).
+    """True when ``data`` is ``read_room_file``'s image-content-block shape.
 
-    Only ``read_room_file``'s image branch returns this shape, so gate any use
-    on that tool's name: applied to every tool result the structural check
-    would misfire on an unrelated tool whose return value happens to carry a
-    "content" list of dicts with a "type" key.
+    Only ``read_room_file``'s image branch returns this shape (see its
+    "image" case: a ``content`` list of one ``{"type": "image", "data":
+    ..., "mimeType": ...}`` block), so gate any use on that tool's name --
+    prefer ``is_image_passthrough_result`` over calling this directly.
+    Requires ``data``/``mimeType`` on every block (not just ``type``) so a
+    malformed or future-extended block fails this check instead of reaching
+    ``decode_image_block`` and raising past it.
     """
     return (
         isinstance(data, dict)
         and isinstance(data.get("content"), list)
         and bool(data["content"])
         and all(
-            isinstance(block, dict) and "type" in block for block in data["content"]
+            isinstance(block, dict)
+            and block.get("type") == "image"
+            and "data" in block
+            and "mimeType" in block
+            for block in data["content"]
         )
     )
+
+
+def is_image_passthrough_result(tool_name: str, result: Any) -> bool:
+    """True when ``result`` is ``band_read_room_file``'s image-block result.
+
+    The combined check (right tool + right shape) that every adapter's
+    image-passthrough branch needs -- single source of truth instead of
+    re-deriving ``tool_name == BandTool.READ_ROOM_FILE and
+    is_mcp_content_result(result)`` at each call site.
+    """
+    return tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result)
 
 
 def image_block_placeholder(block_count: int) -> str:
@@ -1851,6 +1869,26 @@ def image_block_placeholder(block_count: int) -> str:
 def file_content_placeholder(byte_count: int) -> str:
     """The text a tool-call event reports in place of a file's raw content."""
     return f"<{byte_count} byte file content>"
+
+
+def redact_tool_call_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Replace ``band_send_room_file``'s raw ``content`` before it reaches an event.
+
+    Adapters that report a tool_call event by json.dumps-ing the tool's raw
+    kwargs have no idea ``band_send_room_file``'s ``content`` argument can
+    carry up to ``MAX_SEND_CONTENT_BYTES`` of real file bytes -- redact it
+    centrally rather than teaching every adapter's generic reporter the same
+    field name.
+    """
+    if tool_name != BandTool.SEND_ROOM_FILE or not isinstance(args, dict):
+        return args
+    content = args.get("content")
+    if not isinstance(content, str):
+        return args
+    return {
+        **args,
+        "content": file_content_placeholder(len(content.encode("utf-8"))),
+    }
 
 
 def decode_image_block(block: dict[str, Any]) -> tuple[bytes, str]:

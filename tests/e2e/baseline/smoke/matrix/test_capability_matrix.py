@@ -261,11 +261,13 @@ async def test_file_round_trip_across_files_adapters(
 # source of truth; this list exists only because @per_adapter selects from the
 # separate tests.baseline.adapter.Adapter enum, a different registry). Differs
 # from that set by: -crewai_flow (its E2E builder is a hardcoded echo flow with
-# no Band tool loop, so there's no tool call for this to drive), -parlant (not
-# in Adapter at all -- confirmed unsupportable, no matrix cell), +copilot_acp
-# (wraps ACPClientAdapter, which shares the same already-fixed MCP engine as
-# opencode but isn't tracked in the unit-level set since it's not its own
-# ADAPTER_CONFIGS entry there).
+# no Band tool loop, so there's no tool call for this to drive), +copilot_acp
+# and +letta (both wrap/share the same already-fixed MCP engine as opencode,
+# so the unit-level set excludes them as having no probe of their own, but
+# the E2E matrix gives each a real live cell). parlant isn't in Adapter at
+# all -- confirmed unsupportable, no matrix cell either way.
+# test_image_passthrough_adapters_matches_unit_level_set below asserts this
+# relationship instead of leaving it to this comment alone.
 IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.CLAUDE_SDK,
     Adapter.ANTHROPIC,
@@ -281,6 +283,13 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.CREWAI,
     Adapter.LETTA,
 )
+
+
+# The cross-check against IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS lives in
+# tests/framework_conformance/test_adapter_conformance.py, not here: every
+# test in this package is gated on E2E_TESTS_ENABLED (see
+# tests/e2e/baseline/conftest.py), which would skip a pure offline
+# list-equality check right along with the live ones.
 
 
 @per_adapter(*IMAGE_PASSTHROUGH_ADAPTERS, **FILES_AGENT)

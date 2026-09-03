@@ -85,6 +85,7 @@ def make_stream_events(
                 event.part = MagicMock()
                 event.part.tool_name = tool_name
                 event.part.args = args
+                event.part.args_as_dict = MagicMock(return_value=args)
                 event.part.tool_call_id = tool_call_id
                 yield event
 
@@ -1224,6 +1225,49 @@ class TestExecutionReporting:
             content='{"name": "band_send_message", "args": {"content": "Hello"}, "tool_call_id": "call-123"}',
             message_type="tool_call",
         )
+
+    @pytest.mark.asyncio
+    async def test_tool_call_event_redacts_send_room_file_content(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """band_send_room_file's content arg can carry up to
+        MAX_SEND_CONTENT_BYTES of real file bytes; the tool_call event must
+        report a bounded placeholder instead of the raw content."""
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            emit=Emit.TOOL_CALLS,
+        )
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_calls=[
+                    (
+                        "band_send_room_file",
+                        {"content": "SECRET FILE BYTES", "filename": "f.txt"},
+                        "call-123",
+                    )
+                ],
+            )
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        reported_content = mock_tools.send_event.call_args_list[0].kwargs["content"]
+        assert "SECRET FILE BYTES" not in reported_content
+        assert "byte file content" in reported_content
+        assert '"filename": "f.txt"' in reported_content
 
     @pytest.mark.asyncio
     async def test_emits_tool_result_events_when_enabled(

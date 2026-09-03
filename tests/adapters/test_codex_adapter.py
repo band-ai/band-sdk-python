@@ -1729,6 +1729,43 @@ class TestCodexAdapter:
         assert result_data["tool_call_id"] == "call-50"
 
     @pytest.mark.asyncio
+    async def test_send_room_file_tool_call_event_redacts_content(self) -> None:
+        """band_send_room_file's raw content must never reach a tool_call
+        event -- report has no idea content can carry real file bytes."""
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        events = [
+            _tool_call_request(
+                50, "band_send_room_file", {"content": raw_content, "filename": "f.txt"}
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
+        assert (
+            call_data["args"]["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in json.dumps(call_data)
+
+    @pytest.mark.asyncio
     async def test_execution_reporting_silenced_with_explicit_empty_emit(self) -> None:
         """emit=() silences tool_call/tool_result events (emit otherwise defaults on)."""
         events = [
@@ -1883,6 +1920,59 @@ class TestCodexAdapter:
 
 class TestItemCompletedForwarding:
     """Tests for forwarding internal Codex operations as platform events."""
+
+    @pytest.mark.asyncio
+    async def test_item_completed_mcpToolCall_send_room_file_redacts_content(
+        self,
+    ) -> None:
+        """band_send_room_file routed through Codex's own mcpToolCall item
+        (a separate reporting path from item/tool/call, keyed by the bare
+        "tool" field before it's wrapped in the "mcp:{server}/{tool}"
+        display name) must also redact raw file content before it reaches a
+        tool_call event."""
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "mcp-1",
+                        "server": "band",
+                        "tool": "band_send_room_file",
+                        "arguments": {"content": raw_content, "filename": "f.txt"},
+                        "result": {"status": "success"},
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
+        assert call_data["name"] == "mcp:band/band_send_room_file"
+        assert (
+            call_data["args"]["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in json.dumps(call_data)
 
     @pytest.mark.asyncio
     async def test_item_completed_commandExecution_emits_tool_events(self) -> None:

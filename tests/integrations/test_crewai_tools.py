@@ -310,6 +310,49 @@ class TestToolSetComposition:
         assert result["status"] == "success"
         tools_obj.lookup_peers.assert_awaited_once_with(2, 25)
 
+    def test_lookup_peers_reports_serialized_result_for_raw_model_return(
+        self, builder_mod
+    ):
+        """lookup_peers (and the other six read-only tools that call
+        call.tools.X directly, bypassing execute_tool_call's own
+        serialization boundary) must still emit a tool_result event when the
+        platform method returns a raw Pydantic/Fern model. report_result's
+        json.dumps has no default=str, so an unserialized model previously
+        raised inside report_result -- caught by its own try/except and only
+        logged as a warning -- silently dropping the tool_result event."""
+        from band.core.types import AdapterFeatures, Emit
+
+        class FakePeersResponse:
+            def __init__(self, data):
+                self._data = data
+
+            def model_dump(self):
+                return self._data
+
+        tools_obj = MagicMock()
+        tools_obj.lookup_peers = AsyncMock(
+            return_value=FakePeersResponse({"peers": [{"id": "p1"}]})
+        )
+        tools_obj.send_event = AsyncMock()
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.EmitToolCallsReporter(features),
+            capabilities=frozenset(),
+        )
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
+
+        result = json.loads(lookup_peers._run())
+
+        assert result["status"] == "success"
+        assert result["peers"] == [{"id": "p1"}]
+        result_event = tools_obj.send_event.call_args_list[-1]
+        assert result_event.kwargs["message_type"] == "tool_result"
+        reported = json.loads(result_event.kwargs["content"])
+        assert reported["output"] == {"peers": [{"id": "p1"}]}
+        assert reported["is_error"] is False
+
     def test_send_message_marks_reply_tracker(self, builder_mod):
         """A successful band_send_message flips both ReplyTracker markers so the
         adapter can treat a later empty final answer as benign."""

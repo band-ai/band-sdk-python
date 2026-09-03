@@ -67,6 +67,7 @@ from band.runtime.tools import (
     is_terminal_success,
     missing_reply_error,
     platform_tool,
+    redact_tool_call_args,
     serialize_tool_result,
 )
 
@@ -812,7 +813,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.ARGS: event.part.args,
+                                            ToolEventKey.ARGS: redact_tool_call_args(
+                                                event.part.tool_name,
+                                                event.part.args_as_dict(),
+                                            ),
                                             ToolEventKey.TOOL_CALL_ID: event.part.tool_call_id,
                                         }
                                     ),

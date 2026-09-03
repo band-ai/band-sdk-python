@@ -8,6 +8,7 @@ usage, and cleanup.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
@@ -729,6 +730,19 @@ class TestReadRoomFileImagePassthrough:
 
         assert _result_text(result) == "<3 image content block(s)>"
 
+    def test_malformed_image_data_returns_error_result(self):
+        """A decode_image_block failure (invalid base64) must degrade to an
+        error result, not raise uncaught out of stream()'s async generator --
+        this runs after _execute's own try/except already succeeded, so
+        _tool_result needs its own boundary around the decode step."""
+        tool_use = {"toolUseId": "t1", "name": "band_read_room_file", "input": {}}
+        value = {"content": [{"type": "image", "data": "A", "mimeType": "image/png"}]}
+
+        result = _tool_result(tool_use, value=value, ok=True)
+
+        assert result["status"] == "error"
+        assert "text" in result["content"][0]
+
     def test_result_text_keeps_images_at_their_original_position(self):
         """A combined image placeholder must appear where the first image
         block occurred among text/json blocks, not get shoved to the end."""
@@ -744,3 +758,37 @@ class TestReadRoomFileImagePassthrough:
         }
 
         assert _result_text(result) == "before\n<2 image content block(s)>\nafter"
+
+
+class TestSendRoomFileArgsRedaction:
+    @pytest.mark.asyncio
+    async def test_tool_call_event_redacts_content_not_raw_bytes(self, tools):
+        """band_send_room_file's tool_call event must report a bounded
+        placeholder for content, not the raw file bytes -- generic ARGS
+        reporting has no idea this one tool's content argument can carry up
+        to MAX_SEND_CONTENT_BYTES of real file data."""
+        adapter = StrandsAdapter(
+            model=ScriptedStrandsModel(
+                (
+                    ToolTurn(
+                        "band_send_room_file",
+                        {"content": "raw file bytes", "filename": "notes.txt"},
+                    ),
+                )
+            ),
+            capabilities=Capability.FILES,
+            emit=Emit.TOOL_CALLS,
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        await _run_message(adapter, tools)
+
+        tool_calls = [
+            json.loads(e["content"])
+            for e in tools.events_sent
+            if e["message_type"] == "tool_call"
+        ]
+        [send_room_file_call] = [
+            c for c in tool_calls if c["name"] == "band_send_room_file"
+        ]
+        assert send_room_file_call["args"]["content"] == "<14 byte file content>"

@@ -40,7 +40,7 @@ from band.runtime.tools import (
     BandTool,
     ToolDefinition,
     append_mention_handles_hint,
-    is_mcp_content_result,
+    is_image_passthrough_result,
     iter_tool_definitions,
     mcp_tool_names,
     serialize_tool_result,
@@ -87,7 +87,7 @@ def _make_result(data: Any) -> dict[str, Any]:
     misfire on an unrelated custom tool whose own return value happens to
     have a "content" list of dicts each carrying a "type" key. The
     band_read_room_file passthrough is instead decided by the one caller that
-    actually needs it -- see ``is_mcp_content_result`` at the
+    actually needs it -- see ``is_image_passthrough_result`` at the
     ``_build_builtin_sdk_tool`` call site.
     """
     return {"content": [{"type": "text", "text": json.dumps(data, default=str)}]}
@@ -131,16 +131,16 @@ def _format_success_payload(
     result: Any,
 ) -> dict[str, Any]:
     """Keep tool result payloads stable across Claude integrations."""
-    if tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result):
+    if is_image_passthrough_result(tool_name, result):
         # Pass the image content block through bare -- wrapping it in
         # {"status": "success", **result} would bury "content" behind an
         # extra key, and _make_result would no longer recognize the shape.
         return result
-    if tool_name == "band_send_message":
+    if tool_name == BandTool.SEND_MESSAGE:
         return {"status": "success", "message": "Message sent"}
-    if tool_name == "band_send_event":
+    if tool_name == BandTool.SEND_EVENT:
         return {"status": "success", "message": "Event sent"}
-    if tool_name == "band_add_participant":
+    if tool_name == BandTool.ADD_PARTICIPANT:
         return {
             "status": "success",
             "message": (
@@ -148,13 +148,13 @@ def _format_success_payload(
             ),
             **result,
         }
-    if tool_name == "band_remove_participant":
+    if tool_name == BandTool.REMOVE_PARTICIPANT:
         return {
             "status": "success",
             "message": f"Participant '{call_args['identifier']}' removed",
             **result,
         }
-    if tool_name == "band_get_participants":
+    if tool_name == BandTool.GET_PARTICIPANTS:
         participants = result if isinstance(result, list) else []
         # Convert Fern models to dicts for JSON serialization
         serialized = [
@@ -165,7 +165,7 @@ def _format_success_payload(
             "participants": serialized,
             "count": len(serialized),
         }
-    if tool_name == "band_create_chatroom":
+    if tool_name == BandTool.CREATE_CHATROOM:
         return {
             "status": "success",
             "message": "Chat room created",
@@ -232,9 +232,7 @@ def _build_builtin_sdk_tool(
             # content block (see _format_success_payload) -- pass it through
             # bare instead of json-encoding it into a text block, which is
             # what _make_result would otherwise do to any dict.
-            if definition.name == BandTool.READ_ROOM_FILE and is_mcp_content_result(
-                payload
-            ):
+            if is_image_passthrough_result(definition.name, payload):
                 return payload
             return _make_result(payload)
         except (ValueError, BandToolError) as error:

@@ -56,17 +56,17 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
-    BandTool,
     ToolDefinition,
     ToolCallOutcome,
     band_tool_errored,
     decode_image_block,
     get_band_tool_category,
     image_block_placeholder,
-    is_mcp_content_result,
+    is_image_passthrough_result,
     is_terminal_success,
     iter_tool_definitions,
     missing_reply_error,
+    redact_tool_call_args,
     serialize_tool_result,
     validate_tool_arguments,
 )
@@ -87,27 +87,40 @@ def _format_tool_output(value: object) -> str:
 def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
     """Build the framework's typed result envelope at the Strands boundary."""
     content: list[ToolResultContent]
-    if (
-        ok
-        and tool_use["name"] == BandTool.READ_ROOM_FILE
-        and is_mcp_content_result(value)
-    ):
-        content = []
-        for block in cast(dict[str, Any], value)["content"]:
-            data, mime_type = decode_image_block(block)
-            content.append(
-                {
-                    "image": {
-                        "format": cast(ImageFormat, mime_type.removeprefix("image/")),
-                        "source": {"bytes": data},
+    status = "success" if ok else "error"
+    if ok and is_image_passthrough_result(tool_use["name"], value):
+        try:
+            content = []
+            for block in cast(dict[str, Any], value)["content"]:
+                data, mime_type = decode_image_block(block)
+                content.append(
+                    {
+                        "image": {
+                            "format": cast(
+                                ImageFormat, mime_type.removeprefix("image/")
+                            ),
+                            "source": {"bytes": data},
+                        }
                     }
-                }
+                )
+        except Exception as error:
+            # A malformed or future-extended image block (see
+            # is_mcp_content_result's docstring) must degrade to the
+            # adapter's normal failure result, not raise uncaught out of
+            # stream()'s async generator -- this runs after _execute's own
+            # try/except already succeeded, so it needs its own boundary.
+            logger.error(
+                "Failed to decode image content for %s: %s",
+                tool_use["name"],
+                error,
             )
+            status = "error"
+            content = [{"text": f"Error: {error}"}]
     else:
         content = [{"text": _format_tool_output(value)}]
     return {
         "toolUseId": tool_use["toolUseId"],
-        "status": "success" if ok else "error",
+        "status": status,
         "content": content,
     }
 
@@ -333,7 +346,9 @@ class BandTurnHooks(HookProvider):
             MessageType.TOOL_CALL,
             {
                 ToolEventKey.NAME: event.tool_use["name"],
-                ToolEventKey.ARGS: event.tool_use["input"],
+                ToolEventKey.ARGS: redact_tool_call_args(
+                    event.tool_use["name"], event.tool_use["input"]
+                ),
                 ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
             },
         )

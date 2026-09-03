@@ -368,6 +368,32 @@ def test_probe_registry_matches_supported_framework_ids() -> None:
     assert set(IMAGE_PASSTHROUGH_PROBES) == IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS
 
 
+@pytest.mark.skipif(not _CREWAI_AVAILABLE, reason="crewai not installed in this venv")
+def test_crewai_platform_tool_name_is_plain_str() -> None:
+    """CrewAI's real BaseTool doesn't validate field defaults, so a bare
+    BandTool (StrEnum) default would leave tool.name a BandTool instance at
+    runtime instead of the str the field is typed as -- str(spec.name) at
+    the PlatformTool definition must keep it a plain str."""
+    from band.core.types import Capability
+    from band.integrations.crewai.tools import (
+        CrewAIToolContext,
+        NoopReporter,
+        build_band_crewai_tools,
+    )
+
+    context = CrewAIToolContext(room_id="room-1", tools=_StubReadRoomFileTools())
+    tools = build_band_crewai_tools(
+        get_context=lambda: context,
+        reporter=NoopReporter(),
+        capabilities=frozenset({Capability.FILES}),
+    )
+
+    for tool in tools:
+        assert type(tool.name) is str, (
+            f"{tool.name!r} is {type(tool.name)}, not plain str"
+        )
+
+
 def _framework_param(framework_id: str) -> Any:
     available = _SOMETIMES_MISSING.get(framework_id, True)
     return pytest.param(
