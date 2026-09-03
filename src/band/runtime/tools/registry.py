@@ -774,8 +774,7 @@ _TOOL_CATEGORIES: dict[str, ToolCategory] = {
 }
 
 # Capability -> the built-in agent+human tool names it gates. Single source
-# of truth for iter_tool_definitions()/AgentTools schema methods, replacing
-# what used to be two independent per-capability boolean parameters.
+# of truth for iter_tool_definitions()/AgentTools schema methods.
 CAPABILITY_TOOL_NAMES: dict[Capability, frozenset[str]] = {
     Capability.MEMORY: MEMORY_TOOL_NAMES | HUMAN_SURFACE_MEMORY_TOOL_NAMES,
     Capability.CONTACTS: CONTACT_TOOL_NAMES | HUMAN_SURFACE_CONTACT_TOOL_NAMES,

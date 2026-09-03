@@ -1,7 +1,6 @@
-"""Band platform tools -- the package `band.runtime.tools` used to be a
-single module. It is split by concern (`types`, `inputs/`, `registry`,
-`schema`, `agent`, `human`); this file re-exports the full surface so every
-existing `from band.runtime.tools import X` import keeps working unchanged.
+"""Band platform tools, split by concern across `types`, `inputs/`,
+`registry`, `schema`, `agent`, and `human`; this file re-exports the full
+surface so every `from band.runtime.tools import X` import works unchanged.
 """
 
 from __future__ import annotations

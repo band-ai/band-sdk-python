@@ -13,10 +13,12 @@ from pydantic import ValidationError
 
 from band.runtime.tools import (
     TOOL_MODELS,
-    SendMessageInput,
-    SendEventInput,
     AddParticipantInput,
+    GetTaskInput,
     LookupPeersInput,
+    SendEventInput,
+    SendMessageInput,
+    UpdateTaskInput,
     format_arg_doc,
     get_tool_description,
     get_tool_docstring_with_args,
@@ -101,6 +103,20 @@ class TestAddParticipantInput:
 
         with pytest.raises(ValidationError):
             AddParticipantInput(identifier="Bob", role="invalid")
+
+
+class TestUpdateTaskInput:
+    """Tests for UpdateTaskInput model."""
+
+    def test_requires_at_least_one_field_besides_id(self):
+        """id alone is a no-op write; the model rejects it up front so an
+        agent gets a clear error instead of the call silently doing nothing."""
+        with pytest.raises(ValidationError, match="At least one of"):
+            UpdateTaskInput(id="task-1")
+
+    def test_one_field_besides_id_is_sufficient(self):
+        update = UpdateTaskInput(id="task-1", comment="progress note")
+        assert update.comment == "progress note"
 
 
 class TestLookupPeersInput:
@@ -283,8 +299,44 @@ class TestPlatformTool:
 
 
 class TestPlatformArgsSchema:
-    def test_returns_master_model_unchanged_without_validators(self):
-        assert platform_args_schema("band_send_message") is SendMessageInput
+    def test_subclasses_master_model_unchanged_without_validators(self):
+        """Not the same object as the master model (it's always wrapped to
+        sanitize its schema -- see the const/enum test below), but a subclass
+        that keeps the master's fields, docstring, and validation behavior."""
+        schema = platform_args_schema("band_send_message")
+
+        assert schema is not SendMessageInput
+        assert issubclass(schema, SendMessageInput)
+        assert schema.__doc__ == SendMessageInput.__doc__
+        assert schema.model_fields.keys() == SendMessageInput.model_fields.keys()
+        assert (
+            schema(content="hi", mentions=["@alice"]).model_dump()
+            == SendMessageInput(content="hi", mentions=["@alice"]).model_dump()
+        )
+
+    def test_sanitizes_single_value_literal_to_enum(self):
+        """A single-value Literal field renders as JSON-Schema `const` by
+        default (a Pydantic quirk); some providers' restricted JSON-Schema
+        subsets (e.g. Gemini) reject `const`, so every args_schema must widen
+        it to `enum` before reaching a framework -- not just the master
+        model/MCP paths that already call sanitize_tool_schema() directly."""
+        schema = platform_args_schema("band_get_task")
+
+        assert "const" not in str(schema.model_json_schema())
+        assert schema.model_json_schema()["properties"]["include"]["anyOf"][0][
+            "enum"
+        ] == ["history"]
+
+    def test_get_task_input_still_declares_const_before_sanitizing(self):
+        """Guards the premise of the test above: if Pydantic ever stops
+        emitting `const` for this field shape, the sanitize path would be
+        exercising nothing."""
+        assert (
+            GetTaskInput.model_json_schema()["properties"]["include"]["anyOf"][0][
+                "const"
+            ]
+            == "history"
+        )
 
     def test_subclass_keeps_master_description_and_field_text(self):
         from pydantic import field_validator

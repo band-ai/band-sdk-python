@@ -10,7 +10,7 @@ import inspect
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, ClassVar, Literal, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, cast, get_origin, get_type_hints
 
 import httpx
 from pydantic_ai import (
@@ -683,11 +683,18 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             async def band_get_task(
                 ctx: RunContext[AgentToolsProtocol],
                 id: str,
-                include: Literal["history"] | None = None,
+                # str, not Literal["history"] | None: pydantic-ai's own schema
+                # builder emits an unsanitized JSON-Schema `const` for a
+                # single-value Literal (unlike the master model/MCP paths,
+                # which run sanitize_tool_schema()), which providers with a
+                # restricted JSON-Schema subset (e.g. Gemini) reject.
+                include: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
                     return serialize_tool_result(
-                        await ctx.deps.get_task(id, include=include)
+                        await ctx.deps.get_task(
+                            id, include=cast(Literal["history"] | None, include)
+                        )
                     )
                 except Exception as e:
                     return f"Error getting task '{id}': {e}"
@@ -741,11 +748,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             @platform_tool
             async def band_get_board(
                 ctx: RunContext[AgentToolsProtocol],
-                include: Literal["history"] | None = None,
+                # See band_get_task's `include` for why this is str, not Literal.
+                include: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
                     return serialize_tool_result(
-                        await ctx.deps.get_board(include=include)
+                        await ctx.deps.get_board(
+                            include=cast(Literal["history"] | None, include)
+                        )
                     )
                 except Exception as e:
                     return f"Error getting board: {e}"

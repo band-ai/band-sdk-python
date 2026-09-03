@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError, create_model
 
+from band.core.tool_filter import sanitize_tool_schema
 from band.runtime.tools.registry import TOOL_MODELS
 
 
@@ -106,6 +107,20 @@ def platform_tool(fn: ToolFunc) -> ToolFunc:
     return fn
 
 
+class _SanitizedSchema(BaseModel):
+    """Mixin: run ``model_json_schema()`` output through the same wire-schema
+    scrubbing every other tool-schema consumer already gets (``AgentTools.
+    get_tool_schemas()``, the MCP engine), so ``platform_args_schema()`` can't
+    be the one door that still hands a framework raw provider-hostile
+    JSON-Schema (e.g. ``const`` from a single-value ``Literal`` field, which
+    Gemini's restricted schema subset rejects).
+    """
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return sanitize_tool_schema(super().model_json_schema(*args, **kwargs))
+
+
 def platform_args_schema(
     name: str,
     *,
@@ -122,16 +137,16 @@ def platform_args_schema(
     model = resolve_tool_model(name)
     if model is None:
         raise KeyError(name)
-    if not validators:
-        return model
-    return create_model(
-        f"{model.__name__}Adapted",
-        __base__=model,
-        # create_model does not inherit the base docstring, and that docstring
-        # is the tool description every adapter reads.
-        __doc__=model.__doc__,
-        __validators__=validators,
-    )
+    if validators:
+        model = create_model(
+            f"{model.__name__}Adapted",
+            __base__=model,
+            # create_model does not inherit the base docstring, and that
+            # docstring is the tool description every adapter reads.
+            __doc__=model.__doc__,
+            __validators__=validators,
+        )
+    return type(model.__name__, (_SanitizedSchema, model), {"__doc__": model.__doc__})
 
 
 def format_tool_validation_error(tool_name: str, error: ValidationError) -> str:

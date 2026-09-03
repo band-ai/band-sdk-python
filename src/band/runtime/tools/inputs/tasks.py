@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 
@@ -98,6 +98,24 @@ class UpdateTaskInput(BaseModel):
         None,
         description="Lifecycle: cancel, archive, or restore ('active' un-archives)",
     )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_field(self) -> "UpdateTaskInput":
+        if not any(
+            (
+                self.status,
+                self.active_form,
+                self.comment,
+                self.subject,
+                self.detail,
+                self.state,
+            )
+        ):
+            raise ValueError(
+                "At least one of status, active_form, comment, subject, detail, "
+                "or state must be set"
+            )
+        return self
 
 
 class GetTaskHistoryInput(BaseModel):
