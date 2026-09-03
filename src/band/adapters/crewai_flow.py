@@ -1505,7 +1505,9 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     """
 
     SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
-    SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY, Capability.CONTACTS})
+    SUPPORTED_CAPABILITIES = frozenset(
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
+    )
 
     def __init__(
         self,

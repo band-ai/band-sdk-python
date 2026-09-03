@@ -40,6 +40,7 @@ class ToolGroup(StrEnum):
 
     CONTACTS = "contacts"
     MEMORY = "memory"
+    TASKS = "tasks"
 
 
 class Transport(StrEnum):

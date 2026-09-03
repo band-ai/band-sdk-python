@@ -72,3 +72,16 @@ through untouched.
 `Capability.FILES` gates the three file tools above — see
 [Capability Negotiation](capability-negotiation.md) for when it's actually
 usable against a real deployment.
+
+## Task Board Tools
+- `band_list_tasks`: List the shared tasks on this room's task board
+- `band_create_task`: Create a shared task on this room's task board
+- `band_get_task`: Read one task by UUID or board number
+- `band_update_task`: Update a task's status, active_form, comment, subject, detail, or lifecycle state
+- `band_get_task_history`: The append-only history of one task
+- `band_get_board`: Read this room's goal (the team mission)
+- `band_set_board`: Set or update this room's goal (upsert)
+
+`Capability.TASKS` gates the seven task-board tools above, room-scoped like
+the file tools — see [Capability Negotiation](capability-negotiation.md) for
+how a request gets pruned against `AgentMe.feature_flags`.

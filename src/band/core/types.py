@@ -91,6 +91,7 @@ class Capability(_FlagEnum):
     MEMORY = "memory"
     CONTACTS = "contacts"
     FILES = "files"
+    TASKS = "tasks"
 
 
 ALL_CAPABILITIES: frozenset[Capability] = frozenset(Capability)

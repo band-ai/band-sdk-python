@@ -214,7 +214,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
     )
 
     def __init__(

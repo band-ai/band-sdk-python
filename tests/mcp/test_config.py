@@ -273,6 +273,17 @@ def test_tools_known_and_unknown_mixed():
     assert _warning_of_kind(cfg, "unknown-tools-value").value == "zzz"
 
 
+def test_tools_comma_separated_with_tasks():
+    cfg = resolve_config(cli={"tools": "contacts,memory,tasks"}, env={})
+    assert cfg.tools == ["contacts", "memory", "tasks"]
+
+
+def test_tools_known_and_unknown_mixed_with_tasks():
+    cfg = resolve_config(cli={"tools": "contacts,zzz,memory,tasks"}, env={})
+    assert cfg.tools == ["contacts", "memory", "tasks"]
+    assert _warning_of_kind(cfg, "unknown-tools-value").value == "zzz"
+
+
 # ---------------------------------------------------------------------------
 # validate()
 # ---------------------------------------------------------------------------

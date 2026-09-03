@@ -26,6 +26,7 @@ from typing import (
     Any,
     Awaitable,
     Callable,
+    NamedTuple,
     Protocol,
     cast,
     runtime_checkable,
@@ -55,6 +56,7 @@ from band.runtime.custom_tools import (
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAME,
+    ToolCategory,
     append_available_mention_handles,
     get_tool_description,
     is_terminal_success,
@@ -65,24 +67,31 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
-_CREWAI_TOOL_CATEGORIES = {
-    "band_send_message": "chat",
-    "band_send_event": "chat",
-    "band_add_participant": "chat",
-    "band_remove_participant": "chat",
-    "band_get_participants": "chat",
-    "band_lookup_peers": "chat",
-    "band_create_chatroom": "chat",
-    "band_list_contacts": "contacts",
-    "band_add_contact": "contacts",
-    "band_remove_contact": "contacts",
-    "band_list_contact_requests": "contacts",
-    "band_respond_contact_request": "contacts",
-    "band_list_memories": "memory",
-    "band_store_memory": "memory",
-    "band_get_memory": "memory",
-    "band_supersede_memory": "memory",
-    "band_archive_memory": "memory",
+_CREWAI_TOOL_CATEGORIES: dict[str, ToolCategory] = {
+    "band_send_message": ToolCategory.CHAT,
+    "band_send_event": ToolCategory.CHAT,
+    "band_add_participant": ToolCategory.CHAT,
+    "band_remove_participant": ToolCategory.CHAT,
+    "band_get_participants": ToolCategory.CHAT,
+    "band_lookup_peers": ToolCategory.CHAT,
+    "band_create_chatroom": ToolCategory.CHAT,
+    "band_list_contacts": ToolCategory.CONTACTS,
+    "band_add_contact": ToolCategory.CONTACTS,
+    "band_remove_contact": ToolCategory.CONTACTS,
+    "band_list_contact_requests": ToolCategory.CONTACTS,
+    "band_respond_contact_request": ToolCategory.CONTACTS,
+    "band_list_memories": ToolCategory.MEMORY,
+    "band_store_memory": ToolCategory.MEMORY,
+    "band_get_memory": ToolCategory.MEMORY,
+    "band_supersede_memory": ToolCategory.MEMORY,
+    "band_archive_memory": ToolCategory.MEMORY,
+    "band_list_tasks": ToolCategory.TASKS,
+    "band_create_task": ToolCategory.TASKS,
+    "band_get_task": ToolCategory.TASKS,
+    "band_update_task": ToolCategory.TASKS,
+    "band_get_task_history": ToolCategory.TASKS,
+    "band_get_board": ToolCategory.TASKS,
+    "band_set_board": ToolCategory.TASKS,
 }
 
 
@@ -353,17 +362,26 @@ SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
 _no_cache: Any = staticmethod(lambda *_a, **_kw: False)
 
 
+class PlatformToolGroups(NamedTuple):
+    """The platform tool groups ``build_band_crewai_tools`` selects from by
+    capability."""
+
+    base: list[BaseTool]
+    contacts: list[BaseTool]
+    memory: list[BaseTool]
+    tasks: list[BaseTool]
+
+
 def _make_platform_tools(
     *,
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
-    """Build the 7 base + 5 contact + 5 memory platform tools.
+) -> PlatformToolGroups:
+    """Build the 7 base + 5 contact + 5 memory + 7 task platform tools.
 
-    Returns a (base, contacts, memory) triple. ``build_band_crewai_tools``
-    is responsible for stitching them together based on the requested
-    capabilities.
+    ``build_band_crewai_tools`` is responsible for stitching the returned
+    groups together based on the requested capabilities.
     """
     from crewai.tools import BaseTool
 
@@ -831,6 +849,198 @@ def _make_platform_tools(
 
             return _exec("band_archive_memory", execute)
 
+    class ListTasksTool(BaseTool):
+        name: str = "band_list_tasks"
+        description: str = get_tool_description("band_list_tasks")
+        args_schema: type[BaseModel] = platform_args_schema("band_list_tasks")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            state = kwargs.get("state")
+            cursor = kwargs.get("cursor")
+            limit = kwargs.get("limit")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_list_tasks",
+                    {"state": state, "cursor": cursor, "limit": limit},
+                )
+                list_kwargs = {
+                    key: value
+                    for key, value in {
+                        "state": state,
+                        "cursor": cursor,
+                        "limit": limit,
+                    }.items()
+                    if value is not None
+                }
+                result = await tools.list_tasks(**list_kwargs)
+                await reporter.report_result(tools, "band_list_tasks", result)
+                return serialize_success_result(result)
+
+            return _exec("band_list_tasks", execute)
+
+    class CreateTaskTool(BaseTool):
+        name: str = "band_create_task"
+        description: str = get_tool_description("band_create_task")
+        args_schema: type[BaseModel] = platform_args_schema("band_create_task")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            subject = kwargs.get("subject", "")
+            detail = kwargs.get("detail")
+            supersedes_id = kwargs.get("supersedes_id")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_create_task",
+                    {
+                        "subject": subject,
+                        "detail": detail,
+                        "supersedes_id": supersedes_id,
+                    },
+                )
+                result = await tools.create_task(
+                    subject, detail=detail, supersedes_id=supersedes_id
+                )
+                await reporter.report_result(tools, "band_create_task", result)
+                return serialize_success_result(result)
+
+            return _exec("band_create_task", execute)
+
+    class GetTaskTool(BaseTool):
+        name: str = "band_get_task"
+        description: str = get_tool_description("band_get_task")
+        args_schema: type[BaseModel] = platform_args_schema("band_get_task")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            task_id = kwargs.get("id", "")
+            include = kwargs.get("include")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools, "band_get_task", {"id": task_id, "include": include}
+                )
+                result = await tools.get_task(task_id, include=include)
+                await reporter.report_result(tools, "band_get_task", result)
+                return serialize_success_result(result)
+
+            return _exec("band_get_task", execute)
+
+    class UpdateTaskTool(BaseTool):
+        name: str = "band_update_task"
+        description: str = get_tool_description("band_update_task")
+        args_schema: type[BaseModel] = platform_args_schema("band_update_task")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            task_id = kwargs.get("id", "")
+            status = kwargs.get("status")
+            active_form = kwargs.get("active_form")
+            comment = kwargs.get("comment")
+            subject = kwargs.get("subject")
+            detail = kwargs.get("detail")
+            state = kwargs.get("state")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_update_task",
+                    {
+                        "id": task_id,
+                        "status": status,
+                        "active_form": active_form,
+                        "comment": comment,
+                        "subject": subject,
+                        "detail": detail,
+                        "state": state,
+                    },
+                )
+                result = await tools.update_task(
+                    task_id,
+                    status=status,
+                    active_form=active_form,
+                    comment=comment,
+                    subject=subject,
+                    detail=detail,
+                    state=state,
+                )
+                await reporter.report_result(tools, "band_update_task", result)
+                return serialize_success_result(result)
+
+            return _exec("band_update_task", execute)
+
+    class GetTaskHistoryTool(BaseTool):
+        name: str = "band_get_task_history"
+        description: str = get_tool_description("band_get_task_history")
+        args_schema: type[BaseModel] = platform_args_schema("band_get_task_history")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            task_id = kwargs.get("id", "")
+            cursor = kwargs.get("cursor")
+            limit = kwargs.get("limit")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_get_task_history",
+                    {"id": task_id, "cursor": cursor, "limit": limit},
+                )
+                result = await tools.get_task_history(
+                    task_id, cursor=cursor, limit=limit
+                )
+                await reporter.report_result(tools, "band_get_task_history", result)
+                return serialize_success_result(result)
+
+            return _exec("band_get_task_history", execute)
+
+    class GetBoardTool(BaseTool):
+        name: str = "band_get_board"
+        description: str = get_tool_description("band_get_board")
+        args_schema: type[BaseModel] = platform_args_schema("band_get_board")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            include = kwargs.get("include")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools, "band_get_board", {"include": include}
+                )
+                result = await tools.get_board(include=include)
+                await reporter.report_result(tools, "band_get_board", result)
+                return serialize_success_result(result)
+
+            return _exec("band_get_board", execute)
+
+    class SetBoardTool(BaseTool):
+        name: str = "band_set_board"
+        description: str = get_tool_description("band_set_board")
+        args_schema: type[BaseModel] = platform_args_schema("band_set_board")
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            goal_title = kwargs.get("goal_title")
+            goal_summary = kwargs.get("goal_summary")
+
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(
+                    tools,
+                    "band_set_board",
+                    {"goal_title": goal_title, "goal_summary": goal_summary},
+                )
+                result = await tools.set_board(
+                    goal_title=goal_title, goal_summary=goal_summary
+                )
+                await reporter.report_result(tools, "band_set_board", result)
+                return serialize_success_result(result)
+
+            return _exec("band_set_board", execute)
+
     base_tools: list[BaseTool] = [
         SendMessageTool(),
         SendEventTool(),
@@ -854,8 +1064,19 @@ def _make_platform_tools(
         SupersedeMemoryTool(),
         ArchiveMemoryTool(),
     ]
+    task_tools: list[BaseTool] = [
+        ListTasksTool(),
+        CreateTaskTool(),
+        GetTaskTool(),
+        UpdateTaskTool(),
+        GetTaskHistoryTool(),
+        GetBoardTool(),
+        SetBoardTool(),
+    ]
 
-    return base_tools, contact_tools, memory_tools
+    return PlatformToolGroups(
+        base=base_tools, contacts=contact_tools, memory=memory_tools, tasks=task_tools
+    )
 
 
 def _make_custom_tools(
@@ -954,24 +1175,27 @@ def build_band_crewai_tools(
       - 7 base tools always.
       - +5 contact tools when Capability.CONTACTS is in `capabilities`.
       - +5 memory tools when Capability.MEMORY is in `capabilities`.
+      - +7 task tools when Capability.TASKS is in `capabilities`.
       - +N custom tools after platform tools.
 
     The returned tools close over `get_context`, `reporter`, and `fallback_loop`.
     Each adapter passes its own getter/reporter so the wrappers stay
     framework-agnostic.
     """
-    base, contacts, memories = _make_platform_tools(
+    groups = _make_platform_tools(
         get_context=get_context,
         reporter=reporter,
         fallback_loop=fallback_loop,
     )
 
     active_features = features or AdapterFeatures(capabilities=capabilities)
-    selected: list[BaseTool] = list(base)
+    selected: list[BaseTool] = list(groups.base)
     if Capability.CONTACTS in active_features.capabilities:
-        selected.extend(contacts)
+        selected.extend(groups.contacts)
     if Capability.MEMORY in active_features.capabilities:
-        selected.extend(memories)
+        selected.extend(groups.memory)
+    if Capability.TASKS in active_features.capabilities:
+        selected.extend(groups.tasks)
 
     selected = filter_tool_schemas(
         selected,

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.tools import Tool
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AliasChoices, BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
@@ -40,6 +41,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
+from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import Capability, EventMessageType, MessageType
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -408,13 +410,14 @@ def _build_handler_signature(input_model: type[BaseModel]) -> inspect.Signature:
 def _make_dispatch_function(
     registration: MCPToolRegistration,
 ) -> Callable[..., Awaitable[str]]:
-    """Synthesize the function FastMCP's ``add_tool`` derives a schema from.
+    """Synthesize the function ``Tool.from_function`` derives a schema from.
 
-    FastMCP inspects a real function's signature (via ``Tool.from_function``)
-    to build the advertised JSON schema -- there is no API to hand it an
-    explicit schema dict directly. This is why the schema-shaping work above
-    happens on ``registration.input_model`` (a real Pydantic model) rather
-    than on a hand-built schema dict.
+    FastMCP inspects a real function's signature to build the advertised JSON
+    schema -- there is no API to hand it an explicit schema dict directly.
+    This is why the schema-shaping work above happens on
+    ``registration.input_model`` (a real Pydantic model) rather than on a
+    hand-built schema dict; ``_build_mcp_tool`` sanitizes the schema this
+    produces afterward.
     """
     signature = _build_handler_signature(registration.input_model)
 
@@ -682,10 +685,27 @@ def build_engine(
         sse_path=sse_path,
         message_path=message_path,
         streamable_http_path=streamable_http_path,
+        tools=[_build_mcp_tool(registration) for registration in spec.tools],
     )
-    for registration in spec.tools:
-        handler = _make_dispatch_function(registration)
-        mcp.add_tool(
-            handler, name=registration.name, description=registration.description
-        )
     return mcp
+
+
+def _build_mcp_tool(registration: MCPToolRegistration) -> Tool:
+    """Build FastMCP's ``Tool`` directly so its wire schema can be sanitized.
+
+    ``FastMCP.add_tool`` derives ``parameters`` from the handler signature via
+    ``Tool.from_function`` with no hook to intercept the resulting schema --
+    and Pydantic renders a single-value ``Literal`` field as ``const``, which
+    some MCP clients' restricted JSON-Schema subsets reject. Building the
+    ``Tool`` here and normalizing it through ``sanitize_tool_schema`` (the
+    same helper ``AgentTools.get_tool_schemas`` already applies) keeps this
+    engine's wire schema consistent with every other schema surface the SDK
+    exposes, instead of teaching a second, parallel normalization to whatever
+    reads this schema downstream.
+    """
+    handler = _make_dispatch_function(registration)
+    tool = Tool.from_function(
+        handler, name=registration.name, description=registration.description
+    )
+    tool.parameters = sanitize_tool_schema(tool.parameters)
+    return tool

@@ -29,6 +29,7 @@ import warnings
 from typing import Annotated, Any, Callable, Literal, Optional, get_args, get_origin
 
 from band.core.exceptions import BandToolError
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
     append_available_mention_handles,
@@ -651,6 +652,218 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data=f"Error responding to contact request: {e}")
 
+    include_tasks = features is None or Capability.TASKS in features.capabilities
+
+    @band_tool()
+    async def band_list_tasks(
+        context: ToolContext,
+        state: TaskListState | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] list_tasks called: session=%s, state=%s",
+            context.session_id,
+            state,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] list_tasks: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.list_tasks(state=state, cursor=cursor, limit=limit)
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error listing tasks: %s", e, exc_info=True)
+            return ToolResult(data=f"Error listing tasks: {e}")
+
+    @band_tool()
+    async def band_create_task(
+        context: ToolContext,
+        subject: str,
+        detail: str | None = None,
+        supersedes_id: str | None = None,
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] create_task called: session=%s, subject=%s",
+            context.session_id,
+            subject,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] create_task: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.create_task(
+                subject, detail=detail, supersedes_id=supersedes_id
+            )
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error(
+                "[Parlant Tool] Error creating task '%s': %s", subject, e, exc_info=True
+            )
+            return ToolResult(data=f"Error creating task '{subject}': {e}")
+
+    @band_tool()
+    async def band_get_task(
+        context: ToolContext,
+        id: str,
+        include: str | None = None,
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] get_task called: session=%s, id=%s", context.session_id, id
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] get_task: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.get_task(id, include=include)
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error(
+                "[Parlant Tool] Error getting task '%s': %s", id, e, exc_info=True
+            )
+            return ToolResult(data=f"Error getting task '{id}': {e}")
+
+    @band_tool()
+    async def band_update_task(
+        context: ToolContext,
+        id: str,
+        status: TaskAssignmentStatus | None = None,
+        active_form: str | None = None,
+        comment: str | None = None,
+        subject: str | None = None,
+        detail: str | None = None,
+        state: TaskLifecycleState | None = None,
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] update_task called: session=%s, id=%s, status=%s",
+            context.session_id,
+            id,
+            status,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] update_task: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.update_task(
+                id,
+                status=status,
+                active_form=active_form,
+                comment=comment,
+                subject=subject,
+                detail=detail,
+                state=state,
+            )
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error(
+                "[Parlant Tool] Error updating task '%s': %s", id, e, exc_info=True
+            )
+            return ToolResult(data=f"Error updating task '{id}': {e}")
+
+    @band_tool()
+    async def band_get_task_history(
+        context: ToolContext,
+        id: str,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> ToolResult:
+        logger.info(
+            "[Parlant Tool] get_task_history called: session=%s, id=%s",
+            context.session_id,
+            id,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] get_task_history: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.get_task_history(id, cursor=cursor, limit=limit)
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error(
+                "[Parlant Tool] Error getting task history for '%s': %s",
+                id,
+                e,
+                exc_info=True,
+            )
+            return ToolResult(data=f"Error getting task history for '{id}': {e}")
+
+    @band_tool()
+    async def band_get_board(
+        context: ToolContext,
+        include: str | None = None,
+    ) -> ToolResult:
+        logger.info("[Parlant Tool] get_board called: session=%s", context.session_id)
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] get_board: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.get_board(include=include)
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error getting board: %s", e, exc_info=True)
+            return ToolResult(data=f"Error getting board: {e}")
+
+    @band_tool()
+    async def band_set_board(
+        context: ToolContext,
+        goal_title: str | None = None,
+        goal_summary: str | None = None,
+    ) -> ToolResult:
+        logger.info("[Parlant Tool] set_board called: session=%s", context.session_id)
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] set_board: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        try:
+            result = await tools.set_board(
+                goal_title=goal_title, goal_summary=goal_summary
+            )
+            data = serialize_tool_result(result)
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error setting board: %s", e, exc_info=True)
+            return ToolResult(data=f"Error setting board: {e}")
+
     tools = [
         band_send_message,
         band_send_event,
@@ -669,6 +882,19 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 band_remove_contact,
                 band_list_contact_requests,
                 band_respond_contact_request,
+            ]
+        )
+
+    if include_tasks:
+        tools.extend(
+            [
+                band_list_tasks,
+                band_create_task,
+                band_get_task,
+                band_update_task,
+                band_get_task_history,
+                band_get_board,
+                band_set_board,
             ]
         )
 

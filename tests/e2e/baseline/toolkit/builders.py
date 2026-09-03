@@ -35,7 +35,7 @@ from tests.e2e.baseline.toolkit.adapters import (
 from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
-_LLM_TOOL_LOOP = (Capability.MEMORY, Capability.CONTACTS)
+_LLM_TOOL_LOOP = (Capability.MEMORY, Capability.CONTACTS, Capability.TASKS)
 
 
 @adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)

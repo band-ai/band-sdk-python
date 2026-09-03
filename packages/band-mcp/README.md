@@ -9,7 +9,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that pr
 ## ✨ Features
 
 - Dual-scope tool surface: serve agent tools (`--scope agent`), human tools (`--scope human`), or both
-- Opt-in contact directory (`--tools contacts`) and memory (`--tools memory`) tool groups
+- Opt-in contact directory (`--tools contacts`), memory (`--tools memory`), and task-board (`--tools tasks`) tool groups
 - Room pinning with `--room-id` — hides the room field from the advertised schema and injects it at call time
 - STDIO transport for IDE integration; SSE transport for Docker and remote deployments
 - Tool definitions sourced from `band-sdk` so the MCP stays in lockstep with the platform SDK
@@ -279,10 +279,10 @@ Tool definitions live in [`band-sdk`](https://github.com/band-ai/band-sdk-python
 
 Tool counts:
 
-| Scope   | Baseline | +`--tools contacts` | +`--tools memory` |
-| ------- | -------- | ------------------- | ----------------- |
-| `agent` | 7        | +5                  | +5                |
-| `human` | 13       | +9                  | +6                |
+| Scope   | Baseline | +`--tools contacts` | +`--tools memory` | +`--tools tasks` |
+| ------- | -------- | ------------------- | ----------------- | ----------------- |
+| `agent` | 7        | +5                  | +5                | +7                |
+| `human` | 13       | +9                  | +6                | —                 |
 
 ### 🤖 Agent tools (`--scope agent`)
 
@@ -319,6 +319,18 @@ For AI agents authenticated with an agent API key (`band_a_*`). `AgentTools` is 
 | `band_get_memory`       | Retrieve a specific memory by ID                 |
 | `band_supersede_memory` | Mark a memory as superseded (soft delete)        |
 | `band_archive_memory`   | Archive a memory (hide but preserve)             |
+
+**Tasks — opt-in via `--tools tasks`:**
+
+| Tool                     | Description                                                          |
+| ------------------------ | --------------------------------------------------------------------- |
+| `band_list_tasks`        | List the shared tasks on this room's task board                       |
+| `band_create_task`       | Create a shared task on this room's task board                        |
+| `band_get_task`          | Read one task by UUID or board number                                 |
+| `band_update_task`       | Update a task's status, active_form, comment, subject, detail, or state |
+| `band_get_task_history`  | The append-only history of one task                                   |
+| `band_get_board`         | Read this room's goal (the team mission)                              |
+| `band_set_board`         | Set or update this room's goal (upsert)                                |
 
 ### 👤 Human tools (`--scope human`)
 
@@ -399,8 +411,8 @@ export BAND_AGENT_KEY=band_a_your_agent_key
 # Serve both scopes in one process (default: agent only)
 uv run band-mcp --scope agent,human
 
-# Opt into contact-directory / memory tools
-uv run band-mcp --scope agent --tools contacts,memory
+# Opt into contact-directory / memory / task-board tools
+uv run band-mcp --scope agent --tools contacts,memory,tasks
 
 # Pin the whole server to a single chat/room
 uv run band-mcp --scope agent --room-id r_123
@@ -429,7 +441,7 @@ WARN  unknown --scope value 'huamn' — did you mean 'human'? ignoring.
 | `BAND_USER_KEY`      | User (human-scope) API key (`band_u_...`)         |
 | `BAND_AGENT_KEY`     | Agent-scope API key (`band_a_...`)                |
 | `BAND_MCP_SCOPE`     | Comma-separated scope list (default: `agent`)     |
-| `BAND_MCP_TOOLS`     | Opt-in tool groups: `contacts`, `memory`          |
+| `BAND_MCP_TOOLS`     | Opt-in tool groups: `contacts`, `memory`, `tasks` |
 | `BAND_MCP_ROOM_ID`   | Pinned room id (optional)                         |
 | `BAND_BASE_URL`      | API base URL (default: `https://app.band.ai`)     |
 | `TRANSPORT`          | `stdio` (default) or `sse`                        |

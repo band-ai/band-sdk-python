@@ -23,8 +23,9 @@ adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
   usage — whichever that adapter supports). Pass `emit=()` for silence, or a
   narrower `Emit` combination to select specific kinds.
 - **`capabilities` is opt-in**: omitted, it defaults to empty. Turning on
-  `Capability.MEMORY`/`Capability.CONTACTS`/`Capability.FILES` puts extra tool
-  schemas in front of the model on every turn, so it stays off by default.
+  `Capability.MEMORY`/`Capability.CONTACTS`/`Capability.FILES`/`Capability.TASKS`
+  puts extra tool schemas in front of the model on every turn, so it stays off
+  by default.
 - Requesting an `emit`/`capabilities` value outside the adapter's
   `SUPPORTED_EMIT`/`SUPPORTED_CAPABILITIES` raises `BandConfigError`
   immediately at construction — never a silent no-op.

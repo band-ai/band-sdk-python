@@ -144,6 +144,13 @@ class TestToolModelsRegistry:
             "band_list_room_files",
             "band_read_room_file",
             "band_send_room_file",
+            "band_list_tasks",
+            "band_create_task",
+            "band_get_task",
+            "band_update_task",
+            "band_get_task_history",
+            "band_get_board",
+            "band_set_board",
         }
         assert set(TOOL_MODELS.keys()) == expected
 
