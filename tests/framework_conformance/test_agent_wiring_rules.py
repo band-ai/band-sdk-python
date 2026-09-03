@@ -20,7 +20,15 @@ from unittest.mock import patch
 import pytest
 
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
-from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, PER_ADAPTER_MARKER
+from tests.e2e.baseline.toolkit import adapters as adapters_module
+from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from tests.e2e.baseline.agents import (
+    WITH_ADAPTERS_MARKER,
+    PER_ADAPTER_MARKER,
+    PerAdapter,
+    WithAdapters,
+    per_adapter,
+)
 
 
 class FakeItem:
@@ -183,7 +191,6 @@ def test_decorator_that_provisions_nothing_is_rejected() -> None:
 
 def test_from_node_raises_when_the_decorator_is_missing() -> None:
     """A missing decorator fails loud with the caller's hint, not a downstream error."""
-    from tests.e2e.baseline.agents import WithAdapters  # noqa: PLC0415
 
     with pytest.raises(pytest.UsageError, match="requires @with_adapters"):
         WithAdapters.from_node(FakeItem(), hint="requires @with_adapters")
@@ -192,7 +199,6 @@ def test_from_node_raises_when_the_decorator_is_missing() -> None:
 def test_from_node_raises_on_a_wrong_payload_type() -> None:
     """A marker whose arg is not the expected payload (e.g. a raw pytest.mark) is caught
     by the isinstance check — a clear UsageError, not an AttributeError deep in a fixture."""
-    from tests.e2e.baseline.agents import PerAdapter  # noqa: PLC0415
 
     with pytest.raises(pytest.UsageError):
         PerAdapter.from_node(FakeItem(each=True))  # FakeItem carries a SimpleNamespace
@@ -218,9 +224,6 @@ def test_peer_must_be_a_live_adapter() -> None:
     Synthesizes the pending state by patching a live adapter's registry entry,
     so the guard stays testable when (as expected) no real adapter is pending.
     """
-    from tests.e2e.baseline.agents import per_adapter  # noqa: PLC0415
-    from tests.e2e.baseline.toolkit import adapters as adapters_module  # noqa: PLC0415
-    from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for  # noqa: PLC0415
 
     pending_spec = replace(
         spec_for(Adapter.LANGGRAPH), e2e_pending="synthetic: backend not CI-wired"
@@ -242,7 +245,6 @@ EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset()
 
 def test_pending_adapters_match_the_allowlist() -> None:
     """The e2e_pending set equals the explicit allowlist (empty today)."""
-    from tests.e2e.baseline.toolkit.adapters import specs  # noqa: PLC0415
 
     pending = {
         str(spec.id): spec.e2e_pending

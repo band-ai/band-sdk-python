@@ -45,7 +45,7 @@ def create_llm() -> BaseChatModel:
 
         return ChatAnthropic(model="claude-sonnet-4-5-20250929")
     elif settings.openai_api_key:
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415 -- only load the model actually selected by which API key is configured
 
         return ChatOpenAI(model="gpt-5.5")
     else:
@@ -83,7 +83,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
     else:
         if not settings.openai_api_key:
             raise ValueError(f"OPENAI_API_KEY must be set to use model '{model}'")
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415 -- only load the model actually selected by which API key is configured
 
         return ChatOpenAI(model=model)
 

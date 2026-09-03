@@ -12,7 +12,7 @@ import warnings
 from typing import Any, ClassVar, cast
 
 from anthropic import AsyncAnthropic
-from anthropic.types import Message, MessageParam, ToolParam, ToolUseBlock
+from anthropic.types import Message, MessageParam, TextBlock, ToolParam, ToolUseBlock
 from typing_extensions import Unpack
 
 from band.core.exceptions import BandConfigError
@@ -358,8 +358,6 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     # --- Copied from BandAnthropicAgent._extract_text_content ---
     def _extract_text_content(self, content: list) -> str:
         """Extract text content from response content blocks."""
-        from anthropic.types import TextBlock  # noqa: PLC0415
-
         texts = []
         for block in content:
             if isinstance(block, TextBlock) and block.text:
@@ -369,8 +367,6 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     # --- Copied from BandAnthropicAgent._serialize_content_blocks ---
     def _serialize_content_blocks(self, content: list) -> list[dict[str, Any]]:
         """Serialize content blocks to dict format for message history."""
-        from anthropic.types import TextBlock  # noqa: PLC0415
-
         serialized = []
         for block in content:
             if isinstance(block, ToolUseBlock):

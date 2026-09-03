@@ -30,6 +30,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LogSettings
 from band.core.types import Emit
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
 
 
 class Settings(BaseSettings):
@@ -174,8 +176,6 @@ async def main() -> None:
     config = load_config(config_path)
 
     # Import here to allow early config validation
-    from band import Agent  # noqa: PLC0415
-    from band.adapters import ClaudeSDKAdapter  # noqa: PLC0415
 
     # Extract config values
     agent_id = config["agent_id"]

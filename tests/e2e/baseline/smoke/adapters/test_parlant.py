@@ -39,6 +39,10 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # structural skip (not a fail) is correct where it isn't importable.
 pytest.importorskip("parlant.sdk")
 
+import parlant.sdk as p
+
+from band.adapters.parlant import ParlantAdapter
+
 _SHORT = "You are a friendly assistant in a chat room. Reply in one short sentence."
 
 
@@ -72,10 +76,6 @@ async def test_parlant_replies(
     shared toolkit provisions and runs it, and the delivery barrier proves the
     turn completed before we read the reply.
     """
-    import parlant.sdk as p  # noqa: PLC0415
-
-    from band.adapters.parlant import ParlantAdapter  # noqa: PLC0415
-
     adapter = ParlantAdapter(
         name="E2E Showcase Agent",
         description="A test agent for baseline E2E validation. Keep replies short.",

@@ -145,7 +145,7 @@ def hermetic_copilot_config(
     smoke's one billed turn uses a cheap, deterministic model instead of
     Copilot's ``auto`` picker.
     """
-    from band.adapters.copilot_acp import CopilotACPAdapterConfig  # noqa: PLC0415
+    from band.adapters.copilot_acp import CopilotACPAdapterConfig  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
 
     home = copilot_home_dir(str(work_dir))
     hosted_env = {
@@ -182,7 +182,7 @@ async def test_copilot_hosted_auth_replies(
     cheap turn keeps it proven. Skips (not fails) without a token: hosted
     auth is optional extra coverage, the BYOK cells are the lane's bar.
     """
-    from band.adapters.copilot_acp import CopilotACPAdapter  # noqa: PLC0415
+    from band.adapters.copilot_acp import CopilotACPAdapter  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
 
     if not baseline_settings.backends.github_token:
         pytest.skip("GITHUB_TOKEN unset — the Copilot-hosted auth smoke needs one")
@@ -240,7 +240,7 @@ async def test_acp_recall_via_room_replay_when_session_load_misses(
     reply lines are its only possible source (the regression case for a replay
     that drops the agent's side of the transcript).
     """
-    from band.adapters.copilot_acp import CopilotACPAdapter  # noqa: PLC0415
+    from band.adapters.copilot_acp import CopilotACPAdapter  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
 
     tracking_marker = unique_marker("acp-replay")
     agent_fact = "blue"

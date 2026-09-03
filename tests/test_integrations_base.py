@@ -57,12 +57,12 @@ class TestIntegrationsImport:
 
     def test_can_import_from_integrations(self):
         """Should be able to import check_and_format_participants from integrations."""
-        from band.integrations import check_and_format_participants  # noqa: PLC0415
+        from band.integrations import check_and_format_participants  # noqa: PLC0415 -- pins the exact import path this test exercises
 
         assert check_and_format_participants is not None
 
     def test_check_and_format_participants_in_all(self):
         """Should be listed in __all__."""
-        from band import integrations  # noqa: PLC0415
+        from band import integrations  # noqa: PLC0415 -- pins the exact import path this test exercises
 
         assert "check_and_format_participants" in integrations.__all__

@@ -1427,7 +1427,7 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitToolCallsReporter.report_call should not propagate."""
-        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415
+        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         reporter = EmitToolCallsReporter(adapter.features)
@@ -1441,7 +1441,7 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitToolCallsReporter.report_result should not propagate."""
-        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415
+        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         reporter = EmitToolCallsReporter(adapter.features)

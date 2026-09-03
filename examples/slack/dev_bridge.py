@@ -37,6 +37,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from band import Agent, LogSettings
 from band.adapters import AnthropicAdapter
 from band.integrations.slack import SlackAdapter, SlackApp
+import uvicorn
+from starlette.applications import Starlette
 
 # slack_sdk raised alongside band, not a bare LogSettings().configure(): this
 # driver exists to debug the bridge, and slack_sdk's own INFO diagnostics are
@@ -111,8 +113,6 @@ async def main() -> None:
     if transport == "http":
         # Mount the Slack router into a tiny ASGI app and run uvicorn
         # alongside the Band WS agent loop.
-        import uvicorn  # noqa: PLC0415
-        from starlette.applications import Starlette  # noqa: PLC0415
 
         starlette_app = Starlette()
         starlette_app.mount("/slack", slack.router)

@@ -65,7 +65,7 @@ def test_adapter_features_constructible():
 
 def test_can_import_letta_adapter_via_lazy_loader():
     """LettaAdapter resolves through the adapters lazy loader."""
-    from band.adapters import LettaAdapter, LettaAdapterConfig  # noqa: PLC0415
+    from band.adapters import LettaAdapter, LettaAdapterConfig  # noqa: PLC0415 -- pins the exact import path this test exercises
 
     assert LettaAdapter is not None
     assert LettaAdapterConfig is not None
@@ -73,7 +73,7 @@ def test_can_import_letta_adapter_via_lazy_loader():
 
 def test_can_import_langgraph_integrations():
     """Verify we can import LangGraph integration utilities."""
-    from band.integrations.langgraph import (  # noqa: PLC0415
+    from band.integrations.langgraph import (  # noqa: PLC0415 -- pins the exact import path this test exercises
         agent_tools_to_langchain,
         graph_as_tool,
     )

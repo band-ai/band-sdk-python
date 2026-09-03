@@ -1277,6 +1277,8 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     @staticmethod
     def _default_web_client_factory(app: SlackApp) -> AsyncWebClient:
+        # slack extra kept out of this module's unconditional import surface;
+        # TYPE_CHECKING above supplies the annotation without a runtime cost
         from slack_sdk.web.async_client import AsyncWebClient  # noqa: PLC0415
 
         return AsyncWebClient(token=app.bot_token)

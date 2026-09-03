@@ -20,6 +20,13 @@ import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LoggingStyle, LogSettings
+from band_rest import AsyncRestClient
+from band_rest.types import (
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
+    ChatRoomRequest,
+    ParticipantRequest,
+)
 
 # The bare message format only exists for the standard style, so the style is
 # pinned rather than read from BAND_LOG_CONSOLE_STYLE.
@@ -49,13 +56,6 @@ def load_agent_config(filename: str) -> dict:
 
 
 async def main() -> None:
-    from band_rest import AsyncRestClient  # noqa: PLC0415
-    from band_rest.types import (  # noqa: PLC0415
-        ChatMessageRequest,
-        ChatMessageRequestMentionsItem,
-        ChatRoomRequest,
-        ParticipantRequest,
-    )
 
     # Load agent configs
     planner = load_agent_config("planner.yaml")

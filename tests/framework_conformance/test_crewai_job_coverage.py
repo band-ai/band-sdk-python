@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.framework_conformance import venv_job_coverage as vjc
+from tests.framework_configs.sentinel import StrictnessSettings
 from tests.paths import REPO_ROOT
 
 # Import names of the distributions only `dev-crewai` installs. Kept as a map so
@@ -86,8 +87,6 @@ def test_missing_framework_optout_is_parsed_as_a_boolean(
     """
     monkeypatch.setenv("CI", "true")
     monkeypatch.setenv("BAND_ALLOW_MISSING_FRAMEWORKS", flag)
-
-    from tests.framework_configs.sentinel import StrictnessSettings  # noqa: PLC0415
 
     settings = StrictnessSettings()
     strict = settings.ci and not settings.band_allow_missing_frameworks

@@ -149,6 +149,7 @@ def _make_request_handler(
     avoid retries. Redelivered events (same ``event_id``) are dropped via
     ``seen_events`` so a reconnect can't double-invoke the brain.
     """
+    # slack extra kept out of this module's unconditional import surface
     from slack_sdk.socket_mode.response import SocketModeResponse  # noqa: PLC0415
 
     async def handle(client: SocketModeClient, req: Any) -> None:

@@ -159,8 +159,8 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         List of Parlant ToolEntry objects
     """
     try:
-        import parlant.sdk as p  # type: ignore[missing-import]  # noqa: PLC0415
-        from parlant.core.tools import (  # type: ignore[missing-import]  # noqa: PLC0415
+        import parlant.sdk as p  # type: ignore[missing-import]  # noqa: PLC0415 -- parlant extra, absent from the standard dev venv
+        from parlant.core.tools import (  # type: ignore[missing-import]  # noqa: PLC0415 -- parlant extra, absent from the standard dev venv
             ToolContext,
             ToolParameterOptions,
             ToolResult,

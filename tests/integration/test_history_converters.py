@@ -26,6 +26,8 @@ import pytest
 from band_rest import ChatEventRequest, ChatMessageRequest
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
+from band.converters.anthropic import AnthropicHistoryConverter
+from band.converters.pydantic_ai import PydanticAIHistoryConverter
 from band.runtime.formatters import format_history_for_llm
 from tests.integration.conftest import fetch_all_context, requires_api
 
@@ -83,8 +85,6 @@ class TestAnthropicConverterIntegration:
         """Verify Anthropic converter handles real platform tool history."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -178,8 +178,6 @@ class TestAnthropicConverterIntegration:
         """Verify converter batches parallel tool calls from platform."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -294,8 +292,6 @@ class TestPydanticAIConverterIntegration:
         ModelRequest = pydantic_ai_messages.ModelRequest
         ModelResponse = pydantic_ai_messages.ModelResponse
 
-        from band.converters.pydantic_ai import PydanticAIHistoryConverter  # noqa: PLC0415
-
         chat_id = shared_room
         agent_name = shared_agent1_info.name
         tc_id = _unique_id("call_pai")
@@ -381,8 +377,6 @@ class TestMixedConversationIntegration:
         """Test converter handles realistic conversation with multiple turns."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -505,8 +499,6 @@ class TestEdgeCasesIntegration:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from band.converters.anthropic import AnthropicHistoryConverter  # noqa: PLC0415
-
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
         thought_content = f"Let me think about this request {marker}..."
@@ -560,8 +552,6 @@ class TestEdgeCasesIntegration:
         """Verify error events are properly skipped."""
         if shared_room is None:
             pytest.skip("shared_room not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]

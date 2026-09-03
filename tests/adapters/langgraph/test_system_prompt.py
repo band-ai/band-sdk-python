@@ -9,6 +9,8 @@ from langchain_core.messages import SystemMessage
 from band.adapters.langgraph import LangGraphAdapter
 
 from .helpers import make_capture_graph
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 
 class TestSystemPromptCrossTurn:
@@ -95,8 +97,6 @@ class TestSystemPromptCrossTurn:
         checkpointer (not the adapter) is what keeps the system prompt
         present across turns.
         """
-        from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
-        from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: PLC0415
 
         checkpointer = InMemorySaver()
         seen_system_prompts: list[list[str]] = []

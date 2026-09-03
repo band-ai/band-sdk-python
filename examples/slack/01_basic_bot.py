@@ -73,6 +73,8 @@ from band import Agent, Emit, configure_logging
 from band.adapters import AnthropicAdapter
 from band.config import load_agent_config
 from band.integrations.slack import SlackAdapter, SlackApp
+import uvicorn
+from starlette.applications import Starlette
 
 configure_logging(logging.INFO, extra_loggers={"slack_sdk": logging.INFO})
 logger = logging.getLogger(__name__)
@@ -157,8 +159,6 @@ async def main() -> None:
         # In a real service you'd mount ``slack.router`` into your
         # existing FastAPI/Starlette app instead of running uvicorn
         # standalone like this.
-        import uvicorn  # noqa: PLC0415
-        from starlette.applications import Starlette  # noqa: PLC0415
 
         web_app = Starlette()
         web_app.mount("/slack", slack.router)

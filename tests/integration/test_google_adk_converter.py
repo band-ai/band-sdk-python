@@ -18,6 +18,7 @@ from band_rest import ChatEventRequest, ChatMessageRequest
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from tests.integration.conftest import requires_api
+from band.converters.google_adk import GoogleADKHistoryConverter
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,6 @@ class TestGoogleADKConverterIntegration:
         """
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -182,8 +181,6 @@ class TestGoogleADKConverterIntegration:
         """Verify converter batches parallel tool calls from platform."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -295,8 +292,6 @@ class TestGoogleADKConverterEdgeCases:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415
-
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
         thought_content = f"Let me think about this {marker}..."
@@ -330,8 +325,6 @@ class TestGoogleADKConverterEdgeCases:
         """Verify error events are skipped in conversion."""
         if shared_room is None:
             pytest.skip("shared_room not available")
-
-        from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
@@ -368,8 +361,6 @@ class TestGoogleADKConverterEdgeCases:
         """Verify is_error flag is preserved through platform round-trip."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -439,8 +430,6 @@ class TestGoogleADKMultiTurnConversation:
         """Test converter handles realistic multi-turn conversation."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name

@@ -916,7 +916,7 @@ def _build_json_formatter(
     # _TraceContextFilter always sets record.trace_context; without this,
     # JsonFormatter's default (any non-reserved attribute is a free "extra")
     # would leak it into output even when json_fields excludes it.
-    from pythonjsonlogger.core import RESERVED_ATTRS  # noqa: PLC0415
+    from pythonjsonlogger.core import RESERVED_ATTRS  # noqa: PLC0415 -- logging extra, guarded above
 
     fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
     json_formatter: LoggingConfig = {
@@ -936,6 +936,8 @@ def _build_json_formatter(
 
 
 def _build_rich_handler(*, stream: LogStream, datefmt: str) -> logging.Handler:
+    # rich ships with the optional `logging` extra (see _require_optional_package's
+    # caller above); a top-level import would break every install that omits it.
     from rich.console import Console  # noqa: PLC0415
     from rich.logging import RichHandler  # noqa: PLC0415
 

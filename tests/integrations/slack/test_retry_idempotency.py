@@ -36,6 +36,7 @@ from band.integrations.slack.server import (
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
+from band.integrations.slack.adapter import SlackAdapter
 
 
 # ── Unit tests on SeenEvents ────────────────────────────────────────────────
@@ -289,8 +290,6 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     """End-to-end via the full SlackAdapter wrapping shape: 3 retries
     must produce exactly one inner brain invocation and one Band
     room (not three)."""
-
-    from band.integrations.slack.adapter import SlackAdapter  # noqa: PLC0415
 
     class _Brain(SimpleAdapter[Any]):
         def __init__(self) -> None:

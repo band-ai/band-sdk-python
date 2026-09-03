@@ -86,10 +86,10 @@ def _require_adk() -> tuple[type, type, type, Any]:
         ImportError: If google-adk is not installed.
     """
     try:
-        from google.adk import Agent as ADKAgent  # noqa: PLC0415
-        from google.adk.runners import InMemoryRunner  # noqa: PLC0415
-        from google.adk.tools import BaseTool  # noqa: PLC0415
-        from google.genai import types  # noqa: PLC0415
+        from google.adk import Agent as ADKAgent  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+        from google.adk.runners import InMemoryRunner  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+        from google.adk.tools import BaseTool  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+        from google.genai import types  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
     except ImportError as exc:
         raise ImportError(
             "google-adk is required for GoogleADKAdapter. "

@@ -18,7 +18,9 @@ This is a complete, functional example with:
 - Query validation before execution
 """
 
+import logging
 import os
+import urllib.request
 from typing import Annotated, Literal
 
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
@@ -104,10 +106,6 @@ def create_sql_agent(db_path: str = "Chinook.db"):
 
 def download_chinook_db():
     """Download the Chinook sample database if not present."""
-    import logging  # noqa: PLC0415
-    import os  # noqa: PLC0415
-    import urllib.request  # noqa: PLC0415
-
     logger = logging.getLogger(__name__)
 
     db_path = "Chinook.db"

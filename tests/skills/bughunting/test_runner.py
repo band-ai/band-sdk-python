@@ -183,7 +183,7 @@ def running_example(
 
 def install_capture(monkeypatch: pytest.MonkeyPatch, capture: Capture) -> None:
     """Make the runner's late-imported ``reply_capture`` yield ``capture``."""
-    import tests.e2e.baseline.toolkit.capture as capture_module  # noqa: PLC0415
+    import tests.e2e.baseline.toolkit.capture as capture_module  # noqa: PLC0415 -- avoids pulling the e2e baseline toolkit into every skills-test collection
 
     @asynccontextmanager
     async def factory(*args: Any, **kwargs: Any) -> AsyncIterator[Capture]:

@@ -113,6 +113,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # patterns get a uniform tool list, and a tool written once works across
         # adapters (LangChain would otherwise reject a bare tuple).
         if additional_tools:
+            # local: tests patch this name on langchain_tools itself, which only
+            # takes effect if it's looked up at call time rather than import time
             from band.integrations.langgraph.langchain_tools import (  # noqa: PLC0415
                 custom_tool_defs_to_langchain,
             )
@@ -136,6 +138,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # ("system", ...) message on bootstrap and the checkpointer carries it
         # forward, matching the pattern used by every other Band adapter.
         if uses_simple_pattern:
+            # local: tests patch langchain.agents.create_agent directly, which only
+            # works if this module looks it up at call time rather than import time
             from langchain.agents import create_agent  # noqa: PLC0415
             from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
 
@@ -246,6 +250,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         room_id: str,
     ) -> None:
         """Handle message with LangGraph."""
+        # local: tests patch this name on langchain_tools itself, which only
+        # takes effect if it's looked up at call time rather than import time
         from band.integrations.langgraph.langchain_tools import (  # noqa: PLC0415
             agent_tools_to_langchain,
         )

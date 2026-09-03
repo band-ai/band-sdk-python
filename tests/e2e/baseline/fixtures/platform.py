@@ -10,6 +10,8 @@ from collections.abc import AsyncGenerator
 import pytest
 from band_rest import AsyncRestClient
 
+from band import agent as agent_module
+from band.runtime import single_instance
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
@@ -130,9 +132,6 @@ async def reap_leaked_agents() -> AsyncGenerator[None, None]:
     its lock — removes the zombie so the next start is a true singleton.
     Reruns re-run function fixtures, so reaping here heals them too.
     """
-    from band import agent as agent_module  # noqa: PLC0415
-    from band.runtime import single_instance  # noqa: PLC0415
-
     yield
     for leaked_agent in agent_module.running_agents():
         logger.warning(
