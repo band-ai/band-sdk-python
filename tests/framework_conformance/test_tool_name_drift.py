@@ -1,6 +1,6 @@
 """Conformance tests that detect tool-name drift between the central registry and adapters.
 
-When a new tool is added to ``TOOL_MODELS`` in ``runtime/tools.py``, these
+When a new tool is added to ``TOOL_MODELS`` in ``runtime/tools/``, these
 tests will fail for any adapter or integration that is missing it — surfacing
 the gap before it reaches production.
 

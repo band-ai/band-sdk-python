@@ -1,12 +1,13 @@
 # Platform Tools
 
-Every Band agent gets a standard set of tools for chat, contacts, memory, and
-file management. This page documents the tool inventory and the rule that
-keeps their descriptions consistent across every framework adapter.
+Every Band agent gets a standard set of tools for chat, contacts, memory,
+files, and the room task board. This page documents the tool inventory and
+the rule that keeps their descriptions consistent across every framework
+adapter.
 
 ## Tool text is never written in an adapter
 
-`src/band/runtime/tools.py` owns every word an LLM reads about a platform tool:
+`src/band/runtime/tools/` owns every word an LLM reads about a platform tool:
 the input model's class docstring is the tool description, and each
 `Field(description=...)` is an argument description. An adapter must reach for
 whichever of these fits its framework instead of retyping the text:

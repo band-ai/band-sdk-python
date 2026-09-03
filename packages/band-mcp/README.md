@@ -521,7 +521,7 @@ packages/band-mcp/
 ```
 
 Tool *implementations* live one level up, in `band-sdk`
-(`src/band/runtime/tools.py`, `src/band/integrations/mcp/engine.py`).
+(`src/band/runtime/tools/`, `src/band/integrations/mcp/engine.py`).
 `band_mcp` only contains the CLI's transport-layer plumbing: input-schema
 extension for room-bound tools, the per-room `AgentTools` cache, and wiring
 the resolved `Config` into `build_engine()`. Its own tests live with the rest

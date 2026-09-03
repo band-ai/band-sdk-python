@@ -7,13 +7,13 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents)
 2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
 3. ACP integration: Editor-facing server and client adapters over stdio or TCP (Cursor, Codex, Claude Code, GitHub Copilot)
-4. Platform tools for chat, contacts, memory, and file management
+4. Platform tools for chat, contacts, memory, files, and the room task board
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
 
 ## Platform Tools
 
-`src/band/runtime/tools.py` owns every word an LLM reads about a platform
-tool (chat, contacts, memory, files) — reach for `platform_args_schema`/
+`src/band/runtime/tools/` owns every word an LLM reads about a platform
+tool (chat, contacts, memory, files, tasks) — reach for `platform_args_schema`/
 `@platform_tool`/the schema helpers instead of retyping tool description
 text. See [docs/platform-tools.md](docs/platform-tools.md) for the full tool
 inventory, the modeling pattern, and the drift guardrail test.
