@@ -62,6 +62,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import threading
 from pathlib import Path
 
 # Add current directory to path for local imports
@@ -265,8 +266,6 @@ async def main() -> None:
 
     # Run gateway in background, orchestrator in foreground
     # Note: uvicorn.run() is blocking, so we run orchestrator in a thread
-    import threading  # noqa: PLC0415
-
     # Start gateway in asyncio
     gateway_task = asyncio.create_task(run_gateway())
 

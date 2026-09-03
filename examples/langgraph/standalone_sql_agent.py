@@ -20,6 +20,7 @@ This is a complete, functional example with:
 
 import logging
 import os
+import sqlite3
 import urllib.request
 from typing import Annotated, Literal
 
@@ -123,9 +124,6 @@ def download_chinook_db():
     except Exception as e:
         logger.error("Error downloading database: %s", e)
         logger.info("Creating minimal test database instead...")
-
-        # Create minimal test database if download fails
-        import sqlite3  # noqa: PLC0415
 
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
