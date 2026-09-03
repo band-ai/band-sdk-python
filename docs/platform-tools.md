@@ -13,7 +13,7 @@ whichever of these fits its framework instead of retyping the text:
 
 | Framework wants | Use | Result |
 |---|---|---|
-| A Pydantic `args_schema` class | `platform_args_schema(name)` | the master model itself |
+| A Pydantic `args_schema` class | `platform_args_schema(name)` | a schema-sanitized subclass of the master model |
 | The same, but its tool layer emits a value the master won't parse | `platform_args_schema(name, validators={...})` | a subclass with the master's text plus the extra validators |
 | Schema derived from a function docstring | `@platform_tool` (bare — reads `fn.__name__`, takes no name argument) | docstring = master description + a rendered `Args:` section |
 | A raw JSON/dict schema | `iter_tool_definitions()`, `get_openai_tool_schemas()`, `get_anthropic_tool_schemas()` | built live from the master |
@@ -31,7 +31,7 @@ from band.runtime.tools import SendMessageInput, platform_args_schema, platform_
 async def band_send_message(content: str, mentions: list[str]) -> None: ...
 
 
-assert platform_args_schema("band_send_message") is SendMessageInput
+assert issubclass(platform_args_schema("band_send_message"), SendMessageInput)
 assert "Args:" in (band_send_message.__doc__ or "")
 ```
 
