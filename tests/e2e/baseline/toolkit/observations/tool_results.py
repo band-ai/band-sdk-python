@@ -113,6 +113,28 @@ class ToolResults(list[ToolResult]):
         """Assert at least one result was captured."""
         assert_nonempty(len(self), label=what or "a tool_result event")
 
+    def assert_succeeded(
+        self, name: str, *, output_contains: str | None = None
+    ) -> None:
+        """Assert a named tool returned successfully, optionally with content."""
+        matching = [result for result in self if result.name.lower() == name.lower()]
+        if not matching:
+            observed = [result.name for result in self] or ["<none>"]
+            raise AssertionError(
+                f"expected tool result for {name!r}, but observed: {observed}"
+            )
+        failures = [result.output for result in matching if result.is_error]
+        if failures:
+            raise AssertionError(f"tool {name!r} returned an error: {failures}")
+        if output_contains is not None and not any(
+            output_contains in result.output for result in matching
+        ):
+            observed = [result.output for result in matching]
+            raise AssertionError(
+                f"no successful result for {name!r} contained {output_contains!r}; "
+                f"observed: {observed}"
+            )
+
     def assert_json_output(self) -> None:
         """Assert every captured result's ``output`` is one well-formed JSON
         document.

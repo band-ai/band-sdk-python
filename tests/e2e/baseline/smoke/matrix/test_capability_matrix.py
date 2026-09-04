@@ -1,4 +1,4 @@
-"""Grid tests for adapters that expose memory or contacts capabilities.
+"""Grid tests for adapters that expose memory, contacts, or files capabilities.
 
 Every cell comes from a capability filter, never a hard-coded adapter list:
 ``supports={Capability.MEMORY}`` selects the memory-capable adapters and
@@ -11,6 +11,9 @@ regression.
 
 from __future__ import annotations
 
+import random
+from collections.abc import Awaitable, Callable
+
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
@@ -21,24 +24,43 @@ from band.core.types import Capability
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     CONTACTS_AGENT,
+    FILES_AGENT,
+    IMAGE_COLORS,
     MEMORY_AGENT,
     TASK_AGENT,
+    file_round_trip_instruction,
+    image_round_trip_instruction,
     list_contacts_instruction,
     recall_memory_instruction,
     retrieve_memory_instruction,
+    solid_color_png,
     store_memory_instruction,
     task_lifecycle_instruction,
     task_read_instruction,
     unique_marker,
 )
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.observations import ContactTool
+from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
+from tests.e2e.baseline.toolkit.observations import ContactTool, FileTool
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+JudgeFn = Callable[..., Awaitable[Verdict]]
+
+# The file/image cells need a deployment with ``ff_file_transfer`` on; without
+# it ``Capability.FILES`` is pruned before a file tool ever reaches the model,
+# so they cannot pass. Skips rather than fails (the ``GITHUB_TOKEN`` hosted-auth
+# smoke's rationale): on SaaS the flag is off by design, not misconfiguration,
+# and no key can turn it on -- this is optional extra coverage over the matrix.
+requires_file_transfer = pytest.mark.skipif(
+    not BaselineSettings().deployment.file_transfer,
+    reason="E2E_FILE_TRANSFER is not true (ff_file_transfer is on-prem-only)",
+)
 
 
 @per_adapter(supports={Capability.MEMORY}, **MEMORY_AGENT)
@@ -241,6 +263,146 @@ async def test_task_lifecycle_across_task_adapters(
     calls.assert_get_called()
     calls.assert_get_history_called()
     calls.assert_get_board_called()
+
+
+@per_adapter(supports={Capability.FILES}, **FILES_AGENT)
+@requires_file_transfer
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@pytest.mark.timeout(extra=120)  # upload -> list -> read is a multi-tool turn
+@pytest.mark.asyncio(loop_scope="session")
+async def test_file_round_trip_across_files_adapters(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Each files-capable adapter can send, discover, and read a room file."""
+    marker = unique_marker("file")
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-files-{agent.adapter_id}", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            file_round_trip_instruction(marker),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        replies = await capture.wait_for_reply(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+        results = await capture.tool_results(sender_id=agent.id)
+
+    calls.assert_fired(FileTool.SEND.value)
+    calls.assert_fired(FileTool.LIST.value)
+    calls.assert_fired(FileTool.READ.value)
+    results.assert_succeeded(FileTool.SEND.value)
+    results.assert_succeeded(FileTool.LIST.value)
+    results.assert_succeeded(FileTool.READ.value, output_contains=marker)
+    replies.assert_contains_any([marker])
+
+
+# Adapters with a verified real image-vision-passthrough fix -- keep this in
+# sync with IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS in
+# tests/framework_conformance/test_adapter_conformance.py (that's the unit-level
+# source of truth; this list exists only because @per_adapter selects from the
+# separate tests.baseline.adapter.Adapter enum, a different registry). Differs
+# from that set by: -crewai_flow (its E2E builder is a hardcoded echo flow with
+# no Band tool loop, so there's no tool call for this to drive), +copilot_acp
+# and +letta (both wrap/share the same already-fixed MCP engine as opencode,
+# so the unit-level set excludes them as having no probe of their own, but
+# the E2E matrix gives each a real live cell). parlant isn't in Adapter at
+# all -- confirmed unsupportable, no matrix cell either way.
+# test_image_passthrough_adapters_matches_unit_level_set below asserts this
+# relationship instead of leaving it to this comment alone.
+IMAGE_PASSTHROUGH_ADAPTERS = (
+    Adapter.CLAUDE_SDK,
+    Adapter.ANTHROPIC,
+    Adapter.OPENCODE,
+    Adapter.GEMINI,
+    Adapter.LANGGRAPH,
+    Adapter.AGNO,
+    Adapter.STRANDS,
+    Adapter.COPILOT_SDK,
+    Adapter.COPILOT_ACP,
+    Adapter.CODEX,
+    Adapter.PYDANTIC_AI,
+    Adapter.CREWAI,
+    Adapter.LETTA,
+)
+
+
+# The cross-check against IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS lives in
+# tests/framework_conformance/test_adapter_conformance.py, not here: every
+# test in this package is gated on E2E_TESTS_ENABLED (see
+# tests/e2e/baseline/conftest.py), which would skip a pure offline
+# list-equality check right along with the live ones.
+
+
+@per_adapter(*IMAGE_PASSTHROUGH_ADAPTERS, **FILES_AGENT)
+@requires_file_transfer
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@pytest.mark.timeout(extra=120)  # upload -> list -> read -> vision reply
+@pytest.mark.asyncio(loop_scope="session")
+async def test_image_vision_passthrough_across_adapters(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    reply_capture: CaptureFactory,
+    judge: JudgeFn,
+) -> None:
+    """Each adapter with a verified image-passthrough fix can actually SEE an
+    image a peer shared in the room, not just degrade it to descriptive text.
+
+    The platform's file-upload endpoint is agent-scoped (no user-side upload),
+    so a peer agent -- not UserOps -- plays "someone already shared a file
+    here": PeerActor.send_file uploads a solid-color PNG built by
+    solid_color_png() (pure stdlib, no Pillow dependency) and mentions the
+    agent under test. The color is randomized per run and judged against
+    ground truth, so a model can't pass by reflexively guessing a common
+    default without actually looking at the pixels.
+    """
+    color = random.choice(sorted(IMAGE_COLORS))
+    image = solid_color_png(color)
+
+    bystander = await resource_manager.provision_agent(
+        f"image-sender-{agent.adapter_id}"
+    )
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-image-{agent.adapter_id}",
+        participants=[agent.id, bystander.id],
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await resource_manager.peer(bystander).send_file(
+            room_id,
+            image,
+            filename="swatch.png",
+            content_type="image/png",
+            caption=image_round_trip_instruction(),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        replies = await capture.wait_for_reply(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+        results = await capture.tool_results(sender_id=agent.id)
+
+    calls.assert_fired(FileTool.LIST.value)
+    calls.assert_fired(FileTool.READ.value)
+    results.assert_succeeded(FileTool.LIST.value)
+    results.assert_succeeded(FileTool.READ.value)
+
+    verdict = await judge(
+        criteria=(
+            f"An agent was shown an image whose single dominant color is "
+            f"{color} (RGB {IMAGE_COLORS[color]}). It was asked to identify "
+            "that color in one word and reply with just it. Pass if the "
+            "reply names that exact color or an unambiguous close synonym "
+            "(e.g. 'crimson' for red, 'violet' for purple). Fail if the "
+            "reply names a clearly different color, describes the image as "
+            "unreadable or inaccessible, or otherwise shows it did not "
+            "actually see the image content."
+        ),
+        transcript=replies,
+    )
+    assert verdict.passed, f"{verdict.reasoning}\n{format_transcript(replies)}"
 
 
 @per_adapter(without={Capability.MEMORY})

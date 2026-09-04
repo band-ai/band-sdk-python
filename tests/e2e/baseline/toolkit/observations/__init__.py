@@ -38,6 +38,7 @@ from tests.e2e.baseline.toolkit.observations.memories import (
 from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.observations.tool_calls import (
     ContactTool,
+    FileTool,
     MemoryTool,
     MemoryToolCalls,
     TaskTool,
@@ -52,6 +53,7 @@ __all__ = [
     "ContactTool",
     "Errors",
     "Events",
+    "FileTool",
     "Memories",
     "MemoryObservation",
     "MemoryTool",

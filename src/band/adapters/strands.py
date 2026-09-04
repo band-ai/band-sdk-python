@@ -16,10 +16,12 @@ try:
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
     from strands.models.openai import OpenAIModel
+    from strands.types.media import ImageFormat
     from strands.types.tools import (
         AgentTool,
         ToolGenerator,
         ToolResult,
+        ToolResultContent,
         ToolSpec,
         ToolUse,
     )
@@ -57,10 +59,14 @@ from band.runtime.tools import (
     ToolDefinition,
     ToolCallOutcome,
     band_tool_errored,
+    decode_image_block,
     get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
     is_terminal_success,
     iter_tool_definitions,
     missing_reply_error,
+    redact_tool_call_args,
     serialize_tool_result,
     validate_tool_arguments,
 )
@@ -80,22 +86,63 @@ def _format_tool_output(value: object) -> str:
 
 def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
     """Build the framework's typed result envelope at the Strands boundary."""
+    content: list[ToolResultContent]
+    status = "success" if ok else "error"
+    if ok and is_image_passthrough_result(tool_use["name"], value):
+        try:
+            content = []
+            for block in cast(dict[str, Any], value)["content"]:
+                data, mime_type = decode_image_block(block)
+                content.append(
+                    {
+                        "image": {
+                            "format": cast(
+                                ImageFormat, mime_type.removeprefix("image/")
+                            ),
+                            "source": {"bytes": data},
+                        }
+                    }
+                )
+        except Exception as error:
+            # A malformed or future-extended image block (see
+            # is_mcp_content_result's docstring) must degrade to the
+            # adapter's normal failure result, not raise uncaught out of
+            # stream()'s async generator -- this runs after _execute's own
+            # try/except already succeeded, so it needs its own boundary.
+            logger.error(
+                "Failed to decode image content for %s: %s",
+                tool_use["name"],
+                error,
+            )
+            status = "error"
+            content = [{"text": f"Error: {error}"}]
+    else:
+        content = [{"text": _format_tool_output(value)}]
     return {
         "toolUseId": tool_use["toolUseId"],
-        "status": "success" if ok else "error",
-        "content": [{"text": _format_tool_output(value)}],
+        "status": status,
+        "content": content,
     }
 
 
 def _result_text(result: ToolResult) -> str:
     """Flatten a tool result for execution events and terminal-state policy."""
     parts: list[str] = []
+    image_count = 0
+    image_index: int | None = None
     for block in result.get("content", []):
         match block:
             case {"text": str() as text}:
                 parts.append(text)
             case {"json": value}:
                 parts.append(_format_tool_output(value))
+            case {"image": _}:
+                if image_index is None:
+                    image_index = len(parts)
+                    parts.append("")
+                image_count += 1
+    if image_index is not None:
+        parts[image_index] = image_block_placeholder(image_count)
     return "\n".join(parts)
 
 
@@ -299,7 +346,9 @@ class BandTurnHooks(HookProvider):
             MessageType.TOOL_CALL,
             {
                 ToolEventKey.NAME: event.tool_use["name"],
-                ToolEventKey.ARGS: event.tool_use["input"],
+                ToolEventKey.ARGS: redact_tool_call_args(
+                    event.tool_use["name"], event.tool_use["input"]
+                ),
                 ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
             },
         )
@@ -349,7 +398,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(

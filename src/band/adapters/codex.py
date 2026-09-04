@@ -53,10 +53,31 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools import is_room_posting_tool
+from band.runtime.tools import (
+    image_block_placeholder,
+    is_image_passthrough_result,
+    is_room_posting_tool,
+    redact_tool_call_args,
+)
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """An image tool result as Codex app-server ``inputImage`` content items.
+
+    Inlined as a data: URI -- the protocol's ``imageUrl`` is a bare string with
+    no documented inline-vs-http distinction.
+    """
+    return [
+        {
+            "type": "inputImage",
+            "imageUrl": f"data:{block['mimeType']};base64,{block['data']}",
+        }
+        for block in result["content"]
+    ]
+
 
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -373,7 +394,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -1357,7 +1378,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     content=json.dumps(
                         {
                             ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: arguments,
+                            ToolEventKey.ARGS: redact_tool_call_args(
+                                tool_name, arguments
+                            ),
                             ToolEventKey.TOOL_CALL_ID: call_id,
                         }
                     ),
@@ -1378,15 +1401,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                text_result = (
-                    result
-                    if isinstance(result, str)
-                    else json.dumps(result, default=str)
-                )
+                if success and is_image_passthrough_result(tool_name, result):
+                    content_items = _image_content_items(result)
+                    text_result = image_block_placeholder(len(content_items))
+                else:
+                    text_result = (
+                        result
+                        if isinstance(result, str)
+                        else json.dumps(result, default=str)
+                    )
+                    content_items = [{"type": "inputText", "text": text_result}]
                 await self._client.respond(
                     event.id,
                     {
-                        "contentItems": [{"type": "inputText", "text": text_result}],
+                        "contentItems": content_items,
                         "success": success,
                     },
                 )
@@ -1872,6 +1900,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mcp_args = item.get("arguments", {})
         if not isinstance(mcp_args, dict):
             mcp_args = {}
+        # redact_tool_call_args compares against the bare tool name (e.g.
+        # "band_send_room_file"), not the "mcp:{server}/{tool}" display name
+        # this method returns -- redact before that prefix is applied.
+        mcp_args = redact_tool_call_args(tool, mcp_args)
         output = CodexAdapter._stringify_tool_output(
             item.get("result"),
             item.get("error"),

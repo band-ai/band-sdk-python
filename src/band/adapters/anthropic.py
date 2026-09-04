@@ -34,8 +34,32 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """An image tool result as Anthropic ``ImageBlockParam`` dicts.
+
+    No media_type validation: Anthropic's accepted set is exactly
+    ``PREVIEWABLE_IMAGE_CONTENT_TYPES``, the only types read_room_file inlines.
+    """
+    return [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": block["mimeType"],
+                "data": block["data"],
+            },
+        }
+        for block in result["content"]
+    ]
 
 
 class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
@@ -57,7 +81,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -426,7 +450,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         content=json.dumps(
                             {
                                 ToolEventKey.NAME: tool_name,
-                                ToolEventKey.ARGS: tool_input,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, tool_input
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: tool_use_id,
                             }
                         ),
@@ -445,14 +471,18 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                result_str = (
-                    json.dumps(result, default=str)
-                    if not isinstance(result, str)
-                    else result
-                )
+                if is_image_passthrough_result(tool_name, result):
+                    content = _image_tool_result_content(result)
+                    result_str = image_block_placeholder(len(content))
+                else:
+                    content = result_str = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                 is_error = False
             except Exception as e:
-                result_str = f"Error: {e}"
+                content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
 
@@ -480,7 +510,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": result_str,
+                    "content": content,
                     "is_error": is_error,
                 }
             )

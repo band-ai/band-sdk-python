@@ -15,6 +15,7 @@ from band.converters.letta import LettaHistoryConverter, LettaSessionState
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
+    AdapterFeatures,
     Capability,
     Emit,
     FeatureKwargs,
@@ -30,7 +31,11 @@ from band.integrations.letta.config import (
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import CHAT_ID_FIELD_NAME, iter_tool_definitions
+from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
+    iter_tool_definitions,
+    redact_tool_call_args,
+)
 
 __all__ = [
     "LettaAdapter",
@@ -112,7 +117,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         {Emit.TOOL_CALLS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -139,7 +144,17 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self._shared_agent_id: str | None = None
 
         # The Band MCP tool path: self-hosted server + Letta registration.
-        self._mcp = LettaMCPBridge(
+        self._mcp = self._build_mcp_bridge()
+
+        # Protects agent creation and MCP (re)registration only — not held
+        # during message handling, so concurrent rooms process in parallel.
+        self._rpc_lock = asyncio.Lock()
+
+        # Built during on_started
+        self._system_prompt: str = ""
+
+    def _build_mcp_bridge(self) -> LettaMCPBridge:
+        return LettaMCPBridge(
             self.config.mcp,
             tool_definitions=iter_tool_definitions(
                 capabilities=self.features.capabilities,
@@ -148,12 +163,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             teardown_timeout_s=self.config.teardown_timeout_s,
         )
 
-        # Protects agent creation and MCP (re)registration only — not held
-        # during message handling, so concurrent rooms process in parallel.
-        self._rpc_lock = asyncio.Lock()
-
-        # Built during on_started
-        self._system_prompt: str = ""
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Rebuild the unstarted MCP bridge with negotiated capabilities."""
+        super().apply_effective_features(features)
+        self._mcp = self._build_mcp_bridge()
 
     def _get_room_tools(self, room_id: str) -> AgentToolsProtocol | None:
         """Resolve room-scoped tools for the self-hosted MCP server."""
@@ -469,15 +482,29 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     )
                     if tool_name == self._mcp.send_message_tool:
                         used_send_message = True
+                    # ToolCall.arguments is a JSON string (letta_client's own
+                    # wire shape); parse it so redact_tool_call_args can
+                    # replace band_send_room_file's content field -- reporting
+                    # the raw string would put real file bytes in this event.
+                    raw_arguments = (
+                        getattr(tool_call, "arguments", "{}") if tool_call else "{}"
+                    )
+                    try:
+                        parsed_arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        parsed_arguments = raw_arguments
+                    reported_args = (
+                        redact_tool_call_args(tool_name, parsed_arguments)
+                        if isinstance(parsed_arguments, dict)
+                        else parsed_arguments
+                    )
                     await self._report_execution_event(
                         tools,
                         "tool_call",
                         tool_name,
                         {
                             ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: getattr(tool_call, "arguments", "{}")
-                            if tool_call
-                            else "{}",
+                            ToolEventKey.ARGS: reported_args,
                         },
                     )
                 case "tool_return_message":

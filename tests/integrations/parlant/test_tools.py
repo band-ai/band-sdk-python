@@ -184,6 +184,9 @@ class TestCreateParlantTools:
         assert "band_remove_contact" in tool_names
         assert "band_list_contact_requests" in tool_names
         assert "band_respond_contact_request" in tool_names
+        assert "band_list_room_files" in tool_names
+        assert "band_read_room_file" in tool_names
+        assert "band_send_room_file" in tool_names
 
     def test_tools_have_descriptions(self):
         """Should have descriptions for all tools."""
@@ -375,6 +378,53 @@ class TestCreateParlantTools:
         assert "band_list_contact_requests" not in tool_names
         assert "band_respond_contact_request" not in tool_names
 
+    def test_excludes_file_tools_without_capability(self):
+        """File tools excluded when FILES capability is absent."""
+        tools = create_parlant_tools(features=AdapterFeatures())
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_list_room_files" not in tool_names
+        assert "band_read_room_file" not in tool_names
+        assert "band_send_room_file" not in tool_names
+
+    def test_includes_file_tools_with_capability(self):
+        """File tools included when FILES capability is present."""
+        tools = create_parlant_tools(
+            features=AdapterFeatures(capabilities={Capability.FILES})
+        )
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_list_room_files" in tool_names
+        assert "band_read_room_file" in tool_names
+        assert "band_send_room_file" in tool_names
+
+    def test_includes_file_tools_when_no_features(self):
+        """File tools included when features is None (backward compat)."""
+        tools = create_parlant_tools(features=None)
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_list_room_files" in tool_names
+        assert "band_send_room_file" in tool_names
+
+    def test_send_room_file_mentions_param_notes_comma_separated_shape(self):
+        """mentions is a comma-separated string in Parlant, not the master's list[str]."""
+        tools = create_parlant_tools()
+
+        entry = next(t for t in tools if t.tool.name == "band_send_room_file")
+        description = entry.tool.parameters["mentions"][1].description
+
+        assert description is not None
+        assert "comma" in description
+
+    def test_read_room_file_tool_has_file_id_parameter(self):
+        """read_room_file should have a file_id parameter."""
+        tools = create_parlant_tools()
+
+        entry = next(t for t in tools if t.tool.name == "band_read_room_file")
+        param_names = list(entry.tool.parameters.keys())
+
+        assert "file_id" in param_names
+
     def test_includes_contact_tools_with_capability(self):
         """Contact tools included when CONTACTS capability is present."""
         tools = create_parlant_tools(
@@ -464,6 +514,33 @@ class TestParlantToolFunctions:
             return_value=[{"name": "User1", "type": "User"}]
         )
         tools.create_chatroom = AsyncMock(return_value="new-room-123")
+        tools.list_room_files = AsyncMock(
+            return_value={
+                "data": [
+                    {
+                        "id": "file-1",
+                        "name": "report.txt",
+                        "content_type": "text/plain",
+                        "bytes": 42,
+                    }
+                ],
+                "next_cursor": None,
+            }
+        )
+        tools.read_room_file = AsyncMock(
+            return_value={
+                "name": "report.txt",
+                "content_type": "text/plain",
+                "bytes": 42,
+                "text": "hello world",
+            }
+        )
+        tools.send_room_file = AsyncMock(
+            return_value={
+                "attachment": {"id": "file-2", "name": "notes.txt"},
+                "message_id": "msg-1",
+            }
+        )
         return tools
 
     @pytest.fixture
@@ -560,6 +637,33 @@ class TestParlantToolFunctions:
         result = await send_message(mock_context, "Hello", "Alice")
 
         # Result is a ToolResult with the error text visible to the LLM
+        assert "Error sending message" in result.data
+        assert "503" in result.data
+
+    @pytest.mark.asyncio
+    async def test_send_message_mention_hint_survives_session_teardown_race(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """A room torn down between the tool body's own lookup and the
+        mention-hint failure handler's re-lookup must not crash the call.
+
+        guard_failures re-fetches session tools independently when building
+        the mention hint; if the session vanished in between, that re-fetch
+        returns None and must fall back to the plain error, not attribute
+        error out on None.participants.
+        """
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        def _fail_and_tear_down_session(*args, **kwargs):
+            set_session_tools(mock_context.session_id, None)
+            raise BandToolError("Backend rejected message: 503 Service Unavailable")
+
+        mock_tools.send_message.side_effect = _fail_and_tear_down_session
+
+        send_message = parlant_tools["band_send_message"]
+        # Must NOT raise AttributeError from None.participants
+        result = await send_message(mock_context, "Hello", "Alice")
+
         assert "Error sending message" in result.data
         assert "503" in result.data
 
@@ -707,3 +811,177 @@ class TestParlantToolFunctions:
         result = await send_message(mock_context, "Hello", "Alice")
 
         assert "Error sending message: Connection failed" in result.data
+
+    @pytest.mark.asyncio
+    async def test_tool_returns_error_on_malformed_call_arguments(
+        self, parlant_tools, mock_context
+    ):
+        """A signature mismatch in guard_failures's own bind() step -- before
+        the call-handling try starts, so there's no call.arguments yet to
+        build the usual failure message from -- must return a ToolResult,
+        not propagate a raw TypeError out of the tool coroutine."""
+        send_message = parlant_tools["band_send_message"]
+
+        result = await send_message(mock_context)  # missing content/mentions
+
+        assert result.data.startswith("Error calling band_send_message:")
+
+    @pytest.mark.asyncio
+    async def test_tool_logs_result_on_success(
+        self, parlant_tools, mock_tools, mock_context, caplog
+    ):
+        """guard_failures must log a per-call outcome, not just the initial
+        'called' line -- operators grep these logs for tool-level
+        confirmation (e.g. that a specific branch was hit)."""
+        set_session_tools(mock_context.session_id, mock_tools)
+        send_message = parlant_tools["band_send_message"]
+
+        with caplog.at_level("INFO"):
+            await send_message(mock_context, "Hello", "Alice")
+
+        result_logs = [
+            r
+            for r in caplog.records
+            if r.getMessage().startswith("[Parlant Tool] band_send_message ->")
+        ]
+        assert len(result_logs) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_returns_formatted_list(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should return formatted list of room files."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        list_room_files = parlant_tools["band_list_room_files"]
+        result = await list_room_files(mock_context, "")
+
+        mock_tools.list_room_files.assert_called_once_with(None)
+        assert "report.txt" in result.data
+        assert "file-1" in result.data
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_passes_cursor(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should forward a non-empty cursor to the underlying tool."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        list_room_files = parlant_tools["band_list_room_files"]
+        await list_room_files(mock_context, "cursor-1")
+
+        mock_tools.list_room_files.assert_called_once_with("cursor-1")
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_handles_empty_result(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should handle an empty room-file list."""
+        mock_tools.list_room_files.return_value = {"data": [], "next_cursor": None}
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        list_room_files = parlant_tools["band_list_room_files"]
+        result = await list_room_files(mock_context, "")
+
+        assert "No files found in this room" in result.data
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_returns_text(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should return the file's decoded text."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        read_room_file = parlant_tools["band_read_room_file"]
+        result = await read_room_file(mock_context, "file-1")
+
+        mock_tools.read_room_file.assert_called_once_with("file-1")
+        assert "hello world" in result.data
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_describes_image_instead_of_inlining(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """An image result must be described, not passed through as bytes."""
+        mock_tools.read_room_file.return_value = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        read_room_file = parlant_tools["band_read_room_file"]
+        result = await read_room_file(mock_context, "file-1")
+
+        assert "image/png" in result.data
+        assert "ZmFrZQ==" not in result.data
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_describes_non_previewable_file(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """A too-large/non-previewable file returns its description, not bytes."""
+        mock_tools.read_room_file.return_value = {
+            "name": "archive.zip",
+            "content_type": "application/zip",
+            "bytes": 999_999,
+            "description": "File not shown inline: exceeds the inline text limit.",
+        }
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        read_room_file = parlant_tools["band_read_room_file"]
+        result = await read_room_file(mock_context, "file-1")
+
+        assert "archive.zip" in result.data
+        assert "not shown inline" in result.data
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_calls_tools_send_room_file(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should call tools.send_room_file with parsed mentions."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        send_room_file = parlant_tools["band_send_room_file"]
+        result = await send_room_file(
+            mock_context, "file body", "notes.txt", "Alice, Bob", "here's a file"
+        )
+
+        mock_tools.send_room_file.assert_called_once_with(
+            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
+        )
+        assert "notes.txt" in result.data
+        assert "file-2" in result.data
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_requires_mentions(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should return error when no mentions provided."""
+        mock_tools.agent_id = "self"
+        mock_tools.participants = [
+            {"id": "user-1", "handle": "@alice"},
+            {"id": "self", "handle": "@self"},
+        ]
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        send_room_file = parlant_tools["band_send_room_file"]
+        result = await send_room_file(mock_context, "body", "notes.txt", "", "")
+
+        assert "At least one mention is required" in result.data
+        assert "@alice" in result.data
+        mock_tools.send_room_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_translates_band_tool_error(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """BandToolError from underlying tool must surface as ToolResult, not crash."""
+        mock_tools.send_room_file.side_effect = BandToolError(
+            "Filename must use plain printable ASCII characters"
+        )
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        send_room_file = parlant_tools["band_send_room_file"]
+        result = await send_room_file(mock_context, "body", "café.txt", "Alice", "")
+
+        assert "Error sending room file" in result.data
+        assert "ASCII" in result.data

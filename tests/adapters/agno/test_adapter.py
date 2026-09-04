@@ -21,6 +21,7 @@ from agno.agent import Agent as AgnoAgent
 from agno.models.message import Message
 from agno.run import RunStatus
 from agno.run.agent import RunErrorEvent, RunOutput
+from agno.tools.function import ToolResult
 
 from band.adapters.agno import (
     AgnoAdapter,
@@ -301,6 +302,54 @@ class TestBandEntrypointBinding:
         assert "no active Band context" in result
         assert tools.tool_calls == []
 
+    async def test_read_room_file_image_result_passes_through_as_agno_image(self):
+        class _ImageTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {
+                    "content": [
+                        {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                    ]
+                }
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_ImageTools()):
+            result = await entry(file_id="f1")
+
+        assert isinstance(result, ToolResult)
+        assert result.images is not None
+        assert len(result.images) == 1
+        assert result.images[0].content == b"fake"
+        assert result.images[0].mime_type == "image/png"
+
+    async def test_read_room_file_non_image_result_stays_json(self):
+        class _TextTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {"name": "notes.txt", "content_type": "text/plain"}
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_TextTools()):
+            result = await entry(file_id="f1")
+
+        assert result == '{"name": "notes.txt", "content_type": "text/plain"}'
+
+    async def test_read_room_file_malformed_image_data_returns_error_string(self):
+        """A decode_image_block failure (invalid base64) must degrade to the
+        adapter's usual error string, not raise uncaught out of the tool
+        entrypoint Agno invokes directly."""
+
+        class _MalformedImageTools(FakeAgentTools):
+            async def execute_tool_call(self, tool_name: str, arguments: dict) -> Any:
+                return {
+                    "content": [{"type": "image", "data": "A", "mimeType": "image/png"}]
+                }
+
+        entry = _make_band_entrypoint("band_read_room_file")
+        with _bind_room_tools(_MalformedImageTools()):
+            result = await entry(file_id="f1")
+
+        assert isinstance(result, str)
+        assert result.startswith("Error reading room file:")
+
 
 class TestReply:
     """The adapter delivers nothing on its own. Like the other adapters, the
@@ -415,6 +464,36 @@ class TestEmitExecution:
 
         types = [e["message_type"] for e in tools.events_sent]
         assert types == ["tool_call", "tool_result"]
+
+    async def test_send_room_file_tool_call_event_redacts_content(
+        self, make_started_adapter, sample_platform_message, tools
+    ):
+        """band_send_room_file's tool_call event must report a bounded
+        placeholder for content, not the raw file bytes -- generic ARGS
+        reporting has no idea this one tool's content argument can carry up
+        to MAX_SEND_CONTENT_BYTES of real file data."""
+        events = tool_events(
+            tool_execution(
+                "band_send_room_file",
+                args={"content": "raw file bytes", "filename": "notes.txt"},
+                result="ok",
+            )
+        )
+        adapter, _ = await make_started_adapter(emit=Emit.TOOL_CALLS, events=events)
+
+        await adapter.on_message(
+            sample_platform_message,
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_payload = json.loads(tools.events_sent[0]["content"])
+        assert call_payload["args"]["content"] == "<14 byte file content>"
+        assert call_payload["args"]["filename"] == "notes.txt"
 
     async def test_no_events_without_execution_emit(
         self, make_started_adapter, sample_platform_message, tools

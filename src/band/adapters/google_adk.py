@@ -37,6 +37,12 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    BandTool,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 if TYPE_CHECKING:
     from google.adk.runners import InMemoryRunner
@@ -55,6 +61,32 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
     "_get_declaration",  # google-adk 1.x (current internal API)
     "get_declaration",  # likely public rename candidate
 )
+
+
+def _redacted_function_response_output(tool_name: str, response: Any) -> str:
+    """The text a tool_result event reports for one ADK function response.
+
+    ``run_async`` always ``json.dumps`` a non-str tool result before
+    returning it (ADK requires a plain string or dict return); ADK's own
+    ``__build_response_event`` then wraps a non-dict result as
+    ``{"result": <that json string>}`` since its spec requires a dict.
+    ``str()``ing that wrapper for ``band_read_room_file``'s image branch
+    would embed the full base64 payload, so unwrap and check it first.
+    """
+    if not response:
+        return ""
+    if tool_name == BandTool.READ_ROOM_FILE and isinstance(response, dict):
+        wrapped = response.get("result")
+        if isinstance(wrapped, str):
+            try:
+                parsed = json.loads(wrapped)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict) and is_image_passthrough_result(
+                tool_name, parsed
+            ):
+                return image_block_placeholder(len(parsed["content"]))
+    return str(response)
 
 
 def _sanitize_adk_agent_name(agent_name: str) -> str:
@@ -288,7 +320,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -653,6 +685,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         if function_calls:
             for fc in function_calls:
                 try:
+                    tool_name = getattr(fc, "name", "unknown")
                     try:
                         args = dict(fc.args) if fc.args else {}
                     except (TypeError, ValueError):
@@ -660,8 +693,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                ToolEventKey.NAME: getattr(fc, "name", "unknown"),
-                                ToolEventKey.ARGS: args,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, args
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: getattr(fc, "id", ""),
                             }
                         ),
@@ -674,13 +709,14 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         if function_responses:
             for fr in function_responses:
                 try:
+                    tool_name = getattr(fr, "name", "unknown")
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                ToolEventKey.NAME: getattr(fr, "name", "unknown"),
-                                ToolEventKey.OUTPUT: str(fr.response)
-                                if getattr(fr, "response", None)
-                                else "",
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: _redacted_function_response_output(
+                                    tool_name, getattr(fr, "response", None)
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: getattr(fr, "id", ""),
                             }
                         ),

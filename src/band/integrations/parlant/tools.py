@@ -17,16 +17,29 @@ This module provides the same tools as LangGraph/Claude adapters:
 - band_remove_contact: Remove an existing contact
 - band_list_contact_requests: List received and sent requests
 - band_respond_contact_request: Approve, reject, or cancel requests
+- band_list_room_files: List files shared in the current room
+- band_read_room_file: Read a file shared in the current room
+- band_send_room_file: Upload text content as a file and share it
 
 NOTE: We intentionally do NOT use `from __future__ import annotations` here
 because Parlant's @p.tool decorator checks annotation types at runtime.
 """
 
+import functools
 import inspect
 import json
 import logging
 import warnings
-from typing import Annotated, Any, Callable, Literal, Optional, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Literal,
+    Optional,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from band.core.exceptions import BandToolError
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
@@ -34,11 +47,24 @@ from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
     append_available_mention_handles,
     get_tool_description,
+    is_mcp_content_result,
     resolve_tool_model,
     serialize_tool_result,
 )
 
 logger = logging.getLogger(__name__)
+
+# Every log line this module emits is tagged with it, so a Parlant run's tool
+# activity greps out of a mixed log in one pass.
+LOG_PREFIX = "[Parlant Tool]"
+
+# What a tool answers the model with when its Parlant session has no Band room
+# bound — a session that outlived its room, or a tool called before one was set.
+NO_SESSION_TOOLS_ERROR = "Error: No tools available in current context"
+
+# Longest argument value echoed into the per-call log line; a full message body
+# or file payload would otherwise dominate the log.
+LOGGED_VALUE_CHARS = 50
 
 # Session-keyed registry to hold tools for each session
 # This approach works across async contexts (unlike ContextVar)
@@ -90,6 +116,49 @@ def _literal_choices(annotation: Any) -> tuple[str, ...] | None:
         if args and all(isinstance(a, str) for a in args):
             return args
     return None
+
+
+class NoSessionTools(Exception):
+    """A tool ran while its Parlant session had no Band room bound to it."""
+
+
+def require_session_tools(context: Any) -> Any:
+    """The room's ``AgentTools`` for this Parlant session, or refuse to run.
+
+    Raising rather than returning ``None`` is what lets ``band_tool`` turn the
+    refusal into the model-visible error from one place.
+    """
+    tools = get_session_tools(context.session_id)
+    if not tools:
+        raise NoSessionTools(context.session_id)
+    return tools
+
+
+def with_mention_handles(message: str, tools: Any) -> str:
+    """``message`` plus the handles this room offers, so a bad mention can retry."""
+    return append_available_mention_handles(
+        message, tools.participants, getattr(tools, "agent_id", None)
+    )
+
+
+def split_mentions(mentions: str) -> list[str]:
+    """Parlant's one comma-separated mentions string, as the platform's handle list."""
+    return [mention.strip() for mention in mentions.split(",") if mention.strip()]
+
+
+def _logged_arguments(call: inspect.BoundArguments) -> str:
+    """The call's own arguments, truncated, for one per-tool log line."""
+    rendered = ", ".join(
+        f"{name}={str(value)[:LOGGED_VALUE_CHARS]}"
+        for name, value in call.arguments.items()
+        if name != "context"
+    )
+    return f", {rendered}" if rendered else ""
+
+
+def or_none(value: str) -> str | None:
+    """``""`` is how a Parlant model omits a string; the platform wants ``None``."""
+    return value or None
 
 
 def set_session_tools(session_id: str, tools: Optional[Any]) -> None:
@@ -170,732 +239,553 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         logger.warning("Parlant SDK not installed, skipping tool creation")
         return []
 
-    def band_tool(
-        extra_doc: str = "",
-        param_overrides: dict[str, str] | None = None,
-    ) -> Callable[[Callable[..., Any]], Any]:
-        """Decorator: describe *func* and its parameters from the master model, then register it.
+    def describe_from_master(
+        func: Callable[..., Any],
+        extra_doc: str,
+        param_overrides: dict[str, str] | None,
+    ) -> None:
+        """Give *func* its tool and per-argument text from the master model.
 
-        The tool name is never retyped as a string — it's ``func.__name__``,
-        which is always written to match its ``TOOL_MODELS`` entry (e.g. the
-        function below is literally named ``band_send_message``). ``extra_doc``
-        appends prose the master tool description can't express (a
-        Parlant-only argument shape); ``param_overrides`` does the same per
-        argument, keyed by parameter name. Neither ever replaces master text —
-        only appends — so a master model edit keeps propagating.
+        Parlant's schema builder never reads a docstring's ``Args:`` section —
+        a parameter is described only via
+        ``Annotated[T, ToolParameterOptions(description=...)]``, so every
+        annotation is rewrapped here, skipping ``context`` (must stay exactly
+        ``ToolContext``). ``extra_doc`` and ``param_overrides`` only append to
+        master text, so a master model edit keeps propagating.
+        """
+        func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
 
-        Parlant's own schema builder never reads a docstring's ``Args:``
-        section (unlike pydantic-ai's griffe parser) — a parameter only gets a
-        description if its type annotation is
-        ``Annotated[T, ToolParameterOptions(description=...)]``. So this also
-        wraps each parameter's annotation from the master model's
-        ``Field(description=...)`` before registering, skipping ``context``
-        (must stay exactly ``ToolContext``) and any parameter with no master
-        description. A master field typed ``Literal[...]`` has its string
-        choices folded into that same description text (see
-        ``_literal_choices``) — the function keeps its own ``str``
-        annotation, since handing Parlant the ``Literal`` itself crashes
-        registration.
+        model = resolve_tool_model(func.__name__)
+        if model is None:
+            return
+
+        for param_name, param in inspect.signature(func).parameters.items():
+            if param_name == "context":
+                continue
+            field = model.model_fields.get(param_name)
+            if field is None or not field.description:
+                continue
+            description = field.description
+            if choices := _literal_choices(field.annotation):
+                description = description.rstrip() + f" One of: {', '.join(choices)}."
+            if param_overrides and param_name in param_overrides:
+                description = description.rstrip() + param_overrides[param_name]
+            func.__annotations__[param_name] = Annotated[
+                param.annotation, ToolParameterOptions(description=description)
+            ]
+
+    def guard_failures(
+        func: Callable[..., Any], failure: str, mention_hints: bool
+    ) -> Callable[..., Any]:
+        """Wrap *func* with the logging and failure handling every tool shares.
+
+        ``failure`` completes ``"Error {failure}: {exc}"`` and may template the
+        call's own arguments (e.g. ``"adding participant '{identifier}'"``);
+        ``mention_hints`` appends the room's available handles to a
+        mention-related failure. ``functools.wraps`` is load-bearing: Parlant
+        introspects ``__wrapped__``, so the registered signature is *func*'s own.
         """
 
+        @functools.wraps(func)
+        async def run(context: Any, *args: Any, **kwargs: Any) -> Any:
+            # bind() gets its own try: a signature/argument-shape mismatch
+            # raises TypeError here, before the call-handling try below even
+            # starts, and there's no `call.arguments` yet to build the usual
+            # failure message from.
+            try:
+                call = inspect.signature(func).bind(context, *args, **kwargs)
+                call.apply_defaults()
+            except TypeError as exc:
+                logger.error(
+                    "%s %s: malformed call arguments: %s",
+                    LOG_PREFIX,
+                    func.__name__,
+                    exc,
+                    exc_info=True,
+                )
+                return ToolResult(data=f"Error calling {func.__name__}: {exc}")
+
+            logger.info(
+                "%s %s called: session=%s%s",
+                LOG_PREFIX,
+                func.__name__,
+                context.session_id,
+                _logged_arguments(call),
+            )
+            try:
+                result = await func(context, *args, **kwargs)
+            except NoSessionTools:
+                logger.error(
+                    "%s %s: no tools available for session %s",
+                    LOG_PREFIX,
+                    func.__name__,
+                    context.session_id,
+                )
+                return ToolResult(data=NO_SESSION_TOOLS_ERROR)
+            except Exception as exc:
+                context_phrase = failure.format(**call.arguments)
+                logger.error(
+                    "%s Error %s: %s", LOG_PREFIX, context_phrase, exc, exc_info=True
+                )
+                message = str(exc)
+                if mention_hints and isinstance(exc, (ValueError, BandToolError)):
+                    session_tools = get_session_tools(context.session_id)
+                    if session_tools:
+                        message = with_mention_handles(message, session_tools)
+                return ToolResult(data=f"Error {context_phrase}: {message}")
+            logger.info("%s %s -> %s", LOG_PREFIX, func.__name__, result)
+            return result
+
+        return run
+
+    def band_tool(
+        failure: str,
+        extra_doc: str = "",
+        param_overrides: dict[str, str] | None = None,
+        mention_hints: bool = False,
+    ) -> Callable[[Callable[..., Any]], Any]:
+        """Decorator: describe the tool from the master model, guard it, register it."""
+
         def decorator(func: Callable[..., Any]) -> Any:
-            func.__doc__ = get_tool_description(func.__name__).rstrip() + extra_doc
-
-            model = resolve_tool_model(func.__name__)
-            if model is not None:
-                for param_name, param in inspect.signature(func).parameters.items():
-                    if param_name == "context":
-                        continue
-                    field = model.model_fields.get(param_name)
-                    if field is None or not field.description:
-                        continue
-                    description = field.description
-                    if choices := _literal_choices(field.annotation):
-                        description = (
-                            description.rstrip() + f" One of: {', '.join(choices)}."
-                        )
-                    if param_overrides and param_name in param_overrides:
-                        description = description.rstrip() + param_overrides[param_name]
-                    func.__annotations__[param_name] = Annotated[
-                        param.annotation, ToolParameterOptions(description=description)
-                    ]
-
-            return p.tool(func)
+            describe_from_master(func, extra_doc, param_overrides)
+            return p.tool(guard_failures(func, failure, mention_hints))
 
         return decorator
 
-    @band_tool(
-        SEND_MESSAGE_MENTIONS_NOTE,
-        param_overrides={"mentions": SEND_MESSAGE_MENTIONS_PARAM_NOTE},
-    )
-    async def band_send_message(
-        context: ToolContext,
-        content: str,
-        mentions: str,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] send_message called: session=%s, content=%s..., mentions=%s",
-            context.session_id,
-            content[:50],
-            mentions,
+    def chat_tools() -> list[Any]:
+        """The room tools every Parlant agent gets, capability-free."""
+
+        @band_tool(
+            "sending message",
+            SEND_MESSAGE_MENTIONS_NOTE,
+            param_overrides={"mentions": SEND_MESSAGE_MENTIONS_PARAM_NOTE},
+            mention_hints=True,
         )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] send_message: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            # Parse mentions from comma-separated string
-            mention_list = [m.strip() for m in mentions.split(",") if m.strip()]
-            if not mention_list:
-                logger.warning("[Parlant Tool] send_message: No mentions provided")
-                error = append_available_mention_handles(
-                    "At least one mention is required",
-                    tools.participants,
-                    getattr(tools, "agent_id", None),
+        async def band_send_message(
+            context: ToolContext,
+            content: str,
+            mentions: str,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            recipients = split_mentions(mentions)
+            if not recipients:
+                return ToolResult(
+                    data="Error: "
+                    + with_mention_handles("At least one mention is required", tools)
                 )
-                return ToolResult(data=f"Error: {error}")
 
-            logger.info("[Parlant Tool] Sending message to: %s", mention_list)
-            await tools.send_message(content, mention_list)
-            # Mark that we sent a message via the tool (so adapter doesn't duplicate)
+            await tools.send_message(content, recipients)
+            # Tells the adapter its own reply would duplicate this one.
             mark_message_sent(context.session_id)
-            logger.info("[Parlant Tool] Message sent successfully via tool")
-            return ToolResult(data=f"Message sent to {', '.join(mention_list)}")
-        except Exception as e:
-            logger.error("[Parlant Tool] Error sending message: %s", e, exc_info=True)
-            error = str(e)
-            if isinstance(e, (ValueError, BandToolError)):
-                error = append_available_mention_handles(
-                    error,
-                    tools.participants,
-                    getattr(tools, "agent_id", None),
+            return ToolResult(data=f"Message sent to {', '.join(recipients)}")
+
+        @band_tool("sending event")
+        async def band_send_event(
+            context: ToolContext,
+            content: str,
+            message_type: str,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            if message_type not in ("thought", "error", "task"):
+                return ToolResult(
+                    data=f"Error: Invalid message_type '{message_type}'. Use 'thought', 'error', or 'task'"
                 )
-            return ToolResult(data=f"Error sending message: {error}")
 
-    @band_tool()
-    async def band_send_event(
-        context: ToolContext,
-        content: str,
-        message_type: str,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] send_event called: session=%s, type=%s",
-            context.session_id,
-            message_type,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] send_event: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        if message_type not in ("thought", "error", "task"):
-            return ToolResult(
-                data=f"Error: Invalid message_type '{message_type}'. Use 'thought', 'error', or 'task'"
-            )
-
-        try:
             await tools.send_event(content, message_type, None)
-            logger.info("[Parlant Tool] Event (%s) sent successfully", message_type)
             return ToolResult(data=f"Event ({message_type}) sent successfully")
-        except Exception as e:
-            logger.error("[Parlant Tool] Error sending event: %s", e, exc_info=True)
-            return ToolResult(data=f"Error sending event: {e}")
 
-    @band_tool()
-    async def band_add_participant(
-        context: ToolContext,
-        identifier: str,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] add_participant called: session=%s, identifier=%s",
-            context.session_id,
-            identifier,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] add_participant: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
+        @band_tool("adding participant '{identifier}'")
+        async def band_add_participant(
+            context: ToolContext,
+            identifier: str,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
             result = await tools.add_participant(identifier, "member")
-            status = result.get("status", "added")
-            if status == "already_in_room":
-                logger.info("[Parlant Tool] '%s' is already in the room", identifier)
+            if result.get("status", "added") == "already_in_room":
                 return ToolResult(
                     data=f"'{identifier}' is already in the room - no action needed"
                 )
-            logger.info(
-                "[Parlant Tool] Successfully added '%s' to the room", identifier
-            )
             return ToolResult(data=f"Successfully added '{identifier}' to the room")
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error adding participant '%s': %s",
-                identifier,
-                e,
-                exc_info=True,
-            )
-            return ToolResult(data=f"Error adding participant '{identifier}': {e}")
 
-    @band_tool()
-    async def band_remove_participant(
-        context: ToolContext,
-        identifier: str,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] remove_participant called: session=%s, identifier=%s",
-            context.session_id,
-            identifier,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] remove_participant: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
+        @band_tool("removing participant '{identifier}'")
+        async def band_remove_participant(
+            context: ToolContext,
+            identifier: str,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
             await tools.remove_participant(identifier)
-            logger.info(
-                "[Parlant Tool] Successfully removed '%s' from the room", identifier
-            )
             return ToolResult(data=f"Successfully removed '{identifier}' from the room")
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error removing participant '%s': %s",
-                identifier,
-                e,
-                exc_info=True,
-            )
-            return ToolResult(data=f"Error removing participant '{identifier}': {e}")
 
-    @band_tool(LOOKUP_PEERS_RETURN_NOTE)
-    async def band_lookup_peers(
-        context: ToolContext,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] lookup_peers called: session=%s", context.session_id
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] lookup_peers: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            # Use defaults - pagination rarely needed for agent lookups
-            result = await tools.lookup_peers(page=1, page_size=50)
-            logger.info("[Parlant Tool] lookup_peers result: %s", result)
-            # Normalize Fern model -> dict for uniform handling
-            data = serialize_tool_result(result)
+        @band_tool("looking up peers", LOOKUP_PEERS_RETURN_NOTE)
+        async def band_lookup_peers(
+            context: ToolContext,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            # Pagination is rarely needed for agent lookups, so it isn't exposed.
+            data = serialize_tool_result(await tools.lookup_peers(page=1, page_size=50))
             peers = data.get("data") or []
-            metadata = data.get("metadata") or {}
             if not peers:
                 return ToolResult(data="No available agents found")
 
-            page_num = metadata.get("page", 1)
-            total_pages = metadata.get("total_pages", 1)
-            lines = [f"Available agents (page {page_num} of {total_pages}):"]
-            for peer in peers:
-                name = peer.get("name", "Unknown")
-                desc = peer.get("description") or "No description"
-                peer_type = peer.get("type", "Agent")
-                lines.append(f"- {name} ({peer_type}): {desc}")
+            metadata = data.get("metadata") or {}
+            lines = [
+                f"Available agents (page {metadata.get('page', 1)} of "
+                f"{metadata.get('total_pages', 1)}):"
+            ]
+            lines.extend(
+                f"- {peer.get('name', 'Unknown')} ({peer.get('type', 'Agent')}): "
+                f"{peer.get('description') or 'No description'}"
+                for peer in peers
+            )
             return ToolResult(data="\n".join(lines))
-        except Exception as e:
-            logger.error("[Parlant Tool] Error looking up peers: %s", e, exc_info=True)
-            return ToolResult(data=f"Error looking up peers: {e}")
 
-    @band_tool()
-    async def band_get_participants(
-        context: ToolContext,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] get_participants called: session=%s", context.session_id
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] get_participants: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
+        @band_tool("getting participants")
+        async def band_get_participants(
+            context: ToolContext,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
             result = await tools.get_participants()
-            logger.info("[Parlant Tool] get_participants result: %s", result)
-            # Normalize Fern models -> dicts for uniform handling
-            if isinstance(result, list):
-                items = serialize_tool_result(result)
-                if not items:
-                    return ToolResult(data="No participants in the room")
-                lines = ["Current participants:"]
-                for participant in items:
-                    name = participant.get("name", "Unknown")
-                    p_type = participant.get("type", "Unknown")
-                    lines.append(f"- {name} ({p_type})")
-                return ToolResult(data="\n".join(lines))
-            return ToolResult(data=str(result))
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error getting participants: %s", e, exc_info=True
+            if not isinstance(result, list):
+                return ToolResult(data=str(result))
+
+            participants = serialize_tool_result(result)
+            if not participants:
+                return ToolResult(data="No participants in the room")
+            lines = ["Current participants:"]
+            lines.extend(
+                f"- {participant.get('name', 'Unknown')} "
+                f"({participant.get('type', 'Unknown')})"
+                for participant in participants
             )
-            return ToolResult(data=f"Error getting participants: {e}")
+            return ToolResult(data="\n".join(lines))
 
-    @band_tool()
-    async def band_create_chatroom(
-        context: ToolContext,
-        task_id: str = "",
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] create_chatroom called: session=%s, task_id=%s",
-            context.session_id,
-            task_id,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] create_chatroom: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
+        @band_tool("creating chatroom")
+        async def band_create_chatroom(
+            context: ToolContext,
+            task_id: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            room_id = await tools.create_chatroom(or_none(task_id))
+            return ToolResult(data=f"Created new chat room: {room_id}")
 
-        try:
-            result = await tools.create_chatroom(task_id if task_id else None)
-            logger.info("[Parlant Tool] Created chatroom: %s", result)
-            return ToolResult(data=f"Created new chat room: {result}")
-        except Exception as e:
-            logger.error("[Parlant Tool] Error creating chatroom: %s", e, exc_info=True)
-            return ToolResult(data=f"Error creating chatroom: {e}")
+        return [
+            band_send_message,
+            band_send_event,
+            band_add_participant,
+            band_remove_participant,
+            band_lookup_peers,
+            band_get_participants,
+            band_create_chatroom,
+        ]
 
-    include_contacts = features is None or Capability.CONTACTS in features.capabilities
+    def contact_tools() -> list[Any]:
+        """Contact management — gated behind ``Capability.CONTACTS``."""
 
-    @band_tool()
-    async def band_list_contacts(
-        context: ToolContext,
-        page: int = 1,
-        page_size: int = 50,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] list_contacts called: session=%s, page=%s",
-            context.session_id,
-            page,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] list_contacts: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.list_contacts(page, page_size)
-            # Fern model: serialize via model_dump if available, fallback to str
-            data = serialize_tool_result(result)
+        @band_tool("listing contacts")
+        async def band_list_contacts(
+            context: ToolContext,
+            page: int = 1,
+            page_size: int = 50,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(await tools.list_contacts(page, page_size))
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error("[Parlant Tool] Error listing contacts: %s", e, exc_info=True)
-            return ToolResult(data=f"Error listing contacts: {e}")
 
-    @band_tool()
-    async def band_add_contact(
-        context: ToolContext,
-        handle: str,
-        message: str = "",
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] add_contact called: session=%s, handle=%s",
-            context.session_id,
-            handle,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] add_contact: No tools available for session %s",
-                context.session_id,
+        @band_tool("adding contact")
+        async def band_add_contact(
+            context: ToolContext,
+            handle: str,
+            message: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.add_contact(handle, or_none(message))
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.add_contact(handle, message if message else None)
-            data = serialize_tool_result(result)
             status = (
                 data.get("status", "pending") if isinstance(data, dict) else "pending"
             )
             return ToolResult(data=f"Contact request to {handle}: {status}")
-        except Exception as e:
-            logger.error("[Parlant Tool] Error adding contact: %s", e, exc_info=True)
-            return ToolResult(data=f"Error adding contact: {e}")
 
-    @band_tool()
-    async def band_remove_contact(
-        context: ToolContext,
-        handle: str = "",
-        contact_id: str = "",
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] remove_contact called: session=%s, handle=%s, contact_id=%s",
-            context.session_id,
-            handle,
-            contact_id,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] remove_contact: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
+        @band_tool("removing contact")
+        async def band_remove_contact(
+            context: ToolContext,
+            handle: str = "",
+            contact_id: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            if not handle and not contact_id:
+                return ToolResult(
+                    data="Error: Either handle or contact_id must be provided"
+                )
 
-        h = handle if handle else None
-        cid = contact_id if contact_id else None
-        if not h and not cid:
+            await tools.remove_contact(or_none(handle), or_none(contact_id))
             return ToolResult(
-                data="Error: Either handle or contact_id must be provided"
+                data=f"Contact '{handle or contact_id}' removed successfully"
             )
 
-        try:
-            await tools.remove_contact(h, cid)
-            identifier = handle or contact_id
-            return ToolResult(data=f"Contact '{identifier}' removed successfully")
-        except Exception as e:
-            logger.error("[Parlant Tool] Error removing contact: %s", e, exc_info=True)
-            return ToolResult(data=f"Error removing contact: {e}")
-
-    @band_tool()
-    async def band_list_contact_requests(
-        context: ToolContext,
-        page: int = 1,
-        page_size: int = 50,
-        sent_status: str = "pending",
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] list_contact_requests called: session=%s, sent_status=%s",
-            context.session_id,
-            sent_status,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] list_contact_requests: No tools available for session %s",
-                context.session_id,
+        @band_tool("listing contact requests")
+        async def band_list_contact_requests(
+            context: ToolContext,
+            page: int = 1,
+            page_size: int = 50,
+            sent_status: str = "pending",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.list_contact_requests(page, page_size, sent_status)
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.list_contact_requests(page, page_size, sent_status)
-            # Fern model: serialize via model_dump if available, fallback to str
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error listing contact requests: %s", e, exc_info=True
-            )
-            return ToolResult(data=f"Error listing contact requests: {e}")
 
-    @band_tool()
-    async def band_respond_contact_request(
-        context: ToolContext,
-        action: str,
-        handle: str = "",
-        request_id: str = "",
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] respond_contact_request called: session=%s, action=%s",
-            context.session_id,
-            action,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] respond_contact_request: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
+        @band_tool("responding to contact request")
+        async def band_respond_contact_request(
+            context: ToolContext,
+            action: str,
+            handle: str = "",
+            request_id: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            if not handle and not request_id:
+                return ToolResult(
+                    data="Error: Either handle or request_id must be provided"
+                )
+            if action not in ("approve", "reject", "cancel"):
+                return ToolResult(
+                    data=f"Error: Invalid action '{action}'. Use 'approve', 'reject', or 'cancel'"
+                )
 
-        h = handle if handle else None
-        rid = request_id if request_id else None
-        if not h and not rid:
-            return ToolResult(
-                data="Error: Either handle or request_id must be provided"
+            data = serialize_tool_result(
+                await tools.respond_contact_request(
+                    action, or_none(handle), or_none(request_id)
+                )
             )
-
-        if action not in ("approve", "reject", "cancel"):
-            return ToolResult(
-                data=f"Error: Invalid action '{action}'. Use 'approve', 'reject', or 'cancel'"
-            )
-
-        try:
-            result = await tools.respond_contact_request(action, h, rid)
-            data = serialize_tool_result(result)
             status = data.get("status", action) if isinstance(data, dict) else action
             return ToolResult(data=f"Contact request {action}d: {status}")
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error responding to contact request: %s",
-                e,
-                exc_info=True,
+
+        return [
+            band_list_contacts,
+            band_add_contact,
+            band_remove_contact,
+            band_list_contact_requests,
+            band_respond_contact_request,
+        ]
+
+    def file_tools() -> list[Any]:
+        """Room files — gated behind ``Capability.FILES``."""
+
+        @band_tool("listing room files")
+        async def band_list_room_files(
+            context: ToolContext,
+            cursor: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(await tools.list_room_files(or_none(cursor)))
+            files = data.get("data") or []
+            if not files:
+                return ToolResult(data="No files found in this room")
+
+            lines = ["Files in this room:"]
+            lines.extend(
+                f"- {file.get('name', 'Unknown')} "
+                f"({file.get('content_type', 'unknown')}, {file.get('bytes', 0)} bytes) "
+                f"id={file.get('id', '')}"
+                for file in files
             )
-            return ToolResult(data=f"Error responding to contact request: {e}")
+            if next_cursor := data.get("next_cursor"):
+                lines.append(
+                    f"More files available; call again with cursor='{next_cursor}' "
+                    "to see the rest."
+                )
+            return ToolResult(data="\n".join(lines))
 
-    include_tasks = features is None or Capability.TASKS in features.capabilities
+        @band_tool("reading room file")
+        async def band_read_room_file(
+            context: ToolContext,
+            file_id: str,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            result = await tools.read_room_file(file_id)
+            match result:
+                case {"text": str() as text}:
+                    note = result.get("description")
+                    return ToolResult(data=f"{text}\n\n({note})" if note else text)
+                case _ if is_mcp_content_result(result):
+                    # A Parlant ToolResult has no multimodal channel, so the
+                    # image is described rather than passed through as vision.
+                    mime_type = result["content"][0].get("mimeType", "image")
+                    return ToolResult(
+                        data=(
+                            f"This file is a {mime_type} image; image content cannot "
+                            "be shown inline by this tool."
+                        )
+                    )
 
-    @band_tool()
-    async def band_list_tasks(
-        context: ToolContext,
-        state: TaskListState | None = None,
-        cursor: str | None = None,
-        limit: int | None = None,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] list_tasks called: session=%s, state=%s",
-            context.session_id,
-            state,
+            summary = (
+                f"{result.get('name', 'Unknown')} "
+                f"({result.get('content_type', 'unknown')}, "
+                f"{result.get('bytes', 0)} bytes)"
+            )
+            description = result.get("description", "")
+            return ToolResult(
+                data=f"{summary}. {description}" if description else summary
+            )
+
+        @band_tool(
+            "sending room file",
+            SEND_MESSAGE_MENTIONS_NOTE,
+            param_overrides={"mentions": SEND_MESSAGE_MENTIONS_PARAM_NOTE},
+            mention_hints=True,
         )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] list_tasks: No tools available for session %s",
-                context.session_id,
-            )
-            return ToolResult(data="Error: No tools available in current context")
+        async def band_send_room_file(
+            context: ToolContext,
+            content: str,
+            filename: str,
+            mentions: str,
+            caption: str = "",
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            recipients = split_mentions(mentions)
+            if not recipients:
+                return ToolResult(
+                    data="Error: "
+                    + with_mention_handles("At least one mention is required", tools)
+                )
 
-        try:
-            result = await tools.list_tasks(state=state, cursor=cursor, limit=limit)
-            data = serialize_tool_result(result)
+            result = await tools.send_room_file(content, filename, caption, recipients)
+            attachment = result.get("attachment") or {}
+            return ToolResult(
+                data=f"Uploaded '{attachment.get('name', filename)}' "
+                f"(id={attachment.get('id', '')}) and shared with "
+                f"{', '.join(recipients)}"
+            )
+
+        return [
+            band_list_room_files,
+            band_read_room_file,
+            band_send_room_file,
+        ]
+
+    def task_tools() -> list[Any]:
+        """Task board — gated behind ``Capability.TASKS``."""
+
+        @band_tool("listing tasks")
+        async def band_list_tasks(
+            context: ToolContext,
+            state: TaskListState | None = None,
+            cursor: str | None = None,
+            limit: int | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.list_tasks(state=state, cursor=cursor, limit=limit)
+            )
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error("[Parlant Tool] Error listing tasks: %s", e, exc_info=True)
-            return ToolResult(data=f"Error listing tasks: {e}")
 
-    @band_tool()
-    async def band_create_task(
-        context: ToolContext,
-        subject: str,
-        detail: str | None = None,
-        supersedes_id: str | None = None,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] create_task called: session=%s, subject=%s",
-            context.session_id,
-            subject,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] create_task: No tools available for session %s",
-                context.session_id,
+        @band_tool("creating task '{subject}'")
+        async def band_create_task(
+            context: ToolContext,
+            subject: str,
+            detail: str | None = None,
+            supersedes_id: str | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.create_task(
+                    subject, detail=detail, supersedes_id=supersedes_id
+                )
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.create_task(
-                subject, detail=detail, supersedes_id=supersedes_id
-            )
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error creating task '%s': %s", subject, e, exc_info=True
-            )
-            return ToolResult(data=f"Error creating task '{subject}': {e}")
 
-    @band_tool()
-    async def band_get_task(
-        context: ToolContext,
-        id: str,
-        include: str | None = None,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] get_task called: session=%s, id=%s", context.session_id, id
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] get_task: No tools available for session %s",
-                context.session_id,
+        @band_tool("getting task '{id}'")
+        async def band_get_task(
+            context: ToolContext,
+            id: str,
+            include: str | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.get_task(
+                    id, include=cast(Literal["history"] | None, include)
+                )
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.get_task(id, include=include)
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error getting task '%s': %s", id, e, exc_info=True
-            )
-            return ToolResult(data=f"Error getting task '{id}': {e}")
 
-    @band_tool()
-    async def band_update_task(
-        context: ToolContext,
-        id: str,
-        status: TaskAssignmentStatus | None = None,
-        active_form: str | None = None,
-        comment: str | None = None,
-        subject: str | None = None,
-        detail: str | None = None,
-        state: TaskLifecycleState | None = None,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] update_task called: session=%s, id=%s, status=%s",
-            context.session_id,
-            id,
-            status,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] update_task: No tools available for session %s",
-                context.session_id,
+        @band_tool("updating task '{id}'")
+        async def band_update_task(
+            context: ToolContext,
+            id: str,
+            status: TaskAssignmentStatus | None = None,
+            active_form: str | None = None,
+            comment: str | None = None,
+            subject: str | None = None,
+            detail: str | None = None,
+            state: TaskLifecycleState | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.update_task(
+                    id,
+                    status=status,
+                    active_form=active_form,
+                    comment=comment,
+                    subject=subject,
+                    detail=detail,
+                    state=state,
+                )
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.update_task(
-                id,
-                status=status,
-                active_form=active_form,
-                comment=comment,
-                subject=subject,
-                detail=detail,
-                state=state,
-            )
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error updating task '%s': %s", id, e, exc_info=True
-            )
-            return ToolResult(data=f"Error updating task '{id}': {e}")
 
-    @band_tool()
-    async def band_get_task_history(
-        context: ToolContext,
-        id: str,
-        cursor: str | None = None,
-        limit: int | None = None,
-    ) -> ToolResult:
-        logger.info(
-            "[Parlant Tool] get_task_history called: session=%s, id=%s",
-            context.session_id,
-            id,
-        )
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] get_task_history: No tools available for session %s",
-                context.session_id,
+        @band_tool("getting task history for '{id}'")
+        async def band_get_task_history(
+            context: ToolContext,
+            id: str,
+            cursor: str | None = None,
+            limit: int | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.get_task_history(id, cursor=cursor, limit=limit)
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.get_task_history(id, cursor=cursor, limit=limit)
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error(
-                "[Parlant Tool] Error getting task history for '%s': %s",
-                id,
-                e,
-                exc_info=True,
-            )
-            return ToolResult(data=f"Error getting task history for '{id}': {e}")
 
-    @band_tool()
-    async def band_get_board(
-        context: ToolContext,
-        include: str | None = None,
-    ) -> ToolResult:
-        logger.info("[Parlant Tool] get_board called: session=%s", context.session_id)
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] get_board: No tools available for session %s",
-                context.session_id,
+        @band_tool("getting board")
+        async def band_get_board(
+            context: ToolContext,
+            include: str | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.get_board(include=cast(Literal["history"] | None, include))
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.get_board(include=include)
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error("[Parlant Tool] Error getting board: %s", e, exc_info=True)
-            return ToolResult(data=f"Error getting board: {e}")
 
-    @band_tool()
-    async def band_set_board(
-        context: ToolContext,
-        goal_title: str | None = None,
-        goal_summary: str | None = None,
-    ) -> ToolResult:
-        logger.info("[Parlant Tool] set_board called: session=%s", context.session_id)
-        tools = get_session_tools(context.session_id)
-        if not tools:
-            logger.error(
-                "[Parlant Tool] set_board: No tools available for session %s",
-                context.session_id,
+        @band_tool("setting board")
+        async def band_set_board(
+            context: ToolContext,
+            goal_title: str | None = None,
+            goal_summary: str | None = None,
+        ) -> ToolResult:
+            tools = require_session_tools(context)
+            data = serialize_tool_result(
+                await tools.set_board(goal_title=goal_title, goal_summary=goal_summary)
             )
-            return ToolResult(data="Error: No tools available in current context")
-
-        try:
-            result = await tools.set_board(
-                goal_title=goal_title, goal_summary=goal_summary
-            )
-            data = serialize_tool_result(result)
             return ToolResult(data=json.dumps(data, default=str))
-        except Exception as e:
-            logger.error("[Parlant Tool] Error setting board: %s", e, exc_info=True)
-            return ToolResult(data=f"Error setting board: {e}")
 
-    tools = [
-        band_send_message,
-        band_send_event,
-        band_add_participant,
-        band_remove_participant,
-        band_lookup_peers,
-        band_get_participants,
-        band_create_chatroom,
-    ]
+        return [
+            band_list_tasks,
+            band_create_task,
+            band_get_task,
+            band_update_task,
+            band_get_task_history,
+            band_get_board,
+            band_set_board,
+        ]
 
-    if include_contacts:
-        tools.extend(
-            [
-                band_list_contacts,
-                band_add_contact,
-                band_remove_contact,
-                band_list_contact_requests,
-                band_respond_contact_request,
-            ]
-        )
-
-    if include_tasks:
-        tools.extend(
-            [
-                band_list_tasks,
-                band_create_task,
-                band_get_task,
-                band_update_task,
-                band_get_task_history,
-                band_get_board,
-                band_set_board,
-            ]
-        )
-
+    capabilities = features.capabilities if features else None
+    tools = chat_tools()
+    if capabilities is None or Capability.CONTACTS in capabilities:
+        tools += contact_tools()
+    if capabilities is None or Capability.FILES in capabilities:
+        tools += file_tools()
+    if capabilities is None or Capability.TASKS in capabilities:
+        tools += task_tools()
     return tools
