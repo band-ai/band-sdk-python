@@ -19,7 +19,9 @@ way to produce it -- so a precise instruction is the only way to comply.
 
 from __future__ import annotations
 
+import struct
 import uuid
+import zlib
 
 
 from band.core.types import AdapterFeatures, Capability, Emit, MessageType
@@ -52,6 +54,11 @@ def memory_features() -> AdapterFeatures:
 def contacts_features() -> AdapterFeatures:
     """Features for contacts smokes: expose contact tools and record their calls."""
     return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.TOOL_CALLS})
+
+
+def files_features() -> AdapterFeatures:
+    """Expose room-file tools and persist their calls for capability smokes."""
+    return AdapterFeatures(capabilities={Capability.FILES}, emit={Emit.TOOL_CALLS})
 
 
 def usage_features() -> AdapterFeatures:
@@ -103,6 +110,7 @@ MEMORY_SECRETARY_PROMPT = (
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
 CONTACTS_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": contacts_features()}
+FILES_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": files_features()}
 MEMORY_SECRETARY_AGENT = {
     "prompt": MEMORY_SECRETARY_PROMPT,
     "features": memory_features(),
@@ -155,6 +163,86 @@ def liveness_probe(marker: str) -> str:
 def unique_marker(prefix: str) -> str:
     """A high-entropy token to assert verbatim in event/memory content."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def file_round_trip_instruction(marker: str) -> str:
+    """Drive one real text-file send, discovery, and read-back in a room.
+
+    Numbered steps plus an explicit anti-shortcut clause: a smaller model
+    otherwise pattern-matches "reply with the exact token" (step 4) as the
+    whole task and jumps straight to a single band_send_message, skipping
+    the file round-trip entirely -- observed live against gpt-5.4-mini and
+    claude-haiku-4-5.
+    """
+    return (
+        "Complete these four tool calls in order, then stop -- do not reply "
+        "or take any other action until all four are done:\n"
+        f"1. Call band_send_room_file to upload a text file named "
+        f"evidence.txt whose entire content is the exact token {marker}. "
+        "Include at least one room participant in its mentions.\n"
+        "2. Call band_list_room_files to find that file.\n"
+        "3. Call band_read_room_file with its returned id.\n"
+        f"4. Only after steps 1-3 are done, call band_send_message to reply "
+        f"with the exact token {marker}."
+    )
+
+
+# Visually distinct, single-word-nameable colors for the image vision-passthrough
+# smoke. Randomizing per run (see IMAGE_COLORS usage) means a model can't pass by
+# reflexively guessing a common default (e.g. "blue") without actually seeing the
+# uploaded pixels -- the judge is told the true color as ground truth.
+IMAGE_COLORS: dict[str, tuple[int, int, int]] = {
+    "red": (220, 20, 20),
+    "green": (20, 180, 20),
+    "orange": (240, 140, 20),
+    "purple": (140, 20, 200),
+    "yellow": (230, 210, 20),
+    "cyan": (20, 200, 210),
+}
+
+
+def solid_color_png(color_name: str, *, size: int = 64) -> bytes:
+    """A minimal, real, valid solid-color PNG -- pure stdlib (no Pillow, which
+    is only a crewai-extra dependency, not available in every lane's venv).
+
+    ``color_name`` must be a key of ``IMAGE_COLORS``. Encodes an 8-bit RGB
+    image (color type 2, no filtering) with a single IDAT chunk -- the
+    smallest structure a real PNG decoder (and a real vision model) accepts.
+    """
+    rgb = IMAGE_COLORS[color_name]
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data))
+        )
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    raw_row = b"\x00" + bytes(rgb) * size  # filter-type-0 byte + RGB pixels
+    raw = raw_row * size
+    idat = zlib.compress(raw)
+    return signature + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+def image_round_trip_instruction() -> str:
+    """Drive discovery and vision passthrough of an image a peer already
+    shared in the room: list, read, then report what color it saw.
+
+    No marker/color hint in the wording -- the whole point is that the model
+    must actually look at the image, not echo a string. The judge checks the
+    reply against the real uploaded color (known to the test, not the model)
+    as ground truth.
+    """
+    return (
+        "A peer already shared an image file in this room. Use "
+        "band_list_room_files to find it, then band_read_room_file with its "
+        "returned id to view it. Look at the image and identify its single "
+        "dominant color in one word. Then use band_send_message to reply "
+        "with just that color word."
+    )
 
 
 def emit_event_instruction(event_type: MessageType, marker: str) -> str:

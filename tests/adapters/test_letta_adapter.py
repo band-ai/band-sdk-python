@@ -7,6 +7,7 @@ in ``test_letta_mcp.py``; the shared mock factories in ``lettakit.py``.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -658,6 +659,54 @@ class TestExecutionReporting:
             if e["message_type"] in ("tool_call", "tool_result")
         ]
         assert len(tool_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self,
+    ) -> None:
+        """ToolCall.arguments is a raw JSON string (letta_client's own wire
+        shape); the tool_call event must still redact band_send_room_file's
+        content field, not embed the real file bytes verbatim."""
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.tool_ids = []
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message(
+                "band_send_room_file",
+                '{"content": "SECRET FILE BYTES", "filename": "f.txt"}',
+            ),
+            make_tool_return_message("band_send_room_file", '{"status": "ok"}'),
+            make_assistant_message("Done"),
+        )
+
+        tools = FakeAgentTools()
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        await adapter.on_message(
+            msg,
+            tools,
+            history,
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        tool_call_events = [
+            e for e in tools.events_sent if e["message_type"] == "tool_call"
+        ]
+        assert len(tool_call_events) == 1
+        reported_args = json.loads(tool_call_events[0]["content"])["args"]
+        assert "SECRET FILE BYTES" not in json.dumps(reported_args)
+        assert "byte file content" in reported_args["content"]
+        assert reported_args["filename"] == "f.txt"
 
 
 # ──────────────────────────────────────────────────────────────────────

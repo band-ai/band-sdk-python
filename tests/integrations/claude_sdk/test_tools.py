@@ -27,7 +27,6 @@ from pydantic import BaseModel
 
 from band.integrations.claude_sdk.tools import (
     _format_success_payload,
-    _is_mcp_content_result,
     _make_result,
     build_band_sdk_tools,
 )
@@ -37,20 +36,6 @@ _IMAGE_RESULT = {
     "content": [{"type": "image", "data": "YmFzZTY0", "mimeType": "image/png"}]
 }
 _TEXT_RESULT = {"name": "notes.txt", "content_type": "text/plain", "text": "hi"}
-
-
-class TestIsMcpContentResult:
-    def test_true_for_image_content_block(self) -> None:
-        assert _is_mcp_content_result(_IMAGE_RESULT)
-
-    def test_false_for_plain_dict(self) -> None:
-        assert not _is_mcp_content_result(_TEXT_RESULT)
-
-    def test_false_for_non_dict(self) -> None:
-        assert not _is_mcp_content_result("just a string")
-
-    def test_false_for_content_list_without_type_keys(self) -> None:
-        assert not _is_mcp_content_result({"content": [{"no_type": 1}]})
 
 
 class TestMakeResultAlwaysEncodes:

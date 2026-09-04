@@ -2,8 +2,8 @@
 System prompt rendering for Band agents.
 
 Combines agent identity + custom instructions + base environment instructions.
-Capability-gated: memory/contact tool instruction sections are only included
-when the corresponding AdapterFeatures capabilities are enabled.
+Capability-gated: memory/contact/file tool instruction sections are only
+included when the corresponding AdapterFeatures capabilities are enabled.
 
 Example:
     from band.runtime.prompts import render_system_prompt
@@ -139,6 +139,14 @@ You have access to contact management tools. Use `band_list_contacts`
 to see your contacts, `band_add_contact` to send contact requests,
 and `band_respond_contact_request` to handle incoming requests.
 """
+FILES_SECTION = """
+## Room File Tools
+
+You have access to file tools for the current room. Use
+`band_list_room_files` to see files shared in the room, `band_read_room_file`
+to fetch one by id, and `band_send_room_file` to upload text content as a
+file and share it in the room.
+"""
 
 # Backward-compatible template dict — DEPRECATED.
 # This static template does NOT include capability-gated sections (MEMORY_SECTION,
@@ -192,6 +200,8 @@ def render_system_prompt(
             capability_sections.append(MEMORY_SECTION.strip())
         if Capability.CONTACTS in features.capabilities:
             capability_sections.append(CONTACT_SECTION.strip())
+        if Capability.FILES in features.capabilities:
+            capability_sections.append(FILES_SECTION.strip())
 
     if not include_base_instructions:
         # Minimal prompt: identity + capability/adapter sections + custom section.

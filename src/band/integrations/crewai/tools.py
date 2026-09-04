@@ -7,12 +7,13 @@ spawn sub-Crews inside @listen methods get platform tools without copying code.
 The builder takes three injectables:
 - get_context: callable returning the current room context (room_id + tools).
   Each adapter owns its own ContextVar and supplies its own getter.
-- reporter: CrewAIToolReporter implementation. Two ship in this module:
+- reporter: CrewAIToolReporter implementation. Two ship in this integration:
   EmitToolCallsReporter (gates by Emit.TOOL_CALLS) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
-Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
-one platform tool surface.
+What each tool *does* lives in ``catalog.py``; this module is how one is run
+and handed to a crew. It is also the integration's public face: the names in
+``__all__`` are re-exported here for both adapters and their tests.
 """
 
 from __future__ import annotations
@@ -20,18 +21,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Awaitable,
-    Callable,
-    Protocol,
-    cast,
-    runtime_checkable,
-)
+from typing import TYPE_CHECKING, Any, Callable
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from crewai.tools import BaseTool
@@ -39,11 +31,20 @@ if TYPE_CHECKING:
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import (
-    AdapterFeatures,
-    Capability,
-    Emit,
-    ToolEventKey,
+from band.core.types import AdapterFeatures, Capability
+from band.integrations.crewai.catalog import (
+    PLATFORM_TOOLS,
+    Invocation,
+    ToolSpec,
+    serialize_success_result,
+    vision_sentinel,
+)
+from band.integrations.crewai.reporting import (
+    CrewAIToolContext,
+    CrewAIToolReporter,
+    EmitToolCallsReporter,
+    NoopReporter,
+    ReplyTracker,
 )
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
@@ -53,187 +54,19 @@ from band.runtime.custom_tools import (
     is_marked_terminal,
 )
 from band.runtime.tools import (
+    CAPABILITY_TOOL_NAMES,
     EVENT_TOOL_NAMES,
-    SEND_MESSAGE_TOOL_NAME,
+    BandTool,
     append_available_mention_handles,
+    get_band_tool_category,
     get_tool_description,
     is_terminal_success,
-    platform_args_schema,
-    serialize_tool_result,
-    validate_tool_arguments,
 )
 
 logger = logging.getLogger(__name__)
 
-_CREWAI_TOOL_CATEGORIES = {
-    "band_send_message": "chat",
-    "band_send_event": "chat",
-    "band_add_participant": "chat",
-    "band_remove_participant": "chat",
-    "band_get_participants": "chat",
-    "band_lookup_peers": "chat",
-    "band_create_chatroom": "chat",
-    "band_list_contacts": "contacts",
-    "band_add_contact": "contacts",
-    "band_remove_contact": "contacts",
-    "band_list_contact_requests": "contacts",
-    "band_respond_contact_request": "contacts",
-    "band_list_memories": "memory",
-    "band_store_memory": "memory",
-    "band_get_memory": "memory",
-    "band_supersede_memory": "memory",
-    "band_archive_memory": "memory",
-}
 
-
-# --- Shared context + reporter contracts ---
-
-
-@dataclass
-class ReplyTracker:
-    """Mutable per-turn markers shared (by reference) with the tool wrappers.
-
-    ``replied`` flips once ``band_send_message`` succeeds; ``tool_executed`` flips
-    once *any* tool succeeds. Together they let an adapter tell a benign "empty
-    final answer" from CrewAI — emitted after the agent already did its work, via
-    a reply or any other tool (e.g. a memory store on a turn instructed not to
-    message) — apart from a genuine no-response failure where nothing happened.
-    """
-
-    replied: bool = False
-    tool_executed: bool = False
-
-
-@dataclass(frozen=True)
-class CrewAIToolContext:
-    """Snapshot of the current room context passed to tool wrappers.
-
-    Each adapter owns its own ContextVar and supplies its own getter that
-    returns this dataclass. Tools never reach back into the adapter directly.
-    """
-
-    room_id: str
-    tools: AgentToolsProtocol
-    reply_tracker: ReplyTracker | None = None
-
-
-@runtime_checkable
-class CrewAIToolReporter(Protocol):
-    """Hook for tool execution event emission.
-
-    Implementations decide whether to send tool_call / tool_result events to
-    the platform. The default EmitToolCallsReporter gates emission on
-    Emit.TOOL_CALLS. NoopReporter never emits.
-
-    Both methods are best-effort: implementations must not raise on transport
-    failure. Wrappers depend on this contract.
-    """
-
-    async def report_call(
-        self,
-        tools: AgentToolsProtocol,
-        tool_name: str,
-        input_data: dict[str, Any],
-    ) -> None: ...
-
-    async def report_result(
-        self,
-        tools: AgentToolsProtocol,
-        tool_name: str,
-        result: Any,
-        is_error: bool = False,
-    ) -> None: ...
-
-
-class EmitToolCallsReporter:
-    """Reporter gated by Emit.TOOL_CALLS — matches legacy CrewAIAdapter behavior."""
-
-    def __init__(self, features: AdapterFeatures) -> None:
-        self._features = features
-
-    async def report_call(
-        self,
-        tools: AgentToolsProtocol,
-        tool_name: str,
-        input_data: dict[str, Any],
-    ) -> None:
-        if Emit.TOOL_CALLS not in self._features.emit:
-            return
-        try:
-            await tools.send_event(
-                content=json.dumps(
-                    {ToolEventKey.NAME: tool_name, ToolEventKey.ARGS: input_data}
-                ),
-                message_type="tool_call",
-            )
-        except Exception as e:
-            logger.warning("Failed to send tool_call event: %s", e)
-
-    async def report_result(
-        self,
-        tools: AgentToolsProtocol,
-        tool_name: str,
-        result: Any,
-        is_error: bool = False,
-    ) -> None:
-        if Emit.TOOL_CALLS not in self._features.emit:
-            return
-        try:
-            await tools.send_event(
-                content=json.dumps(
-                    {
-                        ToolEventKey.NAME: tool_name,
-                        ToolEventKey.OUTPUT: result,
-                        ToolEventKey.IS_ERROR: is_error,
-                    }
-                ),
-                message_type="tool_result",
-            )
-        except Exception as e:
-            logger.warning("Failed to send tool_result event: %s", e)
-
-
-class NoopReporter:
-    """Reporter that emits nothing — useful for adapters that report elsewhere."""
-
-    async def report_call(
-        self,
-        tools: AgentToolsProtocol,
-        tool_name: str,
-        input_data: dict[str, Any],
-    ) -> None:
-        return None
-
-    async def report_result(
-        self,
-        tools: AgentToolsProtocol,
-        tool_name: str,
-        result: Any,
-        is_error: bool = False,
-    ) -> None:
-        return None
-
-
-# --- Helpers ---
-
-
-def serialize_success_result(result: Any) -> str:
-    """Serialize a successful tool result without losing domain status fields.
-
-    Pydantic models are converted via serialize_tool_result at the boundary.
-    Dicts that already carry a "status" key (e.g. domain status from REST
-    responses) get that field renamed to "result_status" so the wrapper's
-    own "status": "success" envelope stays unambiguous.
-    """
-    result = serialize_tool_result(result)
-    if isinstance(result, dict):
-        payload = dict(result)
-        result_status = payload.pop("status", None)
-        response: dict[str, Any] = {"status": "success", **payload}
-        if result_status is not None:
-            response["result_status"] = result_status
-        return json.dumps(response, default=str)
-    return json.dumps({"status": "success", "result": result}, default=str)
+# --- Execution ---
 
 
 def _execute_tool(
@@ -266,7 +99,7 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
-            if tool_name == SEND_MESSAGE_TOOL_NAME and isinstance(
+            if tool_name == BandTool.SEND_MESSAGE and isinstance(
                 e, (ValueError, BandToolError)
             ):
                 error_msg = append_available_mention_handles(
@@ -281,71 +114,35 @@ def _execute_tool(
 
     result = run_async(_execute(), fallback_loop=fallback_loop)
 
-    # Record that the agent did productive work this turn so the adapter can treat
-    # CrewAI's "empty final answer" ValueError as benign (the work already
-    # happened) instead of a genuine no-response failure. ``replied`` is the
-    # stricter signal (a user-facing reply went out via band_send_message);
-    # ``tool_executed`` covers any successful *terminal* tool — a non-read-only
-    # band tool, or a custom tool that opted in via ``band_terminal`` — so a
-    # tool-only turn (e.g. a memory store the user told the agent not to follow
-    # with a message) is also benign. Read-only band tools and undeclared custom
-    # tools do NOT count: an empty answer after only those is a genuine
-    # no-response failure (fail-loud). ``is_terminal_success`` is the single
-    # source of truth, shared with the pydantic-ai adapter.
     if context.reply_tracker is not None:
-        try:
-            if json.loads(result).get("status") == "success":
-                if is_terminal_success(
-                    tool_name, succeeded=True, custom_terminal=custom_terminal
-                ):
-                    context.reply_tracker.tool_executed = True
-                if tool_name == SEND_MESSAGE_TOOL_NAME:
-                    context.reply_tracker.replied = True
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            pass
-
+        _mark_productive_work(
+            context.reply_tracker,
+            tool_name,
+            result,
+            custom_terminal=custom_terminal,
+        )
     return result
 
 
-# --- CrewAI-specific parsing leniency ---
+def _mark_productive_work(
+    tracker: ReplyTracker, tool_name: str, result: str, *, custom_terminal: bool
+) -> None:
+    """Record that the turn did real work, so an empty final answer stays benign.
 
-
-def normalize_mentions_lenient(value: Any) -> list[str]:
-    """Coerce whatever CrewAI's tool layer produced into a list of handles.
-
-    Smaller models driving CrewAI emit ``mentions`` as a JSON-encoded string or
-    a bracketed list of bare handles (``"[@john/agent]"``) rather than a real
-    list. Without this the platform rejects the call for having no mentions and
-    the agent retries in a loop, so the leniency lives here rather than on the
-    master model, which every other adapter satisfies as-is.
+    CrewAI raises on an empty final answer; that is a genuine no-response
+    failure only when nothing terminal ran. ``is_terminal_success`` is the
+    shared rule for what counts (read-only Band tools and undeclared custom
+    tools do not).
     """
-    if value is None or value == "":
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    if isinstance(value, str):
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            pass
-        else:
-            if isinstance(decoded, list):
-                return [str(item) for item in decoded]
-        stripped = value.strip().strip("[]")
-        return [
-            token.strip().strip("'\"") for token in stripped.split(",") if token.strip()
-        ]
-    return [str(value)]
-
-
-SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
-    SEND_MESSAGE_TOOL_NAME,
-    validators={
-        "normalize_mentions": field_validator("mentions", mode="before")(
-            staticmethod(normalize_mentions_lenient)
-        ),
-    },
-)
+    try:
+        if json.loads(result).get("status") != "success":
+            return
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return
+    if is_terminal_success(tool_name, succeeded=True, custom_terminal=custom_terminal):
+        tracker.tool_executed = True
+    if tool_name == BandTool.SEND_MESSAGE:
+        tracker.replied = True
 
 
 # --- Tool factory ---
@@ -353,590 +150,91 @@ SEND_MESSAGE_ARGS_SCHEMA: type[BaseModel] = platform_args_schema(
 _no_cache: Any = staticmethod(lambda *_a, **_kw: False)
 
 
-def _make_platform_tools(
+def _platform_tool(
+    spec: ToolSpec,
     *,
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
-    """Build the 7 base + 5 contact + 5 memory platform tools.
-
-    Returns a (base, contacts, memory) triple. ``build_band_crewai_tools``
-    is responsible for stitching them together based on the requested
-    capabilities.
-    """
+) -> BaseTool:
+    """Wrap one ToolSpec as the CrewAI BaseTool instance the crew is handed."""
     from crewai.tools import BaseTool
 
-    def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
-        return _execute_tool(
-            tool_name=tool_name,
-            coro_factory=factory,
-            get_context=get_context,
-            reporter=reporter,
-            fallback_loop=fallback_loop,
-        )
-
-    class SendMessageTool(BaseTool):
-        name: str = SEND_MESSAGE_TOOL_NAME
-        description: str = get_tool_description(SEND_MESSAGE_TOOL_NAME)
-        args_schema: type[BaseModel] = SEND_MESSAGE_ARGS_SCHEMA
+    class PlatformTool(BaseTool):
+        # str(...): pydantic doesn't validate field defaults (no
+        # validate_default here), so an unwrapped BandTool (StrEnum) default
+        # would leave tool.name a BandTool instance at runtime, not the str
+        # the field is typed as.
+        name: str = str(spec.name)
+        description: str = get_tool_description(spec.name)
+        args_schema: type[BaseModel] = spec.args_schema
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            content: str = kwargs.get("content", "")
-            # Normalized here too, not just in the schema: _run is also called
-            # directly, bypassing args_schema validation.
-            mention_list = normalize_mentions_lenient(kwargs.get("mentions"))
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                execute_send_message = getattr(reporter, "execute_send_message", None)
-                if callable(execute_send_message):
-                    typed_execute_send_message = cast(
-                        Callable[[AgentToolsProtocol, str, list[str]], Awaitable[None]],
-                        execute_send_message,
-                    )
-                    await typed_execute_send_message(tools, content, mention_list)
-                    return json.dumps({"status": "success", "message": "Message sent"})
-
-                await reporter.report_call(
-                    tools,
-                    SEND_MESSAGE_TOOL_NAME,
-                    {"content": content, "mentions": mention_list},
-                )
-                await tools.send_message(content, mention_list)
-                await reporter.report_result(tools, SEND_MESSAGE_TOOL_NAME, "success")
-                return json.dumps({"status": "success", "message": "Message sent"})
-
-            return _exec(SEND_MESSAGE_TOOL_NAME, execute)
-
-    class SendEventTool(BaseTool):
-        name: str = "band_send_event"
-        description: str = get_tool_description("band_send_event")
-        args_schema: type[BaseModel] = platform_args_schema("band_send_event")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            async def execute(tools: AgentToolsProtocol) -> str:
-                # Validated here, not in _run: _run is also called directly,
-                # bypassing args_schema validation, and _exec turns the
-                # ValueError into the error result the caller expects.
-                args = validate_tool_arguments(
-                    "band_send_event", self.args_schema, kwargs
-                )
-                # No execution reporting for send_event to avoid meta-events
-                # (the failure path honors this too — see _SEND_EVENT_TOOL).
-                await tools.send_event(
-                    args["content"], args["message_type"], metadata=args.get("metadata")
-                )
-                return json.dumps({"status": "success", "message": "Event sent"})
-
-            return _exec("band_send_event", execute)
-
-    class AddParticipantTool(BaseTool):
-        name: str = "band_add_participant"
-        description: str = get_tool_description("band_add_participant")
-        args_schema: type[BaseModel] = platform_args_schema("band_add_participant")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            identifier: str = kwargs.get("identifier", "")
-            role: str = kwargs.get("role", "member")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_add_participant",
-                    {"identifier": identifier, "role": role},
-                )
-                result = await tools.add_participant(identifier, role)
-                await reporter.report_result(tools, "band_add_participant", result)
-                return serialize_success_result(result)
-
-            return _exec("band_add_participant", execute)
-
-    class RemoveParticipantTool(BaseTool):
-        name: str = "band_remove_participant"
-        description: str = get_tool_description("band_remove_participant")
-        args_schema: type[BaseModel] = platform_args_schema("band_remove_participant")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            identifier: str = kwargs.get("identifier", "")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools, "band_remove_participant", {"identifier": identifier}
-                )
-                result = await tools.remove_participant(identifier)
-                await reporter.report_result(tools, "band_remove_participant", result)
-                return serialize_success_result(result)
-
-            return _exec("band_remove_participant", execute)
-
-    class GetParticipantsTool(BaseTool):
-        name: str = "band_get_participants"
-        description: str = get_tool_description("band_get_participants")
-        args_schema: type[BaseModel] = platform_args_schema("band_get_participants")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **_kwargs: Any) -> Any:
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(tools, "band_get_participants", {})
-                participants = await tools.get_participants()
-                serialized = (
-                    [
-                        p.model_dump() if hasattr(p, "model_dump") else p
-                        for p in participants
-                    ]
-                    if isinstance(participants, list)
-                    else participants
-                )
-                result = {
-                    "status": "success",
-                    "participants": serialized,
-                    "count": len(participants) if isinstance(participants, list) else 0,
-                }
-                await reporter.report_result(tools, "band_get_participants", result)
-                return json.dumps(result, default=str)
-
-            return _exec("band_get_participants", execute)
-
-    class LookupPeersTool(BaseTool):
-        name: str = "band_lookup_peers"
-        description: str = get_tool_description("band_lookup_peers")
-        args_schema: type[BaseModel] = platform_args_schema("band_lookup_peers")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            page: int = kwargs.get("page", 1)
-            page_size: int = kwargs.get("page_size", 50)
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_lookup_peers",
-                    {"page": page, "page_size": page_size},
-                )
-                result = await tools.lookup_peers(page, page_size)
-                await reporter.report_result(tools, "band_lookup_peers", result)
-                return serialize_success_result(result)
-
-            return _exec("band_lookup_peers", execute)
-
-    class CreateChatroomTool(BaseTool):
-        name: str = "band_create_chatroom"
-        description: str = get_tool_description("band_create_chatroom")
-        args_schema: type[BaseModel] = platform_args_schema("band_create_chatroom")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            task_id: str | None = kwargs.get("task_id")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools, "band_create_chatroom", {"task_id": task_id}
-                )
-                new_room_id = await tools.create_chatroom(task_id)
-                result = {
-                    "status": "success",
-                    "message": "Chat room created",
-                    "room_id": new_room_id,
-                }
-                await reporter.report_result(tools, "band_create_chatroom", result)
-                return json.dumps(result)
-
-            return _exec("band_create_chatroom", execute)
-
-    class ListContactsTool(BaseTool):
-        name: str = "band_list_contacts"
-        description: str = get_tool_description("band_list_contacts")
-        args_schema: type[BaseModel] = platform_args_schema("band_list_contacts")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            page: int = kwargs.get("page", 1)
-            page_size: int = kwargs.get("page_size", 50)
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_list_contacts",
-                    {"page": page, "page_size": page_size},
-                )
-                result = await tools.list_contacts(page, page_size)
-                await reporter.report_result(tools, "band_list_contacts", result)
-                return serialize_success_result(result)
-
-            return _exec("band_list_contacts", execute)
-
-    class AddContactTool(BaseTool):
-        name: str = "band_add_contact"
-        description: str = get_tool_description("band_add_contact")
-        args_schema: type[BaseModel] = platform_args_schema("band_add_contact")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            handle: str = kwargs.get("handle", "")
-            message: str | None = kwargs.get("message")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_add_contact",
-                    {"handle": handle, "message": message},
-                )
-                result = await tools.add_contact(handle, message)
-                await reporter.report_result(tools, "band_add_contact", result)
-                return serialize_success_result(result)
-
-            return _exec("band_add_contact", execute)
-
-    class RemoveContactTool(BaseTool):
-        name: str = "band_remove_contact"
-        description: str = get_tool_description("band_remove_contact")
-        args_schema: type[BaseModel] = platform_args_schema("band_remove_contact")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            handle: str | None = kwargs.get("handle")
-            contact_id: str | None = kwargs.get("contact_id")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_remove_contact",
-                    {"handle": handle, "contact_id": contact_id},
-                )
-                result = await tools.remove_contact(handle, contact_id)
-                await reporter.report_result(tools, "band_remove_contact", result)
-                return serialize_success_result(result)
-
-            return _exec("band_remove_contact", execute)
-
-    class ListContactRequestsTool(BaseTool):
-        name: str = "band_list_contact_requests"
-        description: str = get_tool_description("band_list_contact_requests")
-        args_schema: type[BaseModel] = platform_args_schema(
-            "band_list_contact_requests"
-        )
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            page: int = kwargs.get("page", 1)
-            page_size: int = kwargs.get("page_size", 50)
-            sent_status: str = kwargs.get("sent_status", "pending")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_list_contact_requests",
-                    {
-                        "page": page,
-                        "page_size": page_size,
-                        "sent_status": sent_status,
-                    },
-                )
-                result = await tools.list_contact_requests(page, page_size, sent_status)
-                await reporter.report_result(
-                    tools, "band_list_contact_requests", result
-                )
-                return serialize_success_result(result)
-
-            return _exec("band_list_contact_requests", execute)
-
-    class RespondContactRequestTool(BaseTool):
-        name: str = "band_respond_contact_request"
-        description: str = get_tool_description("band_respond_contact_request")
-        args_schema: type[BaseModel] = platform_args_schema(
-            "band_respond_contact_request"
-        )
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            action: str = kwargs.get("action", "")
-            handle: str | None = kwargs.get("handle")
-            request_id: str | None = kwargs.get("request_id")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_respond_contact_request",
-                    {"action": action, "handle": handle, "request_id": request_id},
-                )
-                result = await tools.respond_contact_request(action, handle, request_id)
-                await reporter.report_result(
-                    tools, "band_respond_contact_request", result
-                )
-                return serialize_success_result(result)
-
-            return _exec("band_respond_contact_request", execute)
-
-    class ListMemoriesTool(BaseTool):
-        name: str = "band_list_memories"
-        description: str = get_tool_description("band_list_memories")
-        args_schema: type[BaseModel] = platform_args_schema("band_list_memories")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            subject_id = kwargs.get("subject_id")
-            scope = kwargs.get("scope")
-            system = kwargs.get("system")
-            memory_type = kwargs.get("type")
-            segment = kwargs.get("segment")
-            content_query = kwargs.get("content_query")
-            page_size = kwargs.get("page_size", 50)
-            status = kwargs.get("status")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_list_memories",
-                    {
-                        "subject_id": subject_id,
-                        "scope": scope,
-                        "system": system,
-                        "type": memory_type,
-                        "segment": segment,
-                        "content_query": content_query,
-                        "page_size": page_size,
-                        "status": status,
-                    },
-                )
-                list_kwargs = {"page_size": page_size}
-                optional_filters = {
-                    "subject_id": subject_id,
-                    "scope": scope,
-                    "system": system,
-                    "type": memory_type,
-                    "segment": segment,
-                    "content_query": content_query,
-                    "status": status,
-                }
-                list_kwargs.update(
-                    {
-                        key: value
-                        for key, value in optional_filters.items()
-                        if value is not None
-                    }
-                )
-                result = await tools.list_memories(**list_kwargs)
-                await reporter.report_result(tools, "band_list_memories", result)
-                return serialize_success_result(result)
-
-            return _exec("band_list_memories", execute)
-
-    class StoreMemoryTool(BaseTool):
-        name: str = "band_store_memory"
-        description: str = get_tool_description("band_store_memory")
-        args_schema: type[BaseModel] = platform_args_schema("band_store_memory")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            content = kwargs.get("content", "")
-            system = kwargs.get("system", "")
-            memory_type = kwargs.get("type", "")
-            segment = kwargs.get("segment", "")
-            thought = kwargs.get("thought", "")
-            scope = kwargs.get("scope", "")
-            subject_id = kwargs.get("subject_id")
-            metadata = kwargs.get("metadata")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools,
-                    "band_store_memory",
-                    {
-                        "content": content,
-                        "system": system,
-                        "type": memory_type,
-                        "segment": segment,
-                        "thought": thought,
-                        "scope": scope,
-                        "subject_id": subject_id,
-                        "metadata": metadata,
-                    },
-                )
-                store_kwargs = {
-                    "content": content,
-                    "system": system,
-                    "type": memory_type,
-                    "segment": segment,
-                    "thought": thought,
-                    "scope": scope,
-                }
-                if subject_id is not None:
-                    store_kwargs["subject_id"] = subject_id
-                if metadata is not None:
-                    store_kwargs["metadata"] = metadata
-                result = await tools.store_memory(**store_kwargs)
-                await reporter.report_result(tools, "band_store_memory", result)
-                return serialize_success_result(result)
-
-            return _exec("band_store_memory", execute)
-
-    class GetMemoryTool(BaseTool):
-        name: str = "band_get_memory"
-        description: str = get_tool_description("band_get_memory")
-        args_schema: type[BaseModel] = platform_args_schema("band_get_memory")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            memory_id = kwargs.get("memory_id", "")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools, "band_get_memory", {"memory_id": memory_id}
-                )
-                result = await tools.get_memory(memory_id)
-                await reporter.report_result(tools, "band_get_memory", result)
-                return serialize_success_result(result)
-
-            return _exec("band_get_memory", execute)
-
-    class SupersedeMemoryTool(BaseTool):
-        name: str = "band_supersede_memory"
-        description: str = get_tool_description("band_supersede_memory")
-        args_schema: type[BaseModel] = platform_args_schema("band_supersede_memory")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            memory_id = kwargs.get("memory_id", "")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools, "band_supersede_memory", {"memory_id": memory_id}
-                )
-                result = await tools.supersede_memory(memory_id)
-                await reporter.report_result(tools, "band_supersede_memory", result)
-                return serialize_success_result(result)
-
-            return _exec("band_supersede_memory", execute)
-
-    class ArchiveMemoryTool(BaseTool):
-        name: str = "band_archive_memory"
-        description: str = get_tool_description("band_archive_memory")
-        args_schema: type[BaseModel] = platform_args_schema("band_archive_memory")
-        cache_function: Any = _no_cache
-
-        def _run(self, *_args: Any, **kwargs: Any) -> Any:
-            memory_id = kwargs.get("memory_id", "")
-
-            async def execute(tools: AgentToolsProtocol) -> str:
-                await reporter.report_call(
-                    tools, "band_archive_memory", {"memory_id": memory_id}
-                )
-                result = await tools.archive_memory(memory_id)
-                await reporter.report_result(tools, "band_archive_memory", result)
-                return serialize_success_result(result)
-
-            return _exec("band_archive_memory", execute)
-
-    base_tools: list[BaseTool] = [
-        SendMessageTool(),
-        SendEventTool(),
-        AddParticipantTool(),
-        RemoveParticipantTool(),
-        GetParticipantsTool(),
-        LookupPeersTool(),
-        CreateChatroomTool(),
-    ]
-    contact_tools: list[BaseTool] = [
-        ListContactsTool(),
-        AddContactTool(),
-        RemoveContactTool(),
-        ListContactRequestsTool(),
-        RespondContactRequestTool(),
-    ]
-    memory_tools: list[BaseTool] = [
-        ListMemoriesTool(),
-        StoreMemoryTool(),
-        GetMemoryTool(),
-        SupersedeMemoryTool(),
-        ArchiveMemoryTool(),
-    ]
-
-    return base_tools, contact_tools, memory_tools
-
-
-def _make_custom_tools(
+            return _execute_tool(
+                tool_name=spec.name,
+                coro_factory=lambda tools: spec.invoke(
+                    Invocation(tools=tools, reporter=reporter), kwargs
+                ),
+                get_context=get_context,
+                reporter=reporter,
+                fallback_loop=fallback_loop,
+            )
+
+    return PlatformTool()
+
+
+def _custom_tool(
+    definition: CustomToolDef,
     *,
-    custom_tools: list[CustomToolDef],
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
-) -> list[BaseTool]:
-    """Convert CustomToolDef tuples to CrewAI BaseTool instances."""
+) -> BaseTool:
+    """Wrap one CustomToolDef as a CrewAI BaseTool instance."""
     from crewai.tools import BaseTool
 
-    crewai_tools: list[BaseTool] = []
+    input_model, handler = definition
+    tool_name = get_custom_tool_name(input_model)
+    # Only a custom tool that opts in (band_terminal=True) lets an empty final
+    # answer be treated as benign; undeclared customs fail loud.
+    terminal = is_marked_terminal(handler)
 
-    def _exec(
-        tool_name: str,
-        factory: Callable[[AgentToolsProtocol], Any],
-        *,
-        custom_terminal: bool = False,
-    ) -> str:
-        return _execute_tool(
-            tool_name=tool_name,
-            coro_factory=factory,
-            get_context=get_context,
-            reporter=reporter,
-            fallback_loop=fallback_loop,
-            custom_terminal=custom_terminal,
+    class CustomCrewAITool(BaseTool):
+        name: str = tool_name
+        description: str = input_model.__doc__ or f"Execute {tool_name}"
+        args_schema: type[BaseModel] = input_model
+        cache_function: Any = _no_cache
+
+        def _run(self, *_args: Any, **kwargs: Any) -> Any:
+            async def execute(tools: AgentToolsProtocol) -> str:
+                await reporter.report_call(tools, tool_name, kwargs)
+                result = await execute_custom_tool(definition, kwargs)
+                await reporter.report_result(tools, tool_name, result)
+                return json.dumps({"status": "success", "result": result}, default=str)
+
+            return _execute_tool(
+                tool_name=tool_name,
+                coro_factory=execute,
+                get_context=get_context,
+                reporter=reporter,
+                fallback_loop=fallback_loop,
+                custom_terminal=terminal,
+            )
+
+    return CustomCrewAITool()
+
+
+def _enabled_specs(capabilities: frozenset[Capability]) -> list[ToolSpec]:
+    """The platform tools a crew with these capabilities is allowed to see."""
+    withheld: frozenset[str] = frozenset().union(
+        *(
+            names
+            for capability, names in CAPABILITY_TOOL_NAMES.items()
+            if capability not in capabilities
         )
-
-    for input_model, func in custom_tools:
-        tool_name = get_custom_tool_name(input_model)
-        tool_description = input_model.__doc__ or f"Execute {tool_name}"
-
-        def make_tool(
-            tool_name_param: str,
-            tool_desc_param: str,
-            model: type[BaseModel],
-            handler: Any,
-        ) -> BaseTool:
-            _tool_name = tool_name_param
-            _tool_desc = tool_desc_param
-            # Only a custom tool that opts in (band_terminal=True) lets an empty
-            # final answer be treated as benign; undeclared customs fail loud.
-            _terminal = is_marked_terminal(handler)
-
-            class CustomCrewAITool(BaseTool):
-                name: str = _tool_name  # type: ignore[misc]
-                description: str = _tool_desc  # type: ignore[misc]
-                args_schema: type[BaseModel] = model
-                cache_function: Any = staticmethod(lambda *_a, **_kw: False)
-
-                def _run(self, *_args: Any, **kwargs: Any) -> Any:
-                    async def execute(_tools: AgentToolsProtocol) -> str:
-                        try:
-                            await reporter.report_call(_tools, _tool_name, kwargs)
-                            result = await execute_custom_tool((model, handler), kwargs)
-                            await reporter.report_result(_tools, _tool_name, result)
-                            if isinstance(result, str):
-                                return json.dumps(
-                                    {"status": "success", "result": result}
-                                )
-                            return json.dumps(
-                                {"status": "success", "result": result}, default=str
-                            )
-                        except Exception as e:
-                            error_msg = str(e)
-                            logger.error(
-                                "Custom tool %s failed: %s", _tool_name, error_msg
-                            )
-                            await reporter.report_result(
-                                _tools, _tool_name, error_msg, is_error=True
-                            )
-                            return json.dumps({"status": "error", "message": error_msg})
-
-                    return _exec(_tool_name, execute, custom_terminal=_terminal)
-
-            return CustomCrewAITool()
-
-        crewai_tools.append(make_tool(tool_name, tool_description, input_model, func))
-
-    return crewai_tools
+    )
+    return [spec for spec in PLATFORM_TOOLS if spec.name not in withheld]
 
 
 def build_band_crewai_tools(
@@ -948,48 +246,41 @@ def build_band_crewai_tools(
     custom_tools: list[CustomToolDef] | None = None,
     fallback_loop: asyncio.AbstractEventLoop | None = None,
 ) -> list[BaseTool]:
-    """Build the list of CrewAI BaseTool instances for the platform tool surface.
+    """Build the CrewAI BaseTool instances for the platform tool surface.
 
-    Selection:
-      - 7 base tools always.
-      - +5 contact tools when Capability.CONTACTS is in `capabilities`.
-      - +5 memory tools when Capability.MEMORY is in `capabilities`.
-      - +N custom tools after platform tools.
-
-    The returned tools close over `get_context`, `reporter`, and `fallback_loop`.
-    Each adapter passes its own getter/reporter so the wrappers stay
+    Chat tools are always present; contact, memory and file tools follow their
+    capability, and custom tools are appended after the platform ones. The
+    returned tools close over ``get_context``, ``reporter`` and
+    ``fallback_loop``, so each adapter supplies its own and the wrappers stay
     framework-agnostic.
     """
-    base, contacts, memories = _make_platform_tools(
-        get_context=get_context,
-        reporter=reporter,
-        fallback_loop=fallback_loop,
-    )
-
     active_features = features or AdapterFeatures(capabilities=capabilities)
-    selected: list[BaseTool] = list(base)
-    if Capability.CONTACTS in active_features.capabilities:
-        selected.extend(contacts)
-    if Capability.MEMORY in active_features.capabilities:
-        selected.extend(memories)
+    selected: list[BaseTool] = [
+        _platform_tool(
+            spec,
+            get_context=get_context,
+            reporter=reporter,
+            fallback_loop=fallback_loop,
+        )
+        for spec in _enabled_specs(active_features.capabilities)
+    ]
 
     selected = filter_tool_schemas(
         selected,
         active_features,
         get_name=lambda tool: tool.name,
-        get_category=lambda tool: _CREWAI_TOOL_CATEGORIES.get(tool.name),
+        get_category=lambda tool: get_band_tool_category(tool.name),
     )
 
-    if custom_tools:
-        selected.extend(
-            _make_custom_tools(
-                custom_tools=custom_tools,
-                get_context=get_context,
-                reporter=reporter,
-                fallback_loop=fallback_loop,
-            )
+    selected.extend(
+        _custom_tool(
+            definition,
+            get_context=get_context,
+            reporter=reporter,
+            fallback_loop=fallback_loop,
         )
-
+        for definition in custom_tools or ()
+    )
     return selected
 
 
@@ -998,6 +289,8 @@ __all__ = [
     "CrewAIToolReporter",
     "EmitToolCallsReporter",
     "NoopReporter",
+    "ReplyTracker",
     "build_band_crewai_tools",
     "serialize_success_result",
+    "vision_sentinel",
 ]

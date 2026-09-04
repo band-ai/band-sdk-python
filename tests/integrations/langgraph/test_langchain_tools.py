@@ -146,6 +146,42 @@ def test_add_participant_schema_exposes_identifier_and_role() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_room_file_image_result_becomes_image_content_block() -> None:
+    tools = make_tools()
+    tools.execute_tool_call = AsyncMock(
+        return_value={
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+    )
+    wrapped = by_name(
+        agent_tools_to_langchain(
+            tools, features=AdapterFeatures(capabilities=frozenset({Capability.FILES}))
+        )
+    )
+
+    result = await wrapped["band_read_room_file"].ainvoke({"file_id": "f1"})
+
+    assert result == [{"type": "image", "mime_type": "image/png", "base64": "ZmFrZQ=="}]
+
+
+@pytest.mark.asyncio
+async def test_read_room_file_non_image_result_stays_raw() -> None:
+    tools = make_tools()
+    tools.execute_tool_call = AsyncMock(
+        return_value={"name": "notes.txt", "content_type": "text/plain"}
+    )
+    wrapped = by_name(
+        agent_tools_to_langchain(
+            tools, features=AdapterFeatures(capabilities=frozenset({Capability.FILES}))
+        )
+    )
+
+    result = await wrapped["band_read_room_file"].ainvoke({"file_id": "f1"})
+
+    assert result == {"name": "notes.txt", "content_type": "text/plain"}
+
+
+@pytest.mark.asyncio
 async def test_wrapper_errors_are_returned_to_model() -> None:
     tools = make_tools()
     tools.execute_tool_call.side_effect = RuntimeError("platform unavailable")

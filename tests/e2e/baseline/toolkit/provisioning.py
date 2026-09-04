@@ -12,6 +12,7 @@ recognise its own resources by prefix and never touch a non-test agent.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from collections.abc import AsyncGenerator, Iterator, Sequence
@@ -30,6 +31,7 @@ from band_rest import (
     AsyncRestClient,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
+    NotFoundError,
 )
 
 from band.agent import Agent
@@ -166,6 +168,55 @@ class PeerActor:
                 mentions=[
                     ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
                 ],
+            ),
+        )
+        return response.data.id
+
+    async def send_file(
+        self,
+        room_id: str,
+        body: bytes,
+        *,
+        filename: str,
+        content_type: str,
+        caption: str,
+        mention_id: str,
+        mention_name: str,
+    ) -> str:
+        """Upload ``body`` as an attachment and post it as this peer; return the
+        message id.
+
+        Uploading is Agent-API-only (there is no ``human_api_files``), so a peer
+        agent — never ``UserOps`` — has to play the uploader.
+        """
+        try:
+            upload = await self._client.agent_api_files.upload_agent_chat_file(
+                chat_id=room_id,
+                request=body,
+                request_options={
+                    "additional_headers": {
+                        "x-file-name": filename,
+                        "x-file-sha256": hashlib.sha256(body).hexdigest(),
+                        "content-type": content_type,
+                    }
+                },
+            )
+        except NotFoundError as error:
+            raise RuntimeError(
+                f"Uploading a file to room {room_id} as peer {self._peer.name} "
+                "got 404 Not Found. Either the room doesn't exist, or this "
+                "deployment has ff_file_transfer off (an on-prem-only flag, "
+                "off on SaaS today) — see the local-platform-testing skill to "
+                "stand up a deployment with it on."
+            ) from error
+        response = await self._client.agent_api_messages.create_agent_chat_message(
+            room_id,
+            message=ChatMessageRequest(
+                content=caption,
+                mentions=[
+                    ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
+                ],
+                attachment_ids=[upload.data.id],
             ),
         )
         return response.data.id

@@ -103,12 +103,16 @@ class AdapterConfig:
 
 
 def _all_capabilities() -> Any:
-    """Every capability, so a probe sees the whole platform tool surface."""
-    from band.core.types import AdapterFeatures, Capability
+    """Every capability, so a probe sees the whole platform tool surface.
 
-    return AdapterFeatures(
-        capabilities={Capability.CONTACTS, Capability.MEMORY},
-    )
+    Reuses the real ``ALL_CAPABILITIES`` constant rather than listing members
+    by name, so a newly added capability is covered here automatically
+    instead of silently sitting outside every probe until someone remembers
+    to add it.
+    """
+    from band.core.types import ALL_CAPABILITIES, AdapterFeatures
+
+    return AdapterFeatures(capabilities=ALL_CAPABILITIES)
 
 
 async def pydantic_ai_probe_tools() -> dict[str, Any]:
@@ -121,7 +125,8 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     from band.core.types import Capability
 
     adapter = PydanticAIAdapter(
-        model="test", capabilities=Capability.CONTACTS | Capability.MEMORY
+        model="test",
+        capabilities=Capability.CONTACTS | Capability.MEMORY | Capability.FILES,
     )
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {

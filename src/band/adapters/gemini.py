@@ -44,8 +44,31 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    decode_image_block,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _image_function_response_parts(
+    result: dict[str, Any],
+) -> list[types.FunctionResponsePart]:
+    """Convert an MCP-content-shaped band_read_room_file result into Gemini
+    FunctionResponsePart inline_data blocks, so the model receives real image
+    content instead of a JSON-stringified blob."""
+    parts: list[types.FunctionResponsePart] = []
+    for block in result["content"]:
+        data, mime_type = decode_image_block(block)
+        parts.append(
+            types.FunctionResponsePart(
+                inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=data)
+            )
+        )
+    return parts
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -66,7 +89,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -499,7 +522,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         content=json.dumps(
                             {
                                 ToolEventKey.NAME: tool_name,
-                                ToolEventKey.ARGS: tool_input,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, tool_input
+                                ),
                                 ToolEventKey.TOOL_CALL_ID: tool_call_id,
                             }
                         ),
@@ -508,17 +533,22 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 except Exception as e:
                     logger.warning("Failed to send tool_call event: %s", e)
 
+            response_parts: list[types.FunctionResponsePart] | None = None
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                result_str = (
-                    json.dumps(result, default=str)
-                    if not isinstance(result, str)
-                    else result
-                )
+                if is_image_passthrough_result(tool_name, result):
+                    response_parts = _image_function_response_parts(result)
+                    result_str = image_block_placeholder(len(response_parts))
+                else:
+                    result_str = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                 is_error = False
             except ValidationError as exc:
                 errors = format_validation_error(exc)
@@ -555,6 +585,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         id=tool_call_id,
                         name=tool_name,
                         response=response_payload,
+                        parts=response_parts,
                     )
                 )
             )
