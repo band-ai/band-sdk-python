@@ -24,7 +24,7 @@ from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from band.client.streaming.errors import (
     WebSocketUpgradeError,
-    classify_initial_upgrade_error,
+    probe_upgrade_error,
 )
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
@@ -387,6 +387,8 @@ class WebSocketClient:
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
         self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
         self._session = Session(self._watchdog.policy)
+        self._connect_failure_probed: bool = False
+        self._cached_connect_failure: WebSocketUpgradeError | None = None
 
     @property
     def validation_error_count(self) -> int:
@@ -455,20 +457,39 @@ class WebSocketClient:
             client.channel_socket_url += f"&agent_id={self.agent_id}"
         return client
 
+    async def _classify_connect_failure(
+        self, exc: Exception
+    ) -> WebSocketUpgradeError | None:
+        """Classify one failed connect exception, reusing the previous
+        live-socket probe result for a repeat unclassifiable
+        PHXConnectionError.
+
+        probe_upgrade_error blocks for up to open_timeout=5s; without this
+        cache it reran on every backoff retry of the very same rejection,
+        stacking its own network latency on top of every computed delay.
+        """
+        upgrade_error = WebSocketUpgradeError.from_exception(exc)
+        if upgrade_error is not None or not isinstance(exc, PHXConnectionError):
+            return upgrade_error
+        if not self._connect_failure_probed:
+            self._cached_connect_failure = await probe_upgrade_error(
+                self._require_client().channel_socket_url
+            )
+            self._connect_failure_probed = True
+        return self._cached_connect_failure
+
     async def _resolve_failed_connect_attempt(
         self, exc: Exception, epoch: int
     ) -> float:
         """Classify one failed initial-connect attempt through Session and
         resolve it to a retry delay, or raise if Session now considers the
         session Dead."""
-        # Captured before the live-socket probe below (up to open_timeout=5s
-        # inside classify_initial_upgrade_error) -- charging the probe's own
-        # latency to Session's rapid-disconnect timing would understate how
-        # fast repeated failures are actually happening.
+        # Captured before the live-socket probe inside
+        # _classify_connect_failure (up to open_timeout=5s) -- charging the
+        # probe's own latency to Session's rapid-disconnect timing would
+        # understate how fast repeated failures are actually happening.
         now = asyncio.get_running_loop().time()
-        upgrade_error = await classify_initial_upgrade_error(
-            exc, self._require_client().channel_socket_url
-        )
+        upgrade_error = await self._classify_connect_failure(exc)
         match upgrade_error:
             case WebSocketUpgradeError():
                 outcome = self._session.on_upgrade_rejected(
@@ -555,6 +576,8 @@ class WebSocketClient:
         start a new connection lifecycle, not resume a now-Dead one.
         """
         self._session = Session(self._watchdog.policy)
+        self._connect_failure_probed = False
+        self._cached_connect_failure = None
         while True:
             now = asyncio.get_running_loop().time()
             epoch = self._session.begin_attempt(now)

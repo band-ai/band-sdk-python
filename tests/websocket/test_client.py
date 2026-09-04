@@ -399,6 +399,71 @@ async def test_aenter_probes_initial_phx_connection_error_then_retries_and_succe
     await client.__aexit__(None, None, None)
 
 
+async def test_aenter_caches_probe_result_across_repeated_connect_failures(
+    monkeypatch,
+):
+    """The live-socket probe recovering a PHXConnectionError's hidden upgrade
+    rejection blocks for up to open_timeout=5s -- rerunning it on every
+    backoff retry of the very same rejection would stack a fresh network
+    round trip onto every computed delay. A repeat bare PHXConnectionError
+    must reuse the first probe's classification instead of probing again."""
+    upgrade_exc = _upgrade_exception(
+        429,
+        b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429"}}',
+        {"Retry-After": "5"},
+    )
+    probed_urls = []
+    attempts = 0
+
+    class RecoveringPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise PHXConnectionError(
+                    "Connection supervisor stopped before connecting"
+                )
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    class FailingProbe:
+        async def __aenter__(self):
+            raise upgrade_exc
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    def fake_connect(url, *, open_timeout):
+        probed_urls.append((url, open_timeout))
+        return FailingProbe()
+
+    async def fake_sleep(delay):
+        return None
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.PHXChannelsClient", RecoveringPHXClient
+    )
+    monkeypatch.setattr("band.client.streaming.errors.connect", fake_connect)
+    monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert attempts == 3
+    # Two attempts failed with the unclassifiable PHXConnectionError, but the
+    # probe only ran once -- the second failure's classification came from
+    # the cache.
+    assert probed_urls == [("wss://test/socket&agent_id=agent-123", 5)]
+
+    await client.__aexit__(None, None, None)
+
+
 async def test_aenter_restores_reconnect_after_successful_initial_connect(monkeypatch):
     init_kwargs = {}
 
@@ -480,7 +545,7 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             return None
 
-    async def no_upgrade_error(exc, websocket_url):
+    async def no_upgrade_error(websocket_url):
         return None
 
     async def fake_sleep(delay):
@@ -490,7 +555,7 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
         "band.client.streaming.client.PHXChannelsClient", FlakyPHXClient
     )
     monkeypatch.setattr(
-        "band.client.streaming.client.classify_initial_upgrade_error",
+        "band.client.streaming.client.probe_upgrade_error",
         no_upgrade_error,
     )
     monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
@@ -535,7 +600,7 @@ async def test_aenter_trips_dead_after_rapid_disconnect_threshold(monkeypatch):
             attempts += 1
             raise PHXConnectionError("temporary network failure")
 
-    async def no_upgrade_error(exc, websocket_url):
+    async def no_upgrade_error(websocket_url):
         return None
 
     async def fake_sleep(delay):
@@ -545,7 +610,7 @@ async def test_aenter_trips_dead_after_rapid_disconnect_threshold(monkeypatch):
         "band.client.streaming.client.PHXChannelsClient", AlwaysFailingPHXClient
     )
     monkeypatch.setattr(
-        "band.client.streaming.client.classify_initial_upgrade_error",
+        "band.client.streaming.client.probe_upgrade_error",
         no_upgrade_error,
     )
     monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
@@ -572,10 +637,10 @@ async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
     monkeypatch,
 ):
     """`now` must be the wall-clock time the connect attempt actually failed,
-    not the time classify_initial_upgrade_error's live-socket probe finished
-    -- otherwise a burst of true back-to-back failures each looks slower than
-    it really was, understating how rapid the disconnects are to Session's
-    rolling rapid-disconnect window."""
+    not the time probe_upgrade_error's live-socket probe finished -- otherwise
+    a burst of true back-to-back failures each looks slower than it really
+    was, understating how rapid the disconnects are to Session's rolling
+    rapid-disconnect window."""
     now_s_seen = []
 
     class RecordingSession:
@@ -604,13 +669,13 @@ async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
 
     probe_delay_s = 0.1
 
-    async def slow_classify(exc, websocket_url):
+    async def slow_probe(websocket_url):
         await asyncio.sleep(probe_delay_s)
         return None
 
     monkeypatch.setattr(
-        "band.client.streaming.client.classify_initial_upgrade_error",
-        slow_classify,
+        "band.client.streaming.client.probe_upgrade_error",
+        slow_probe,
     )
 
     attempts = 0
@@ -699,11 +764,11 @@ async def test_resolve_failed_connect_attempt_raises_when_retry_after_s_missing(
 
     monkeypatch.setattr("band.client.streaming.client.Session", BadOutcomeSession)
 
-    async def no_upgrade_error(exc, websocket_url):
+    async def no_upgrade_error(websocket_url):
         return None
 
     monkeypatch.setattr(
-        "band.client.streaming.client.classify_initial_upgrade_error",
+        "band.client.streaming.client.probe_upgrade_error",
         no_upgrade_error,
     )
 
