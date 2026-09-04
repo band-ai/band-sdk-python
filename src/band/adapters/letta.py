@@ -27,8 +27,10 @@ from band.integrations.letta.config import (
     LettaAdapterConfig,
     LettaMCPConfig,
     MCPTransport,
+    is_letta_cloud_url,
 )
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
+from band.integrations.letta.orgscope import resolve_org_scoped_headers
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -200,7 +202,33 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             client_kwargs["api_key"] = self.config.provider_key
         if self.config.project:
             client_kwargs["project"] = self.config.project
+
+        # Self-hosted Letta dedupes MCP-discovered Tool rows by
+        # (name, organization_id): with no user_id header, every instance
+        # resolves to the same default org, and a second instance's MCP
+        # registration silently re-points the first instance's tool row to
+        # its own server. Scoping each instance to its own org+user closes
+        # that collision. Cloud is never scoped (org_scoped=True against it
+        # is already rejected at config construction — see LettaAdapterConfig).
+        org_scoped = (
+            self.config.org_scoped
+            if self.config.org_scoped is not None
+            else not is_letta_cloud_url(self.config.base_url)
+        )
+        if org_scoped:
+            client_kwargs["default_headers"] = await resolve_org_scoped_headers(
+                base_url=self.config.base_url,
+                agent_name=agent_name,
+                bearer_token=self.config.provider_key,
+            )
         self._client = AsyncLetta(**client_kwargs)
+        if org_scoped:
+            # A fresh org has zero Tool rows; base tools (send_message, etc.)
+            # are seeded lazily only by this list call (GET /v1/tools/ with
+            # upsert_base_tools). Nothing else in this adapter's flow reaches
+            # it, so the first agents.create(include_base_tools=True) in a
+            # fresh org would otherwise raise before the agent exists.
+            await self._client.tools.list()
 
         # Fail loud at startup if the tool path cannot be wired — the adapter
         # is useless without it.

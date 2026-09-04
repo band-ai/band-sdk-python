@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,20 @@ from band.core.exceptions import BandConfigError
 from band.integrations.mcp.local_server import LOCAL_MCP_HOST
 
 MCPTransport = Literal["sse", "streamable_http"]
+
+# Single source of truth for the Letta Cloud endpoint: both the base_url
+# field default and self-hosted detection (org_scoped auto-detection, the
+# Cloud+org_scoped=True construction guard) read this constant.
+LETTA_CLOUD_BASE_URL = "https://api.letta.com"
+_LETTA_CLOUD_HOSTNAME = urlsplit(LETTA_CLOUD_BASE_URL).hostname
+
+
+def is_letta_cloud_url(base_url: str) -> bool:
+    """Whether ``base_url`` points at Letta Cloud rather than a self-hosted server."""
+    try:
+        return urlsplit(base_url).hostname == _LETTA_CLOUD_HOSTNAME
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -102,7 +117,7 @@ class LettaAdapterConfig(BaseSettings):
     provider_key: str | None = Field(
         default=None, validation_alias=AliasChoices("LETTA_API_KEY")
     )  # Required for Letta Cloud; omit for self-hosted
-    base_url: str = "https://api.letta.com"
+    base_url: str = LETTA_CLOUD_BASE_URL
     custom_section: str = ""
     include_base_instructions: bool = True
     persona: str | None = None
@@ -112,6 +127,19 @@ class LettaAdapterConfig(BaseSettings):
 
     # Letta Cloud project scoping (ignored for self-hosted)
     project: str | None = None
+
+    # Self-hosted only: provision a dedicated Letta organization + user per
+    # adapter instance so MCP tool storage never collides between instances
+    # sharing one server (Letta dedupes MCP-discovered Tool rows by
+    # (name, organization_id); with no scoping, a second instance silently
+    # re-points the first instance's tool to its own MCP server). None
+    # (default) auto-enables for a self-hosted base_url and stays off for
+    # Letta Cloud. Explicit False is the only meaningful override — it opts
+    # a self-hosted deployment back out. Explicit True against Letta Cloud
+    # raises BandConfigError at construction (see _reject_org_scoped_cloud
+    # below): Cloud does not expose the admin API this needs, so honoring it
+    # would fail deep inside on_started instead of failing loud up front.
+    org_scoped: bool | None = None
 
     # Embedding model passed on agent create. Letta's Docker server requires
     # one; Cloud picks its own default when None.
@@ -190,4 +218,16 @@ class LettaAdapterConfig(BaseSettings):
             )
             self.mcp_server_url = None
             self.mcp_server_name = None
+        return self
+
+    @model_validator(mode="after")
+    def _reject_org_scoped_cloud(self) -> LettaAdapterConfig:
+        if self.org_scoped and is_letta_cloud_url(self.base_url):
+            raise BandConfigError(
+                "org_scoped=True is not supported against Letta Cloud "
+                f"(base_url={self.base_url!r}) — it provisions organizations "
+                "and users via a self-hosted-only admin API that Letta Cloud "
+                "does not expose. Leave org_scoped unset (Cloud stays "
+                "unscoped) or set base_url to a self-hosted server."
+            )
         return self

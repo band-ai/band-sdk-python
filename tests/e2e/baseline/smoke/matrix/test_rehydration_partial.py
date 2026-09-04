@@ -88,14 +88,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
             "(langgraph-adapter behaviour under investigation)",
         ),
         ExcludedAdapter(
-            Adapter.LETTA,
-            "self-hosted Letta shares one org-wide send-message tool across "
-            "co-located agents, so a second live agent's reply routes through the "
-            "most-recently-registered adapter's MCP server and posts under the "
-            "wrong identity — the stayer-scoped reply is never observed. Needs "
-            "per-instance tool-name isolation to run two Letta agents in one org",
-        ),
-        ExcludedAdapter(
             Adapter.CREWAI_FLOW,
             "terminal echo flow with no memory — cannot rehydrate context across a "
             "reboot",

@@ -20,11 +20,17 @@ LETTA_IMAGE="letta/letta:0.16.8@sha256:aa66c3eeee13d2dfc40c650d709b550237ee31bfc
 # handle, but forwarding the key lets LETTA_MODEL select an anthropic/* one.
 # The port binds loopback only — the tests run on the same host, and the test
 # server is unauthenticated.
+#
+# LETTA_NO_DEFAULT_ACTOR=true turns an unresolvable user_id header into a
+# loud error instead of a silent fallback to the default org/user — needed
+# so a broken org-scoping resolution in the adapter fails the live test
+# loudly instead of silently passing (see LettaAdapterConfig.org_scoped).
 docker run -d --name letta-server \
   -p 127.0.0.1:8283:8283 \
   --add-host=host.docker.internal:host-gateway \
   -e OPENAI_API_KEY="${OPENAI_API_KEY:?OPENAI_API_KEY is required for the Letta server}" \
   -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+  -e LETTA_NO_DEFAULT_ACTOR=true \
   "$LETTA_IMAGE"
 
 wait_healthy() {
