@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.0](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.1.0...band-mcp-v2.2.0) (2026-09-04)
+
+
+### Features
+
+* Capability.FILES support across every adapter ([#600](https://github.com/band-ai/band-sdk-python/issues/600)) ([2488008](https://github.com/band-ai/band-sdk-python/commit/2488008b03872b0c53c07fc227fbf06ad16c9ead))
+
+
+### Bug Fixes
+
+* bump band-mcp's band-sdk floor to 3.0.0 ([#582](https://github.com/band-ai/band-sdk-python/issues/582)) ([4dce083](https://github.com/band-ai/band-sdk-python/commit/4dce0830918f081dccccf5b7af4f2c05a2f16299))
+
 ## [2.1.0](https://github.com/band-ai/band-sdk-python/compare/band-mcp-v2.0.1...band-mcp-v2.1.0) (2026-08-26)
 
 
