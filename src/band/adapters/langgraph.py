@@ -8,6 +8,8 @@ import logging
 from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
+import langchain.agents
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 from typing_extensions import Unpack
 
@@ -22,6 +24,7 @@ from band.core.types import (
     TurnUsage,
 )
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from band.integrations.langgraph import langchain_tools
 from band.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
@@ -113,18 +116,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # patterns get a uniform tool list, and a tool written once works across
         # adapters (LangChain would otherwise reject a bare tuple).
         if additional_tools:
-            # local: tests patch this name on langchain_tools itself, which only
-            # takes effect if it's looked up at call time rather than import time
-            from band.integrations.langgraph.langchain_tools import (  # noqa: PLC0415
-                custom_tool_defs_to_langchain,
-            )
-
             normalized: list[Any] = []
             for item in additional_tools:
                 if isinstance(
                     item, tuple
                 ):  # a band CustomToolDef (InputModel, handler)
-                    normalized.extend(custom_tool_defs_to_langchain([item]))
+                    normalized.extend(
+                        langchain_tools.custom_tool_defs_to_langchain([item])
+                    )
                 else:  # already a LangChain tool / callable
                     normalized.append(item)
             additional_tools = normalized
@@ -138,11 +137,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # ("system", ...) message on bootstrap and the checkpointer carries it
         # forward, matching the pattern used by every other Band adapter.
         if uses_simple_pattern:
-            # local: tests patch langchain.agents.create_agent directly, which only
-            # works if this module looks it up at call time rather than import time
-            from langchain.agents import create_agent  # noqa: PLC0415
-            from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
-
             if checkpointer is None:
                 checkpointer = InMemorySaver()
 
@@ -150,7 +144,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             def factory(band_tools: list[Any]) -> Pregel:
                 all_tools = band_tools + additional
-                return create_agent(
+                return langchain.agents.create_agent(
                     model=llm,
                     tools=all_tools,
                     checkpointer=checkpointer,
@@ -250,17 +244,11 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         room_id: str,
     ) -> None:
         """Handle message with LangGraph."""
-        # local: tests patch this name on langchain_tools itself, which only
-        # takes effect if it's looked up at call time rather than import time
-        from band.integrations.langgraph.langchain_tools import (  # noqa: PLC0415
-            agent_tools_to_langchain,
-        )
-
         logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
 
         # Get LangChain tools
-        langchain_tools = (
-            agent_tools_to_langchain(
+        lc_tools = (
+            langchain_tools.agent_tools_to_langchain(
                 tools,
                 features=self.features,
             )
@@ -269,7 +257,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         # Build or get graph
         if self.graph_factory:
-            graph = self.graph_factory(langchain_tools)
+            graph = self.graph_factory(lc_tools)
         else:
             graph = self._static_graph
 

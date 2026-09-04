@@ -14,12 +14,10 @@ if so which Slack thread does it mirror?".
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from band.core.protocols import HistoryConverter
-
-if TYPE_CHECKING:
-    from band.integrations.slack.types import SlackSessionState
+from band.integrations.slack.types import SlackRoomBinding, SlackSessionState
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +43,6 @@ class SlackHistoryConverter(HistoryConverter["SlackSessionState"]):
             contains a Slack bootstrap task event, otherwise the empty
             default state.
         """
-        from band.integrations.slack.types import (  # noqa: PLC0415 -- avoids a circular import: band.integrations.slack's __init__ imports adapter.py, which imports this module
-            SlackRoomBinding,
-            SlackSessionState,
-        )
-
         binding: SlackRoomBinding | None = None
         for msg in raw:
             if msg.get("message_type") != "task":

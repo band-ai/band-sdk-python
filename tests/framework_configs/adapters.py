@@ -19,12 +19,21 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK,
     ClaudeSDKAdapter,
 )
+
+# Safe without the crewai package: every crewai import in both adapters is
+# TYPE_CHECKING-only or function-local, so the module loads and the classes
+# construct with the package absent. Do not fake crewai through
+# ``sys.modules`` to get here — see ``tests/test_module_isolation.py`` for
+# what that costs.
+from band.adapters.crewai import CrewAIAdapter
+from band.adapters.crewai_flow import CrewAIFlowAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.adapters.copilot_sdk import (
     _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK,
     CopilotSDKAdapter,
     CopilotSDKAdapterConfig,
 )
+from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 
 __all__ = [
     "AdapterConfig",
@@ -159,8 +168,6 @@ async def _crewai_advertised_arg_text() -> dict[str, dict[str, str | None]]:
     text plus CrewAI-specific mentions leniency, so a field re-declared on that
     subclass would drift silently — this is the probe that catches it.
     """
-    from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file configures
-
     tools = build_band_crewai_tools(
         get_context=lambda: None,
         reporter=NoopReporter(),
@@ -210,19 +217,6 @@ def _crewai_installed() -> bool:
     return True
 
 
-def _get_crewai_adapter_cls() -> type:
-    """The CrewAIAdapter class for the conformance config.
-
-    A plain import needs no crewai: every crewai import in the adapter is
-    TYPE_CHECKING-only or function-local, so the module loads and the class
-    constructs with the package absent. Do not fake crewai through ``sys.modules``
-    to get here — see ``tests/test_module_isolation.py`` for what that costs.
-    """
-    from band.adapters.crewai import CrewAIAdapter  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file configures
-
-    return CrewAIAdapter
-
-
 async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
     raise RuntimeError(
         "CrewAI conformance instance is config-only — "
@@ -231,8 +225,7 @@ async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
 
 
 def _crewai_factory(**kw: Any) -> Any:
-    cls = _get_crewai_adapter_cls()
-    instance = cls(**kw)
+    instance = CrewAIAdapter(**kw)
     # Guard the runtime methods in both venvs: without crewai they would fail on its
     # function-local import, and with it they would build a Crew and call an LLM for
     # real. on_cleanup is never guarded (dict.pop + logging, no CrewAI interaction).
@@ -386,7 +379,7 @@ def _build_langgraph_config() -> AdapterConfig:
 
 
 def _build_crewai_config() -> AdapterConfig:
-    crewai_cls = _get_crewai_adapter_cls()
+    crewai_cls = CrewAIAdapter
     _crewai_available = _crewai_installed()
 
     return AdapterConfig(
@@ -433,22 +426,10 @@ def _build_crewai_config() -> AdapterConfig:
     )
 
 
-def _get_crewai_flow_adapter_cls() -> type:
-    """The CrewAIFlowAdapter class for the conformance config.
-
-    Plain import, as for ``_get_crewai_adapter_cls``. The adapter no longer
-    imports ``Flow`` at module scope, so this remains safe when crewai is absent.
-    """
-    from band.adapters.crewai_flow import CrewAIFlowAdapter  # noqa: PLC0415 -- isolates the crewai_flow extra from the other frameworks this file configures
-
-    return CrewAIFlowAdapter
-
-
 def _crewai_flow_factory(**kw: Any) -> Any:
-    cls = _get_crewai_flow_adapter_cls()
     if "flow_factory" not in kw:
         kw["flow_factory"] = lambda: MagicMock()
-    instance = cls(**kw)
+    instance = CrewAIFlowAdapter(**kw)
 
     async def _guard(*_a: Any, **_k: Any) -> None:
         raise RuntimeError(
@@ -461,7 +442,7 @@ def _crewai_flow_factory(**kw: Any) -> Any:
 
 
 def _build_crewai_flow_config() -> AdapterConfig:
-    flow_cls = _get_crewai_flow_adapter_cls()
+    flow_cls = CrewAIFlowAdapter
 
     return AdapterConfig(
         framework_id="crewai_flow",

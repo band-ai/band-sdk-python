@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from band.core.protocols import HistoryConverter
-
-# Use TYPE_CHECKING to avoid circular import:
-# acp/__init__.py -> server_adapter.py -> this module -> acp/types.py -> acp/__init__.py
-if TYPE_CHECKING:
-    from band.integrations.acp.types import ACPSessionState
+from band.integrations.acp.types import ACPSessionState
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +36,6 @@ class ACPServerHistoryConverter(HistoryConverter["ACPSessionState"]):
             ACPSessionState with session_to_room mapping extracted
             from the history.
         """
-        # Runtime import to avoid circular import at module load time
-        from band.integrations.acp.types import ACPSessionState  # noqa: PLC0415
-
         session_to_room: dict[str, str] = {}
         session_cwd: dict[str, str] = {}
         session_mcp_servers: dict[str, list[dict[str, Any]]] = {}

@@ -33,13 +33,16 @@ import pytest
 from band_rest import (
     AgentRegisterRequest,
     AsyncRestClient,
-    ChatMessageRequest,
     CreateContactRequestRequestContactRequest,
     CreateMyChatRoomRequestChat,
-    ParticipantRequest,
 )
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, ParsingError
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    ChatMessageRequest,
+    ParsingError,
+    ParticipantRequest,
+)
 from band.runtime.tools import HumanTools
 
 

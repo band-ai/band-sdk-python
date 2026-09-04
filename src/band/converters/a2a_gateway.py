@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from band.core.protocols import HistoryConverter
-
-# Use TYPE_CHECKING to avoid circular import:
-# gateway/__init__.py -> adapter.py -> this module -> gateway/types.py -> gateway/__init__.py
-if TYPE_CHECKING:
-    from band.integrations.a2a.gateway.types import GatewaySessionState
+from band.integrations.a2a.gateway.types import GatewaySessionState
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +40,6 @@ class GatewayHistoryConverter(HistoryConverter["GatewaySessionState"]):
             GatewaySessionState with context_to_room and room_participants
             mappings extracted from the history.
         """
-        # Runtime import to avoid circular import at module load time
-        from band.integrations.a2a.gateway.types import GatewaySessionState  # noqa: PLC0415
-
         context_to_room: dict[str, str] = {}
         room_participants: dict[str, set[str]] = defaultdict(set)
 
