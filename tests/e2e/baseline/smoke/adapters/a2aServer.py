@@ -32,6 +32,8 @@ from a2a.types import (
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT
 from starlette.applications import Starlette
 
+from band.integrations.uvicorn_server import wait_until_started
+
 from tests.ports import reserve_port
 
 CANNED_REPLY = "a2a-fixture-canned-reply"
@@ -129,7 +131,7 @@ class A2ACounterparty:
         return Starlette(routes=routes)
 
     async def start(self) -> None:
-        self._uvicorn = uvicorn.Server(
+        server = uvicorn.Server(
             uvicorn.Config(
                 self._build_app(),
                 host="127.0.0.1",
@@ -138,15 +140,10 @@ class A2ACounterparty:
                 timeout_graceful_shutdown=STOP_TIMEOUT_S,
             )
         )
-        self._server_task = asyncio.create_task(self._uvicorn.serve())
-        deadline = asyncio.get_running_loop().time() + START_TIMEOUT_S
-        while not self._uvicorn.started:
-            if asyncio.get_running_loop().time() > deadline:
-                raise RuntimeError(
-                    f"A2A fixture server did not start within {START_TIMEOUT_S}s "
-                    f"on port {self.port}"
-                )
-            await asyncio.sleep(0.05)
+        server_task = asyncio.create_task(server.serve())
+        self._uvicorn = server
+        self._server_task = server_task
+        await wait_until_started(server, server_task, timeout_s=START_TIMEOUT_S)
 
     async def stop(self) -> None:
         if self._uvicorn is None or self._server_task is None:

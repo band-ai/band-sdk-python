@@ -22,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
+from band.integrations.uvicorn_server import wait_until_started
 from band_rest import Peer
 
 logger = logging.getLogger(__name__)
@@ -253,7 +254,7 @@ class GatewayServer:
         import uvicorn
 
         self._app = self._build_app()
-        self._uvicorn = uvicorn.Server(
+        server = uvicorn.Server(
             uvicorn.Config(
                 self._app,
                 host="0.0.0.0",
@@ -262,24 +263,15 @@ class GatewayServer:
                 timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
             )
         )
-        self._server_task = asyncio.create_task(self._uvicorn.serve())
-        await self._wait_until_started()
+        server_task = asyncio.create_task(server.serve())
+        self._uvicorn = server
+        self._server_task = server_task
+        await wait_until_started(server, server_task, timeout_s=SERVER_START_TIMEOUT_S)
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
             self.port,
             len(self.peers),
         )
-
-    async def _wait_until_started(self) -> None:
-        assert self._uvicorn is not None
-        deadline = asyncio.get_running_loop().time() + SERVER_START_TIMEOUT_S
-        while not self._uvicorn.started:
-            if asyncio.get_running_loop().time() > deadline:
-                raise RuntimeError(
-                    f"A2A Gateway server did not start within "
-                    f"{SERVER_START_TIMEOUT_S}s on port {self.port}"
-                )
-            await asyncio.sleep(0.05)
 
     async def stop(self) -> None:
         if self._uvicorn is None or self._server_task is None:

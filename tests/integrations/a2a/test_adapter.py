@@ -22,6 +22,7 @@ from a2a.types import (
 
 from band.core.types import PlatformMessage
 from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
+from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
 from band.testing import FakeAgentTools
 
 
@@ -143,10 +144,12 @@ class TestA2AAdapterStartup:
         await adapter.cleanup_all()
 
     @pytest.mark.asyncio
-    async def test_owned_http_client_has_no_read_timeout(self) -> None:
+    async def test_owned_http_client_has_a_generous_bounded_read_timeout(self) -> None:
         """A real remote turn (a live LLM call, a tool loop) routinely leaves
         several seconds of silence between SSE events -- httpx's 5s default
-        read timeout would misreport that as a dead connection."""
+        read timeout would misreport that as a dead connection. The bound
+        must still be finite, though, so a peer that hangs after accepting
+        the connection fails the turn instead of blocking the room forever."""
         adapter = A2AAdapter(remote_url="http://localhost:10000")
         client = MagicMock()
 
@@ -157,7 +160,7 @@ class TestA2AAdapterStartup:
             await adapter.on_started("Agent", "Description")
 
         assert adapter._http_client is not None
-        assert adapter._http_client.timeout.read is None
+        assert adapter._http_client.timeout.read == _SSE_READ_TIMEOUT_S
 
         client.close = AsyncMock()
         await adapter.cleanup_all()

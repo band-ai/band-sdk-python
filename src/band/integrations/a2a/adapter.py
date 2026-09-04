@@ -37,6 +37,13 @@ from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
 logger = logging.getLogger(__name__)
 
+# httpx's read timeout resets on every chunk received, so this bounds the gap
+# between SSE events, not the turn as a whole. Generous enough for the
+# multi-second silences of a live LLM call or tool loop; still finite, so a
+# peer that accepts the connection and then hangs eventually fails the turn
+# instead of blocking the room forever.
+_SSE_READ_TIMEOUT_S = 300.0
+
 
 class A2AAdapter(SimpleAdapter[A2ASessionState]):
     """Adapter that forwards messages to a remote A2A agent.
@@ -109,10 +116,11 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         # httpx's default 5s read timeout fires on the normal, multi-second
         # gap between SSE events during a real remote turn (a live LLM call,
-        # a tool loop) -- not a hang. Leave read unbounded; connect/write/pool
-        # stay bounded so a genuinely dead peer still fails promptly.
+        # a tool loop) -- not a hang. Use a generous bound instead of the
+        # default so a genuinely dead peer still fails promptly.
         self._http_client = httpx.AsyncClient(
-            headers=headers, timeout=httpx.Timeout(10.0, read=None)
+            headers=headers,
+            timeout=httpx.Timeout(10.0, read=_SSE_READ_TIMEOUT_S),
         )
         factory = ClientFactory(
             ClientConfig(streaming=self.streaming, httpx_client=self._http_client)

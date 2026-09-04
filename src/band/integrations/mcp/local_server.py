@@ -35,6 +35,7 @@ from band.integrations.mcp.engine import (
     build_engine,
     validate_unique_tool_names,
 )
+from band.integrations.uvicorn_server import wait_until_started
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +237,9 @@ class LocalMCPServer:
                 self._uvicorn_server = uvicorn_server
                 self._serve_task = serve_task
 
-                await self._wait_until_started()
+                await wait_until_started(
+                    uvicorn_server, serve_task, timeout_s=SERVER_START_TIMEOUT_S
+                )
             except Exception:
                 await self._stop_locked()
                 raise
@@ -343,15 +346,3 @@ class LocalMCPServer:
             "Could not find a free localhost MCP port in range "
             f"{self._port_min}-{self._port_max}"
         ) from last_error
-
-    async def _wait_until_started(self) -> None:
-        if self._serve_task is None or self._uvicorn_server is None:
-            raise RuntimeError("Local MCP server task not initialized")
-
-        deadline = asyncio.get_running_loop().time() + SERVER_START_TIMEOUT_S
-        while not self._uvicorn_server.started:
-            if self._serve_task.done():
-                await self._serve_task
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("Timed out waiting for local MCP server startup")
-            await asyncio.sleep(0.05)
