@@ -7,9 +7,9 @@ of them while the *other stays running* the whole time. Two properties fall out
 that the single-agent rejoin test cannot exercise:
 
 * Selective/partial rehydration — the rebooted agent (a fresh adapter under the
-  same identity, no in-memory state) still recalls a fact stated before its reboot,
-  which can only have come from the platform rehydrating the room on bootstrap
-  (``/context``). The reboot happens amid a live peer, not in an empty room.
+same identity, no in-memory state) recalls a fact its peer stated *while it was
+offline*. That marker cannot be in the rebooted adapter's persisted backend session,
+so it must have come from platform ``/context`` on bootstrap.
 * Peer continuity — the never-rebooted agent, which stayed up across its neighbour's
   churn, answers a liveness probe unperturbed. Rebooting one participant does not
   disturb the other.
@@ -47,7 +47,9 @@ Fixing it needs per-instance tool-name isolation (or per-agent Letta project/org
 scoping); until then two Letta agents cannot keep separate identities in one org.
 
 Wording note: a neutral "note", not a "secret code" (models refuse to echo a
-credential-shaped value — an unrelated false failure).
+credential-shaped value — an unrelated false failure). The peer's setup reply must
+both contain the marker and mention the offline rebooter: platform history is
+agent-scoped, so an unmentioned peer message would not belong in its ``/context``.
 """
 
 from __future__ import annotations
@@ -57,8 +59,6 @@ from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
-    RECALL,
-    REMEMBER,
     REPLY_PROMPT,
     unique_marker,
 )
@@ -114,7 +114,7 @@ async def test_partial_reboot_preserves_context_and_peer(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Rebooting one agent recalls via rehydration; the peer stays responsive."""
+    """A rebooted agent recalls its offline peer's note; the peer stays responsive."""
     note = unique_marker("note")
 
     # Two distinct identities from the same cell — distinct labels or the generated
@@ -126,29 +126,54 @@ async def test_partial_reboot_preserves_context_and_peer(
         participants=[stayer.id, rebooter.id],
     )
 
+    relay_prompt = (
+        REPLY_PROMPT
+        + f" When asked, send exactly one message that mentions participant "
+        f"'{rebooter.name}' and contains this exact note: {note}."
+    )
+
     # The stayer is UP for the entire test — it never reboots, so it can only answer
     # the liveness probe if a peer's reboot left it undisturbed.
-    async with cell.run_as(stayer):
-        # Rebooter run 1: state the note to the rebooter, then stop it (exit block).
+    async with cell.run_as(stayer, prompt=relay_prompt):
+        # Establish the rebooter's own backend session before it goes offline. The
+        # marker below is created only afterwards, so session resume cannot explain
+        # a successful recall.
         async with cell.run_as(rebooter):
             async with reply_capture(room_id) as capture:
+                mark = capture.messages.snapshot()
                 mid = await user_ops.send_message(
                     room_id,
-                    REMEMBER.format(note=note),
+                    "Please acknowledge that you are ready.",
                     mention_id=rebooter.id,
                     mention_name=rebooter.name,
                 )
-                await capture.wait_for_processed(mid, rebooter.id)
+                await capture.wait_for_reply(mid, rebooter.id, since=mark)
 
-        # Rebooter run 2: a brand-new adapter under the SAME identity — no in-memory
-        # history. A correct recall proves the platform rehydrated the room on
-        # bootstrap, even though the reboot happened alongside a live peer.
+        # While the rebooter is offline, the stayer authors a marker-bearing message
+        # that explicitly mentions it. This is the agent-scoped-history precondition:
+        # without the mention, the platform correctly omits the peer message from the
+        # rebooter's /context and a failed recall would be ambiguous.
+        async with reply_capture(room_id) as capture:
+            mark = capture.messages.snapshot()
+            mid = await user_ops.send_message(
+                room_id,
+                f"Please pass the note to {rebooter.name}.",
+                mention_id=stayer.id,
+                mention_name=stayer.name,
+            )
+            replies = await capture.wait_for_reply(mid, stayer.id, since=mark)
+            replies.mentioning(rebooter.id).assert_contains_any([note])
+
+        # Rebooter run 2: a fresh adapter under the SAME identity. Its old backend
+        # session cannot know a marker created while it was offline; a correct recall
+        # therefore proves platform rehydration even for session-resume adapters.
         async with cell.run_as(rebooter):
             async with reply_capture(room_id) as capture:
                 mark = capture.messages.snapshot()  # scope to the recall turn
                 mid = await user_ops.send_message(
                     room_id,
-                    RECALL,
+                    "Earlier, the other participant sent you a short note with a token. "
+                    "Reply with just that token.",
                     mention_id=rebooter.id,
                     mention_name=rebooter.name,
                 )

@@ -190,6 +190,9 @@ jobs:
       # @pytest.mark.timeout(extra=...). See tests/e2e/baseline/conftest.py.
       # The registry scopes which adapters run in this lane.
       BAND_E2E_LANE: ${{ matrix.lane }}
+      # Per-test timeouts are the primary boundary. This larger no-progress
+      # watchdog catches a stuck pytest process that failed to enforce one.
+      E2E_PROGRESS_DEADLINE_SECONDS: "1800"
       # The dev-crewai and dev-parlant venvs each lack the other frameworks;
       # tolerate missing framework configs there instead of failing fast (mirrors
       # ci.yml's crewai and parlant jobs).
@@ -283,6 +286,8 @@ jobs:
         ATTEMPT1: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-1.json
         ATTEMPT2: artifacts/attempts/scorecard-${{ matrix.lane }}-${{ matrix.os }}-2.json
         FINAL: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
+        PROGRESS_DIAGNOSTIC1: artifacts/diagnostics/progress-${{ matrix.lane }}-${{ matrix.os }}-1.json
+        PROGRESS_DIAGNOSTIC2: artifacts/diagnostics/progress-${{ matrix.lane }}-${{ matrix.os }}-2.json
       run: bash .github/scripts/run-baseline-e2e.sh
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp).
@@ -336,6 +341,7 @@ jobs:
         path: |
           artifacts/scorecard-*.json
           artifacts/environment-*.json
+          artifacts/diagnostics/*.json
         if-no-files-found: ignore
 
   # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A)

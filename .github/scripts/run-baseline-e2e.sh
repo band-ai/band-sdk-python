@@ -18,9 +18,26 @@ set -uo pipefail
 : "${ATTEMPT1:?ATTEMPT1 scorecard path is required}"
 : "${ATTEMPT2:?ATTEMPT2 scorecard path is required}"
 : "${FINAL:?FINAL scorecard path is required}"
+: "${PROGRESS_DIAGNOSTIC1:?first-attempt progress diagnostic path is required}"
+: "${PROGRESS_DIAGNOSTIC2:?retry progress diagnostic path is required}"
+
+# The workflow supplies this one conservative ceiling. A per-test timeout remains
+# the primary contract; this only catches a harness that stops enforcing it.
+E2E_PROGRESS_DEADLINE_SECONDS="${E2E_PROGRESS_DEADLINE_SECONDS:-1800}"
 
 mkdir -p artifacts/attempts
-BAND_E2E_SCORECARD_JSON="$ATTEMPT1" uv run pytest tests/e2e/baseline/ -v -s --no-cov
+run_pytest() {
+  local scorecard="$1"
+  local diagnostic="$2"
+  shift 2
+  BAND_E2E_SCORECARD_JSON="$scorecard" \
+    python .github/scripts/watch-progress.py \
+      --idle-seconds "$E2E_PROGRESS_DEADLINE_SECONDS" \
+      --diagnostic "$diagnostic" \
+      -- uv run pytest tests/e2e/baseline/ -v -s --no-cov "$@"
+}
+
+run_pytest "$ATTEMPT1" "$PROGRESS_DIAGNOSTIC1"
 code=$?
 if [ "$code" -ne 0 ]; then
   # A retry only helps for one-off flakiness (a rate-limit window, a cold start).
@@ -39,8 +56,7 @@ if [ "$code" -ne 0 ]; then
     # the retry into a second full live lane -- double the provider spend and wall
     # clock, against a leg that carries a wall-clock cap. Deselecting instead is the
     # honest reading: a retry with nothing identifiable to retry has nothing to add.
-    BAND_E2E_SCORECARD_JSON="$ATTEMPT2" uv run pytest tests/e2e/baseline/ -v -s --no-cov \
-      --last-failed --lfnf=none
+    run_pytest "$ATTEMPT2" "$PROGRESS_DIAGNOSTIC2" --last-failed --lfnf=none
     retry_code=$?
     # Exit 5 is pytest's "no tests collected" -- here, --lfnf=none deselecting
     # everything (the no-cache case above). That says nothing about the lane, so

@@ -11,6 +11,7 @@ The fixture re-exports are listed in ``__all__`` so they read as intentional.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -47,6 +48,9 @@ from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.scorecard import ScorecardCollector
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.toolkit.timeouts import effective_timeout
+
+
+_terminal_reporter: Any | None = None
 
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
@@ -98,6 +102,12 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Resolve the terminal reporter after pytest has registered its built-ins."""
+    global _terminal_reporter
+    _terminal_reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     """Gate every baseline test, then resolve any ``@requires(...)`` extras.
 
@@ -119,6 +129,12 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         # requires() always wraps deps in a tuple; guard the raw-marker case.
         for dep in marker.args[0] if marker.args else ():
             require_dep(dep, settings)
+
+
+def pytest_runtest_logstart(nodeid: str, location: tuple[str, int | None, str]) -> None:
+    """Emit a safe current-node marker for CI's no-progress watchdog."""
+    if _terminal_reporter is not None:
+        _terminal_reporter.write_line(f"E2E_PROGRESS nodeid={nodeid}")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
