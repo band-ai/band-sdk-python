@@ -461,10 +461,14 @@ class WebSocketClient:
         """Classify one failed initial-connect attempt through Session and
         resolve it to a retry delay, or raise if Session now considers the
         session Dead."""
+        # Captured before the live-socket probe below (up to open_timeout=5s
+        # inside classify_initial_upgrade_error) -- charging the probe's own
+        # latency to Session's rapid-disconnect timing would understate how
+        # fast repeated failures are actually happening.
+        now = asyncio.get_running_loop().time()
         upgrade_error = await classify_initial_upgrade_error(
             exc, self._require_client().channel_socket_url
         )
-        now = asyncio.get_running_loop().time()
         match upgrade_error:
             case WebSocketUpgradeError():
                 outcome = self._session.on_upgrade_rejected(
@@ -501,8 +505,12 @@ class WebSocketClient:
             raise raise_exc from exc
 
         # None only when Dead (handled above) or stale (unreachable here) --
-        # narrows the type for the caller's asyncio.sleep.
-        assert outcome.retry_after_s is not None
+        # fail loudly rather than trust a Session contract that assert would
+        # silently drop under python -O.
+        if outcome.retry_after_s is None:
+            raise RuntimeError(
+                "Session returned a non-Dead outcome with no retry_after_s"
+            )
         logger.warning(
             "Initial WebSocket connection failed; retrying in %.2fs: %s",
             outcome.retry_after_s,
@@ -553,7 +561,16 @@ class WebSocketClient:
             if epoch is None:
                 # Unreachable given this loop's own control flow, but
                 # Session's signature allows it -- fail loudly rather than
-                # silently proceed with a None epoch.
+                # silently proceed with a None epoch, and still populate
+                # last_disconnect_reason like every other Dead path in this
+                # class so BandLink.connect() sees a terminal reason too.
+                self.record_terminal_disconnect(
+                    WebSocketDisconnectReason(
+                        reason="session_ended",
+                        message="WebSocket session is no longer connectable",
+                        retryable=False,
+                    )
+                )
                 raise RuntimeError("WebSocket session is no longer connectable")
 
             self.client = self._build_phx_client()

@@ -25,7 +25,7 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 import band_sdk_core
-from band_sdk_core import DeadReason
+from band_sdk_core import DeadReason, SessionState
 
 from band.credentials import PROXY_MANAGED_API_KEY
 import band.client.streaming.wire as wire_module
@@ -566,6 +566,162 @@ async def test_aenter_trips_dead_after_rapid_disconnect_threshold(monkeypatch):
     # so no `from` chaining applies -- self-referential __cause__ would be
     # incorrect (and misleading) here.
     assert exc_info.value.__cause__ is None
+
+
+async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
+    monkeypatch,
+):
+    """`now` must be the wall-clock time the connect attempt actually failed,
+    not the time classify_initial_upgrade_error's live-socket probe finished
+    -- otherwise a burst of true back-to-back failures each looks slower than
+    it really was, understating how rapid the disconnects are to Session's
+    rolling rapid-disconnect window."""
+    now_s_seen = []
+
+    class RecordingSession:
+        def __init__(self, policy):
+            pass
+
+        def begin_attempt(self, now_s):
+            return 1
+
+        def on_socket_close(self, epoch, now_s, close_code, jitter_sample):
+            now_s_seen.append(now_s)
+            return SimpleNamespace(
+                state=SessionState.Reconnecting,
+                retry_after_s=0.0,
+                dead_reason=None,
+                stale_reason=None,
+            )
+
+        def on_connected(self, epoch, now_s):
+            return SimpleNamespace(stale_reason=None)
+
+        def end(self):
+            return SessionState.Dead
+
+    monkeypatch.setattr("band.client.streaming.client.Session", RecordingSession)
+
+    probe_delay_s = 0.1
+
+    async def slow_classify(exc, websocket_url):
+        await asyncio.sleep(probe_delay_s)
+        return None
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.classify_initial_upgrade_error",
+        slow_classify,
+    )
+
+    attempts = 0
+
+    class FailOncePHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PHXConnectionError("temporary network failure")
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.PHXChannelsClient", FailOncePHXClient
+    )
+
+    start = asyncio.get_running_loop().time()
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert len(now_s_seen) == 1
+    # The probe alone burns probe_delay_s; if `now` were captured after it,
+    # the recorded gap would be at least that large.
+    assert now_s_seen[0] - start < probe_delay_s / 2
+
+    await client.__aexit__(None, None, None)
+
+
+async def test_aenter_records_terminal_disconnect_when_session_returns_no_epoch(
+    monkeypatch,
+):
+    """begin_attempt() returning None is unreachable given this loop's own
+    control flow, but Session's own signature allows it -- if it ever
+    happens, last_disconnect_reason must still be populated before raising,
+    like every other Dead path in this class, so BandLink.connect() sees a
+    terminal reason instead of silently keeping a stale one."""
+
+    class DeadOnArrivalSession:
+        def __init__(self, policy):
+            pass
+
+        def begin_attempt(self, now_s):
+            return None
+
+    monkeypatch.setattr("band.client.streaming.client.Session", DeadOnArrivalSession)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(RuntimeError, match="no longer connectable"):
+        await client.__aenter__()
+
+    assert client.last_disconnect_reason is not None
+    assert client.last_disconnect_reason.retryable is False
+
+
+async def test_resolve_failed_connect_attempt_raises_when_retry_after_s_missing(
+    monkeypatch,
+):
+    """A non-Dead SessionOutcome with retry_after_s=None can't happen with the
+    real Session today, but if that contract were ever violated, a bare
+    `assert` would be stripped under `python -O` and surface as an unhandled
+    `asyncio.sleep(None)` TypeError -- this must fail loudly instead, like
+    the sibling `epoch is None` check in `__aenter__`."""
+
+    class BadOutcomeSession:
+        def __init__(self, policy):
+            pass
+
+        def begin_attempt(self, now_s):
+            return 1
+
+        def on_socket_close(self, epoch, now_s, close_code, jitter_sample):
+            return SimpleNamespace(
+                state=SessionState.Reconnecting,
+                retry_after_s=None,
+                dead_reason=None,
+                stale_reason=None,
+            )
+
+    monkeypatch.setattr("band.client.streaming.client.Session", BadOutcomeSession)
+
+    async def no_upgrade_error(exc, websocket_url):
+        return None
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.classify_initial_upgrade_error",
+        no_upgrade_error,
+    )
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise PHXConnectionError("temporary network failure")
+
+    monkeypatch.setattr(
+        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(RuntimeError, match="no retry_after_s"):
+        await client.__aenter__()
 
 
 async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
