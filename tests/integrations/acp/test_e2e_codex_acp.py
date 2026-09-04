@@ -42,6 +42,10 @@ from band.integrations.mcp.engine import (
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
 from tests.toolkit.timeouts import backstop_timeout
+from acp import spawn_agent_process
+from acp.schema import HttpMcpServer
+from tests.runtime.conftest import make_participant
+from acp.exceptions import RequestError
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +94,6 @@ class EchoInput(BaseModel):
 
 def _spawn_codex_acp(acp_client: BandACPClient):
     """Spawn the installed codex-acp executable."""
-    from acp import spawn_agent_process
 
     if _CODEX_ACP_COMMAND is None:
         pytest.skip("codex-acp not available")
@@ -220,7 +223,6 @@ async def test_codex_acp_http_mcp_server_tool_call(
     acp_runtime: ACPRuntime,
 ) -> None:
     """Should connect to a local HTTP MCP server and execute a tool."""
-    from acp.schema import HttpMcpServer
 
     assert acp_runtime.client is not None
 
@@ -288,9 +290,6 @@ async def test_codex_acp_band_mcp_tool_call(
     acp_runtime: ACPRuntime,
 ) -> None:
     """Should discover and call a real Band MCP tool."""
-    from acp.schema import HttpMcpServer
-
-    from tests.runtime.conftest import make_participant
 
     assert acp_runtime.client is not None
 
@@ -417,7 +416,6 @@ async def test_codex_acp_multiple_sessions(acp_runtime: ACPRuntime) -> None:
 @pytest.mark.asyncio
 async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
     """Should list created sessions (if supported by the agent)."""
-    from acp.exceptions import RequestError
 
     ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
@@ -459,7 +457,6 @@ async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
 @pytest.mark.asyncio
 async def test_spawn_process_safety(acp_client: BandACPClient) -> None:
     """Should handle __aenter__ failure gracefully for bad command."""
-    from acp import spawn_agent_process
 
     ctx = spawn_agent_process(acp_client, "nonexistent-acp-command-12345")
     with pytest.raises(Exception):

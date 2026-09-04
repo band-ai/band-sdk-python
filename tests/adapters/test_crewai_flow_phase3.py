@@ -319,18 +319,14 @@ class TestFlowFactoryException:
 
 
 class TestNestAsyncioNotInvoked:
+    @requires_nest_asyncio
     @pytest.mark.asyncio
     async def test_direct_response_does_not_apply_nest_asyncio(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Patch nest_asyncio.apply at the module level.
-        try:
-            import nest_asyncio  # type: ignore
-
-            apply_mock = MagicMock()
-            monkeypatch.setattr(nest_asyncio, "apply", apply_mock)
-        except ImportError:
-            pytest.skip("nest_asyncio not installed")
+        apply_mock = MagicMock()
+        monkeypatch.setattr(nest_asyncio, "apply", apply_mock)
 
         flow = _make_flow_returning(
             {"decision": "direct_response", "content": "hi", "mentions": []}

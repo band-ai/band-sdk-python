@@ -10,6 +10,7 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from band_rest import RestClient
 from mcp import ClientSession
 
 
@@ -22,8 +23,6 @@ def _assert_no_method_name_collisions() -> None:
     group ever share a method name, such a test would silently pass with the
     wrong assertion instead of failing loudly.
     """
-    from band_rest import RestClient
-
     try:
         client = RestClient(api_key="dummy", base_url="http://localhost")
     except Exception as exc:

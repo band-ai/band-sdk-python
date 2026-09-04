@@ -13,8 +13,13 @@ nothing left to shim.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
+from band.adapters.anthropic import AnthropicAdapter
+from band.adapters.gemini import GeminiAdapter
+from band.adapters.letta import LettaAdapterConfig
 from band.core.exceptions import BandConfigError
 
 
@@ -22,15 +27,11 @@ class TestSelectiveRenameShims:
     """Anthropic and Gemini get the api_key/prompt selective renames."""
 
     def test_anthropic_anthropic_api_key_warns(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
             AnthropicAdapter(anthropic_api_key="sk-test-key")
 
     def test_anthropic_anthropic_api_key_resolves_to_provider_key(self) -> None:
-        from unittest.mock import patch
-
-        from band.adapters.anthropic import AnthropicAdapter
 
         with patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls:
             with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
@@ -38,7 +39,6 @@ class TestSelectiveRenameShims:
         mock_cls.assert_called_once_with(api_key="sk-old-key")
 
     def test_anthropic_api_key_warns(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -46,9 +46,6 @@ class TestSelectiveRenameShims:
             AnthropicAdapter(api_key="sk-test-key")
 
     def test_anthropic_api_key_resolves_to_provider_key(self) -> None:
-        from unittest.mock import patch
-
-        from band.adapters.anthropic import AnthropicAdapter
 
         with patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls:
             with pytest.warns(
@@ -58,44 +55,37 @@ class TestSelectiveRenameShims:
         mock_cls.assert_called_once_with(api_key="sk-test-key")
 
     def test_anthropic_custom_section_warns(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="custom_section"):
             AnthropicAdapter(custom_section="Be helpful.")
 
     def test_anthropic_provider_key_and_api_key_conflict(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(provider_key="sk-new", api_key="sk-old")
 
     def test_anthropic_anthropic_api_key_and_provider_key_conflict(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass"):
             AnthropicAdapter(provider_key="sk-new", anthropic_api_key="sk-old")
 
     def test_anthropic_prompt_and_custom_section_conflict(self) -> None:
-        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(prompt="new", custom_section="old")
 
     def test_gemini_gemini_api_key_warns(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="gemini_api_key"):
             GeminiAdapter(gemini_api_key="AIza-test-key")
 
     def test_gemini_gemini_api_key_resolves_to_provider_key(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="gemini_api_key"):
             adapter = GeminiAdapter(gemini_api_key="AIza-old-key")
         assert adapter._provider_key == "AIza-old-key"
 
     def test_gemini_api_key_warns(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -103,7 +93,6 @@ class TestSelectiveRenameShims:
             GeminiAdapter(api_key="AIza-test-key")
 
     def test_gemini_api_key_resolves_to_provider_key(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -112,25 +101,21 @@ class TestSelectiveRenameShims:
         assert adapter._provider_key == "AIza-test-key"
 
     def test_gemini_custom_section_warns(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="custom_section"):
             GeminiAdapter(custom_section="Be concise.")
 
     def test_gemini_provider_key_and_api_key_conflict(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(provider_key="AIza-new", api_key="AIza-old")
 
     def test_gemini_gemini_api_key_and_provider_key_conflict(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass"):
             GeminiAdapter(provider_key="AIza-new", gemini_api_key="AIza-old")
 
     def test_gemini_prompt_and_custom_section_conflict(self) -> None:
-        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(prompt="new", custom_section="old")
@@ -140,7 +125,6 @@ class TestLettaApiKeyShim:
     """LettaAdapterConfig.api_key must warn and resolve to provider_key."""
 
     def test_letta_api_key_warns(self) -> None:
-        from band.adapters.letta import LettaAdapterConfig
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -152,7 +136,6 @@ class TestLettaApiKeyShim:
         assert "api_key" not in LettaAdapterConfig.model_fields
 
     def test_letta_provider_key_and_api_key_conflict(self) -> None:
-        from band.adapters.letta import LettaAdapterConfig
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             LettaAdapterConfig(provider_key="new-key", api_key="old-key")
@@ -162,7 +145,6 @@ class TestLettaMCPKwargShim:
     """Legacy Letta MCP kwargs must populate the nested MCP config."""
 
     def test_legacy_mcp_kwargs_warn_and_populate_external_config(self) -> None:
-        from band.adapters.letta import LettaAdapterConfig
 
         with pytest.warns(
             DeprecationWarning,

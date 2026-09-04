@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
-from band.core.types import ALL_CAPABILITIES, Emit, PlatformMessage
+from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
@@ -109,8 +109,6 @@ class TestInitialization:
 
     def test_memory_tools_default(self):
         """Should default memory tools to False."""
-        from band.core.types import Capability
-
         adapter = GoogleADKAdapter()
         assert Capability.MEMORY not in adapter.features.capabilities
 

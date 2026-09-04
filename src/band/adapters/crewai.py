@@ -64,9 +64,9 @@ def _silence_lite_agent_error_panel() -> None:
     """
     try:
         # event_listener is imported for its side effect: registering the handlers.
-        from crewai.events import crewai_event_bus
-        from crewai.events.event_listener import event_listener  # noqa: F401
-        from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent
+        from crewai.events import crewai_event_bus  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        from crewai.events.event_listener import event_listener  # noqa: F401, PLC0415 -- crewai extra, absent from the standard dev venv
+        from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
 
         handlers = crewai_event_bus._sync_handlers.get(
             LiteAgentExecutionErrorEvent, frozenset()
@@ -178,8 +178,8 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Initialize CrewAI agent after metadata is fetched."""
         try:
-            from crewai import Agent as CrewAIAgent
-            from crewai import LLM
+            from crewai import Agent as CrewAIAgent  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            from crewai import LLM  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
         except ImportError as e:
             raise ImportError(
                 "crewai is required for CrewAI adapter.\n"

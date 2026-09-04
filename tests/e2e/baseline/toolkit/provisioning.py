@@ -38,6 +38,7 @@ from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 if TYPE_CHECKING:
@@ -581,15 +582,9 @@ class AdapterCell:
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
     ) -> SimpleAdapter[Any]:
-        """Construct (do not run) this cell's adapter; arguments override cell defaults.
-
-        ``build_adapter`` is imported lazily so this module never pulls the adapter
-        registry (and its optional framework deps) at import time.
-        """
+        """Construct (do not run) this cell's adapter; arguments override cell defaults."""
         # Overrides use None-means-"cell default" (not a sentinel): no test needs to
         # clear a default back to "no prompt", so the sentinel would be dead machinery.
-        from tests.e2e.baseline.toolkit.adapters import build_adapter
-
         return build_adapter(
             self.adapter_id,
             self.settings,

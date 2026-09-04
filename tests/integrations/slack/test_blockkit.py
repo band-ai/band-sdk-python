@@ -25,7 +25,7 @@ from band.integrations.slack.block_kit import (
     render_plan_blocks,
 )
 from band.integrations.slack.types import SlackRoomBinding
-from band.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools, ToolCallOutcome
 
 
 # ── humanize_tool_name ──────────────────────────────────────────────────────
@@ -249,8 +249,6 @@ def _patch_super_execute(
 ) -> tuple[Any, AsyncMock]:
     """Patch ``AgentTools.execute_tool_call_structured`` so super calls return
     controlled :class:`ToolCallOutcome` results."""
-    from band.runtime.tools import ToolCallOutcome
-
     mock = AsyncMock(
         return_value=ToolCallOutcome(
             value=return_value, ok=ok, error_message=error_message
@@ -344,11 +342,12 @@ async def test_failed_tool_call_flips_task_to_error():
 async def test_super_exception_marks_task_error_and_reraises():
     tools, _, _ = _make_tools()
     err = RuntimeError("boom")
-    from band.runtime.tools import AgentTools as _AT
 
     # BandToolError (and anything else that propagates out of the
     # structured call) must mark the task ERROR and re-raise.
-    with patch.object(_AT, "execute_tool_call_structured", AsyncMock(side_effect=err)):
+    with patch.object(
+        AgentTools, "execute_tool_call_structured", AsyncMock(side_effect=err)
+    ):
         with pytest.raises(RuntimeError, match="boom"):
             await tools.execute_tool_call("band_lookup_peers", {})
 

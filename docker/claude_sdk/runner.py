@@ -26,6 +26,8 @@ from typing import Any
 
 import yaml
 
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
 from band.config.loader import load_agent_config
 from band.config.logs import LogSettings
 from band.core.types import Emit
@@ -160,9 +162,6 @@ async def main() -> None:
         agent_key=agent_key,
         lock_timeout_s=lock_timeout_s,
     )
-
-    from band import Agent
-    from band.adapters import ClaudeSDKAdapter
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]

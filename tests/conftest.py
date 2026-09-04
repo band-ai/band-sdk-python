@@ -56,6 +56,7 @@ from band.platform.event import (
     ContactRemovedEvent,
 )
 from band.platform.link import BandLink
+from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import PlatformMessage
 
 from tests.paths import ENV_TEST_FILE
@@ -185,8 +186,6 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     if {"e2e", "integration"} & set(request.node.path.parts):
         yield
         return
-
-    from band.runtime.single_instance import SingleInstanceGuard
 
     lock_dir: list = []
     created: list[SingleInstanceGuard] = []

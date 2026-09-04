@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from anthropic.types import TextBlock, ToolUseBlock
+
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, PlatformMessage
 from band.testing import feature_kwargs
@@ -185,8 +187,6 @@ class BaselineScenario:
         decision = self.script.next(**request)
         if isinstance(decision, Exception):
             raise decision
-
-        from anthropic.types import TextBlock, ToolUseBlock
 
         content: list[Any] = []
         for index, call in enumerate(decision.tool_calls, start=1):

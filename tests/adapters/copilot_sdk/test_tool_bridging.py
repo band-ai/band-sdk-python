@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
 from band.core.types import Emit
@@ -144,7 +144,6 @@ class TestToolBridging:
     @pytest.mark.asyncio
     async def test_model_level_validation_error_is_llm_readable(self):
         """Model-validator errors have loc=() and must not crash the handler."""
-        from pydantic import model_validator
 
         class PairInput(BaseModel):
             a: int

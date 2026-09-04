@@ -7,9 +7,11 @@ remains in the per-framework test files under tests/adapters/.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
-from band.core.types import Capability
+from band.core.types import Capability, Emit
 from tests.baseline.adapter import Adapter
 from tests.e2e.baseline.agents import ExcludedAdapter
 
@@ -137,7 +139,6 @@ class TestAdapterOnMessage:
 
     def test_on_message_is_coroutine_function(self, adapter_config):
         """on_message must be an async method."""
-        import inspect
 
         adapter = adapter_config.adapter_factory()
         assert inspect.iscoroutinefunction(adapter.on_message)
@@ -165,7 +166,6 @@ class TestAdapterFeaturesContract:
 
     def test_supported_emit_declared(self, adapter_config):
         """Every adapter class must define SUPPORTED_EMIT as a frozenset."""
-        from band.core.types import Emit
 
         adapter = adapter_config.adapter_factory()
         cls = type(adapter)
@@ -337,7 +337,10 @@ class TestImagePassthroughMatrix:
         (both share opencode's already-fixed MCP engine, so they're excluded
         from *this* unit-level set as having no probe of their own, but get
         a real E2E cell each)."""
-        from tests.e2e.baseline.smoke.matrix.test_capability_matrix import (
+        # Real circular import: test_capability_matrix imports
+        # IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS from this module at its own
+        # top level, so this side must defer to call time.
+        from tests.e2e.baseline.smoke.matrix.test_capability_matrix import (  # noqa: PLC0415
             IMAGE_PASSTHROUGH_ADAPTERS,
         )
 

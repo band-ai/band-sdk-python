@@ -24,10 +24,12 @@ import base64
 from collections.abc import Awaitable, Callable, Iterable
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.tools import BandTool, TOOL_DEFINITIONS
+from band.core.types import AdapterFeatures, Capability
+from band.runtime.tools import BandTool, TOOL_DEFINITIONS, ToolCallOutcome
 from tests.framework_conformance.test_adapter_conformance import (
     IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS,
 )
@@ -101,7 +103,7 @@ class _StubReadRoomFileTools:
 
 
 async def _probe_claude_sdk() -> bool:
-    from band.integrations.claude_sdk.tools import build_band_sdk_tools
+    from band.integrations.claude_sdk.tools import build_band_sdk_tools  # noqa: PLC0415 -- claude_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     sdk_tools = build_band_sdk_tools(
         tool_definitions=[TOOL_DEFINITIONS[BandTool.READ_ROOM_FILE]],
@@ -116,11 +118,10 @@ async def _probe_claude_sdk() -> bool:
 
 
 async def _probe_anthropic() -> bool:
-    from unittest.mock import AsyncMock, MagicMock
 
-    from anthropic.types import ToolUseBlock
+    from anthropic.types import ToolUseBlock  # noqa: PLC0415 -- anthropic extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
-    from band.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- anthropic extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     adapter = AnthropicAdapter(emit=())
     tools = MagicMock()
@@ -147,9 +148,11 @@ async def _probe_anthropic() -> bool:
 
 
 async def _probe_opencode() -> bool:
-    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp.shared.memory import (  # noqa: PLC0415 -- opencode extra, absent from the standard dev-crewai/dev-parlant lane venvs
+        create_connected_server_and_client_session,
+    )
 
-    from band.integrations.mcp.engine import (
+    from band.integrations.mcp.engine import (  # noqa: PLC0415 -- opencode extra, absent from the standard dev-crewai/dev-parlant lane venvs
         EmbeddedResolver,
         EngineSpec,
         build_engine,
@@ -179,11 +182,10 @@ async def _probe_opencode() -> bool:
 
 
 async def _probe_gemini() -> bool:
-    from unittest.mock import AsyncMock, MagicMock
 
-    from google.genai import types
+    from google.genai import types  # noqa: PLC0415 -- gemini extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
-    from band.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- gemini extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     adapter = GeminiAdapter(provider_key="test-key")
     tools = MagicMock()
@@ -206,10 +208,10 @@ async def _probe_gemini() -> bool:
 
 
 async def _probe_langgraph() -> bool:
-    from unittest.mock import AsyncMock, MagicMock
 
-    from band.core.types import AdapterFeatures, Capability
-    from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
+    from band.integrations.langgraph.langchain_tools import (  # noqa: PLC0415 -- langgraph extra, absent from the standard dev-crewai/dev-parlant lane venvs
+        agent_tools_to_langchain,
+    )
 
     tools = MagicMock()
     tools.is_hub_room = False
@@ -233,9 +235,12 @@ async def _probe_langgraph() -> bool:
 
 
 async def _probe_agno() -> bool:
-    from agno.tools.function import ToolResult
+    from agno.tools.function import ToolResult  # noqa: PLC0415 -- agno extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
-    from band.adapters.agno import _bind_room_tools, _make_band_entrypoint
+    from band.adapters.agno import (  # noqa: PLC0415 -- agno extra, absent from the standard dev-crewai/dev-parlant lane venvs
+        _bind_room_tools,
+        _make_band_entrypoint,
+    )
 
     entry = _make_band_entrypoint(BandTool.READ_ROOM_FILE)
     with _bind_room_tools(_StubReadRoomFileTools()):
@@ -250,7 +255,7 @@ async def _probe_agno() -> bool:
 
 
 async def _probe_strands() -> bool:
-    from band.adapters.strands import _tool_result
+    from band.adapters.strands import _tool_result  # noqa: PLC0415 -- strands extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     tool_use = {"toolUseId": "t1", "name": BandTool.READ_ROOM_FILE, "input": {}}
 
@@ -264,13 +269,10 @@ async def _probe_strands() -> bool:
 
 
 async def _probe_copilot_sdk() -> bool:
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock, MagicMock
 
-    from copilot import ToolInvocation
+    from copilot import ToolInvocation  # noqa: PLC0415 -- copilot_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
-    from band.runtime.tools import ToolCallOutcome
+    from band.adapters.copilot_sdk import CopilotSDKAdapter  # noqa: PLC0415 -- copilot_sdk extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     room_tools = MagicMock()
     room_tools.execute_tool_call_structured = AsyncMock(
@@ -298,7 +300,7 @@ async def _probe_copilot_sdk() -> bool:
 
 
 async def _probe_codex() -> bool:
-    from band.adapters.codex import _image_content_items
+    from band.adapters.codex import _image_content_items  # noqa: PLC0415 -- codex extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     content_items = _image_content_items(_IMAGE_RESULT)
 
@@ -307,8 +309,7 @@ async def _probe_codex() -> bool:
 
 
 async def _probe_pydantic_ai() -> bool:
-    from band.adapters.pydantic_ai import PydanticAIAdapter
-    from band.core.types import Capability
+    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- pydantic_ai extra, absent from the standard dev-crewai/dev-parlant lane venvs
 
     adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
     await adapter.on_started(agent_name="Probe", agent_description="probe")
@@ -325,13 +326,12 @@ async def _probe_pydantic_ai() -> bool:
 
 
 async def _probe_crewai() -> bool:
-    from band.integrations.crewai.tools import (
+    from band.integrations.crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev-crewai/dev-parlant lane venvs
         CrewAIToolContext,
         NoopReporter,
         build_band_crewai_tools,
         vision_sentinel,
     )
-    from band.core.types import Capability
 
     context = CrewAIToolContext(room_id="room-1", tools=_StubReadRoomFileTools())
     tools = build_band_crewai_tools(
@@ -374,8 +374,7 @@ def test_crewai_platform_tool_name_is_plain_str() -> None:
     BandTool (StrEnum) default would leave tool.name a BandTool instance at
     runtime instead of the str the field is typed as -- str(spec.name) at
     the PlatformTool definition must keep it a plain str."""
-    from band.core.types import Capability
-    from band.integrations.crewai.tools import (
+    from band.integrations.crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev-crewai/dev-parlant lane venvs
         CrewAIToolContext,
         NoopReporter,
         build_band_crewai_tools,

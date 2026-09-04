@@ -14,6 +14,12 @@ import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import BaseModel, ValidationError
+
+from band.core.exceptions import BandToolError
+from band.core.memory_types import memory_type_field_description
+from band.core.types import AdapterFeatures, Capability, Emit
+from band.runtime.tools import file_content_placeholder, image_block_placeholder
 
 
 class MockBaseTool:
@@ -48,14 +54,12 @@ def crewai_mocks(monkeypatch):
 
 @pytest.fixture
 def builder_mod(crewai_mocks):
-    import importlib
 
     return importlib.import_module("band.integrations.crewai.tools")
 
 
 @pytest.fixture
 def runtime_mod(crewai_mocks):
-    import importlib
 
     return importlib.import_module("band.integrations.crewai.runtime")
 
@@ -63,7 +67,6 @@ def runtime_mod(crewai_mocks):
 @pytest.fixture
 def platform_args_schemas(builder_mod):
     """Tool name -> the args schema CrewAI actually advertises to the LLM."""
-    from band.core.types import Capability
 
     tools = builder_mod.build_band_crewai_tools(
         get_context=lambda: None,
@@ -98,7 +101,6 @@ class TestToolSetComposition:
         assert len(tools) == 7
 
     def test_capability_contacts_adds_five(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -117,7 +119,6 @@ class TestToolSetComposition:
         assert len(tools) == 12
 
     def test_capability_memory_adds_five(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -136,7 +137,6 @@ class TestToolSetComposition:
         assert len(tools) == 12
 
     def test_capability_files_adds_three(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -153,7 +153,6 @@ class TestToolSetComposition:
         assert len(tools) == 10
 
     def test_both_capabilities(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -163,7 +162,6 @@ class TestToolSetComposition:
         assert len(tools) == 17  # 7 base + 5 contacts + 5 memory
 
     def test_all_three_capabilities(self, builder_mod):
-        from band.core.types import Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -175,7 +173,6 @@ class TestToolSetComposition:
         assert len(tools) == 20  # 7 base + 5 contacts + 5 memory + 3 files
 
     def test_custom_tools_appended(self, builder_mod):
-        from pydantic import BaseModel
 
         class MyInput(BaseModel):
             """My custom tool."""
@@ -195,7 +192,6 @@ class TestToolSetComposition:
         assert len(tools) == 8
 
     def test_adapter_feature_filters_apply_to_platform_tools(self, builder_mod):
-        from band.core.types import AdapterFeatures, Capability
 
         tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
@@ -215,9 +211,6 @@ class TestToolSetComposition:
         assert "band_archive_memory" not in names
 
     def test_adapter_feature_filters_only_apply_to_platform_tools(self, builder_mod):
-        from pydantic import BaseModel
-
-        from band.core.types import AdapterFeatures
 
         class MyInput(BaseModel):
             value: str
@@ -267,7 +260,6 @@ class TestToolSetComposition:
     def test_platform_tool_schemas_reject_invalid_values(
         self, platform_args_schemas, tool_name, payload
     ):
-        from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             platform_args_schemas[tool_name].model_validate(payload)
@@ -320,7 +312,6 @@ class TestToolSetComposition:
         json.dumps has no default=str, so an unserialized model previously
         raised inside report_result -- caught by its own try/except and only
         logged as a warning -- silently dropping the tool_result event."""
-        from band.core.types import AdapterFeatures, Emit
 
         class FakePeersResponse:
             def __init__(self, data):
@@ -448,7 +439,6 @@ class TestToolSetComposition:
     def test_send_failure_appends_available_handles(self, builder_mod):
         """The real empty-mentions error already lists the room's handles, so the
         CrewAI enricher must surface them once — not append a second copy."""
-        from band.core.exceptions import BandToolError
 
         tools_obj = MagicMock()
         tools_obj.agent_id = None
@@ -487,7 +477,6 @@ class TestToolSetComposition:
     def test_send_failure_excludes_agent_own_handle(self, builder_mod):
         """The agent's own handle is never offered as a retry option — an
         agent can't @mention itself, so listing it only misleads the LLM."""
-        from band.core.exceptions import BandToolError
 
         tools_obj = MagicMock()
         tools_obj.agent_id = "self-2"
@@ -521,7 +510,6 @@ class TestToolSetComposition:
 
 class TestFileTools:
     def test_list_room_files_forwards_cursor(self, builder_mod):
-        from band.core.types import Capability
 
         tools_obj = MagicMock()
         tools_obj.list_room_files = AsyncMock(
@@ -541,7 +529,6 @@ class TestFileTools:
         tools_obj.list_room_files.assert_awaited_once_with("cursor-1")
 
     def test_list_room_files_default_cursor_is_none(self, builder_mod):
-        from band.core.types import Capability
 
         tools_obj = MagicMock()
         tools_obj.list_room_files = AsyncMock(return_value={"data": []})
@@ -558,7 +545,6 @@ class TestFileTools:
         tools_obj.list_room_files.assert_awaited_once_with(None)
 
     def test_read_room_file_forwards_file_id(self, builder_mod):
-        from band.core.types import Capability
 
         tools_obj = MagicMock()
         tools_obj.read_room_file = AsyncMock(
@@ -581,7 +567,6 @@ class TestFileTools:
         """CrewAI's own StepExecutor rewrites a VISION_IMAGE:<media_type>:<b64>
         tool-result string into a real image_url content block -- pin that
         band_read_room_file emits exactly that sentinel for an image result."""
-        from band.core.types import Capability
 
         image_result = {
             "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
@@ -605,8 +590,6 @@ class TestFileTools:
     ):
         """The full base64 sentinel must reach CrewAI's StepExecutor, but the
         platform tool_result event must not carry that same base64 blob."""
-        from band.core.types import AdapterFeatures, Capability, Emit
-        from band.runtime.tools import image_block_placeholder
 
         image_result = {
             "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
@@ -636,7 +619,6 @@ class TestFileTools:
     def test_send_room_file_forwards_args_in_protocol_order(self, builder_mod):
         """AgentToolsProtocol.send_room_file wants (content, filename, caption,
         mentions) positionally -- pin the reorder from the tool's own kwargs."""
-        from band.core.types import Capability
 
         tools_obj = MagicMock()
         tools_obj.send_room_file = AsyncMock(
@@ -667,7 +649,6 @@ class TestFileTools:
     def test_send_room_file_mentions_accepts_lenient_string_shape(self, builder_mod):
         """Smaller models emit mentions as a JSON-string or bracketed string,
         same leniency need as band_send_message -- see normalize_mentions_lenient."""
-        from band.core.types import Capability
 
         tools_obj = MagicMock()
         tools_obj.send_room_file = AsyncMock(
@@ -694,8 +675,6 @@ class TestFileTools:
     ):
         """The full content must still reach send_room_file, but the
         tool_call event must not carry that same raw payload."""
-        from band.core.types import AdapterFeatures, Capability, Emit
-        from band.runtime.tools import file_content_placeholder
 
         tools_obj = MagicMock()
         tools_obj.send_room_file = AsyncMock(
@@ -730,7 +709,6 @@ class TestFileTools:
         assert content not in json.dumps(reported_args)
 
     def test_send_room_file_failure_returns_error_status(self, builder_mod):
-        from band.core.types import Capability
 
         tools_obj = MagicMock()
         tools_obj.send_room_file = AsyncMock(side_effect=RuntimeError("upload failed"))
@@ -758,7 +736,6 @@ class TestFileTools:
 class TestEmitToolCallsReporter:
     @pytest.mark.asyncio
     async def test_does_not_emit_when_tool_calls_unset(self, builder_mod):
-        from band.core.types import AdapterFeatures
 
         features = AdapterFeatures()  # empty emit set
         reporter = builder_mod.EmitToolCallsReporter(features)
@@ -772,7 +749,6 @@ class TestEmitToolCallsReporter:
 
     @pytest.mark.asyncio
     async def test_emits_when_tool_calls_set(self, builder_mod):
-        from band.core.types import AdapterFeatures, Emit
 
         features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
         reporter = builder_mod.EmitToolCallsReporter(features)
@@ -795,7 +771,6 @@ class TestEmitToolCallsReporter:
         were silently dropped on read. Pin the schema here so a count-only
         assertion can't let that drift back in.
         """
-        from band.core.types import AdapterFeatures, Emit
 
         features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
         reporter = builder_mod.EmitToolCallsReporter(features)
@@ -822,7 +797,6 @@ class TestEmitToolCallsReporter:
 
     @pytest.mark.asyncio
     async def test_error_result_sets_is_error(self, builder_mod):
-        from band.core.types import AdapterFeatures, Emit
 
         features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
         reporter = builder_mod.EmitToolCallsReporter(features)
@@ -839,7 +813,6 @@ class TestEmitToolCallsReporter:
 
     @pytest.mark.asyncio
     async def test_send_event_failure_does_not_propagate(self, builder_mod):
-        from band.core.types import AdapterFeatures, Emit
 
         features = AdapterFeatures(emit=frozenset({Emit.TOOL_CALLS}))
         reporter = builder_mod.EmitToolCallsReporter(features)
@@ -905,7 +878,6 @@ class TestStoreMemoryArgsSchema:
     """CrewAI advertises the master model, so master text and validators apply."""
 
     def test_type_description_comes_from_master(self, platform_args_schemas) -> None:
-        from band.core.memory_types import memory_type_field_description
 
         schema = platform_args_schemas["band_store_memory"]
         assert (
@@ -915,7 +887,6 @@ class TestStoreMemoryArgsSchema:
     def test_rejects_subject_scope_without_subject_id(
         self, platform_args_schemas
     ) -> None:
-        from pydantic import ValidationError
 
         with pytest.raises(ValidationError, match="requires a subject_id"):
             platform_args_schemas["band_store_memory"].model_validate(
@@ -930,7 +901,6 @@ class TestStoreMemoryArgsSchema:
             )
 
     def test_rejects_type_for_wrong_system(self, platform_args_schemas) -> None:
-        from pydantic import ValidationError
 
         with pytest.raises(
             ValidationError, match="type `semantic` is not valid for system `sensory`"

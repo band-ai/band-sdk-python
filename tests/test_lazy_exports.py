@@ -83,7 +83,7 @@ def test_first_access_binds_the_name_into_the_package() -> None:
     A resolved export that never lands in the namespace re-enters importlib on
     every single read.
     """
-    import band.testing
+    import band.testing  # noqa: PLC0415 -- pins the exact import path this test exercises
 
     vars(band.testing).pop("FakeAgentTools", None)
 
@@ -93,7 +93,7 @@ def test_first_access_binds_the_name_into_the_package() -> None:
 
 
 def test_unknown_attribute_raises_attribute_error() -> None:
-    import band.adapters
+    import band.adapters  # noqa: PLC0415 -- pins the exact import path this test exercises
 
     with pytest.raises(AttributeError, match="NoSuchAdapter"):
         band.adapters.NoSuchAdapter

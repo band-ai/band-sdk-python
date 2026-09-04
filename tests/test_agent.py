@@ -1,14 +1,22 @@
 """Tests for Agent compositor."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from band.agent import Agent, DEFAULT_SHUTDOWN_TIMEOUT
+from band.client.streaming import (
+    MessageCreatedPayload,
+    MessageMetadata,
+    ParticipantAddedPayload,
+    RoomAddedPayload,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, AgentInput, Capability
+from band.platform.event import MessageEvent, ParticipantAddedEvent, RoomAddedEvent
 from band.runtime.capabilities import FeatureFlag
-from band.runtime.types import AgentConfig, SessionConfig
+from band.runtime.types import AgentConfig, ConversationContext, SessionConfig
 from band.preprocessing.default import DefaultPreprocessor
 from band.testing.platform import platform_connection_stub
 
@@ -477,8 +485,6 @@ class TestDefaultPreprocessorIntegration:
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
 
         # Create a non-MessageEvent (e.g., RoomAddedEvent)
-        from band.platform.event import RoomAddedEvent
-        from band.client.streaming import RoomAddedPayload
 
         mock_ctx = MagicMock()
         mock_event = RoomAddedEvent(
@@ -502,9 +508,6 @@ class TestDefaultPreprocessorIntegration:
     ):
         """Participant events should not become adapter execution turns."""
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
-
-        from band.client.streaming import ParticipantAddedPayload
-        from band.platform.event import ParticipantAddedEvent
 
         mock_ctx = MagicMock()
         mock_event = ParticipantAddedEvent(
@@ -531,10 +534,6 @@ class TestStartupRaceCondition:
     @pytest.mark.asyncio
     async def test_adapter_on_started_before_first_message(self):
         """System prompt must be set before any message processing."""
-        from band.client.streaming import MessageCreatedPayload, MessageMetadata
-        from band.platform.event import MessageEvent
-        from band.runtime.types import ConversationContext
-        from datetime import datetime, timezone
 
         # Track the order of calls
         call_order = []

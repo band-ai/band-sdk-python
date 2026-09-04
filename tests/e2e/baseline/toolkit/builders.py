@@ -50,7 +50,7 @@ def _build_anthropic(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file builds
 
     return AnthropicAdapter(
         model=s.llm_models.anthropic_model,
@@ -69,7 +69,7 @@ def _build_claude_sdk(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.claude_sdk import ClaudeSDKAdapter
+    from band.adapters.claude_sdk import ClaudeSDKAdapter  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
 
     return ClaudeSDKAdapter(
         model=s.llm_models.anthropic_model,
@@ -96,9 +96,9 @@ def _build_copilot_sdk(
     # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
     # ask_user / base_directory / a shared client are bespoke knobs exercised by
     # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
-    from copilot import ProviderConfig
+    from copilot import ProviderConfig  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
 
-    from band.adapters.copilot_sdk import CopilotSDKAdapter, CopilotSDKAdapterConfig
+    from band.adapters.copilot_sdk import CopilotSDKAdapter, CopilotSDKAdapterConfig  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file builds
 
     return CopilotSDKAdapter(
         CopilotSDKAdapterConfig(
@@ -124,10 +124,10 @@ def _build_langgraph(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from langchain_openai import ChatOpenAI
-    from langgraph.checkpoint.memory import MemorySaver
+    from langchain_openai import ChatOpenAI  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file builds
+    from langgraph.checkpoint.memory import MemorySaver  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file builds
 
-    from band.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file builds
 
     return LangGraphAdapter(
         llm=ChatOpenAI(
@@ -155,9 +155,9 @@ def _build_pydantic_ai(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from pydantic_ai import RunContext
+    from pydantic_ai import RunContext  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
 
-    from band.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file builds
 
     # pydantic-ai takes native callables with a RunContext-first signature.
     native = (
@@ -179,9 +179,9 @@ def _build_strands(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from strands.models.openai import OpenAIModel
+    from strands.models.openai import OpenAIModel  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
 
-    from band.adapters.strands import StrandsAdapter
+    from band.adapters.strands import StrandsAdapter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file builds
 
     # Strands has no provider-prefix string shorthand (a bare string means a
     # Bedrock model id), so the OpenAI provider is constructed explicitly.
@@ -205,7 +205,7 @@ def _build_gemini(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file builds
 
     return GeminiAdapter(
         model=s.llm_models.gemini_model,
@@ -224,7 +224,7 @@ def _build_google_adk(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.google_adk import GoogleADKAdapter
+    from band.adapters.google_adk import GoogleADKAdapter  # noqa: PLC0415 -- isolates the google_adk extra from the other frameworks this file builds
 
     # google-adk reads the provider key / Vertex config from the environment.
     return GoogleADKAdapter(
@@ -243,7 +243,7 @@ def _build_crewai(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.crewai import CrewAIAdapter
+    from band.adapters.crewai import CrewAIAdapter  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file builds
 
     return CrewAIAdapter(
         model=s.llm_models.openai_model,
@@ -267,10 +267,10 @@ def _build_agno(
     # Agno bridges a user-built agent, so steering goes into its instructions.
     # Use the Anthropic model: small models refuse the suite's crafted prompts as
     # injection, so the matrix relies on E2E_ANTHROPIC_MODEL being a capable model.
-    from agno.agent import Agent as AgnoAgent
-    from agno.models.anthropic import Claude
+    from agno.agent import Agent as AgnoAgent  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file builds
+    from agno.models.anthropic import Claude  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file builds
 
-    from band.adapters.agno import AgnoAdapter
+    from band.adapters.agno import AgnoAdapter  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file builds
 
     # agno tools are plain callables on the agent; the band adapter captures them
     # and re-offers them alongside the platform tools each run.
@@ -296,7 +296,7 @@ def _build_crewai_flow(
     # CrewAI Flow returns a terminal result rather than running the Band tool loop,
     # so it takes a flow_factory (not a model/prompt) and advertises no platform
     # capabilities. The minimal flow echoes back so the reply path is observable.
-    from band.adapters.crewai_flow import CrewAIFlowAdapter
+    from band.adapters.crewai_flow import CrewAIFlowAdapter  # noqa: PLC0415 -- isolates the crewai_flow extra from the other frameworks this file builds
 
     class _E2EFlow:
         async def kickoff_async(self, inputs: dict[str, Any]) -> dict[str, Any]:
@@ -355,7 +355,7 @@ def _build_codex(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+    from band.adapters.codex import CodexAdapter, CodexAdapterConfig  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file builds
 
     return CodexAdapter(
         config=CodexAdapterConfig(**codex_config_kwargs(s, prompt=prompt)),
@@ -377,7 +377,7 @@ def _build_opencode(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig  # noqa: PLC0415 -- isolates the opencode extra from the other frameworks this file builds
 
     return OpencodeAdapter(
         config=OpencodeAdapterConfig(
@@ -444,7 +444,7 @@ def _build_copilot_acp(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
+    from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig  # noqa: PLC0415 -- isolates the copilot_acp extra from the other frameworks this file builds
 
     # stdio spawn of `copilot --acp` co-located with the SDK, so Band tools reach
     # Copilot over the loopback MCP server (inject_band_tools default True).
@@ -505,7 +505,7 @@ def _build_letta(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
+    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file builds
 
     _reject_tools(Adapter.LETTA, tools)
 

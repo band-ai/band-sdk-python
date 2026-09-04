@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
 from band.adapters.claude_sdk import ClaudeSDKAdapter
 from band.converters.claude_sdk import ClaudeSDKSessionState
@@ -31,8 +32,6 @@ def test_semantic_tool_name_strips_only_our_server_prefix() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_call_event_uses_bare_name() -> None:
-    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
-
     adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
 
     message = PlatformMessage(

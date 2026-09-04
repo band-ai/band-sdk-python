@@ -9,13 +9,32 @@ from __future__ import annotations
 
 import functools
 import inspect
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
-from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK
+from band.adapters.claude_sdk import (
+    _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK,
+    ClaudeSDKAdapter,
+)
+
+# Both classes construct with crewai absent; do not fake the package via
+# ``sys.modules`` instead — see ``tests/test_module_isolation.py``.
+from band.adapters.crewai import CrewAIAdapter
+from band.adapters.crewai_flow import CrewAIFlowAdapter
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.copilot_sdk import (
+    _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK,
+    CopilotSDKAdapter,
+    CopilotSDKAdapterConfig,
+)
+from band.adapters.google_adk import GoogleADKAdapter
+from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.parlant import ParlantAdapter
+from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 
 __all__ = [
     "AdapterConfig",
@@ -110,8 +129,6 @@ def _all_capabilities() -> Any:
     instead of silently sitting outside every probe until someone remembers
     to add it.
     """
-    from band.core.types import ALL_CAPABILITIES, AdapterFeatures
-
     return AdapterFeatures(capabilities=ALL_CAPABILITIES)
 
 
@@ -121,8 +138,7 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     Kept here rather than inline in a test so the walk through pydantic-ai's
     internals lives in exactly one place.
     """
-    from band.adapters.pydantic_ai import PydanticAIAdapter
-    from band.core.types import Capability
+    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
 
     adapter = PydanticAIAdapter(
         model="test",
@@ -157,8 +173,6 @@ async def _crewai_advertised_arg_text() -> dict[str, dict[str, str | None]]:
     text plus CrewAI-specific mentions leniency, so a field re-declared on that
     subclass would drift silently — this is the probe that catches it.
     """
-    from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
-
     tools = build_band_crewai_tools(
         get_context=lambda: None,
         reporter=NoopReporter(),
@@ -179,13 +193,13 @@ async def _crewai_advertised_arg_text() -> dict[str, dict[str, str | None]]:
 
 
 def _anthropic_factory(**kw: Any) -> Any:
-    from band.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
 
     return AnthropicAdapter(**kw)
 
 
 def _langgraph_factory(**kw: Any) -> Any:
-    from band.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
 
     if "llm" not in kw and "graph_factory" not in kw and "graph" not in kw:
         kw["llm"] = MagicMock()
@@ -202,23 +216,10 @@ def _langgraph_factory(**kw: Any) -> Any:
 def _crewai_installed() -> bool:
     """Whether the real crewai package is importable (the dev-crewai venv)."""
     try:
-        import crewai  # noqa: F401
+        import crewai  # noqa: F401, PLC0415
     except ImportError:
         return False
     return True
-
-
-def _get_crewai_adapter_cls() -> type:
-    """The CrewAIAdapter class for the conformance config.
-
-    A plain import needs no crewai: every crewai import in the adapter is
-    TYPE_CHECKING-only or function-local, so the module loads and the class
-    constructs with the package absent. Do not fake crewai through ``sys.modules``
-    to get here — see ``tests/test_module_isolation.py`` for what that costs.
-    """
-    from band.adapters.crewai import CrewAIAdapter
-
-    return CrewAIAdapter
 
 
 async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
@@ -229,8 +230,7 @@ async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
 
 
 def _crewai_factory(**kw: Any) -> Any:
-    cls = _get_crewai_adapter_cls()
-    instance = cls(**kw)
+    instance = CrewAIAdapter(**kw)
     # Guard the runtime methods in both venvs: without crewai they would fail on its
     # function-local import, and with it they would build a Crew and call an LLM for
     # real. on_cleanup is never guarded (dict.pop + logging, no CrewAI interaction).
@@ -241,13 +241,11 @@ def _crewai_factory(**kw: Any) -> Any:
 
 
 def _claude_sdk_factory(**kw: Any) -> Any:
-    from band.adapters.claude_sdk import ClaudeSDKAdapter
-
     return ClaudeSDKAdapter(**kw)
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from band.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
 
     if "model" not in kw:
         kw["model"] = _PYDANTIC_AI_INJECTED_MODEL
@@ -255,7 +253,7 @@ def _pydantic_ai_factory(**kw: Any) -> Any:
 
 
 def _strands_factory(**kw: Any) -> Any:
-    from band.adapters.strands import StrandsAdapter
+    from band.adapters.strands import StrandsAdapter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
 
     if "model" not in kw:
         kw["model"] = _STRANDS_INJECTED_MODEL
@@ -263,8 +261,6 @@ def _strands_factory(**kw: Any) -> Any:
 
 
 def _parlant_factory(**kw: Any) -> Any:
-    from band.adapters.parlant import ParlantAdapter
-
     # A borrowed server with no parlant_agent: system_prompt/custom_section
     # (exercised via custom_kwargs) only apply to an adapter-created agent,
     # so the factory lets the adapter create one on the mocked server.
@@ -280,20 +276,16 @@ def _parlant_factory(**kw: Any) -> Any:
 
 
 def _codex_factory(**kw: Any) -> Any:
-    from band.adapters.codex import CodexAdapter
-
     return CodexAdapter(**kw)
 
 
 def _letta_factory(**kw: Any) -> Any:
-    from band.adapters.letta import LettaAdapter
+    from band.adapters.letta import LettaAdapter  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file configures
 
     return LettaAdapter(**kw)
 
 
 def _opencode_factory(**kw: Any) -> Any:
-    from band.adapters.opencode import OpencodeAdapter
-
     # Fake the server boundary so on_started's reachability preflight
     # (which only runs with the default client factory) stays offline.
     kw.setdefault("client_factory", lambda _config: MagicMock())
@@ -301,7 +293,7 @@ def _opencode_factory(**kw: Any) -> Any:
 
 
 def _agno_factory(**kw: Any) -> Any:
-    from band.adapters.agno import AgnoAdapter
+    from band.adapters.agno import AgnoAdapter  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
 
     # AgnoAdapter takes a developer-built Agno Agent; inject a stand-in so the
     # adapter can be constructed without a real model/API key.
@@ -311,14 +303,12 @@ def _agno_factory(**kw: Any) -> Any:
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from band.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
 
     return GeminiAdapter(**kw)
 
 
 def _google_adk_factory(**kw: Any) -> Any:
-    from band.adapters.google_adk import GoogleADKAdapter
-
     return GoogleADKAdapter(**kw)
 
 
@@ -339,7 +329,7 @@ _STRANDS_INJECTED_MODEL = "strands-conformance-model"
 
 
 def _build_anthropic_config() -> AdapterConfig:
-    from band.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
 
     return AdapterConfig(
         framework_id="anthropic",
@@ -363,7 +353,7 @@ def _build_anthropic_config() -> AdapterConfig:
 
 
 def _build_langgraph_config() -> AdapterConfig:
-    from band.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
 
     return AdapterConfig(
         framework_id="langgraph",
@@ -386,7 +376,7 @@ def _build_langgraph_config() -> AdapterConfig:
 
 
 def _build_crewai_config() -> AdapterConfig:
-    crewai_cls = _get_crewai_adapter_cls()
+    crewai_cls = CrewAIAdapter
     _crewai_available = _crewai_installed()
 
     return AdapterConfig(
@@ -433,22 +423,10 @@ def _build_crewai_config() -> AdapterConfig:
     )
 
 
-def _get_crewai_flow_adapter_cls() -> type:
-    """The CrewAIFlowAdapter class for the conformance config.
-
-    Plain import, as for ``_get_crewai_adapter_cls``. The adapter no longer
-    imports ``Flow`` at module scope, so this remains safe when crewai is absent.
-    """
-    from band.adapters.crewai_flow import CrewAIFlowAdapter
-
-    return CrewAIFlowAdapter
-
-
 def _crewai_flow_factory(**kw: Any) -> Any:
-    cls = _get_crewai_flow_adapter_cls()
     if "flow_factory" not in kw:
         kw["flow_factory"] = lambda: MagicMock()
-    instance = cls(**kw)
+    instance = CrewAIFlowAdapter(**kw)
 
     async def _guard(*_a: Any, **_k: Any) -> None:
         raise RuntimeError(
@@ -461,7 +439,7 @@ def _crewai_flow_factory(**kw: Any) -> Any:
 
 
 def _build_crewai_flow_config() -> AdapterConfig:
-    flow_cls = _get_crewai_flow_adapter_cls()
+    flow_cls = CrewAIFlowAdapter
 
     return AdapterConfig(
         framework_id="crewai_flow",
@@ -483,18 +461,11 @@ def _build_crewai_flow_config() -> AdapterConfig:
 
 
 def _copilot_sdk_factory(**kw: Any) -> Any:
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
-
     return CopilotSDKAdapter(**kw)
 
 
 def _build_copilot_sdk_config() -> AdapterConfig | None:
-    from band.adapters.copilot_sdk import (
-        _COPILOT_SDK_AVAILABLE,
-        CopilotSDKAdapterConfig,
-    )
-
-    if not _COPILOT_SDK_AVAILABLE:
+    if not _HAS_COPILOT_SDK:
         return None  # optional dep not installed; skip in CI
 
     custom = CopilotSDKAdapterConfig(
@@ -519,9 +490,7 @@ def _build_copilot_sdk_config() -> AdapterConfig | None:
 
 
 def _build_claude_sdk_config() -> AdapterConfig | None:
-    from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE, ClaudeSDKAdapter
-
-    if not _CLAUDE_SDK_AVAILABLE:
+    if not _HAS_CLAUDE_SDK:
         return None  # optional dep not installed; skip in CI
 
     return AdapterConfig(
@@ -556,7 +525,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
 
 
 def _build_pydantic_ai_config() -> AdapterConfig:
-    from band.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
 
     return AdapterConfig(
         framework_id="pydantic_ai",
@@ -589,7 +558,7 @@ def _build_pydantic_ai_config() -> AdapterConfig:
 
 
 def _build_strands_config() -> AdapterConfig:
-    from band.adapters.strands import StrandsAdapter
+    from band.adapters.strands import StrandsAdapter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
 
     return AdapterConfig(
         framework_id="strands",
@@ -616,10 +585,8 @@ def _build_strands_config() -> AdapterConfig:
 
 
 def _build_parlant_config() -> AdapterConfig:
-    from band.adapters.parlant import ParlantAdapter
-
     try:
-        import parlant.sdk  # noqa: F401
+        import parlant.sdk  # noqa: F401, PLC0415
 
         _parlant_available = True
     except ImportError:
@@ -649,8 +616,6 @@ def _build_parlant_config() -> AdapterConfig:
 
 
 def _build_codex_config() -> AdapterConfig:
-    from band.adapters.codex import CodexAdapterConfig
-
     return AdapterConfig(
         framework_id="codex",
         display_name="Codex",
@@ -672,7 +637,7 @@ def _build_codex_config() -> AdapterConfig:
 
 
 def _build_letta_config() -> AdapterConfig:
-    from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig
+    from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file configures
 
     return AdapterConfig(
         framework_id="letta",
@@ -701,8 +666,6 @@ def _build_letta_config() -> AdapterConfig:
 
 
 def _build_opencode_config() -> AdapterConfig:
-    from band.adapters.opencode import OpencodeAdapterConfig
-
     return AdapterConfig(
         framework_id="opencode",
         display_name="OpenCode",
@@ -754,7 +717,7 @@ def _build_agno_config() -> AdapterConfig:
 
 
 def _build_gemini_config() -> AdapterConfig:
-    from band.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
 
     return AdapterConfig(
         framework_id="gemini",
@@ -802,8 +765,6 @@ ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)
 
 
 def _build_google_adk_config() -> AdapterConfig:
-    from band.adapters.google_adk import GoogleADKAdapter
-
     return AdapterConfig(
         framework_id="google_adk",
         display_name="GoogleADK",
@@ -857,7 +818,6 @@ def _build_adapter_configs() -> list[AdapterConfig]:
     in one framework does not prevent the remaining frameworks from being
     tested.  In CI, failures are raised immediately to surface broken configs.
     """
-    import logging
 
     logger = logging.getLogger(__name__)
     configs: list[AdapterConfig] = []

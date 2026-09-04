@@ -238,7 +238,7 @@ class GatewayServer:
         return JSONResponse({"peers": peers, "count": len(peers)})
 
     async def start(self) -> None:
-        import uvicorn
+        import uvicorn  # noqa: PLC0415 -- a2a_gateway extra kept out of this module's unconditional import surface
 
         self._app = self._build_app()
         self._uvicorn = uvicorn.Server(

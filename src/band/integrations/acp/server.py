@@ -10,6 +10,7 @@ from acp import (
     NewSessionResponse,
     PromptResponse,
     run_agent,
+    update_agent_message_text,
 )
 from acp.schema import (
     AgentCapabilities,
@@ -417,8 +418,6 @@ class ACPServer:
             if session_id and self._adapter.has_session(session_id):
                 acp_client = self._adapter.get_acp_client()
                 if acp_client:
-                    from acp import update_agent_message_text
-
                     # Forward as informational text update
                     match method:
                         case "cursor/update_todos":

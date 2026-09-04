@@ -40,7 +40,8 @@ class CodexWebSocketClient(BaseJsonRpcClient):
             return
 
         try:
-            from websockets.asyncio.client import connect
+            # `websockets` ships only under the `codex` extra, not core deps.
+            from websockets.asyncio.client import connect  # noqa: PLC0415 -- codex extra, absent from the standard dev venv
         except ImportError as exc:
             raise RuntimeError(
                 "websockets package is required for CodexWebSocketClient"

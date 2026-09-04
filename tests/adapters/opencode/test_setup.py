@@ -27,6 +27,7 @@ from tests.adapters.opencode.helpers import (
     make_platform_message,
     tools_protocol,
 )
+import httpx
 
 
 def test_no_leaked_adapter_config_env_vars(
@@ -37,7 +38,6 @@ def test_no_leaked_adapter_config_env_vars(
 
 async def test_startup_fails_loudly_when_server_unreachable() -> None:
     """The default (real-server) path must fail at startup naming the fix."""
-    import httpx
 
     adapter = OpencodeAdapter()
     with patch(

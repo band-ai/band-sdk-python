@@ -10,6 +10,7 @@ from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import PlatformMessage
 
 from .helpers import make_capture_graph
+from langchain_core.tools import StructuredTool
 
 
 class TestStaticGraph:
@@ -102,7 +103,6 @@ class TestGraphFactoryMultiRoom:
         right tools to the factory each time, so a correctly-written
         factory has access to the current room's wrappers.
         """
-        from langchain_core.tools import StructuredTool
 
         # Two rooms, two distinct AgentToolsProtocol instances. Wrappers
         # dispatch through ``tools.execute_tool_call(name, kwargs)``, so we

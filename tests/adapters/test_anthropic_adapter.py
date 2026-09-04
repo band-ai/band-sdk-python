@@ -7,15 +7,26 @@ This file contains Anthropic-specific behavior: system prompt rendering,
 message history management, tool execution, custom tools, and error handling.
 """
 
+import asyncio
+import json
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from anthropic.types import TextBlock, ToolUseBlock
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.types import Emit, PlatformMessage, TurnUsage
+from band.core.types import (
+    USAGE_EVENT_TYPE,
+    USAGE_METADATA_KEY,
+    Emit,
+    PlatformMessage,
+    ToolEventKey,
+    TurnUsage,
+)
 from tests.adapters.usage_events import sent_usage_payloads
 
 
@@ -207,7 +218,6 @@ class TestHelperMethods:
 
     def test_extract_text_content(self):
         """Should extract text from TextBlock content."""
-        from anthropic.types import TextBlock
 
         adapter = AnthropicAdapter()
 
@@ -230,7 +240,6 @@ class TestHelperMethods:
 
     def test_serialize_content_blocks(self):
         """Should serialize ToolUseBlock and TextBlock."""
-        from anthropic.types import TextBlock, ToolUseBlock
 
         adapter = AnthropicAdapter()
 
@@ -256,7 +265,6 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_reports_tool_calls_when_enabled(self, mock_tools):
         """Should send events when execution reporting is enabled."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
@@ -284,7 +292,6 @@ class TestToolExecution:
         """An image band_read_room_file result must reach the model as a
         real Anthropic image content block, not get json.dumps'd into text
         (which would send the model a giant base64 string it can't see)."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(emit=())
 
@@ -324,11 +331,6 @@ class TestToolExecution:
         report a bounded placeholder, not the raw base64 payload -- the LLM-
         facing content block (asserted above) is a separate path from what
         gets reported to the platform-visible event."""
-        import json
-
-        from anthropic.types import ToolUseBlock
-
-        from band.core.types import ToolEventKey
 
         adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
@@ -359,11 +361,6 @@ class TestToolExecution:
         """The tool_call event for band_send_room_file must report a bounded
         placeholder for `content`, not the raw file text -- real file bytes
         (up to ~1MB) have no business in a platform-visible log event."""
-        import json
-
-        from anthropic.types import ToolUseBlock
-
-        from band.core.types import ToolEventKey
 
         adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
@@ -393,7 +390,6 @@ class TestToolExecution:
         """A description-only (non-image) read_room_file result keeps the
         ordinary json.dumps'd text content -- the image branch only fires
         for the real MCP-content shape."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(emit=())
 
@@ -420,7 +416,6 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_send_event_403_does_not_crash_tool_execution(self, mock_tools):
         """send_event 403 should not prevent tool from executing."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
@@ -449,9 +444,6 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_send_event_failure_logs_warning(self, mock_tools, caplog):
         """send_event failures should be logged as warnings."""
-        import logging
-
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
 
@@ -508,7 +500,6 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_emits_usage_event_when_enabled(self, mock_tools):
         """With Emit.USAGE on, a non-empty TurnUsage rides a task event's metadata."""
-        from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
 
         adapter = AnthropicAdapter(emit=Emit.USAGE)
 
@@ -554,7 +545,6 @@ class TestToolExecution:
         """A cancelled turn must not fire usage I/O from its finally: teardown
         (shutdown, a turn timeout) would otherwise block on a REST call, and a
         CancelledError raised mid-send could skip later cleanup."""
-        import asyncio
 
         adapter = AnthropicAdapter(emit=Emit.USAGE)
         started = asyncio.Event()
@@ -587,7 +577,6 @@ class TestToolExecution:
         is the deterministic summing proof the live smoke can't give (it never
         sees the per-call intermediates).
         """
-        from anthropic.types import TextBlock, ToolUseBlock
 
         adapter = AnthropicAdapter(emit=Emit.USAGE)
 
@@ -644,7 +633,6 @@ class TestToolExecution:
         """A tool loop that raises after a successful call still emits that
         call's usage: tokens spent before the failure were still spent. The
         exception still propagates (the turn is marked failed)."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(emit=Emit.USAGE)
 
@@ -688,7 +676,6 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_handles_tool_error(self, mock_tools):
         """Should handle tool execution errors gracefully."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter()
 
@@ -843,7 +830,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_routes_to_custom_tool(self, mock_tools):
         """Tool call for custom tool should execute custom function."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(
             additional_tools=[(EchoInput, echo_message)],
@@ -872,7 +858,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_routes_to_platform_tool(self, mock_tools):
         """Tool call for platform tool should use execute_tool_call."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(
             additional_tools=[(EchoInput, echo_message)],
@@ -903,7 +888,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tool_error_sets_is_error(self, mock_tools):
         """Custom tool exception should result in is_error=True."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(
             additional_tools=[(EchoInput, failing_tool)],
@@ -928,7 +912,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_preserves_tool_use_id_on_error(self, mock_tools):
         """tool_use_id should be preserved even when custom tool fails."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(
             additional_tools=[(EchoInput, failing_tool)],
@@ -951,7 +934,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_multiple_custom_tools_execution(self, mock_tools):
         """Multiple custom tools should be callable."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(
             additional_tools=[
@@ -985,7 +967,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tool_validation_error(self, mock_tools):
         """Invalid args should result in validation error."""
-        from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(
             additional_tools=[(EchoInput, echo_message)],

@@ -57,7 +57,7 @@ class HTTPForwarder:
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             try:
-                import httpx as _httpx
+                import httpx as _httpx  # noqa: PLC0415
             except ImportError:
                 raise ImportError(
                     "httpx is required for HTTPForwarder. "
@@ -97,8 +97,8 @@ class AgentCoreForwarder:
     def _get_client(self) -> Any:
         if self._client is None:
             try:
-                import boto3
-                from botocore.config import Config
+                import boto3  # noqa: PLC0415
+                from botocore.config import Config  # noqa: PLC0415
             except ImportError:
                 raise ImportError(
                     "boto3 is required for AgentCoreForwarder. "

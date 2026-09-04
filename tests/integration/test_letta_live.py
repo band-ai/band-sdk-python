@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import pytest
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from letta_client import AsyncLetta
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
 pytestmark = pytest.mark.requires_api
 
@@ -53,7 +55,6 @@ LETTA_MCP_ADVERTISED_HOST = _SETTINGS.letta_mcp_advertised_host
 
 
 def _make_client() -> object:
-    from letta_client import AsyncLetta
 
     client_kwargs: dict[str, str] = {"base_url": LETTA_BASE_URL}
     if LETTA_API_KEY:
@@ -99,7 +100,6 @@ async def test_adapter_self_hosted_mcp_registration() -> None:
     that URL reports the band platform tools (i.e. Letta could actually reach
     the server — discovery is a live MCP round-trip, not a config echo).
     """
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
     loopback = LETTA_MCP_ADVERTISED_HOST in ("127.0.0.1", "localhost")
     adapter = LettaAdapter(

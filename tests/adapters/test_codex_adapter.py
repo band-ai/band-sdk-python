@@ -15,10 +15,24 @@ import pytest
 
 from pydantic import BaseModel
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import (
+    _MAX_DIFF_METADATA_BYTES,
+    _THOUGHT_ITEM_TYPES,
+    _TOOL_ITEM_TYPES,
+    CodexAdapter,
+    CodexAdapterConfig,
+    PendingApproval,
+)
 from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
-from band.integrations.codex.types import CodexSessionState
+from band.integrations.codex.types import (
+    _MAX_ERROR_DETAIL_CHARS,
+    CodexItemType,
+    CodexSessionState,
+    CodexTokenUsage,
+    build_structured_error_metadata,
+    parse_plan_steps,
+)
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import ToolCallOutcome
 from band.testing import FakeAgentTools
@@ -448,7 +462,6 @@ class TestCodexAdapter:
         The failure is a non-raising ok=False (bad args / API error) — the case the
         plain execute_tool_call would misread as success and wrongly suppress.
         """
-        from band.runtime.tools import ToolCallOutcome
 
         class SendMessageFailureTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(
@@ -1478,7 +1491,6 @@ class TestCodexAdapter:
         transport/closed; otherwise they leak past on_cleanup because the
         thread id is no longer reachable through ``_room_threads``.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         events = [
             _event_notification(
@@ -3496,7 +3508,6 @@ class TestHistoryInjection:
         returns ok=False with a friendly message (it does not raise), so the adapter
         surfaces it via the ok=False path.
         """
-        from band.runtime.tools import ToolCallOutcome
 
         class ValidationErrorTools(ToolSchemaFakeTools):
             async def execute_tool_call_structured(
@@ -4639,7 +4650,6 @@ class TestDiffsAndTokenUsage:
 
 class TestCodexTypes:
     def test_build_structured_error_metadata_known_type(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
         error_obj = {
             "message": "Context overflow",
@@ -4659,7 +4669,6 @@ class TestCodexTypes:
         assert meta["codex_turn_id"] == "turn-1"
 
     def test_build_structured_error_metadata_unknown_type(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
         error_obj = {
             "message": "Something weird happened",
@@ -4671,7 +4680,6 @@ class TestCodexTypes:
         assert meta["codex_suggested_action"] is None
 
     def test_parse_plan_steps(self) -> None:
-        from band.integrations.codex.types import parse_plan_steps
 
         params = {
             "plan": {
@@ -4689,7 +4697,6 @@ class TestCodexTypes:
         assert steps[2].status == "pending"
 
     def test_parse_plan_steps_string_entries(self) -> None:
-        from band.integrations.codex.types import parse_plan_steps
 
         params = {"plan": {"steps": ["Read code", "Fix bug"]}}
         steps = parse_plan_steps(params)
@@ -4698,7 +4705,6 @@ class TestCodexTypes:
         assert steps[0].status == "pending"
 
     def test_codex_token_usage_update(self) -> None:
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -4722,7 +4728,6 @@ class TestCodexTypes:
     def test_codex_token_usage_update_current_schema(self) -> None:
         """The current app-server schema nests cumulative counters under
         ``tokenUsage.total`` and names reasoning ``reasoningOutputTokens``."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -4809,8 +4814,6 @@ class TestCodexTypes:
         event, no test failure. This test is the guard: it fails loudly the
         moment the partition stops being exhaustive.
         """
-        from band.adapters.codex import _TOOL_ITEM_TYPES, _THOUGHT_ITEM_TYPES
-        from band.integrations.codex.types import CodexItemType
 
         message_types = {CodexItemType.USER_MESSAGE, CodexItemType.AGENT_MESSAGE}
         classified = _TOOL_ITEM_TYPES | _THOUGHT_ITEM_TYPES | message_types
@@ -5130,7 +5133,6 @@ class TestReviewFixes:
 
     def test_token_usage_update_handles_zero_values(self) -> None:
         """CodexTokenUsage.update() correctly handles explicit zero values."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5466,7 +5468,6 @@ class TestContextCompaction:
 class TestPerTurnTokenUsage:
     def test_token_usage_computes_per_turn_deltas(self) -> None:
         """Per-turn deltas are computed from consecutive cumulative updates."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
 
@@ -5504,7 +5505,6 @@ class TestPerTurnTokenUsage:
 
     def test_token_usage_metadata_includes_turn_deltas(self) -> None:
         """to_metadata() includes per-turn deltas when available."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5522,7 +5522,6 @@ class TestPerTurnTokenUsage:
 
     def test_token_usage_format_summary_includes_turn(self) -> None:
         """format_summary() shows per-turn breakdown when deltas > 0."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5540,7 +5539,6 @@ class TestPerTurnTokenUsage:
 
     def test_reset_turn_deltas(self) -> None:
         """reset_turn_deltas() zeroes out per-turn counters."""
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5563,7 +5561,6 @@ class TestPerTurnTokenUsage:
         turn reporting ``turn_input_tokens=30``.  With the anchor, the
         final value is ``180 - 100 = 80`` — the whole-turn rise.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         # End of previous turn: cumulative = 100.
@@ -5594,7 +5591,6 @@ class TestPlanStepsRobustness:
 
     def test_parse_plan_steps_handles_non_dict_plan(self) -> None:
         """parse_plan_steps must not crash when `plan` is not a dict."""
-        from band.integrations.codex.types import parse_plan_steps
 
         assert parse_plan_steps({"plan": "not-a-dict"}) == []
         assert parse_plan_steps({"plan": ["also", "not", "a", "dict"]}) == []
@@ -5602,7 +5598,6 @@ class TestPlanStepsRobustness:
 
     def test_parse_plan_steps_reads_top_level_when_plan_absent(self) -> None:
         """When there's no 'plan' key, parse_plan_steps looks at top-level steps."""
-        from band.integrations.codex.types import parse_plan_steps
 
         steps = parse_plan_steps({"steps": [{"text": "A", "status": "pending"}]})
         assert len(steps) == 1
@@ -5700,7 +5695,6 @@ class TestTokenUsageEmission:
         instances are truthy) so an empty token_usage event could be emitted
         even before Codex sent any thread/tokenUsage/updated notification.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         fake_client = FakeCodexClient()
         adapter = CodexAdapter(
@@ -5735,7 +5729,6 @@ class TestStructuredErrorNormalization:
         was dead code; this test asserts the normalization still works when
         the original error_obj is a string rather than a dict.
         """
-        from band.integrations.codex.types import build_structured_error_metadata
 
         # Simulate the normalization the adapter performs: convert string to
         # {"message": <str>} before passing to build_structured_error_metadata.
@@ -5849,7 +5842,6 @@ class TestTokenUsageCounterMonotonicity:
         late event from the previous turn with a smaller cumulative must
         leave the turn deltas clamped to 0 rather than going negative.
         """
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update({"usage": {"inputTokens": 100, "outputTokens": 100}})
@@ -5912,7 +5904,6 @@ class TestStructuredErrorMappings:
     def test_known_error_type_maps_to_remediation(
         self, error_type: str, expected_action: str, expected_phrase: str
     ) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
         content, meta = build_structured_error_metadata(
             {"codexErrorInfo": {"type": error_type, "retryable": True}}
@@ -5923,7 +5914,6 @@ class TestStructuredErrorMappings:
         assert expected_phrase in content.lower()
 
     def test_non_dict_codex_error_info_is_tolerated(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
         content, meta = build_structured_error_metadata(
             {"message": "boom", "codexErrorInfo": "not-a-dict"}
@@ -5932,7 +5922,6 @@ class TestStructuredErrorMappings:
         assert content == "boom"
 
     def test_missing_codex_error_info_falls_back_to_message(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
         content, meta = build_structured_error_metadata({"message": "network down"})
         assert meta["codex_error_type"] is None
@@ -5940,7 +5929,6 @@ class TestStructuredErrorMappings:
         assert content == "network down"
 
     def test_additional_details_preserved_in_metadata(self) -> None:
-        from band.integrations.codex.types import build_structured_error_metadata
 
         _, meta = build_structured_error_metadata(
             {
@@ -6171,7 +6159,6 @@ class TestCleanupOnCancel:
         # Simulate an active room with a pending approval.
         loop = asyncio.get_running_loop()
         approval_future: asyncio.Future[str] = loop.create_future()
-        from band.adapters.codex import PendingApproval
 
         adapter._room_threads["room-1"] = "thr-1"
         adapter._pending_approvals["room-1"] = {
@@ -6241,7 +6228,6 @@ class TestTokenUsageCumulativeMonotonicity:
     """
 
     def test_late_smaller_event_does_not_corrupt_next_delta(self) -> None:
-        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         # End of previous turn: cumulative = 100.
@@ -6268,10 +6254,6 @@ class TestStructuredErrorDetailCap:
     """``additionalDetails`` is attacker-influenceable and must be capped."""
 
     def test_long_additional_details_string_is_truncated(self) -> None:
-        from band.integrations.codex.types import (
-            _MAX_ERROR_DETAIL_CHARS,
-            build_structured_error_metadata,
-        )
 
         long_detail = "x" * (_MAX_ERROR_DETAIL_CHARS + 500)
         _, meta = build_structured_error_metadata(
@@ -6287,7 +6269,6 @@ class TestStructuredErrorDetailCap:
 
     def test_structured_dict_additional_details_are_preserved(self) -> None:
         """Only string details are capped; dict/list payloads pass through."""
-        from band.integrations.codex.types import build_structured_error_metadata
 
         payload = {"hint": "refresh token", "code": 401}
         _, meta = build_structured_error_metadata(
@@ -6300,7 +6281,6 @@ class TestStructuredErrorDetailCap:
 
     def test_empty_additional_details_is_dropped(self) -> None:
         """Empty strings are not echoed into metadata."""
-        from band.integrations.codex.types import build_structured_error_metadata
 
         _, meta = build_structured_error_metadata(
             {
@@ -6320,10 +6300,6 @@ class TestStructuredErrorDetailCap:
         WebSocket frame.  When the serialized form exceeds the cap we
         replace the whole payload with a truncated marker string.
         """
-        from band.integrations.codex.types import (
-            _MAX_ERROR_DETAIL_CHARS,
-            build_structured_error_metadata,
-        )
 
         # Build a dict whose JSON serialization comfortably exceeds the cap.
         oversized_value = "x" * (_MAX_ERROR_DETAIL_CHARS + 500)
@@ -6345,7 +6321,6 @@ class TestStructuredErrorDetailCap:
         round-trip through ``default=str``; pathological unserializable
         objects (e.g. a circular reference) must be dropped rather than
         raising into the event-emission path."""
-        from band.integrations.codex.types import build_structured_error_metadata
 
         circular: dict[str, Any] = {}
         circular["self"] = circular
@@ -6366,7 +6341,6 @@ class TestDiffByteCap:
     async def test_multibyte_diff_respects_byte_budget(self) -> None:
         """A diff built from 4-byte codepoints is capped to the byte budget,
         not the character budget (which would be ~4× larger on the wire)."""
-        from band.adapters.codex import _MAX_DIFF_METADATA_BYTES
 
         # Each emoji is 4 UTF-8 bytes; use ~1.5× the byte budget worth.
         emoji = "\U0001f600"

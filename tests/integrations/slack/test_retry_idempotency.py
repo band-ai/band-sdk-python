@@ -17,8 +17,9 @@ import hashlib
 import hmac
 import json
 import time
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -26,6 +27,7 @@ from httpx import ASGITransport
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from band.core.simple_adapter import SimpleAdapter
 from band.integrations.slack.server import (
     DEFAULT_SEEN_EVENTS_CACHE_SIZE,
     SeenEvents,
@@ -34,6 +36,7 @@ from band.integrations.slack.server import (
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
+from band.integrations.slack.adapter import SlackAdapter
 
 
 # ── Unit tests on SeenEvents ────────────────────────────────────────────────
@@ -287,11 +290,6 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     """End-to-end via the full SlackAdapter wrapping shape: 3 retries
     must produce exactly one inner brain invocation and one Band
     room (not three)."""
-    from types import SimpleNamespace
-    from unittest.mock import MagicMock
-
-    from band.core.simple_adapter import SimpleAdapter
-    from band.integrations.slack.adapter import SlackAdapter
 
     class _Brain(SimpleAdapter[Any]):
         def __init__(self) -> None:

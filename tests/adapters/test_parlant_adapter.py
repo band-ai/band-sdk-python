@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from band.adapters.parlant import ParlantAdapter
+from band.adapters.parlant import PARLANT_PREAMBLE_TAG, ParlantAdapter
 from band.core.types import PlatformMessage
 
 
@@ -991,8 +991,6 @@ class TestResponseWaitBudget:
         """Parlant emits a preamble then stalls the final generation. A preamble is an
         acknowledgment, not an answer, so the adapter must NOT forward it as the reply
         — the turn is given up honestly (no send_message) rather than faking success."""
-        from band.adapters.parlant import PARLANT_PREAMBLE_TAG
-
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,

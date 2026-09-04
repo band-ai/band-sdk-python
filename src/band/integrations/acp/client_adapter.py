@@ -45,6 +45,7 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ACPToolCall
+from band.runtime.prompts import render_system_prompt
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
 from band.integrations.mcp.local_server import LocalMCPServer
@@ -439,8 +440,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return (host, port) if has_tcp else (None, None)
 
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
-        from band.runtime.prompts import render_system_prompt
-
         agent_name = self.agent_name or "Agent"
         agent_desc = self.agent_description or "An AI assistant"
         requester_name = msg.sender_name or msg.sender_id or "Unknown"

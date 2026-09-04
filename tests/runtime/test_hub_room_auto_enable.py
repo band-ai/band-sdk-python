@@ -14,9 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.types import Capability
+from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 from band.runtime.tools import (
     AgentTools,
     CONTACT_TOOL_NAMES,
+    MEMORY_TOOL_NAMES,
     iter_tool_definitions,
 )
 
@@ -42,8 +45,6 @@ class TestIterToolDefinitionsContactsFlag:
         names = {d.name for d in defs}
         assert names.isdisjoint(CONTACT_TOOL_NAMES)
         # Memory tools present
-        from band.runtime.tools import MEMORY_TOOL_NAMES
-
         assert MEMORY_TOOL_NAMES.issubset(names)
 
 
@@ -96,9 +97,6 @@ class TestAgentToolsHubRoomAutoEnable:
 class TestRuntimeHubRoomWiring:
     def test_set_hub_room_id_propagates_to_new_executions(self) -> None:
         """AgentRuntime.set_hub_room_id is forwarded to ExecutionContext."""
-        from band.runtime.execution import ExecutionContext
-        from band.runtime.runtime import AgentRuntime
-
         link = MagicMock()
         link.rest = MagicMock()
         on_execute = AsyncMock()

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from band.core.protocols import HistoryConverter
-
-if TYPE_CHECKING:
-    from band.integrations.a2a.types import A2ASessionState
+from band.integrations.a2a.types import A2ASessionState
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +34,6 @@ class A2AHistoryConverter(HistoryConverter["A2ASessionState"]):
         Returns:
             A2ASessionState with extracted context_id, task_id, and task_state
         """
-        # Import at runtime to avoid circular import
-        from band.integrations.a2a.types import A2ASessionState
-
         context_id: str | None = None
         task_id: str | None = None
         task_state: str | None = None

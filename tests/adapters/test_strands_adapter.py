@@ -37,13 +37,16 @@ from band.adapters.strands import (  # noqa: E402
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
+    USAGE_METADATA_KEY,
     AgentInput,
     Capability,
     Emit,
     HistoryProvider,
     PlatformMessage,
     TurnUsage,
+    is_usage_event,
 )
+from band.runtime.tools import get_tool_description  # noqa: E402
 from band.testing import (  # noqa: E402
     ErrorTurn,
     FakeAgentTools,
@@ -245,7 +248,6 @@ class TestToolRegistration:
 
     @pytest.mark.asyncio
     async def test_platform_tool_descriptions_from_registry(self):
-        from band.runtime.tools import get_tool_description
 
         adapter = StrandsAdapter(model="m")
         await adapter.on_started("Bot", "A bot")
@@ -498,8 +500,6 @@ class TestOnMessage:
 
         await _run_message(adapter, tools)
 
-        from band.core.types import USAGE_METADATA_KEY, is_usage_event
-
         usage_events = [e for e in tools.events_sent if is_usage_event(e["metadata"])]
         assert len(usage_events) == 1
         # The tool turn and the closing text turn are two model calls, so the
@@ -628,8 +628,6 @@ class TestTurnFailure:
 
         with pytest.raises(EventLoopException, match="provider down"):
             await _run_message(adapter, tools)
-
-        from band.core.types import USAGE_METADATA_KEY, is_usage_event
 
         tools.assert_message_sent(content="hi", count=1)
         assert _tool_results(adapter)  # the completed call is still in the transcript

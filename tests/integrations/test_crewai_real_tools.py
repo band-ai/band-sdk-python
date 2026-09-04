@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("crewai", reason="crewai not installed (band-sdk[crewai])")
 
-from band.core.types import AdapterFeatures  # noqa: E402
+from band.core.types import AdapterFeatures, Capability  # noqa: E402
 from band.integrations.crewai.tools import (  # noqa: E402
     NoopReporter,
     build_band_crewai_tools,
@@ -47,8 +47,6 @@ def test_platform_tools_build_against_the_real_base_tool() -> None:
 def test_file_tools_build_against_the_real_base_tool() -> None:
     """The three room-file tool models also resolve and instantiate for real --
     same "not fully defined" failure mode this file exists to catch."""
-    from band.core.types import Capability
-
     tools = build_band_crewai_tools(
         get_context=lambda: None,
         reporter=NoopReporter(),

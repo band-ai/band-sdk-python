@@ -17,6 +17,7 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 from sse_starlette.sse import AppStatus
 
+import band.integrations.mcp.local_server as local_server_mod
 from band.core.exceptions import BandToolError
 from band.integrations.mcp.engine import (
     EngineSpec,
@@ -380,7 +381,6 @@ class TestLocalMcpServer:
         locks DNS-rebinding protection to 127.0.0.1/localhost only -- even
         for a server explicitly bound to a non-loopback host for a Docker
         callback (see LocalMCPServer's own class docstring)."""
-        import band.integrations.mcp.local_server as local_server_mod
 
         seen_hosts: list[str] = []
         real_build_engine = local_server_mod.build_engine
@@ -427,7 +427,6 @@ class TestLocalMcpServer:
         """Regression: a failure between socket reservation and the uvicorn
         serve task starting (e.g. build_engine raising) must still close the
         reserved socket, not leak a bound-and-listening fd."""
-        import band.integrations.mcp.local_server as local_server_mod
 
         server = LocalMCPServer(
             name="test-engine-failure", tool_registrations=[], port_min=0, port_max=0

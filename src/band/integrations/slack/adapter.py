@@ -385,7 +385,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 by the chosen transport is missing.
         """
         try:
-            import slack_sdk  # noqa: F401
+            import slack_sdk  # noqa: F401, PLC0415
         except ImportError as exc:
             raise ImportError(
                 "slack-sdk is required for SlackAdapter. "
@@ -600,7 +600,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         if self._transport == "socket":
             # Lazy import so HTTP-only installs don't pay the aiohttp /
             # Socket Mode import cost.
-            from band.integrations.slack.socket import (
+            from band.integrations.slack.socket import (  # noqa: PLC0415
                 start_socket_listeners,
             )
 
@@ -1277,7 +1277,9 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     @staticmethod
     def _default_web_client_factory(app: SlackApp) -> AsyncWebClient:
-        from slack_sdk.web.async_client import AsyncWebClient
+        # slack extra kept out of this module's unconditional import surface;
+        # TYPE_CHECKING above supplies the annotation without a runtime cost
+        from slack_sdk.web.async_client import AsyncWebClient  # noqa: PLC0415
 
         return AsyncWebClient(token=app.bot_token)
 

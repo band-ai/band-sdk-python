@@ -186,7 +186,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         )
 
         try:
-            from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency
+            from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency  # noqa: PLC0415
         except ImportError:
             raise ImportError(
                 "letta-client is required for LettaAdapter. "

@@ -21,6 +21,11 @@ from band.adapters.letta import (
     RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.integrations.letta.prompts import (
+    SEND_EVENT_TOOL_NAMES,
+    SEND_MESSAGE_TOOL_NAMES,
+)
+from band.runtime.tools import BandTool
 from band.testing import FakeAgentTools
 from tests.adapters.lettakit import (
     make_assistant_message,
@@ -46,12 +51,6 @@ def test_send_tool_names_use_band_tool_enum_member():
     """SEND_MESSAGE_TOOL_NAMES/SEND_EVENT_TOOL_NAMES's canonical entry must be
     a BandTool member, not a hardcoded literal duplicate that could silently
     drift from BandTool if its value ever changed."""
-    from band.integrations.letta.prompts import (
-        SEND_EVENT_TOOL_NAMES,
-        SEND_MESSAGE_TOOL_NAMES,
-    )
-    from band.runtime.tools import BandTool
-
     assert isinstance(SEND_MESSAGE_TOOL_NAMES[0], BandTool)
     assert isinstance(SEND_EVENT_TOOL_NAMES[0], BandTool)
 

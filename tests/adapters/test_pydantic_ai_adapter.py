@@ -8,7 +8,7 @@ stream event handling, execution reporting, and custom tools.
 """
 
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +20,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
@@ -29,6 +29,7 @@ from pydantic_ai import (
     InstrumentationSettings,
     RunContext,
     UnexpectedModelBehavior,
+    _tool_execution,
 )
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
@@ -49,13 +50,15 @@ from pydantic_ai.models.test import TestModel
 from band.adapters.pydantic_ai import (
     OUTPUT_RETRIES_EXHAUSTED,
     PydanticAIAdapter,
+    _custom_tool_def_to_callable,
     _drop_non_replayable_messages,
     _is_output_retries_exhausted,
     _is_replayable_history_message,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage, TurnUsage
 from band.runtime.custom_tools import get_custom_tool_name
+from tests.adapters.usage_events import sent_usage_payloads
 from band.runtime.tools import get_tool_description
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
@@ -182,7 +185,6 @@ class TestUsageMapping:
         Reading it as a method instead would raise, and the guarded read would then
         report zeros for every turn — silent, so this is the guard.
         """
-        from band.core.types import TurnUsage
 
         result = SimpleNamespace(
             usage=SimpleNamespace(
@@ -201,7 +203,6 @@ class TestUsageMapping:
 
     def test_usage_from_result_swallows_errors(self):
         """Usage that fails to read yields empty usage, never propagates."""
-        from band.core.types import TurnUsage
 
         class Unreadable:
             @property
@@ -216,7 +217,6 @@ class TestUsageMapping:
         Covers the empty-final-response path (no AgentRunResultEvent fires) where
         the turn still spent tokens — each ModelResponse carries its own usage.
         """
-        from band.core.types import TurnUsage
 
         messages = [
             ModelRequest(parts=[]),  # non-response: ignored
@@ -229,9 +229,6 @@ class TestUsageMapping:
 
     def test_usage_from_messages_empty_when_no_responses(self):
         """No ModelResponse in the captured messages → empty usage."""
-        from pydantic_ai.messages import ModelRequest
-
-        from band.core.types import TurnUsage
 
         assert (
             PydanticAIAdapter._usage_from_messages([ModelRequest(parts=[])])
@@ -249,7 +246,6 @@ class TestUsageMapping:
         run — and combined with the ModelResponse-only sum, yields only this turn's
         usage.
         """
-        from band.core.types import TurnUsage
 
         # Prior history: a real response, then two instruction-less requests that
         # pydantic-ai would merge into one on the next run.
@@ -784,8 +780,6 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_image_result_becomes_binary_content(self, file_tools):
-        from pydantic_ai.messages import BinaryContent
-
         file_tools.read_room_file = AsyncMock(
             return_value={
                 "content": [
@@ -1512,7 +1506,6 @@ class TestEmptyFinalAnswer:
         exactly what 2.x did to the 1.x phrasing ("Exceeded maximum retries (N) for
         output validation"). Read the real source so a future reword fails here.
         """
-        from pydantic_ai import _tool_execution
 
         source = Path(_tool_execution.__file__).read_text(encoding="utf-8").lower()
         assert OUTPUT_RETRIES_EXHAUSTED in source
@@ -1553,7 +1546,6 @@ class TestEmptyFinalAnswer:
         # Regression (fallback path): with the run mocked, capture_run_messages records
         # nothing, so the swallow falls back to preserving at least the user prompt so
         # the next same-session turn isn't amnesiac.
-        from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         preserved = adapter._message_history["room-123"]
         assert preserved, "swallowed turn should still record the user message"
@@ -1569,14 +1561,6 @@ class TestEmptyFinalAnswer:
     ):
         """The swallow persists the whole captured turn — not just the user prompt —
         so a later 'what did you just say?' has the agent's reply in context."""
-        from contextlib import contextmanager
-
-        from pydantic_ai.messages import (
-            ModelRequest,
-            ModelResponse,
-            TextPart,
-            UserPromptPart,
-        )
 
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1652,9 +1636,6 @@ class TestEmptyFinalAnswer:
         Tokens spent before the failure were still spent: the finally-based emit
         falls back to summing this run's captured ModelResponses when no result
         event fired, so a hard mid-run failure doesn't silently drop usage."""
-        from contextlib import contextmanager
-
-        from tests.adapters.usage_events import sent_usage_payloads
 
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
@@ -1936,7 +1917,6 @@ class TestPortableCustomToolDef:
 
     @pytest.mark.asyncio
     async def test_tuple_is_normalized_to_a_named_callable(self):
-        from pydantic import BaseModel
 
         class LookupInput(BaseModel):
             """look up a code."""
@@ -1959,7 +1939,6 @@ class TestPortableCustomToolDef:
     async def test_async_handler_is_awaited(self):
         """An async portable handler must be awaited (not returned as a coroutine) —
         the same shared-executor path every other adapter uses."""
-        from pydantic import BaseModel
 
         class LookupInput(BaseModel):
             key: str
@@ -1973,7 +1952,6 @@ class TestPortableCustomToolDef:
         assert await adapter._custom_tools[0](LookupInput(key="beta")) == "code:beta"
 
     def test_tuple_terminal_marker_is_honored(self):
-        from pydantic import BaseModel
 
         class DeployInput(BaseModel):
             """deploy."""
@@ -1991,11 +1969,6 @@ class TestPortableCustomToolDef:
         assert adapter._custom_terminal_names == frozenset({"deploy"})
 
     def test_converted_tuple_flattens_in_pydantic_ai(self):
-        from pydantic import BaseModel
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class LookupInput(BaseModel):
             """look up a code."""
@@ -2016,7 +1989,6 @@ class TestPortableCustomToolDef:
 
     @staticmethod
     def _tool_return_contents(result) -> list:
-        from pydantic_ai.messages import ToolReturnPart
 
         return [
             part.content
@@ -2030,11 +2002,6 @@ class TestPortableCustomToolDef:
         """An async CustomToolDef handler returns its awaited value through a real
         pydantic-ai run — not an unawaited coroutine (which the previous sync
         passthrough produced, failing serialization)."""
-        from pydantic import BaseModel
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class LookupInput(BaseModel):
             """look up a code."""
@@ -2059,11 +2026,6 @@ class TestPortableCustomToolDef:
         """A zero-argument handler with an empty InputModel executes through a real
         pydantic-ai run — the previous sync passthrough called it with one
         positional arg and raised TypeError."""
-        from pydantic import BaseModel
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class PingInput(BaseModel):
             """ping."""
@@ -2084,11 +2046,6 @@ class TestPortableCustomToolDef:
         """An InputModel using a field alias executes through a real pydantic-ai
         run — a dump/re-validate round-trip would emit field names and fail
         re-validation against the alias-only model."""
-        from pydantic import BaseModel, Field
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class AliasedInput(BaseModel):
             """look up a user."""

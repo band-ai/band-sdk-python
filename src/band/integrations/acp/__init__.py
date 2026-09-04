@@ -40,6 +40,7 @@ Example (ACP Client):
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -99,8 +100,6 @@ _IMPORT_MAP: dict[str, tuple[str, str]] = {
 def __getattr__(name: str) -> object:
     if name in _IMPORT_MAP:
         module_path, attr_name = _IMPORT_MAP[name]
-        import importlib
-
         module = importlib.import_module(module_path)
         return getattr(module, attr_name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

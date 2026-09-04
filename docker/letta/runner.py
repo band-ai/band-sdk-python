@@ -47,6 +47,8 @@ except ImportError:
         "pyyaml is required for the Letta runner. Install with: pip install pyyaml"
     )
 
+from band import Agent
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 from band.config.loader import load_agent_config
 from band.config.logs import LogSettings
 from band.core.types import Emit
@@ -157,9 +159,6 @@ async def main() -> None:
         "Loading config from: %s (key: %s)", settings.agent_config, settings.agent_key
     )
     config = load_config(settings.agent_config, settings.agent_key)
-
-    from band import Agent
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]

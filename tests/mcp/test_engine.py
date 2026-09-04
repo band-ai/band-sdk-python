@@ -38,6 +38,7 @@ from band_mcp.config import Config
 from band_mcp.server import standalone_spec
 from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from tests.mcp.conftest import FakeHumanTools
+from mcp.server.transport_security import TransportSecuritySettings
 
 
 async def _list_tool(session: ClientSession, name: str) -> Any:
@@ -98,7 +99,6 @@ class TestBuildEngineHostForwarding:
         assert mcp.settings.transport_security is None
 
     def test_explicit_transport_security_overrides_host_auto_detection(self) -> None:
-        from mcp.server.transport_security import TransportSecuritySettings
 
         explicit = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
