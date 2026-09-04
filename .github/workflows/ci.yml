@@ -259,7 +259,10 @@ jobs:
             ClaimRegistry,
             ParticipantRoster,
             RetryTracker,
+            evaluate_adapter_result,
+            evaluate_delivery_event,
             evaluate_drain_candidate,
+            evaluate_next_message,
             is_self_echo,
         )
 
@@ -273,6 +276,16 @@ jobs:
         assert roster.list() == []
         assert is_self_echo("agent-1", "Agent", "agent-1") is True
         assert evaluate_drain_candidate(None, [], "agent-1") == {"decision": "no_candidate"}
+        assert evaluate_delivery_event("room_added", "room-1", {}, "agent-1") == {
+            "decision": "ignored",
+            "event_type": "room_added",
+        }
+        assert evaluate_next_message("msg-1", None) == {"decision": "no_pending"}
+        assert evaluate_adapter_result("room-1", "msg-1", True) == {
+            "decision": "processed",
+            "room_id": "room-1",
+            "message_id": "msg-1",
+        }
         print('Core imports successful')
         PYEOF
 

@@ -1414,10 +1414,14 @@ class ExecutionContext:
         """
         msg_id = msg.id
 
-        # Skip messages from self (agent's own messages) to avoid infinite loops
+        # Skip messages from self (agent's own messages) to avoid infinite loops.
+        # ``PlatformMessage`` declares these as ``str``, but it's a plain
+        # dataclass filled from Fern models -- a backend null reaches here as
+        # ``None`` and would otherwise raise ``TypeError`` from is_self_echo
+        # (a pyo3 extension with non-Optional ``str`` params).
         if self._agent_id and is_self_echo(
-            sender_id=msg.sender_id,
-            sender_type=msg.sender_type,
+            sender_id=msg.sender_id or "",
+            sender_type=msg.sender_type or "",
             agent_id=self._agent_id,
         ):
             logger.debug("Skipping self-message %s", msg_id)
@@ -1811,10 +1815,14 @@ class ExecutionContext:
 
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
-            # Skip messages from self (agent's own messages) to avoid infinite loops
+            # Skip messages from self (agent's own messages) to avoid infinite
+            # loops. ``payload`` is hydrated via ``model_construct``, which
+            # bypasses pydantic validation -- a null sender field would
+            # otherwise raise ``TypeError`` from is_self_echo's non-Optional
+            # ``str`` params.
             if self._agent_id and is_self_echo(
-                sender_id=payload.sender_id,
-                sender_type=payload.sender_type,
+                sender_id=payload.sender_id or "",
+                sender_type=payload.sender_type or "",
                 agent_id=self._agent_id,
             ):
                 logger.debug("Skipping self-message %s", msg_id)
