@@ -24,10 +24,10 @@ from band.core.types import (
     TurnUsage,
 )
 from band.integrations.letta.config import (
-    LETTA_CLOUD_BASE_URL,
     LettaAdapterConfig,
     LettaMCPConfig,
     MCPTransport,
+    is_letta_cloud_url,
 )
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
 from band.integrations.letta.orgscope import resolve_org_scoped_headers
@@ -213,7 +213,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         org_scoped = (
             self.config.org_scoped
             if self.config.org_scoped is not None
-            else self.config.base_url.rstrip("/") != LETTA_CLOUD_BASE_URL.rstrip("/")
+            else not is_letta_cloud_url(self.config.base_url)
         )
         if org_scoped:
             client_kwargs["default_headers"] = await resolve_org_scoped_headers(

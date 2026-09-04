@@ -242,11 +242,21 @@ class TestLettaAdapterOnStarted:
         mock_client.tools.list.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_on_started_cloud_stays_unscoped(self) -> None:
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.letta.com",
+            "https://API.LETTA.COM/",
+            "  https://api.letta.com  ",
+        ],
+    )
+    async def test_on_started_cloud_stays_unscoped(self, base_url: str) -> None:
         """Regression guard: a Cloud base_url must never invoke org-scope
         resolution — the Cloud path stays byte-for-byte unchanged."""
         adapter = LettaAdapter(
-            config=LettaAdapterConfig(mcp=LettaMCPConfig(mode="external"))
+            config=LettaAdapterConfig(
+                base_url=base_url, mcp=LettaMCPConfig(mode="external")
+            )
         )
 
         mock_client = AsyncMock()
@@ -265,7 +275,7 @@ class TestLettaAdapterOnStarted:
 
         mock_resolve.assert_not_called()
         mock_letta_module.AsyncLetta.assert_called_once_with(
-            base_url="https://api.letta.com",
+            base_url=base_url,
         )
         mock_client.tools.list.assert_not_called()
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,20 @@ MCPTransport = Literal["sse", "streamable_http"]
 # field default and self-hosted detection (org_scoped auto-detection, the
 # Cloud+org_scoped=True construction guard) read this constant.
 LETTA_CLOUD_BASE_URL = "https://api.letta.com"
+_LETTA_CLOUD_HOSTNAME = urlsplit(LETTA_CLOUD_BASE_URL).hostname
+
+
+def is_letta_cloud_url(base_url: str) -> bool:
+    """Whether ``base_url`` points at Letta Cloud rather than a self-hosted server.
+
+    Compares hostnames, not raw strings, so casing and a trailing slash never
+    cause a Cloud URL to be misclassified as self-hosted; ``.strip()`` closes
+    the same gap for incidental whitespace (e.g. an unquoted .env value).
+    """
+    try:
+        return urlsplit(base_url.strip()).hostname == _LETTA_CLOUD_HOSTNAME
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -212,8 +227,7 @@ class LettaAdapterConfig(BaseSettings):
 
     @model_validator(mode="after")
     def _reject_org_scoped_cloud(self) -> LettaAdapterConfig:
-        is_cloud = self.base_url.rstrip("/") == LETTA_CLOUD_BASE_URL.rstrip("/")
-        if self.org_scoped and is_cloud:
+        if self.org_scoped and is_letta_cloud_url(self.base_url):
             raise BandConfigError(
                 "org_scoped=True is not supported against Letta Cloud "
                 f"(base_url={self.base_url!r}) — it provisions organizations "

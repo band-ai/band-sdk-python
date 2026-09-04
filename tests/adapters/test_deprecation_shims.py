@@ -166,11 +166,19 @@ class TestLettaOrgScopedConfig:
     calls instead of failing loud up front.
     """
 
-    def test_letta_org_scoped_and_cloud_conflict(self) -> None:
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.letta.com",
+            "https://API.LETTA.COM/",
+            "  https://api.letta.com  ",
+        ],
+    )
+    def test_letta_org_scoped_and_cloud_conflict(self, base_url: str) -> None:
         from band.adapters.letta import LettaAdapterConfig
 
         with pytest.raises(BandConfigError, match="org_scoped=True"):
-            LettaAdapterConfig(org_scoped=True)
+            LettaAdapterConfig(base_url=base_url, org_scoped=True)
 
     def test_letta_org_scoped_true_on_self_hosted_is_accepted(self) -> None:
         from band.adapters.letta import LettaAdapterConfig
