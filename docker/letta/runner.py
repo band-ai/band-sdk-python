@@ -13,6 +13,14 @@ Environment variables:
     LETTA_MODEL                Model ID (e.g., openai/gpt-5.4)
     LETTA_MODE                 Operating mode: per_room or shared (default: per_room)
     LETTA_PROJECT              Letta Cloud project name (optional, ignored for self-hosted)
+    LETTA_ORG_SCOPED           Self-hosted only: provision a dedicated Letta org+user
+                               per instance so MCP tool storage never collides between
+                               instances sharing one server (default: auto-on for
+                               self-hosted, off for Cloud; set "false" to opt out).
+                               Recommend also setting LETTA_NO_DEFAULT_ACTOR=true on the
+                               Letta *server* process itself — it turns an unresolvable
+                               user_id into a loud error instead of a silent fallback
+                               to the default org, which would defeat this scoping.
     LETTA_EMBEDDING            Embedding model for agent create (required by Letta's
                                Docker server, e.g. openai/text-embedding-3-small)
     MCP_SERVER_URL             External band-mcp server URL. When set, the adapter
@@ -82,6 +90,7 @@ class LettaRunnerSettings(BaseSettings):
     letta_model: str | None = None  # LETTA_MODEL
     letta_mode: str | None = None  # LETTA_MODE
     letta_project: str | None = None  # LETTA_PROJECT
+    letta_org_scoped: str | None = None  # LETTA_ORG_SCOPED
     letta_embedding: str | None = None  # LETTA_EMBEDDING
     letta_mcp_advertised_host: str | None = None  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str | None = None  # MCP_SERVER_URL
@@ -181,6 +190,11 @@ async def main() -> None:
     mcp_server_url = resolve(settings.mcp_server_url, "mcp_server_url")
     mcp_server_name = resolve(settings.mcp_server_name, "mcp_server_name")
     letta_project = resolve(settings.letta_project, "letta_project")
+    # LettaAdapterConfig.org_scoped is bool | None (unlike the str | None
+    # fields resolve() otherwise threads through); pydantic's lenient
+    # str->bool coercion accepts this resolved string ("true"/"false") fine,
+    # but it's not a literal copy-paste of a str | None passthrough.
+    letta_org_scoped = resolve(settings.letta_org_scoped, "letta_org_scoped")
 
     # An explicit MCP_SERVER_URL selects an external band-mcp; otherwise the
     # adapter self-hosts its own Band MCP server in-process.
@@ -207,6 +221,7 @@ async def main() -> None:
             embedding=letta_embedding,
             mcp=mcp_config,
             project=letta_project,
+            org_scoped=letta_org_scoped,
             custom_section="",
             include_base_instructions=True,
         ),

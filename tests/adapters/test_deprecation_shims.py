@@ -158,6 +158,27 @@ class TestLettaApiKeyShim:
             LettaAdapterConfig(provider_key="new-key", api_key="old-key")
 
 
+class TestLettaOrgScopedConfig:
+    """org_scoped=True against Letta Cloud must fail at construction.
+
+    Letta Cloud does not expose the self-hosted-only admin API org_scoped
+    needs; honoring it would only fail deep inside on_started's real httpx
+    calls instead of failing loud up front.
+    """
+
+    def test_letta_org_scoped_and_cloud_conflict(self) -> None:
+        from band.adapters.letta import LettaAdapterConfig
+
+        with pytest.raises(BandConfigError, match="org_scoped=True"):
+            LettaAdapterConfig(org_scoped=True)
+
+    def test_letta_org_scoped_true_on_self_hosted_is_accepted(self) -> None:
+        from band.adapters.letta import LettaAdapterConfig
+
+        config = LettaAdapterConfig(base_url="http://localhost:8283", org_scoped=True)
+        assert config.org_scoped is True
+
+
 class TestLettaMCPKwargShim:
     """Legacy Letta MCP kwargs must populate the nested MCP config."""
 
