@@ -25,11 +25,15 @@ from band.adapters.claude_sdk import (
 from band.adapters.crewai import CrewAIAdapter
 from band.adapters.crewai_flow import CrewAIFlowAdapter
 from band.core.types import AdapterFeatures, Capability
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.adapters.copilot_sdk import (
     _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK,
     CopilotSDKAdapter,
     CopilotSDKAdapterConfig,
 )
+from band.adapters.google_adk import GoogleADKAdapter
+from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.parlant import ParlantAdapter
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 
 __all__ = [
@@ -253,8 +257,6 @@ def _strands_factory(**kw: Any) -> Any:
 
 
 def _parlant_factory(**kw: Any) -> Any:
-    from band.adapters.parlant import ParlantAdapter  # noqa: PLC0415 -- isolates the parlant extra from the other frameworks this file configures
-
     # A borrowed server with no parlant_agent: system_prompt/custom_section
     # (exercised via custom_kwargs) only apply to an adapter-created agent,
     # so the factory lets the adapter create one on the mocked server.
@@ -270,8 +272,6 @@ def _parlant_factory(**kw: Any) -> Any:
 
 
 def _codex_factory(**kw: Any) -> Any:
-    from band.adapters.codex import CodexAdapter  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file configures
-
     return CodexAdapter(**kw)
 
 
@@ -282,8 +282,6 @@ def _letta_factory(**kw: Any) -> Any:
 
 
 def _opencode_factory(**kw: Any) -> Any:
-    from band.adapters.opencode import OpencodeAdapter  # noqa: PLC0415 -- isolates the opencode extra from the other frameworks this file configures
-
     # Fake the server boundary so on_started's reachability preflight
     # (which only runs with the default client factory) stays offline.
     kw.setdefault("client_factory", lambda _config: MagicMock())
@@ -307,8 +305,6 @@ def _gemini_factory(**kw: Any) -> Any:
 
 
 def _google_adk_factory(**kw: Any) -> Any:
-    from band.adapters.google_adk import GoogleADKAdapter  # noqa: PLC0415 -- isolates the google_adk extra from the other frameworks this file configures
-
     return GoogleADKAdapter(**kw)
 
 
@@ -585,8 +581,6 @@ def _build_strands_config() -> AdapterConfig:
 
 
 def _build_parlant_config() -> AdapterConfig:
-    from band.adapters.parlant import ParlantAdapter  # noqa: PLC0415 -- isolates the parlant extra from the other frameworks this file configures
-
     try:
         import parlant.sdk  # noqa: F401, PLC0415
 
@@ -618,8 +612,6 @@ def _build_parlant_config() -> AdapterConfig:
 
 
 def _build_codex_config() -> AdapterConfig:
-    from band.adapters.codex import CodexAdapterConfig  # noqa: PLC0415 -- isolates the codex extra from the other frameworks this file configures
-
     return AdapterConfig(
         framework_id="codex",
         display_name="Codex",
@@ -670,8 +662,6 @@ def _build_letta_config() -> AdapterConfig:
 
 
 def _build_opencode_config() -> AdapterConfig:
-    from band.adapters.opencode import OpencodeAdapterConfig  # noqa: PLC0415 -- isolates the opencode extra from the other frameworks this file configures
-
     return AdapterConfig(
         framework_id="opencode",
         display_name="OpenCode",
@@ -771,8 +761,6 @@ ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)
 
 
 def _build_google_adk_config() -> AdapterConfig:
-    from band.adapters.google_adk import GoogleADKAdapter  # noqa: PLC0415 -- isolates the google_adk extra from the other frameworks this file configures
-
     return AdapterConfig(
         framework_id="google_adk",
         display_name="GoogleADK",

@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 
+from band import Agent
 from band.config.logs import LogSettings
 from band.logging_config import LogStream
 
@@ -84,7 +85,6 @@ async def main(args: argparse.Namespace | None = None) -> None:
     # Lazy: band.integrations.acp.server imports the optional `acp` extra
     # (agent-client-protocol) at its own top level, so importing it eagerly
     # here would break every venv that doesn't install the `acp` extra.
-    from band import Agent  # noqa: PLC0415
     from band.integrations.acp.push_handler import ACPPushHandler  # noqa: PLC0415
     from band.integrations.acp.server import ACPServer, run_acp_server  # noqa: PLC0415
     from band.integrations.acp.server_adapter import BandACPServerAdapter  # noqa: PLC0415

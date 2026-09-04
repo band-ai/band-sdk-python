@@ -10,6 +10,9 @@ import re
 import threading
 from typing import Any, Protocol
 
+from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.converters.copilot_sdk import CopilotSDKSessionState
+
 __all__ = [
     "OutputAdapter",
     "BaseDictListOutputAdapter",
@@ -579,8 +582,6 @@ class ClaudeSDKOutputAdapter(OutputAdapter):
         self._inner = StringOutputAdapter()
 
     def assert_result_type(self, result: Any) -> None:
-        from band.converters.claude_sdk import ClaudeSDKSessionState  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file configures
-
         assert isinstance(result, ClaudeSDKSessionState), (
             f"Expected ClaudeSDKSessionState, got {type(result).__name__}"
         )
@@ -620,8 +621,6 @@ class CopilotSDKOutputAdapter(ClaudeSDKOutputAdapter):
     """
 
     def assert_result_type(self, result: Any) -> None:
-        from band.converters.copilot_sdk import CopilotSDKSessionState  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file configures
-
         assert isinstance(result, CopilotSDKSessionState), (
             f"Expected CopilotSDKSessionState, got {type(result).__name__}"
         )

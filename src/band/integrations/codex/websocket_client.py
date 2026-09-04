@@ -8,6 +8,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import websockets.asyncio.client
+
 from band.core.exceptions import BandConnectionError
 
 from .rpc_base import BaseJsonRpcClient, OverloadRetryPolicy
@@ -39,16 +41,9 @@ class CodexWebSocketClient(BaseJsonRpcClient):
         if self._connected:
             return
 
-        try:
-            from websockets.asyncio.client import connect  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError(
-                "websockets package is required for CodexWebSocketClient"
-            ) from exc
-
         # Codex app-server WS does not support permessage-deflate.
         try:
-            self._ws = await connect(
+            self._ws = await websockets.asyncio.client.connect(
                 self.ws_url,
                 compression=None,
                 max_size=16 * 1024 * 1024,  # Codex can emit large JSON-RPC payloads.

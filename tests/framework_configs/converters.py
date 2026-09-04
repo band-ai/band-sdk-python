@@ -16,6 +16,32 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from tests.framework_configs.output_adapters import OutputAdapter
 
+from band.converters.agno import AgnoHistoryConverter
+from band.converters.anthropic import AnthropicHistoryConverter
+from band.converters.claude_sdk import ClaudeSDKHistoryConverter, ClaudeSDKSessionState
+from band.converters.copilot_sdk import (
+    CopilotSDKHistoryConverter,
+    CopilotSDKSessionState,
+)
+from band.converters.crewai import CrewAIHistoryConverter
+from band.converters.gemini import GeminiHistoryConverter
+from band.converters.google_adk import GoogleADKHistoryConverter
+from band.converters.langchain import LangChainHistoryConverter
+from band.converters.parlant import ParlantHistoryConverter
+from band.converters.pydantic_ai import PydanticAIHistoryConverter
+from band.converters.strands import StrandsHistoryConverter
+from tests.framework_configs.output_adapters import (
+    AgnoOutputAdapter,
+    ClaudeSDKOutputAdapter,
+    CopilotSDKOutputAdapter,
+    DictListOutputAdapter,
+    GeminiOutputAdapter,
+    GoogleADKOutputAdapter,
+    LangChainOutputAdapter,
+    PydanticAIOutputAdapter,
+    SenderDictListAdapter,
+    StrandsOutputAdapter,
+)
 from tests.framework_configs.sentinel import STRICT_CI
 
 __all__ = [
@@ -78,68 +104,46 @@ class ConverterConfig:
 
 
 def _anthropic_factory(**kw: Any) -> Any:
-    from band.converters.anthropic import AnthropicHistoryConverter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
-
     return AnthropicHistoryConverter(**kw)
 
 
 def _langchain_factory(**kw: Any) -> Any:
-    from band.converters.langchain import LangChainHistoryConverter  # noqa: PLC0415 -- isolates the langchain extra from the other frameworks this file configures
-
     return LangChainHistoryConverter(**kw)
 
 
 def _crewai_factory(**kw: Any) -> Any:
-    from band.converters.crewai import CrewAIHistoryConverter  # noqa: PLC0415 -- isolates the crewai extra from the other frameworks this file configures
-
     return CrewAIHistoryConverter(**kw)
 
 
 def _claude_sdk_factory(**kw: Any) -> Any:
-    from band.converters.claude_sdk import ClaudeSDKHistoryConverter  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file configures
-
     return ClaudeSDKHistoryConverter(**kw)
 
 
 def _copilot_sdk_factory(**kw: Any) -> Any:
-    from band.converters.copilot_sdk import CopilotSDKHistoryConverter  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file configures
-
     return CopilotSDKHistoryConverter(**kw)
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from band.converters.pydantic_ai import PydanticAIHistoryConverter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
-
     return PydanticAIHistoryConverter(**kw)
 
 
 def _parlant_factory(**kw: Any) -> Any:
-    from band.converters.parlant import ParlantHistoryConverter  # noqa: PLC0415 -- isolates the parlant extra from the other frameworks this file configures
-
     return ParlantHistoryConverter(**kw)
 
 
 def _agno_factory(**kw: Any) -> Any:
-    from band.converters.agno import AgnoHistoryConverter  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
-
     return AgnoHistoryConverter(**kw)
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from band.converters.gemini import GeminiHistoryConverter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
-
     return GeminiHistoryConverter(**kw)
 
 
 def _google_adk_factory(**kw: Any) -> Any:
-    from band.converters.google_adk import GoogleADKHistoryConverter  # noqa: PLC0415 -- isolates the google_adk extra from the other frameworks this file configures
-
     return GoogleADKHistoryConverter(**kw)
 
 
 def _strands_factory(**kw: Any) -> Any:
-    from band.converters.strands import StrandsHistoryConverter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
-
     return StrandsHistoryConverter(**kw)
 
 
@@ -149,8 +153,6 @@ def _strands_factory(**kw: Any) -> Any:
 
 
 def _build_anthropic_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import DictListOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="anthropic",
         display_name="Anthropic",
@@ -163,8 +165,6 @@ def _build_anthropic_config() -> ConverterConfig:
 
 
 def _build_langchain_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import LangChainOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="langchain",
         display_name="LangChain",
@@ -180,8 +180,6 @@ def _build_langchain_config() -> ConverterConfig:
 
 
 def _build_crewai_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import SenderDictListAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="crewai",
         display_name="CrewAI",
@@ -200,9 +198,6 @@ def _build_crewai_config() -> ConverterConfig:
 
 
 def _build_claude_sdk_config() -> ConverterConfig:
-    from band.converters.claude_sdk import ClaudeSDKSessionState  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file configures
-    from tests.framework_configs.output_adapters import ClaudeSDKOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="claude_sdk",
         display_name="ClaudeSDK",
@@ -217,9 +212,6 @@ def _build_claude_sdk_config() -> ConverterConfig:
 
 
 def _build_copilot_sdk_config() -> ConverterConfig:
-    from band.converters.copilot_sdk import CopilotSDKSessionState  # noqa: PLC0415 -- isolates the copilot_sdk extra from the other frameworks this file configures
-    from tests.framework_configs.output_adapters import CopilotSDKOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="copilot_sdk",
         display_name="CopilotSDK",
@@ -237,8 +229,6 @@ def _build_copilot_sdk_config() -> ConverterConfig:
 
 
 def _build_pydantic_ai_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import PydanticAIOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="pydantic_ai",
         display_name="PydanticAI",
@@ -252,8 +242,6 @@ def _build_pydantic_ai_config() -> ConverterConfig:
 
 
 def _build_parlant_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import SenderDictListAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="parlant",
         display_name="Parlant",
@@ -274,8 +262,6 @@ def _build_parlant_config() -> ConverterConfig:
 
 
 def _build_agno_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import AgnoOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="agno",
         display_name="Agno",
@@ -292,8 +278,6 @@ def _build_agno_config() -> ConverterConfig:
 
 
 def _build_gemini_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import GeminiOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="gemini",
         display_name="Gemini",
@@ -335,8 +319,6 @@ CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
 
 
 def _build_google_adk_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import GoogleADKOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="google_adk",
         display_name="GoogleADK",
@@ -353,8 +335,6 @@ def _build_google_adk_config() -> ConverterConfig:
 
 
 def _build_strands_config() -> ConverterConfig:
-    from tests.framework_configs.output_adapters import StrandsOutputAdapter  # noqa: PLC0415 -- isolates the tests extra from the other frameworks this file configures
-
     return ConverterConfig(
         framework_id="strands",
         display_name="Strands",
