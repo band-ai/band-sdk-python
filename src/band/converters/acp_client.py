@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
-from band.integrations.acp.client_types import ACPClientSessionState
+
+if TYPE_CHECKING:
+    from band.integrations.acp.client_types import ACPClientSessionState
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,11 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
             ACPClientSessionState with room-to-session resume candidates and
             the room's replayable text transcript.
         """
+        # band.integrations.acp.client_types imports client_runtime, which
+        # imports the optional `acp` extra (agent-client-protocol) at module
+        # top level — deferred so this converter stays importable without it.
+        from band.integrations.acp.client_types import ACPClientSessionState  # noqa: PLC0415
+
         room_to_session: dict[str, str] = {}
 
         for msg in raw:
