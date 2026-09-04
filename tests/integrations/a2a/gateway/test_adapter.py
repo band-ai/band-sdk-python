@@ -23,7 +23,7 @@ from a2a.types import (
 from band.core.types import PlatformMessage
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
-from band.integrations.a2a.gateway.adapter import BandAgentExecutor
+from band.integrations.a2a.gateway.adapter import BandAgentExecutor, GatewayRequest
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
 from tests.integrations.a2a.gateway.helpers import make_peer
@@ -194,6 +194,29 @@ class TestGatewayExecution:
         assert final.status.state == TaskState.TASK_STATE_COMPLETED
         assert final.status.message.parts[0].text == "Sunny"
         assert adapter._pending_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_send_to_band_fails_fast_when_post_message_refuses_blank_content(
+        self,
+    ) -> None:
+        """Mirrors ACP's handle_prompt: a refused send must not fall through
+        to _await_response and hang for response_timeout_s waiting on a
+        reply to a message that was never posted."""
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+        peer = make_peer("weather", "Weather Agent")
+        request = GatewayRequest(
+            peer=peer,
+            room_id="room-123",
+            context_id="ctx-123",
+            pending=make_pending(EventQueueLegacy()),
+        )
+
+        with patch(
+            "band.integrations.a2a.gateway.adapter.post_message",
+            AsyncMock(return_value=None),
+        ):
+            with pytest.raises(ValueError, match="blank"):
+                await adapter._send_to_band(request, make_request())
 
     @pytest.mark.asyncio
     async def test_keeps_stream_open_for_non_final_updates(self) -> None:

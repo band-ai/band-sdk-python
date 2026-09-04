@@ -1510,6 +1510,18 @@ class AgentTools(AgentToolsProtocol):
             Serialized to dict by execute_tool_call() at the adapter boundary.
         """
         logger.debug("Updating task: id=%s", id)
+        # Backstops UpdateTaskInput's model_validator: some callers (Parlant,
+        # pydantic-ai) hand-register this as a plain function and never
+        # construct/validate an UpdateTaskInput, so the "at least one field"
+        # rule has to also live here to apply to every caller.
+        if all(
+            field is None
+            for field in (status, active_form, comment, subject, detail, state)
+        ):
+            raise ValueError(
+                "At least one of status, active_form, comment, subject, detail, "
+                "or state must be set"
+            )
         kwargs: dict[str, Any] = {}
         if status is not None:
             kwargs["status"] = status
@@ -1598,6 +1610,10 @@ class AgentTools(AgentToolsProtocol):
         logger.debug(
             "Setting board: goal_title=%s, goal_summary=%s", goal_title, goal_summary
         )
+        # Backstops SetBoardInput's model_validator -- see update_task's
+        # identical note on why this can't rely on the input model alone.
+        if goal_title is None and goal_summary is None:
+            raise ValueError("At least one of goal_title or goal_summary must be set")
         kwargs: dict[str, Any] = {}
         if goal_title is not None:
             kwargs["goal_title"] = goal_title

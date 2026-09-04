@@ -73,6 +73,8 @@ async def post_message(
         message=request,
         request_options=DEFAULT_REQUEST_OPTIONS,
     )
+    if not response.data:
+        raise RuntimeError("Failed to send message - no response data")
     return response.data
 
 
@@ -111,4 +113,6 @@ async def post_event(
         event=request,
         request_options=DEFAULT_REQUEST_OPTIONS,
     )
+    if not response.data:
+        raise RuntimeError("Failed to send event - no response data")
     return response.data

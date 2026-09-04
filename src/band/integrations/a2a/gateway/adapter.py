@@ -27,6 +27,7 @@ from band.client.rest import (
     ParticipantRequest,
 )
 from band.converters.a2a_gateway import GatewayHistoryConverter
+from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
@@ -386,7 +387,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> None:
         """Send the A2A request text to the selected Band peer."""
         content = context.get_user_input()
-        await post_message(
+        sent = await post_message(
             rest=self.rest,
             room_id=request.room_id,
             request=ChatMessageRequest(
@@ -398,6 +399,12 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 ],
             ),
         )
+        if sent is None:
+            # post_message refused blank content instead of posting -- fail
+            # now rather than have _await_response wait out the full
+            # response_timeout_s for a reply to a message that was never
+            # sent (mirrors ACP's handle_prompt).
+            raise ValueError(BLANK_CONTENT_ERROR)
         logger.debug(
             "A2A request sent to Band: room=%s task=%s",
             request.room_id,

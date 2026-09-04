@@ -36,6 +36,18 @@ class TestPostMessage:
             is mock_rest_client.agent_api_messages.create_agent_chat_message.return_value.data
         )
 
+    async def test_raises_when_the_platform_returns_no_response_data(
+        self, mock_rest_client
+    ):
+        mock_rest_client.agent_api_messages.create_agent_chat_message.return_value.data = None
+
+        with pytest.raises(RuntimeError, match="no response data"):
+            await post_message(
+                rest=mock_rest_client,
+                room_id="room-123",
+                request=ChatMessageRequest(content="hello", mentions=[]),
+            )
+
 
 class TestPostEvent:
     @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
@@ -93,6 +105,20 @@ class TestPostEvent:
         assert sent_content.startswith("HEAD")
         assert sent_content.endswith("TAIL")
         assert "[truncated]" in sent_content
+
+    async def test_raises_when_the_platform_returns_no_response_data(
+        self, mock_rest_client
+    ):
+        mock_rest_client.agent_api_events.create_agent_chat_event.return_value.data = (
+            None
+        )
+
+        with pytest.raises(RuntimeError, match="no response data"):
+            await post_event(
+                rest=mock_rest_client,
+                room_id="room-123",
+                request=ChatEventRequest(content="thinking", message_type="thought"),
+            )
 
     async def test_does_not_truncate_a_message_of_the_same_length(
         self, mock_rest_client

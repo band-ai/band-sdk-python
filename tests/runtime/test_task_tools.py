@@ -169,13 +169,28 @@ class TestUpdateTask:
         )
         tools = AgentTools("room-123", mock_rest_client)
 
-        await tools.update_task("task-1")
+        await tools.update_task("task-1", status=TaskAssignmentStatus.IN_PROGRESS)
 
         mock_rest_client.agent_api_chat_tasks.update_chat_task.assert_awaited_once_with(
             chat_id="room-123",
             id="task-1",
+            status=TaskAssignmentStatus.IN_PROGRESS,
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
+
+    @pytest.mark.asyncio
+    async def test_update_task_raises_when_no_fields_are_set(
+        self, mock_rest_client
+    ) -> None:
+        """Guards every caller, not just ones that go through UpdateTaskInput's
+        model_validator -- Parlant and pydantic-ai register this as a plain
+        function and never construct that model."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="At least one of"):
+            await tools.update_task("task-1")
+
+        mock_rest_client.agent_api_chat_tasks.update_chat_task.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_task_includes_provided_fields(self, mock_rest_client) -> None:
@@ -293,12 +308,27 @@ class TestSetBoard:
         )
         tools = AgentTools("room-123", mock_rest_client)
 
-        await tools.set_board()
+        await tools.set_board(goal_title="Ship v2")
 
         mock_rest_client.agent_api_chat_tasks.put_chat_board.assert_awaited_once_with(
             chat_id="room-123",
+            goal_title="Ship v2",
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
+
+    @pytest.mark.asyncio
+    async def test_set_board_raises_when_no_fields_are_set(
+        self, mock_rest_client
+    ) -> None:
+        """Guards every caller, not just ones that go through SetBoardInput's
+        model_validator -- Parlant and pydantic-ai register this as a plain
+        function and never construct that model."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="At least one of"):
+            await tools.set_board()
+
+        mock_rest_client.agent_api_chat_tasks.put_chat_board.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_set_board_includes_provided_fields(self, mock_rest_client) -> None:
