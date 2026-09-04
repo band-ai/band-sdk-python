@@ -20,11 +20,8 @@ from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
 )
 
-# Safe without the crewai package: every crewai import in both adapters is
-# TYPE_CHECKING-only or function-local, so the module loads and the classes
-# construct with the package absent. Do not fake crewai through
-# ``sys.modules`` to get here — see ``tests/test_module_isolation.py`` for
-# what that costs.
+# Both classes construct with crewai absent; do not fake the package via
+# ``sys.modules`` instead — see ``tests/test_module_isolation.py``.
 from band.adapters.crewai import CrewAIAdapter
 from band.adapters.crewai_flow import CrewAIFlowAdapter
 from band.core.types import AdapterFeatures, Capability

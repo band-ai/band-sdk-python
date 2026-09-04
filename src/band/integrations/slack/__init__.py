@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING
 
 from band.exports import lazy_exports
 
-# Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
     from band.integrations.slack.adapter import SlackAdapter as SlackAdapter
     from band.integrations.slack.types import (

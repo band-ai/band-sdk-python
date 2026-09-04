@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING
 
 from band.exports import lazy_exports
 
-# Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
     from band.integrations.a2a.adapter import A2AAdapter as A2AAdapter
     from band.integrations.a2a.types import (

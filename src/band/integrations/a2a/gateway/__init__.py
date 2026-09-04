@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from band.exports import lazy_exports
 
-# Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
     from band.integrations.a2a.gateway.adapter import (
         A2AGatewayAdapter as A2AGatewayAdapter,
