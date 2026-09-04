@@ -8,7 +8,6 @@ import logging
 from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
-import langchain.agents
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 from typing_extensions import Unpack
@@ -137,6 +136,11 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # ("system", ...) message on bootstrap and the checkpointer carries it
         # forward, matching the pattern used by every other Band adapter.
         if uses_simple_pattern:
+            # `langchain` (distinct from `langgraph`) is only needed for this
+            # pattern -- a caller who supplies graph_factory=/graph= directly
+            # never touches create_agent and shouldn't have to install it.
+            from langchain.agents import create_agent  # noqa: PLC0415 -- only needed by the simple llm= pattern below
+
             if checkpointer is None:
                 checkpointer = InMemorySaver()
 
@@ -144,7 +148,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             def factory(band_tools: list[Any]) -> Pregel:
                 all_tools = band_tools + additional
-                return langchain.agents.create_agent(
+                return create_agent(
                     model=llm,
                     tools=all_tools,
                     checkpointer=checkpointer,
