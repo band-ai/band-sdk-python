@@ -17,6 +17,7 @@ from band.client.rest import (
     DEFAULT_REQUEST_OPTIONS,
 )
 from band.converters.acp_server import ACPServerHistoryConverter
+from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
@@ -398,7 +399,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         mention_text = " ".join(f"@{m.name}" for m in mentions)
 
         try:
-            await post_message(
+            sent = await post_message(
                 rest=self.rest,
                 room_id=room_id,
                 request=ChatMessageRequest(
@@ -409,6 +410,13 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         except Exception:
             await self._finish_pending_prompt(room_id, set_done=True)
             raise
+
+        if sent is None:
+            # post_message refused blank content instead of posting -- fail
+            # now rather than wait out the full timeout for a reply to a
+            # message that was never sent.
+            await self._finish_pending_prompt(room_id, set_done=True)
+            raise ValueError(BLANK_CONTENT_ERROR)
 
         logger.debug("Sent prompt to room %s, awaiting response", room_id)
 
