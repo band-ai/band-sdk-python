@@ -33,6 +33,7 @@ from band.platform.posting import post_event, post_message
 from band.config.settings import RuntimeSettings
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import log_roster_call, participant_snapshot
+from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
     MemoryListScope,
@@ -395,9 +396,9 @@ class AgentTools(AgentToolsProtocol):
             message_kwargs["attachment_ids"] = attachment_ids
 
         return await post_message(
-            self.rest,
-            self.room_id,
-            ChatMessageRequest(**message_kwargs),
+            rest=self.rest,
+            room_id=self.room_id,
+            request=ChatMessageRequest(**message_kwargs),
         )
 
     async def send_event(
@@ -424,9 +425,9 @@ class AgentTools(AgentToolsProtocol):
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
 
         return await post_event(
-            self.rest,
-            self.room_id,
-            ChatEventRequest(
+            rest=self.rest,
+            room_id=self.room_id,
+            request=ChatEventRequest(
                 content=content, message_type=message_type, metadata=metadata
             ),
         )
@@ -1334,10 +1335,10 @@ class AgentTools(AgentToolsProtocol):
             content: Text content to upload as a file.
             filename: Name for the uploaded file, including extension. Plain
                 ASCII only -- it travels as a raw HTTP header value.
-            caption: Optional message text to send alongside the file. An
-                empty caption is replaced with a default -- the platform
-                requires non-empty message content even on an attachment-only
-                post.
+            caption: Optional message text to send alongside the file. A
+                caption with no visible characters is replaced with a
+                default -- the platform requires visible message content
+                even on an attachment-only post.
             mentions: Participant handles to @mention, same format as
                 band_send_message.
 
@@ -1345,7 +1346,8 @@ class AgentTools(AgentToolsProtocol):
             Dict with the created attachment's metadata and the posted
             message id.
         """
-        caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
+        if not has_visible_content(caption):
+            caption = DEFAULT_FILE_CAPTION.format(filename=filename)
         if not FILENAME_HEADER_SAFE_PATTERN.fullmatch(filename):
             raise BandToolError(
                 f"Filename {filename!r} must use plain printable ASCII "

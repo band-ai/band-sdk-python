@@ -18,6 +18,7 @@ from band.runtime.tools import (
     LookupPeersInput,
     SendEventInput,
     SendMessageInput,
+    SendMyChatMessageInput,
     SetBoardInput,
     UpdateTaskInput,
     format_arg_doc,
@@ -26,6 +27,7 @@ from band.runtime.tools import (
     platform_args_schema,
     platform_tool,
 )
+from tests.content import BLANK_CONTENT_CASES
 
 
 class TestSendMessageInput:
@@ -54,7 +56,7 @@ class TestSendMessageInput:
         model = SendMessageInput(content="Hello", mentions=[])
         assert model.mentions == []
 
-    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     def test_rejects_content_with_no_visible_characters(self, content):
         """Content must have at least one visible character, not just be non-empty."""
         with pytest.raises(ValidationError) as exc_info:
@@ -93,11 +95,31 @@ class TestSendEventInput:
         event = SendEventInput(content="Test", message_type="thought")
         assert event.metadata is None
 
-    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     def test_rejects_content_with_no_visible_characters(self, content):
         """Content must have at least one visible character, not just be non-empty."""
         with pytest.raises(ValidationError) as exc_info:
             SendEventInput(content=content, message_type="thought")
+        assert "content" in str(exc_info.value)
+
+
+class TestSendMyChatMessageInput:
+    """Tests for the human-scope SendMyChatMessageInput model."""
+
+    def test_valid_message(self):
+        msg = SendMyChatMessageInput(
+            chat_id="room-1", content="Hello", recipients="Alice"
+        )
+        assert msg.content == "Hello"
+
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    def test_rejects_content_with_no_visible_characters(self, content):
+        """The human messages endpoint enforces the same visible-content rule
+        as the agent one, and is not covered by the posting choke point."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendMyChatMessageInput(
+                chat_id="room-1", content=content, recipients="Alice"
+            )
         assert "content" in str(exc_info.value)
 
 

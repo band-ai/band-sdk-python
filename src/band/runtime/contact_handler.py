@@ -362,9 +362,9 @@ class ContactEventHandler:
         """
         try:
             await post_event(
-                self._link.rest,
-                room_id,
-                ChatEventRequest(
+                rest=self._link.rest,
+                room_id=room_id,
+                request=ChatEventRequest(
                     content=content,
                     message_type="task",
                     metadata={"contact_event_type": event_type},

@@ -84,16 +84,11 @@ class TestRoomTurnEmitter:
 
 
 class TestRoomTurnEmitterBlankChunks:
-    """THOUGHT/PLAN chunks pass raw ``chunk.content`` unguarded (unlike TEXT,
-    which checks truthiness) -- a status-only ACP update can collect as a
-    whitespace-only chunk. Exercised against the real ``AgentTools`` (not
-    ``FakeAgentTools``, which never rejects anything) so the send path really
-    reaches ``band.platform.posting.post_event``'s blank-content refusal:
-    before that refusal existed, this content would 422 the REST call and the
-    exception would abort the whole ACP turn (the SDK's routing side of
-    INT-1361 -- Python already turns that into a stopped runtime with a
-    visible error event rather than a silent zombie, but a single blank
-    status update should not cost the rest of the turn either).
+    """THOUGHT/PLAN chunks pass raw ``chunk.content`` through unguarded
+    (unlike TEXT, which checks truthiness first), so a status-only ACP update
+    can reach the send path as a whitespace-only chunk. Exercised against the
+    real ``AgentTools`` so that path really hits
+    ``band.platform.posting.post_event``'s blank-content refusal.
     """
 
     @pytest.mark.asyncio

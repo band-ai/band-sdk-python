@@ -32,6 +32,7 @@ from band.client.rest import (
     Task,
     TaskActor,
 )
+from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import Capability
@@ -144,8 +145,9 @@ class FakeAgentTools:
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
-    ) -> dict[str, Any]:
-        """Record a sent message, enforcing the platform's mention requirement.
+    ) -> dict[str, Any] | None:
+        """Record a sent message, enforcing the platform's mention and
+        visible-content requirements.
 
         The API rejects a mention-less message, so ``AgentTools.send_message``
         raises before any request. A fake that accepts one lets that bug pass
@@ -153,7 +155,19 @@ class FakeAgentTools:
         *resolution* is deliberately not mirrored: a fake that dropped
         unresolvable handles would force every test to configure a participant
         roster, and it is emptiness the platform rejects universally.
+
+        Content with no visible characters is refused the same way, returning
+        ``None`` without recording anything — mirroring the real send's
+        non-throwing refusal at ``band.platform.posting.post_message``.
         """
+        self._require_mentions(mentions)
+        if not has_visible_content(content):
+            return None
+        return self._record_message(content, mentions)
+
+    def _require_mentions(
+        self, mentions: list[str] | list[dict[str, str]] | None
+    ) -> None:
         if not (mentions or []):
             raise BandToolError(
                 append_mention_handles_hint(
@@ -161,6 +175,10 @@ class FakeAgentTools:
                     available_mention_handles(self._participants),
                 )
             )
+
+    def _record_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None
+    ) -> dict[str, Any]:
         msg = {
             "id": f"msg-{len(self.messages_sent)}",
             "content": content,
@@ -174,7 +192,14 @@ class FakeAgentTools:
         content: str,
         message_type: str,
         metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
+        """Record a sent event, refusing content with no visible characters.
+
+        Same fidelity rationale as ``send_message``: the real send returns
+        ``None`` without a request rather than letting the platform 422.
+        """
+        if not has_visible_content(content):
+            return None
         event = {
             "id": f"evt-{len(self.events_sent)}",
             "content": content,
@@ -424,11 +449,14 @@ class FakeAgentTools:
         caption: str = "",
         mentions: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Store the file and send it the same way the real tool does --
-        via ``send_message``, so the fake's mention requirement applies
-        before the file is recorded, same as the real tool validates
-        mentions before uploading."""
-        caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
+        """Store the file and post it as a message, in the real tool's order:
+        mentions are validated before the file is recorded, so a rejected
+        call leaves no orphaned upload behind. A caption with no visible
+        characters falls back to the default -- the send would refuse it
+        otherwise, leaving nothing to report a message id from."""
+        self._require_mentions(mentions)
+        if not has_visible_content(caption):
+            caption = DEFAULT_FILE_CAPTION.format(filename=filename)
         body = content.encode("utf-8")
         attachment = Attachment(
             id=str(uuid.uuid4()),
@@ -438,7 +466,7 @@ class FakeAgentTools:
             sha256=hashlib.sha256(body).hexdigest(),
             has_thumb=False,
         ).model_dump()
-        message = await self.send_message(content=caption, mentions=mentions or [])
+        message = self._record_message(caption, mentions)
         self.files.append(attachment)
         return {"attachment": deepcopy(attachment), "message_id": message["id"]}
 

@@ -399,9 +399,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
         try:
             await post_message(
-                self.rest,
-                room_id,
-                ChatMessageRequest(
+                rest=self.rest,
+                room_id=room_id,
+                request=ChatMessageRequest(
                     content=f"{mention_text} {prompt_text}".strip(),
                     mentions=mentions,
                 ),
@@ -556,9 +556,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             session_id: The ACP session ID.
         """
         await post_event(
-            self.rest,
-            room_id,
-            ChatEventRequest(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="ACP session context",
                 message_type="task",
                 metadata={

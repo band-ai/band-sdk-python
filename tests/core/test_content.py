@@ -10,8 +10,7 @@ ZERO_WIDTH_SPACE = "\u200b"
 LEFT_TO_RIGHT_MARK = "\u200e"
 
 
-# Table mirrors the platform's own validate_visible_content/1 cases
-# (thenvoi-platform lib/thenvoi_com/thenvoi/chat.ex:3936): every
+# Table mirrors the platform's own validate_visible_content/1 cases: every
 # letter/number/punctuation/symbol is visible, everything else (whitespace,
 # zero-width, bidi marks) is not.
 @pytest.mark.parametrize(

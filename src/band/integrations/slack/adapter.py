@@ -962,9 +962,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         slack_user: str,
     ) -> None:
         await post_event(
-            self.rest,
-            room_id,
-            ChatEventRequest(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="Slack thread context",
                 message_type="task",
                 metadata={
@@ -1021,9 +1021,9 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         try:
             await post_event(
-                self.rest,
-                room_id,
-                ChatEventRequest(
+                rest=self.rest,
+                room_id=room_id,
+                request=ChatEventRequest(
                     content=content,
                     message_type="thought",
                     metadata={

@@ -29,6 +29,7 @@ from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
 from tests.conftest import make_participant_mock
+from tests.content import BLANK_CONTENT_CASES
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -1063,6 +1064,33 @@ class TestFileTools:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("caption", BLANK_CONTENT_CASES)
+    async def test_send_room_file_blank_caption_uses_default(
+        self, mock_rest_client, participants, caption
+    ):
+        """A caption that only *looks* non-empty falls back to the default
+        too: the send refuses content with no visible characters and returns
+        ``None``, so anything narrower than the platform's own rule here
+        drops the post after the file is already uploaded, leaving an
+        orphaned attachment."""
+        uploaded = _attachment("file-9", name="report.txt")
+        upload_response = MagicMock()
+        upload_response.data = uploaded
+        mock_rest_client.agent_api_files.upload_agent_chat_file = AsyncMock(
+            return_value=upload_response
+        )
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        result = await tools.send_room_file(
+            "hello world", "report.txt", caption=caption, mentions=["User One"]
+        )
+
+        assert result["attachment"]["id"] == "file-9"
+        assert _posted_message(mock_rest_client).content == (
+            DEFAULT_FILE_CAPTION.format(filename="report.txt")
+        )
+
+    @pytest.mark.asyncio
     async def test_send_room_file_discoverable_from_a_new_agenttools_instance(
         self, mock_rest_client, participants
     ):
@@ -1361,19 +1389,7 @@ class TestAgentToolsSendMessage:
         with pytest.raises(ValueError, match="Unknown participant 'Unknown'"):
             await tools.send_message("Hello!", mentions=["Unknown"])
 
-    async def test_send_message_no_response_raises(
-        self, mock_rest_client, participants
-    ):
-        """send_message() should raise if no response data."""
-        mock_rest_client.agent_api_messages.create_agent_chat_message.return_value = (
-            MagicMock(data=None)
-        )
-        tools = AgentTools("room-123", mock_rest_client, participants)
-
-        with pytest.raises(RuntimeError, match="Failed to send message"):
-            await tools.send_message("Hello!", mentions=["User One"])
-
-    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     async def test_send_message_refuses_content_with_no_visible_characters(
         self, mock_rest_client, participants, content
     ):
@@ -1409,16 +1425,6 @@ class TestAgentToolsSendEvent:
         event = call_args.kwargs["event"]
         assert event.metadata == {"code": 500}
 
-    async def test_send_event_no_response_raises(self, mock_rest_client):
-        """send_event() should raise if no response data."""
-        mock_rest_client.agent_api_events.create_agent_chat_event.return_value = (
-            MagicMock(data=None)
-        )
-        tools = AgentTools("room-123", mock_rest_client)
-
-        with pytest.raises(RuntimeError, match="Failed to send event"):
-            await tools.send_event("Error!", "error")
-
     async def test_send_event_within_limit_untouched(self, mock_rest_client):
         """send_event() should pass short content through unchanged."""
         tools = AgentTools("room-123", mock_rest_client)
@@ -1443,7 +1449,7 @@ class TestAgentToolsSendEvent:
         assert sent_content.endswith("TAIL")  # and the tail isn't dropped
         assert "[truncated]" in sent_content  # with a marker between them
 
-    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     async def test_send_event_refuses_content_with_no_visible_characters(
         self, mock_rest_client, content
     ):

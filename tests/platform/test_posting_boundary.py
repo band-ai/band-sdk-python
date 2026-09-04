@@ -9,6 +9,15 @@ allowlist below, so a new bypass fails a test instead of shipping unguarded.
 
 This scans for the method calls via AST, not imports -- no import-time side
 effects, no needing every extra installed.
+
+Two limits worth knowing before trusting it: it only walks ``src/band``, so
+``examples/``, ``docker/band_python_kit`` and ``band-bridge`` are unscanned;
+and it only matches a direct ``x.<method>(...)`` call, so an aliased bound
+method or a ``getattr`` lookup slips past. The human-scope send
+(``human_api_messages.send_my_chat_message``) is deliberately not a guarded
+name -- it posts through a REST namespace ``post_message``/``post_event``
+don't cover, and gets the same visible-content rule from its own input model
+(``SendMyChatMessageInput``) instead of from this scan.
 """
 
 from __future__ import annotations

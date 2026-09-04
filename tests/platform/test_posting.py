@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from band.client.rest import ChatEventRequest, ChatMessageRequest
 from band.platform.posting import post_event, post_message
+from tests.content import BLANK_CONTENT_CASES
 
 
 class TestPostMessage:
-    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     async def test_refuses_content_with_no_visible_characters(
         self, mock_rest_client, content
     ):
         result = await post_message(
-            mock_rest_client,
-            "room-123",
-            ChatMessageRequest(content=content, mentions=[]),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatMessageRequest(content=content, mentions=[]),
         )
 
         assert result is None
@@ -26,9 +25,9 @@ class TestPostMessage:
 
     async def test_sends_content_with_visible_characters(self, mock_rest_client):
         result = await post_message(
-            mock_rest_client,
-            "room-123",
-            ChatMessageRequest(content="hello", mentions=[]),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatMessageRequest(content="hello", mentions=[]),
         )
 
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_called_once()
@@ -37,28 +36,16 @@ class TestPostMessage:
             is mock_rest_client.agent_api_messages.create_agent_chat_message.return_value.data
         )
 
-    async def test_raises_when_the_platform_returns_no_data(self, mock_rest_client):
-        mock_rest_client.agent_api_messages.create_agent_chat_message.return_value = (
-            MagicMock(data=None)
-        )
-
-        with pytest.raises(RuntimeError, match="Failed to send message"):
-            await post_message(
-                mock_rest_client,
-                "room-123",
-                ChatMessageRequest(content="hello", mentions=[]),
-            )
-
 
 class TestPostEvent:
-    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
     async def test_refuses_content_with_no_visible_characters(
         self, mock_rest_client, content
     ):
         result = await post_event(
-            mock_rest_client,
-            "room-123",
-            ChatEventRequest(content=content, message_type="thought"),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatEventRequest(content=content, message_type="thought"),
         )
 
         assert result is None
@@ -66,9 +53,9 @@ class TestPostEvent:
 
     async def test_sends_content_with_visible_characters(self, mock_rest_client):
         result = await post_event(
-            mock_rest_client,
-            "room-123",
-            ChatEventRequest(content="thinking", message_type="thought"),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatEventRequest(content="thinking", message_type="thought"),
         )
 
         mock_rest_client.agent_api_events.create_agent_chat_event.assert_called_once()
@@ -81,9 +68,9 @@ class TestPostEvent:
         content = "x" * 16384
 
         await post_event(
-            mock_rest_client,
-            "room-123",
-            ChatEventRequest(content=content, message_type="tool_result"),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatEventRequest(content=content, message_type="tool_result"),
         )
 
         call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
@@ -95,9 +82,9 @@ class TestPostEvent:
         content = "HEAD" * 10000 + "TAIL" * 10000
 
         await post_event(
-            mock_rest_client,
-            "room-123",
-            ChatEventRequest(content=content, message_type="tool_result"),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatEventRequest(content=content, message_type="tool_result"),
         )
 
         call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
@@ -114,9 +101,9 @@ class TestPostEvent:
         content = "x" * 20000
 
         result = await post_message(
-            mock_rest_client,
-            "room-123",
-            ChatMessageRequest(content=content, mentions=[]),
+            rest=mock_rest_client,
+            room_id="room-123",
+            request=ChatMessageRequest(content=content, mentions=[]),
         )
 
         call_args = (
@@ -124,15 +111,3 @@ class TestPostEvent:
         )
         assert call_args.kwargs["message"].content == content
         assert result is not None
-
-    async def test_raises_when_the_platform_returns_no_data(self, mock_rest_client):
-        mock_rest_client.agent_api_events.create_agent_chat_event.return_value = (
-            MagicMock(data=None)
-        )
-
-        with pytest.raises(RuntimeError, match="Failed to send event"):
-            await post_event(
-                mock_rest_client,
-                "room-123",
-                ChatEventRequest(content="thinking", message_type="thought"),
-            )

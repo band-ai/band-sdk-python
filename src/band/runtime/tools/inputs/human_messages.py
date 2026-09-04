@@ -6,7 +6,9 @@ applies to every human-tool input model.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from band.runtime.tools.inputs.chat import require_visible_content
 
 
 class ListMyChatMessagesInput(BaseModel):
@@ -37,3 +39,8 @@ class SendMyChatMessageInput(BaseModel):
             "Must contain at least one name; empty string is not accepted."
         ),
     )
+
+    # The human-scope send posts through `human_api_messages`, which
+    # `post_message` does not cover, so the platform's visible-content rule is
+    # enforced here instead.
+    _validate_content = field_validator("content")(require_visible_content)

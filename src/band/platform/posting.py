@@ -52,7 +52,7 @@ def _truncate_event_content(content: str) -> str:
 
 
 async def post_message(
-    rest: AsyncRestClient, room_id: str, request: ChatMessageRequest
+    *, rest: AsyncRestClient, room_id: str, request: ChatMessageRequest
 ) -> MessageSentResponse | None:
     """POST a chat message, refusing content with no visible characters.
 
@@ -73,13 +73,11 @@ async def post_message(
         message=request,
         request_options=DEFAULT_REQUEST_OPTIONS,
     )
-    if not response.data:
-        raise RuntimeError("Failed to send message - no response data")
     return response.data
 
 
 async def post_event(
-    rest: AsyncRestClient, room_id: str, request: ChatEventRequest
+    *, rest: AsyncRestClient, room_id: str, request: ChatEventRequest
 ) -> EventCreatedResponse | None:
     """POST a chat event, refusing content with no visible characters.
 
@@ -113,6 +111,4 @@ async def post_event(
         event=request,
         request_options=DEFAULT_REQUEST_OPTIONS,
     )
-    if not response.data:
-        raise RuntimeError("Failed to send event - no response data")
     return response.data

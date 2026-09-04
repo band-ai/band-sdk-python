@@ -387,9 +387,9 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         """Send the A2A request text to the selected Band peer."""
         content = context.get_user_input()
         await post_message(
-            self.rest,
-            request.room_id,
-            ChatMessageRequest(
+            rest=self.rest,
+            room_id=request.room_id,
+            request=ChatMessageRequest(
                 content=f"@{request.peer.name} {content}",
                 mentions=[
                     ChatMessageRequestMentionsItem(
@@ -562,9 +562,9 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             context_id: The A2A context ID.
         """
         await post_event(
-            self.rest,
-            room_id,
-            ChatEventRequest(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="A2A gateway context",
                 message_type="task",
                 metadata={
