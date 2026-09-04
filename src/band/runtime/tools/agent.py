@@ -21,11 +21,15 @@ from async_lru import alru_cache
 from pydantic import BaseModel
 
 from band.client.rest import (
+    ChatEventRequest,
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
     ChatRoomRequest,
     DEFAULT_REQUEST_OPTIONS,
     NotFoundError,
     UnprocessableEntityError,
 )
+from band.platform.posting import post_event, post_message
 from band.config.settings import RuntimeSettings
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.participants import log_roster_call, participant_snapshot
@@ -91,37 +95,6 @@ async def iter_chat_pages(
         "Stopped listing chats at the %d page cap; some rooms were not read",
         MAX_CHAT_PAGES,
     )
-
-
-# The Agent Events API enforces a hard cap on event content (see
-# thenvoi-platform's events_controller.ex `@content_max_length`) and rejects
-# anything larger with a 422 before it ever reaches the room; it also rejects
-# a blank string outright ("content can't be blank"). Event content can be
-# arbitrarily large or entirely absent in practice — e.g. an ACP tool_result
-# mirroring a large file, or a tool call whose result has no text
-# representation (a terminal- or diff-only ACP tool_call_update) — so guard
-# both ends defensively rather than letting the send fail.
-_EVENT_CONTENT_MAX_LENGTH = 16384
-_EVENT_TRUNCATION_MARKER = "... [truncated] ..."
-_EVENT_EMPTY_CONTENT_PLACEHOLDER = "(no content)"
-
-
-def _truncate_event_content(content: str) -> str:
-    """Cap *content* at ``_EVENT_CONTENT_MAX_LENGTH`` chars, keeping its head
-    and tail around a marker.
-
-    Both ends are preserved because the tail is often the informative part of a
-    truncated payload — the final lines of a raw error dump, or a trailing
-    status — which a head-only cut would silently drop. A no-op when *content*
-    is already within the limit, so callers can run it unconditionally rather
-    than checking the length themselves first.
-    """
-    if len(content) <= _EVENT_CONTENT_MAX_LENGTH:
-        return content
-    budget = _EVENT_CONTENT_MAX_LENGTH - len(_EVENT_TRUNCATION_MARKER)
-    head_len = budget // 2
-    tail_len = budget - head_len
-    return content[:head_len] + _EVENT_TRUNCATION_MARKER + content[-tail_len:]
 
 
 def _normalize_handle(value: str) -> str:
@@ -382,17 +355,13 @@ class AgentTools(AgentToolsProtocol):
                       call never supplies it.
 
         Returns:
-            Fern ChatMessage model (Pydantic). Serialized to dict by
-            execute_tool_call() at the adapter boundary.
+            Fern MessageSentResponse model (Pydantic), serialized to dict by
+            execute_tool_call() at the adapter boundary, or ``None`` if
+            *content* had no visible characters and the send was refused.
 
         Raises:
             ValueError: If a mentioned handle is not found in participants
         """
-        from band.client.rest import (
-            ChatMessageRequest,
-            ChatMessageRequestMentionsItem,
-        )
-
         # Deprecation warning for dict-style mentions WITHOUT an id: those
         # lean on name/handle resolution, which list[str] does better.
         # Id-bearing dicts are adapter-supplied ground truth (the message's
@@ -425,14 +394,11 @@ class AgentTools(AgentToolsProtocol):
         if attachment_ids is not None:
             message_kwargs["attachment_ids"] = attachment_ids
 
-        response = await self.rest.agent_api_messages.create_agent_chat_message(
-            chat_id=self.room_id,
-            message=ChatMessageRequest(**message_kwargs),
-            request_options=DEFAULT_REQUEST_OPTIONS,
+        return await post_message(
+            self.rest,
+            self.room_id,
+            ChatMessageRequest(**message_kwargs),
         )
-        if not response.data:
-            raise RuntimeError("Failed to send message - no response data")
-        return response.data
 
     async def send_event(
         self,
@@ -451,44 +417,19 @@ class AgentTools(AgentToolsProtocol):
             metadata: Optional structured data for the event
 
         Returns:
-            Fern ChatEvent model (Pydantic). Serialized to dict by
-            execute_tool_call() at the adapter boundary.
+            Fern EventCreatedResponse model (Pydantic), serialized to dict by
+            execute_tool_call() at the adapter boundary, or ``None`` if
+            *content* had no visible characters and the send was refused.
         """
-        from band.client.rest import ChatEventRequest
-
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
 
-        if not content:
-            logger.warning(
-                "Substituting placeholder for blank %s event content in room %s",
-                message_type,
-                self.room_id,
-            )
-            content = _EVENT_EMPTY_CONTENT_PLACEHOLDER
-
-        original_length = len(content)
-        content = _truncate_event_content(content)
-        if len(content) != original_length:
-            logger.warning(
-                "Truncated oversized %s event content for room %s (%d chars > %d limit)",
-                message_type,
-                self.room_id,
-                original_length,
-                _EVENT_CONTENT_MAX_LENGTH,
-            )
-
-        response = await self.rest.agent_api_events.create_agent_chat_event(
-            chat_id=self.room_id,
-            event=ChatEventRequest(
-                content=content,
-                message_type=message_type,
-                metadata=metadata,
+        return await post_event(
+            self.rest,
+            self.room_id,
+            ChatEventRequest(
+                content=content, message_type=message_type, metadata=metadata
             ),
-            request_options=DEFAULT_REQUEST_OPTIONS,
         )
-        if not response.data:
-            raise RuntimeError("Failed to send event - no response data")
-        return response.data
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         """

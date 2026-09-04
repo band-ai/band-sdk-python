@@ -9,9 +9,23 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
+from band.core.content import BLANK_CONTENT_ERROR, has_visible_content
 from band.core.types import EventMessageType
+
+
+def require_visible_content(value: str) -> str:
+    """Field-validator body shared by every ``content`` field on this page.
+
+    Exported (not private) so ``band.integrations.mcp.engine``'s
+    ``SendEventWideInput`` -- a from-scratch ``create_model`` that widens
+    ``message_type`` and so cannot subclass ``SendEventInput`` -- can attach
+    the same rule via ``__validators__`` instead of re-deriving it.
+    """
+    if not has_visible_content(value):
+        raise ValueError(BLANK_CONTENT_ERROR)
+    return value
 
 
 class SendMessageInput(BaseModel):
@@ -32,6 +46,8 @@ class SendMessageInput(BaseModel):
         ),
     )
 
+    _validate_content = field_validator("content")(require_visible_content)
+
 
 class SendEventInput(BaseModel):
     """Send an event to the chat room. No mentions required.
@@ -50,6 +66,8 @@ class SendEventInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )
+
+    _validate_content = field_validator("content")(require_visible_content)
 
 
 class AddParticipantInput(BaseModel):

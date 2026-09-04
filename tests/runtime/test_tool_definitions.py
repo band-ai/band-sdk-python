@@ -54,6 +54,13 @@ class TestSendMessageInput:
         model = SendMessageInput(content="Hello", mentions=[])
         assert model.mentions == []
 
+    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    def test_rejects_content_with_no_visible_characters(self, content):
+        """Content must have at least one visible character, not just be non-empty."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendMessageInput(content=content, mentions=["Alice"])
+        assert "content" in str(exc_info.value)
+
 
 class TestSendEventInput:
     """Tests for SendEventInput model."""
@@ -85,6 +92,13 @@ class TestSendEventInput:
         """Metadata should be optional."""
         event = SendEventInput(content="Test", message_type="thought")
         assert event.metadata is None
+
+    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    def test_rejects_content_with_no_visible_characters(self, content):
+        """Content must have at least one visible character, not just be non-empty."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendEventInput(content=content, message_type="thought")
+        assert "content" in str(exc_info.value)
 
 
 class TestAddParticipantInput:

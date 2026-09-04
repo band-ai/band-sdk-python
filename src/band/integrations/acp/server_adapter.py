@@ -22,6 +22,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
 from band.integrations.acp.event_converter import EventConverter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
+from band.platform.posting import post_event, post_message
 
 if TYPE_CHECKING:
     from acp.interfaces import Client
@@ -397,13 +398,13 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         mention_text = " ".join(f"@{m.name}" for m in mentions)
 
         try:
-            await self.rest.agent_api_messages.create_agent_chat_message(
-                chat_id=room_id,
-                message=ChatMessageRequest(
+            await post_message(
+                self.rest,
+                room_id,
+                ChatMessageRequest(
                     content=f"{mention_text} {prompt_text}".strip(),
                     mentions=mentions,
                 ),
-                request_options=DEFAULT_REQUEST_OPTIONS,
             )
         except Exception:
             await self._finish_pending_prompt(room_id, set_done=True)
@@ -554,9 +555,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             room_id: The room ID.
             session_id: The ACP session ID.
         """
-        await self.rest.agent_api_events.create_agent_chat_event(
-            chat_id=room_id,
-            event=ChatEventRequest(
+        await post_event(
+            self.rest,
+            room_id,
+            ChatEventRequest(
                 content="ACP session context",
                 message_type="task",
                 metadata={
@@ -566,7 +568,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                     "acp_mcp_servers": self._session_mcp_servers.get(session_id, []),
                 },
             ),
-            request_options=DEFAULT_REQUEST_OPTIONS,
         )
 
     def _prepend_session_context(self, session_id: str, text: str) -> str:

@@ -1373,6 +1373,18 @@ class TestAgentToolsSendMessage:
         with pytest.raises(RuntimeError, match="Failed to send message"):
             await tools.send_message("Hello!", mentions=["User One"])
 
+    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    async def test_send_message_refuses_content_with_no_visible_characters(
+        self, mock_rest_client, participants, content
+    ):
+        """send_message() should never call the API with blank content."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        result = await tools.send_message(content, mentions=["User One"])
+
+        assert result is None
+        mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_called()
+
 
 class TestAgentToolsSendEvent:
     """Test send_event tool."""
@@ -1431,16 +1443,17 @@ class TestAgentToolsSendEvent:
         assert sent_content.endswith("TAIL")  # and the tail isn't dropped
         assert "[truncated]" in sent_content  # with a marker between them
 
-    async def test_send_event_substitutes_placeholder_for_blank_content(
-        self, mock_rest_client
+    @pytest.mark.parametrize("content", ["", "   ", "\n\t "])
+    async def test_send_event_refuses_content_with_no_visible_characters(
+        self, mock_rest_client, content
     ):
-        """send_event() should never send a blank string — the platform 422s on it."""
+        """send_event() should never call the API with blank content — the platform 422s on it."""
         tools = AgentTools("room-123", mock_rest_client)
 
-        await tools.send_event("", "tool_result")
+        result = await tools.send_event(content, "tool_result")
 
-        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
-        assert call_args.kwargs["event"].content == "(no content)"
+        assert result is None
+        mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
 
 
 class TestMatchesIdentifier:

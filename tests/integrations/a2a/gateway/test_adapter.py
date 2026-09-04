@@ -132,7 +132,7 @@ class TestGatewayExecution:
         configure_room_creation(adapter)
         tools = FakeAgentTools()
 
-        async def send_message(**_kwargs: object) -> None:
+        async def send_message(**_kwargs: object) -> MagicMock:
             await adapter.on_message(
                 make_platform_message("Sunny"),
                 tools,
@@ -142,6 +142,7 @@ class TestGatewayExecution:
                 is_session_bootstrap=False,
                 room_id="room-123",
             )
+            return MagicMock(data=MagicMock())
 
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=send_message
@@ -162,8 +163,9 @@ class TestGatewayExecution:
         configure_room_creation(adapter)
         sent = asyncio.Event()
 
-        async def send_message(**_kwargs: object) -> None:
+        async def send_message(**_kwargs: object) -> MagicMock:
             sent.set()
+            return MagicMock(data=MagicMock())
 
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=send_message
@@ -206,8 +208,9 @@ class TestGatewayExecution:
         queue = EventQueueLegacy()
         sent = asyncio.Event()
 
-        async def send_message(**_kwargs: object) -> None:
+        async def send_message(**_kwargs: object) -> MagicMock:
             sent.set()
+            return MagicMock(data=MagicMock())
 
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=send_message

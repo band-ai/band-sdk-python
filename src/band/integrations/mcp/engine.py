@@ -35,7 +35,7 @@ from typing import Annotated, Any, Literal, Protocol
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import AliasChoices, BaseModel, Field, create_model
+from pydantic import AliasChoices, BaseModel, Field, create_model, field_validator
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
 
@@ -48,6 +48,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
+from band.runtime.tools.inputs.chat import require_visible_content
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
@@ -339,6 +340,12 @@ SendEventWideInput = create_model(  # type: ignore[call-overload]
         ),
     ),
     metadata=(dict[str, Any] | None, SendEventInput.model_fields["metadata"]),
+    # Same reason content/metadata are reused rather than retyped: a
+    # from-scratch model has no validators of its own to independently
+    # drift from SendEventInput's.
+    __validators__={
+        "validate_content": field_validator("content")(require_visible_content)
+    },
 )
 SendEventWideInput.__doc__ = SendEventInput.__doc__
 

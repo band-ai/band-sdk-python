@@ -17,7 +17,7 @@ import pytest
 from mcp import ClientSession
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from band.integrations.mcp.engine import (
     CustomToolSpec,
@@ -156,6 +156,13 @@ class TestSendEventWideInput:
                 {"content": "x", "message_type": message_type}
             )
             assert validated.message_type == message_type
+
+    def test_rejects_content_with_no_visible_characters(self) -> None:
+        """The independent model still carries SendEventInput's content rule."""
+        with pytest.raises(ValidationError, match="content"):
+            SendEventWideInput.model_validate(
+                {"content": "   ", "message_type": "tool_result"}
+            )
 
 
 class TestValidateUniqueToolNames:

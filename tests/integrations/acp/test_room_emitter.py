@@ -22,6 +22,7 @@ from band.integrations.acp.types import (
     ToolResultRoomEvent,
     ToolStatus,
 )
+from band.runtime.tools.agent import AgentTools
 from band.testing.fake_tools import FakeAgentTools
 
 # Arbitrary example name: these tests exercise the generic wrapping mechanism,
@@ -80,3 +81,46 @@ class TestRoomTurnEmitter:
         assert wrapped.name == TOOL_NAME
         assert wrapped.tool_call_id == "tc-2"
         assert wrapped.args == {"message_type": "thought", "content": "hi"}
+
+
+class TestRoomTurnEmitterBlankChunks:
+    """THOUGHT/PLAN chunks pass raw ``chunk.content`` unguarded (unlike TEXT,
+    which checks truthiness) -- a status-only ACP update can collect as a
+    whitespace-only chunk. Exercised against the real ``AgentTools`` (not
+    ``FakeAgentTools``, which never rejects anything) so the send path really
+    reaches ``band.platform.posting.post_event``'s blank-content refusal:
+    before that refusal existed, this content would 422 the REST call and the
+    exception would abort the whole ACP turn (the SDK's routing side of
+    INT-1361 -- Python already turns that into a stopped runtime with a
+    visible error event rather than a silent zombie, but a single blank
+    status update should not cost the rest of the turn either).
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_blank_thought_chunk_does_not_raise(self, mock_rest_client) -> None:
+        tools = AgentTools("room-1", mock_rest_client)
+        emitter = RoomTurnEmitter(tools, mentions=[], session_id="s1", room_id="room-1")
+
+        await emitter.emit(
+            CollectedChunk(chunk_type=ChunkType.THOUGHT, content="   ", tool=None)
+        )
+
+        mock_rest_client.agent_api_events.create_agent_chat_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_the_turn_keeps_emitting_after_a_blank_chunk(
+        self, mock_rest_client
+    ) -> None:
+        tools = AgentTools("room-1", mock_rest_client)
+        emitter = RoomTurnEmitter(tools, mentions=[], session_id="s1", room_id="room-1")
+
+        await emitter.emit(
+            CollectedChunk(chunk_type=ChunkType.THOUGHT, content="   ", tool=None)
+        )
+        await emitter.emit(
+            CollectedChunk(chunk_type=ChunkType.THOUGHT, content="thinking", tool=None)
+        )
+
+        mock_rest_client.agent_api_events.create_agent_chat_event.assert_called_once()
+        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
+        assert call_args.kwargs["event"].content == "thinking"

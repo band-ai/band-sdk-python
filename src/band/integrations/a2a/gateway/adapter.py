@@ -30,6 +30,7 @@ from band.converters.a2a_gateway import GatewayHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.platform.posting import post_event, post_message
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -385,9 +386,10 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> None:
         """Send the A2A request text to the selected Band peer."""
         content = context.get_user_input()
-        await self.rest.agent_api_messages.create_agent_chat_message(
-            chat_id=request.room_id,
-            message=ChatMessageRequest(
+        await post_message(
+            self.rest,
+            request.room_id,
+            ChatMessageRequest(
                 content=f"@{request.peer.name} {content}",
                 mentions=[
                     ChatMessageRequestMentionsItem(
@@ -395,7 +397,6 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                     )
                 ],
             ),
-            request_options=DEFAULT_REQUEST_OPTIONS,
         )
         logger.debug(
             "A2A request sent to Band: room=%s task=%s",
@@ -560,9 +561,10 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             room_id: The room ID.
             context_id: The A2A context ID.
         """
-        await self.rest.agent_api_events.create_agent_chat_event(
-            chat_id=room_id,
-            event=ChatEventRequest(
+        await post_event(
+            self.rest,
+            room_id,
+            ChatEventRequest(
                 content="A2A gateway context",
                 message_type="task",
                 metadata={
