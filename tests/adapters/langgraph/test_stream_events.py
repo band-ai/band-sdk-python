@@ -138,6 +138,73 @@ class TestStreamEventHandling:
         assert payload["output"] == "missing mentions"
 
     @pytest.mark.asyncio
+    async def test_read_room_file_image_result_reports_placeholder(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """band_read_room_file's image result must not leak its base64 data
+        into a tool_result event. langchain_tools.py's execute_definition
+        returns a list[ImageContentBlock] for the image branch, which
+        LangChain wraps in a ToolMessage before on_tool_end sees it -- that
+        object isn't JSON-serializable, so json.dumps's default=str would
+        otherwise fall back to str(ToolMessage(...)), embedding the full
+        base64 payload."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            emit=Emit.TOOL_CALLS,
+        )
+
+        tool_message = SimpleNamespace(
+            content=[
+                {
+                    "type": "image",
+                    "mime_type": "image/png",
+                    "base64": "not-really-base64-but-huge-in-real-life",
+                }
+            ]
+        )
+        event = {
+            "event": "on_tool_end",
+            "name": "band_read_room_file",
+            "run_id": "run-123",
+            "data": {"output": tool_message},
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert "not-really-base64-but-huge-in-real-life" not in call_kwargs["content"]
+        payload = json.loads(call_kwargs["content"])
+        assert payload["output"] == "<1 image content block(s)>"
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_args_content_reported_as_placeholder(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """band_send_room_file's raw file content must not leak into a
+        tool_call event's reported ARGS."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            emit=Emit.TOOL_CALLS,
+        )
+
+        event = {
+            "event": "on_tool_start",
+            "name": "band_send_room_file",
+            "run_id": "run-123",
+            "data": {
+                "input": {"content": "the entire raw file body", "filename": "f.txt"}
+            },
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert "the entire raw file body" not in call_kwargs["content"]
+        assert "byte file content" in call_kwargs["content"]
+
+    @pytest.mark.asyncio
     async def test_ignores_other_events(self, mock_tools, mock_llm, mock_checkpointer):
         """Should ignore events other than tool_start/end."""
         adapter = LangGraphAdapter(

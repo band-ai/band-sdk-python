@@ -36,6 +36,7 @@ from band_rest import ChatMessage
 from band.core.types import MessageType
 from band.runtime.tools import (
     CONTACT_TOOL_NAMES,
+    FILE_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
 )
@@ -85,6 +86,21 @@ if {tool.value for tool in ContactTool} != set(CONTACT_TOOL_NAMES):
     raise ValueError(
         "ContactTool drifted from band.runtime.tools.CONTACT_TOOL_NAMES: "
         f"{set(CONTACT_TOOL_NAMES) ^ {tool.value for tool in ContactTool}}"
+    )
+
+
+class FileTool(StrEnum):
+    """Canonical room-file platform-tool names for capability scenarios."""
+
+    LIST = "band_list_room_files"
+    READ = "band_read_room_file"
+    SEND = "band_send_room_file"
+
+
+if {tool.value for tool in FileTool} != set(FILE_TOOL_NAMES):
+    raise ValueError(
+        "FileTool drifted from band.runtime.tools.FILE_TOOL_NAMES: "
+        f"{set(FILE_TOOL_NAMES) ^ {tool.value for tool in FileTool}}"
     )
 
 

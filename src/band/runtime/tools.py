@@ -855,12 +855,41 @@ class ListMyPeersInput(BaseModel):
 # match here, and ``integrations.mcp.backends`` names the server from it.
 BAND_MCP_SERVER_NAME = "band"
 
-# The one tool whose identity is checked by name well outside its own
-# ToolDefinition entry: room-posting detection, room-binding classification,
-# mention-hint error enrichment, and several adapters' own send-message
-# special cases (crewai, claude_sdk, agno, letta) all need this exact value.
-# Single source of truth so none of those re-type the literal independently.
-SEND_MESSAGE_TOOL_NAME = "band_send_message"
+
+class BandTool(StrEnum):
+    """The agent-surface Band tool names.
+
+    One vocabulary for every site that checks a tool's identity by name:
+    room-posting detection, room-binding classification, capability gating,
+    mention-hint enrichment, and the adapters' own per-tool branches (the
+    send-message special cases in crewai/claude_sdk/agno/letta, the
+    image-vision passthrough only a ``READ_ROOM_FILE`` result can trigger).
+    Members are ``str``, so they compare, hash, and serialize as the wire
+    name. The human surface is a separate vocabulary, deliberately not
+    modeled here.
+    """
+
+    SEND_MESSAGE = "band_send_message"
+    SEND_EVENT = "band_send_event"
+    ADD_PARTICIPANT = "band_add_participant"
+    REMOVE_PARTICIPANT = "band_remove_participant"
+    GET_PARTICIPANTS = "band_get_participants"
+    LOOKUP_PEERS = "band_lookup_peers"
+    CREATE_CHATROOM = "band_create_chatroom"
+    LIST_CONTACTS = "band_list_contacts"
+    ADD_CONTACT = "band_add_contact"
+    REMOVE_CONTACT = "band_remove_contact"
+    LIST_CONTACT_REQUESTS = "band_list_contact_requests"
+    RESPOND_CONTACT_REQUEST = "band_respond_contact_request"
+    LIST_MEMORIES = "band_list_memories"
+    STORE_MEMORY = "band_store_memory"
+    GET_MEMORY = "band_get_memory"
+    SUPERSEDE_MEMORY = "band_supersede_memory"
+    ARCHIVE_MEMORY = "band_archive_memory"
+    LIST_ROOM_FILES = "band_list_room_files"
+    READ_ROOM_FILE = "band_read_room_file"
+    SEND_ROOM_FILE = "band_send_room_file"
+
 
 # Tool names whose successful call posts a visible message into the room.
 # Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
@@ -872,7 +901,7 @@ SEND_MESSAGE_TOOL_NAME = "band_send_message"
 # still match. ``band_send_room_file`` also posts a message (the file's
 # attaching message), same reply-once reasoning.
 ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {SEND_MESSAGE_TOOL_NAME, "create_agent_chat_message", "band_send_room_file"}
+    {BandTool.SEND_MESSAGE, "create_agent_chat_message", BandTool.SEND_ROOM_FILE}
 )
 
 
@@ -936,15 +965,15 @@ def canonicalize_mcp_tool_name(tool_name: str, own_names: Collection[str]) -> st
 # instance selection.
 AGENT_ROOM_BOUND_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        SEND_MESSAGE_TOOL_NAME,
-        "band_send_event",
-        "band_add_participant",
-        "band_remove_participant",
-        "band_get_participants",
-        "band_lookup_peers",
-        "band_list_room_files",
-        "band_read_room_file",
-        "band_send_room_file",
+        BandTool.SEND_MESSAGE,
+        BandTool.SEND_EVENT,
+        BandTool.ADD_PARTICIPANT,
+        BandTool.REMOVE_PARTICIPANT,
+        BandTool.GET_PARTICIPANTS,
+        BandTool.LOOKUP_PEERS,
+        BandTool.LIST_ROOM_FILES,
+        BandTool.READ_ROOM_FILE,
+        BandTool.SEND_ROOM_FILE,
     }
 )
 
@@ -993,102 +1022,102 @@ def classify_room_binding(definition: ToolDefinition) -> tuple[bool, bool]:
 # keys from that instead of retyping the name a second time as a dict key.
 _TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
-        name=SEND_MESSAGE_TOOL_NAME,
+        name=BandTool.SEND_MESSAGE,
         input_model=SendMessageInput,
         method_name="send_message",
     ),
     ToolDefinition(
-        name="band_send_event",
+        name=BandTool.SEND_EVENT,
         input_model=SendEventInput,
         method_name="send_event",
     ),
     ToolDefinition(
-        name="band_add_participant",
+        name=BandTool.ADD_PARTICIPANT,
         input_model=AddParticipantInput,
         method_name="add_participant",
     ),
     ToolDefinition(
-        name="band_remove_participant",
+        name=BandTool.REMOVE_PARTICIPANT,
         input_model=RemoveParticipantInput,
         method_name="remove_participant",
     ),
     ToolDefinition(
-        name="band_lookup_peers",
+        name=BandTool.LOOKUP_PEERS,
         input_model=LookupPeersInput,
         method_name="lookup_peers",
     ),
     ToolDefinition(
-        name="band_get_participants",
+        name=BandTool.GET_PARTICIPANTS,
         input_model=GetParticipantsInput,
         method_name="get_participants",
     ),
     ToolDefinition(
-        name="band_create_chatroom",
+        name=BandTool.CREATE_CHATROOM,
         input_model=CreateChatroomInput,
         method_name="create_chatroom",
     ),
     ToolDefinition(
-        name="band_list_contacts",
+        name=BandTool.LIST_CONTACTS,
         input_model=ListContactsInput,
         method_name="list_contacts",
     ),
     ToolDefinition(
-        name="band_add_contact",
+        name=BandTool.ADD_CONTACT,
         input_model=AddContactInput,
         method_name="add_contact",
     ),
     ToolDefinition(
-        name="band_remove_contact",
+        name=BandTool.REMOVE_CONTACT,
         input_model=RemoveContactInput,
         method_name="remove_contact",
     ),
     ToolDefinition(
-        name="band_list_contact_requests",
+        name=BandTool.LIST_CONTACT_REQUESTS,
         input_model=ListContactRequestsInput,
         method_name="list_contact_requests",
     ),
     ToolDefinition(
-        name="band_respond_contact_request",
+        name=BandTool.RESPOND_CONTACT_REQUEST,
         input_model=RespondContactRequestInput,
         method_name="respond_contact_request",
     ),
     ToolDefinition(
-        name="band_list_memories",
+        name=BandTool.LIST_MEMORIES,
         input_model=ListMemoriesInput,
         method_name="list_memories",
     ),
     ToolDefinition(
-        name="band_store_memory",
+        name=BandTool.STORE_MEMORY,
         input_model=StoreMemoryInput,
         method_name="store_memory",
     ),
     ToolDefinition(
-        name="band_get_memory",
+        name=BandTool.GET_MEMORY,
         input_model=GetMemoryInput,
         method_name="get_memory",
     ),
     ToolDefinition(
-        name="band_supersede_memory",
+        name=BandTool.SUPERSEDE_MEMORY,
         input_model=SupersedeMemoryInput,
         method_name="supersede_memory",
     ),
     ToolDefinition(
-        name="band_archive_memory",
+        name=BandTool.ARCHIVE_MEMORY,
         input_model=ArchiveMemoryInput,
         method_name="archive_memory",
     ),
     ToolDefinition(
-        name="band_list_room_files",
+        name=BandTool.LIST_ROOM_FILES,
         input_model=ListRoomFilesInput,
         method_name="list_room_files",
     ),
     ToolDefinition(
-        name="band_read_room_file",
+        name=BandTool.READ_ROOM_FILE,
         input_model=ReadRoomFileInput,
         method_name="read_room_file",
     ),
     ToolDefinition(
-        name="band_send_room_file",
+        name=BandTool.SEND_ROOM_FILE,
         input_model=SendRoomFileInput,
         method_name="send_room_file",
     ),
@@ -1282,11 +1311,11 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
 # expose functionality that should be gated.
 MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_list_memories",
-        "band_store_memory",
-        "band_get_memory",
-        "band_supersede_memory",
-        "band_archive_memory",
+        BandTool.LIST_MEMORIES,
+        BandTool.STORE_MEMORY,
+        BandTool.GET_MEMORY,
+        BandTool.SUPERSEDE_MEMORY,
+        BandTool.ARCHIVE_MEMORY,
     }
 )
 
@@ -1295,11 +1324,11 @@ MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
 # band_get_contact_context) would be silently misclassified.
 CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_list_contacts",
-        "band_add_contact",
-        "band_remove_contact",
-        "band_list_contact_requests",
-        "band_respond_contact_request",
+        BandTool.LIST_CONTACTS,
+        BandTool.ADD_CONTACT,
+        BandTool.REMOVE_CONTACT,
+        BandTool.LIST_CONTACT_REQUESTS,
+        BandTool.RESPOND_CONTACT_REQUEST,
     }
 )
 
@@ -1309,9 +1338,9 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # above.
 FILE_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_list_room_files",
-        "band_read_room_file",
-        "band_send_room_file",
+        BandTool.LIST_ROOM_FILES,
+        BandTool.READ_ROOM_FILE,
+        BandTool.SEND_ROOM_FILE,
     }
 )
 
@@ -1363,14 +1392,14 @@ FILENAME_HEADER_SAFE_PATTERN = re.compile(r"[\x20-\x7e]+")
 # final answer is a genuine no-response failure, not benign noise.
 READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_get_participants",
-        "band_lookup_peers",
-        "band_list_contacts",
-        "band_list_contact_requests",
-        "band_list_memories",
-        "band_get_memory",
-        "band_list_room_files",
-        "band_read_room_file",
+        BandTool.GET_PARTICIPANTS,
+        BandTool.LOOKUP_PEERS,
+        BandTool.LIST_CONTACTS,
+        BandTool.LIST_CONTACT_REQUESTS,
+        BandTool.LIST_MEMORIES,
+        BandTool.GET_MEMORY,
+        BandTool.LIST_ROOM_FILES,
+        BandTool.READ_ROOM_FILE,
     }
 )
 
@@ -1378,7 +1407,7 @@ READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
 # thought/error/task event (narration/status) — not a chat reply or a durable requested
 # action. Like read-only tools, a turn that only sends an event and then yields an empty
 # final answer is a genuine no-response failure, not benign (see is_terminal_success).
-EVENT_TOOL_NAMES: frozenset[str] = frozenset({"band_send_event"})
+EVENT_TOOL_NAMES: frozenset[str] = frozenset({BandTool.SEND_EVENT})
 
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
 # ``surface="human"`` side of the registry. Used by iter_tool_definitions()
@@ -1494,6 +1523,20 @@ if FILE_TOOL_NAMES - ALL_TOOL_NAMES:
 if EVENT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown event tools: {EVENT_TOOL_NAMES - ALL_TOOL_NAMES}")
 
+# BandTool is the agent surface's vocabulary, so it must stay exactly the set
+# of agent-surface definitions -- a new agent tool that skips the enum, or an
+# enum member with no definition behind it, is a bug either way.
+_AGENT_DEFINITION_NAMES: frozenset[str] = frozenset(
+    definition.name
+    for definition in _TOOL_DEFINITIONS
+    if definition.surface == Surface.AGENT
+)
+if frozenset(BandTool) != _AGENT_DEFINITION_NAMES:
+    raise ValueError(
+        "BandTool drifted from the agent-surface tool definitions: "
+        f"{frozenset(BandTool) ^ _AGENT_DEFINITION_NAMES}"
+    )
+
 # Human-surface registry membership is validated against TOOL_DEFINITIONS
 # (not TOOL_MODELS, which stays agent-only for back-compat).
 _ALL_DEFINITION_NAMES: frozenset[str] = frozenset(TOOL_DEFINITIONS.keys())
@@ -1583,7 +1626,7 @@ def get_tool_description(name: str) -> str:
     Descriptions are sourced from the Pydantic model docstrings.
 
     Args:
-        name: Tool name (e.g., "band_send_message", "band_lookup_peers")
+        name: Tool name (e.g. ``band_send_message``, ``band_lookup_peers``)
               Also accepts unprefixed names for backwards compatibility (deprecated).
 
     Returns:
@@ -1791,6 +1834,77 @@ def serialize_tool_result(result: Any) -> Any:
             for item in result
         ]
     return result
+
+
+def is_mcp_content_result(data: Any) -> bool:
+    """True when ``data`` is ``read_room_file``'s image-content-block shape.
+
+    Only ``read_room_file``'s image branch returns this shape (see its
+    "image" case: a ``content`` list of one ``{"type": "image", "data":
+    ..., "mimeType": ...}`` block), so gate any use on that tool's name --
+    prefer ``is_image_passthrough_result`` over calling this directly.
+    Requires ``data``/``mimeType`` on every block (not just ``type``) so a
+    malformed or future-extended block fails this check instead of reaching
+    ``decode_image_block`` and raising past it.
+    """
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("content"), list)
+        and bool(data["content"])
+        and all(
+            isinstance(block, dict)
+            and block.get("type") == "image"
+            and "data" in block
+            and "mimeType" in block
+            for block in data["content"]
+        )
+    )
+
+
+def is_image_passthrough_result(tool_name: str, result: Any) -> bool:
+    """True when ``result`` is ``band_read_room_file``'s image-block result.
+
+    The combined check (right tool + right shape) that every adapter's
+    image-passthrough branch needs -- single source of truth instead of
+    re-deriving ``tool_name == BandTool.READ_ROOM_FILE and
+    is_mcp_content_result(result)`` at each call site.
+    """
+    return tool_name == BandTool.READ_ROOM_FILE and is_mcp_content_result(result)
+
+
+def image_block_placeholder(block_count: int) -> str:
+    """The text an adapter emits alongside image content it passes separately."""
+    return f"<{block_count} image content block(s)>"
+
+
+def file_content_placeholder(byte_count: int) -> str:
+    """The text a tool-call event reports in place of a file's raw content."""
+    return f"<{byte_count} byte file content>"
+
+
+def redact_tool_call_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Replace ``band_send_room_file``'s raw ``content`` before it reaches an event.
+
+    Adapters that report a tool_call event by json.dumps-ing the tool's raw
+    kwargs have no idea ``band_send_room_file``'s ``content`` argument can
+    carry up to ``MAX_SEND_CONTENT_BYTES`` of real file bytes -- redact it
+    centrally rather than teaching every adapter's generic reporter the same
+    field name.
+    """
+    if tool_name != BandTool.SEND_ROOM_FILE or not isinstance(args, dict):
+        return args
+    content = args.get("content")
+    if not isinstance(content, str):
+        return args
+    return {
+        **args,
+        "content": file_content_placeholder(len(content.encode("utf-8"))),
+    }
+
+
+def decode_image_block(block: dict[str, Any]) -> tuple[bytes, str]:
+    """Decode one MCP image content block into (raw bytes, mime type)."""
+    return base64.b64decode(block["data"]), block["mimeType"]
 
 
 class AttachmentCache(Protocol):

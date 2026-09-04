@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict, deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -223,6 +224,76 @@ def _event_request(request_id: int, method: str, params: dict[str, Any]) -> RpcE
     )
 
 
+def _turn_completed(turn_id: str = "turn-1") -> RpcEvent:
+    """The notification that ends a scripted turn."""
+    return _event_notification(
+        "turn/completed",
+        {"turn": {"id": turn_id, "status": "completed", "items": [], "error": None}},
+    )
+
+
+def _tool_call_request(
+    request_id: int, tool: str, arguments: dict[str, Any] | None = None
+) -> RpcEvent:
+    """The server request Codex sends to invoke one Band tool."""
+    return _event_request(
+        request_id, "item/tool/call", {"tool": tool, "arguments": arguments or {}}
+    )
+
+
+@dataclass(frozen=True)
+class CodexTurn:
+    """What one driven turn left behind, as the projections tests assert on."""
+
+    adapter: CodexAdapter
+    client: FakeCodexClient
+    tools: FakeAgentTools
+
+    @property
+    def tool_response(self) -> tuple[int | str, dict[str, Any]]:
+        """``(request_id, payload)`` of the first tool-call response sent back."""
+        return self.client.responses[0]
+
+    @property
+    def content_items(self) -> list[dict[str, Any]]:
+        """Content items the adapter returned for the first tool call."""
+        return self.tool_response[1]["contentItems"]
+
+
+async def run_codex_turn(
+    *,
+    events: list[RpcEvent],
+    tools: FakeAgentTools | None = None,
+    config: CodexAdapterConfig | None = None,
+    **adapter_kwargs: Any,
+) -> CodexTurn:
+    """Drive one full Codex turn against ``events`` and return what it produced.
+
+    Wraps the scaffolding a turn test otherwise repeats -- fake transport,
+    adapter wired to it, ``on_started``, one bootstrap ``on_message`` -- so a
+    test states only the events it scripts and the outcome it asserts.
+    """
+    client = FakeCodexClient(events=events)
+    adapter = CodexAdapter(
+        config=config or CodexAdapterConfig(transport="ws"),
+        client_factory=lambda _config: client,
+        **adapter_kwargs,
+    )
+    room_tools = tools if tools is not None else ToolSchemaFakeTools()
+
+    await adapter.on_started("Codex Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        room_tools,
+        CodexSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+    return CodexTurn(adapter=adapter, client=client, tools=room_tools)
+
+
 async def _wait_for_pending_approval(
     adapter: CodexAdapter,
     room_id: str,
@@ -259,17 +330,7 @@ class TestCodexAdapter:
                 "item/agentMessage/delta",
                 {"itemId": "msg-1", "delta": "harness-ok"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -308,17 +369,7 @@ class TestCodexAdapter:
     async def test_system_prompt_retry_after_turn_start_failure(self) -> None:
         """System instructions stay pending until turn/start succeeds."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(
             events=events,
@@ -374,25 +425,8 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_tool_call_request_is_dispatched_and_responded(self) -> None:
         events = [
-            _event_request(
-                42,
-                "item/tool/call",
-                {
-                    "tool": "band_lookup_peers",
-                    "arguments": {"page": 1, "page_size": 10},
-                },
-            ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _tool_call_request(42, "band_lookup_peers", {"page": 1, "page_size": 10}),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -462,17 +496,7 @@ class TestCodexAdapter:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -500,19 +524,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_resume_failure_falls_back_to_thread_start(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -546,17 +558,7 @@ class TestCodexAdapter:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -601,17 +603,7 @@ class TestCodexAdapter:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -656,17 +648,7 @@ class TestCodexAdapter:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -697,21 +679,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_cleanup_closes_client_when_last_room_removed(self) -> None:
-        fake_client = FakeCodexClient(
-            events=[
-                _event_notification(
-                    "turn/completed",
-                    {
-                        "turn": {
-                            "id": "turn-1",
-                            "status": "completed",
-                            "items": [],
-                            "error": None,
-                        }
-                    },
-                )
-            ]
-        )
+        fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
@@ -736,21 +704,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_cleanup_idempotent(self) -> None:
         """Calling on_cleanup twice for the same room should not raise."""
-        fake_client = FakeCodexClient(
-            events=[
-                _event_notification(
-                    "turn/completed",
-                    {
-                        "turn": {
-                            "id": "turn-1",
-                            "status": "completed",
-                            "items": [],
-                            "error": None,
-                        }
-                    },
-                )
-            ]
-        )
+        fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
@@ -776,32 +730,8 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     async def test_cleanup_multi_room_keeps_client_until_last(self) -> None:
         """Client stays open until the last room is cleaned up."""
-        events_room1 = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
-        events_room2 = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-2",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events_room1 = [_turn_completed()]
+        events_room2 = [_turn_completed("turn-2")]
         fake_client = FakeCodexClient(events=events_room1 + events_room2)
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws"),
@@ -848,17 +778,7 @@ class TestCodexAdapter:
                 "codex/event/task_complete",
                 {"taskId": "task-1", "summary": "Inspection finished"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -905,17 +825,7 @@ class TestCodexAdapter:
                 "codex/event/task_started",
                 {"taskId": "task-1", "task": {"title": "Inspect repository"}},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -958,17 +868,7 @@ class TestCodexAdapter:
                 "codex/event/task_started",
                 {"id": "turn-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1300,17 +1200,7 @@ class TestCodexAdapter:
                     "arguments": {"model": "o3"},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    },
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1352,17 +1242,7 @@ class TestCodexAdapter:
                     "arguments": {"effort": "xhigh", "summary": "detailed"},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    },
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1395,17 +1275,7 @@ class TestCodexAdapter:
                     "arguments": {"effort": "ultra"},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    },
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1437,19 +1307,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_sandbox_alias_is_normalized_for_thread_and_turn(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
             config=CodexAdapterConfig(
@@ -1486,19 +1344,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_external_sandbox_alias_uses_sandbox_policy(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
             config=CodexAdapterConfig(
@@ -1736,17 +1582,7 @@ class TestCodexAdapter:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1826,17 +1662,7 @@ class TestCodexAdapter:
                     "callId": "call-99",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1880,17 +1706,7 @@ class TestCodexAdapter:
                     "callId": "call-50",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1925,6 +1741,43 @@ class TestCodexAdapter:
         assert result_data["tool_call_id"] == "call-50"
 
     @pytest.mark.asyncio
+    async def test_send_room_file_tool_call_event_redacts_content(self) -> None:
+        """band_send_room_file's raw content must never reach a tool_call
+        event -- report has no idea content can carry real file bytes."""
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        events = [
+            _tool_call_request(
+                50, "band_send_room_file", {"content": raw_content, "filename": "f.txt"}
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
+        assert (
+            call_data["args"]["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in json.dumps(call_data)
+
+    @pytest.mark.asyncio
     async def test_execution_reporting_silenced_with_explicit_empty_emit(self) -> None:
         """emit=() silences tool_call/tool_result events (emit otherwise defaults on)."""
         events = [
@@ -1937,17 +1790,7 @@ class TestCodexAdapter:
                     "callId": "call-50",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -1998,17 +1841,7 @@ class TestCodexAdapter:
                     "callId": "call-60",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2060,17 +1893,7 @@ class TestCodexAdapter:
                     "callId": "call-70",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2111,6 +1934,59 @@ class TestItemCompletedForwarding:
     """Tests for forwarding internal Codex operations as platform events."""
 
     @pytest.mark.asyncio
+    async def test_item_completed_mcpToolCall_send_room_file_redacts_content(
+        self,
+    ) -> None:
+        """band_send_room_file routed through Codex's own mcpToolCall item
+        (a separate reporting path from item/tool/call, keyed by the bare
+        "tool" field before it's wrapped in the "mcp:{server}/{tool}"
+        display name) must also redact raw file content before it reaches a
+        tool_call event."""
+        raw_content = "raw file bytes that must never reach a tool_call event"
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "mcp-1",
+                        "server": "band",
+                        "tool": "band_send_room_file",
+                        "arguments": {"content": raw_content, "filename": "f.txt"},
+                        "result": {"status": "success"},
+                    }
+                },
+            ),
+            _turn_completed(),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+            emit=Emit.TOOL_CALLS,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        call_data = json.loads(events_of_type(tools, "tool_call")[0]["content"])
+        assert call_data["name"] == "mcp:band/band_send_room_file"
+        assert (
+            call_data["args"]["content"]
+            == f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in json.dumps(call_data)
+
+    @pytest.mark.asyncio
     async def test_item_completed_commandExecution_emits_tool_events(self) -> None:
         """commandExecution item emits tool_call + tool_result with command/output."""
         events = [
@@ -2128,17 +2004,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2194,17 +2060,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2252,17 +2108,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2304,17 +2150,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2361,17 +2197,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2422,17 +2248,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2474,17 +2290,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2544,17 +2350,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2597,17 +2393,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2667,17 +2453,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2719,17 +2495,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2772,17 +2538,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2842,17 +2598,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2888,17 +2634,7 @@ class TestItemCompletedForwarding:
                 "item/completed",
                 {"item": {"type": "plan", "id": "plan-blank", "text": "   "}},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -2947,17 +2683,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -3011,17 +2737,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -3063,17 +2779,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -3117,17 +2823,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -3167,17 +2863,7 @@ class TestItemCompletedForwarding:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -3210,19 +2896,7 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_injected_on_resume_failure(self) -> None:
         """Resume fails, fresh thread created, first turn input contains history block."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
@@ -3285,19 +2959,7 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_not_injected_on_successful_resume(self) -> None:
         """Resume succeeds, no history injection."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws"),
@@ -3343,19 +3005,7 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_not_injected_when_disabled(self) -> None:
         """inject_history_on_resume_failure=False, no injection even on failure."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Thread expired"),
@@ -3399,19 +3049,7 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_filters_non_text_messages(self) -> None:
         """Only canonical text messages appear in injected context."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -3491,19 +3129,7 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_respects_max_messages(self) -> None:
         """Only last max_history_messages are injected."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -3562,19 +3188,7 @@ class TestHistoryInjection:
     @pytest.mark.asyncio
     async def test_history_cleared_after_injection(self) -> None:
         """Raw history removed from memory after first turn."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            )
-        ]
+        events = [_turn_completed()]
         fake_client = FakeCodexClient(
             events=events,
             resume_error=CodexJsonRpcError(code=-32002, message="Not found"),
@@ -3907,25 +3521,8 @@ class TestHistoryInjection:
                 )
 
         events = [
-            _event_request(
-                99,
-                "item/tool/call",
-                {
-                    "tool": "band_send_message",
-                    "arguments": {},
-                },
-            ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _tool_call_request(99, "band_send_message"),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -3980,17 +3577,7 @@ class TestStructuredErrors:
                     "willRetry": False,
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4079,17 +3666,7 @@ class TestStructuredErrors:
                     "willRetry": False,
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4131,17 +3708,7 @@ class TestEnrichedApprovals:
                 "item/commandExecution/requestApproval",
                 {"command": "npm test"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=first_events)
         adapter = CodexAdapter(
@@ -4195,17 +3762,7 @@ class TestEnrichedApprovals:
                 "item/commandExecution/requestApproval",
                 {"command": "rm -rf tmp"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4401,17 +3958,7 @@ class TestPlanAndLifecycle:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4457,17 +4004,7 @@ class TestPlanAndLifecycle:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4498,17 +4035,7 @@ class TestPlanAndLifecycle:
     async def test_turn_lifecycle_events_emitted(self) -> None:
         """Enriched turn lifecycle events include duration and status."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4548,17 +4075,7 @@ class TestPlanAndLifecycle:
     async def test_threads_command_lists_mappings(self) -> None:
         """/threads command shows room→thread mappings."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4602,17 +4119,7 @@ class TestPlanAndLifecycle:
     async def test_thread_archive_clears_mapping(self) -> None:
         """/thread archive removes the thread mapping."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4660,17 +4167,7 @@ class TestRealtimeStreaming:
                 "item/reasoning/summaryTextDelta",
                 {"delta": "Analyzing the code...", "itemId": "item-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4707,17 +4204,7 @@ class TestRealtimeStreaming:
                 "item/reasoning/summaryTextDelta",
                 {"delta": "Thinking...", "itemId": "item-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4750,17 +4237,7 @@ class TestRealtimeStreaming:
                 "item/plan/delta",
                 {"delta": "Step 1: Read the test", "itemId": "plan-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4808,17 +4285,7 @@ class TestRealtimeStreaming:
                     "phase": "final_answer",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4869,17 +4336,7 @@ class TestRealtimeStreaming:
                     "phase": "final_answer",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4925,17 +4382,7 @@ class TestRealtimeStreaming:
                     "phase": "final_answer",
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -4977,17 +4424,7 @@ class TestDiffsAndTokenUsage:
                     "files": ["src/app.py"],
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5029,17 +4466,7 @@ class TestDiffsAndTokenUsage:
                 "turn/diff/updated",
                 {"diff": "some diff", "files": ["f.py"]},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5085,17 +4512,7 @@ class TestDiffsAndTokenUsage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5139,17 +4556,7 @@ class TestDiffsAndTokenUsage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5198,17 +4605,7 @@ class TestDiffsAndTokenUsage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5437,17 +4834,7 @@ class TestSessionAutoApproval:
                 "item/commandExecution/requestApproval",
                 {"command": "npm install"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5491,17 +4878,7 @@ class TestSessionAutoApproval:
                 "item/commandExecution/requestApproval",
                 {"command": "npm publish"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5542,17 +4919,7 @@ class TestSessionAutoApproval:
                 "item/commandExecution/requestApproval",
                 {"command": "npm install"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5604,17 +4971,7 @@ class TestCleanup:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5737,17 +5094,7 @@ class TestReviewFixes:
     async def test_thread_archive_clears_raw_history(self) -> None:
         """/thread archive also clears raw history and injection state."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5858,17 +5205,7 @@ class TestAcceptForSession:
                 "item/commandExecution/requestApproval",
                 {"command": "npm test"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5920,17 +5257,7 @@ class TestAcceptForSession:
                 "item/commandExecution/requestApproval",
                 {"command": "npm install"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5975,17 +5302,7 @@ class TestNetworkContext:
                     "networkContext": {"domains": ["registry.npmjs.org"]},
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6037,17 +5354,7 @@ class TestTurnStartedLifecycle:
     async def test_turn_started_lifecycle_event_emitted(self) -> None:
         """Turn started lifecycle event includes input summary."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6090,17 +5397,7 @@ class TestContextCompaction:
                 "context/compacted",
                 {"threadId": "thr-1", "turnId": "turn-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6138,17 +5435,7 @@ class TestContextCompaction:
                 "context/compacted",
                 {"threadId": "thr-1", "turnId": "turn-1"},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6335,17 +5622,7 @@ class TestSessionApprovalValidation:
                 "item/fileChange/requestApproval",
                 {},  # No command field -> session_approval_key returns ""
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6700,17 +5977,7 @@ class TestSlashCommandCoverage:
                     }
                 },
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6792,17 +6059,7 @@ class TestMalformedPayloadTolerance:
         """`error` notification where `error` is a string must not crash the turn."""
         events = [
             _event_notification("error", {"error": "oops"}),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6857,17 +6114,7 @@ class TestMalformedPayloadTolerance:
                 "turn/plan/updated",
                 {"plan": {"steps": "not-a-list"}},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -6940,17 +6187,7 @@ class TestTurnLifecycleEventsDisabled:
         """With emit_turn_lifecycle_events=False, neither started nor completed
         lifecycle task events are emitted."""
         events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -7116,17 +6353,7 @@ class TestDiffByteCap:
                 "turn/diff/updated",
                 {"diff": big_diff, "files": ["src/app.py"]},
             ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -7307,3 +6534,50 @@ class TestConfigEnvSourcing:
         config = CodexAdapterConfig(codex_command=("explicit", "--kwarg"))
 
         assert config.codex_command == ("explicit", "--kwarg")
+
+
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_becomes_input_image_content_item(self) -> None:
+        class _ImageTools(ToolSchemaFakeTools):
+            async def execute_tool_call_structured(
+                self, tool_name: str, arguments: dict[str, Any]
+            ) -> ToolCallOutcome:
+                return ToolCallOutcome(
+                    value={
+                        "content": [
+                            {
+                                "type": "image",
+                                "data": "ZmFrZQ==",
+                                "mimeType": "image/png",
+                            }
+                        ]
+                    },
+                    ok=True,
+                )
+
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(42, "band_read_room_file", {"file_id": "f1"}),
+                _turn_completed(),
+            ],
+            tools=_ImageTools(),
+        )
+
+        response_id, response_payload = turn.tool_response
+        assert response_id == 42
+        assert response_payload["success"] is True
+        assert turn.content_items == [
+            {"type": "inputImage", "imageUrl": "data:image/png;base64,ZmFrZQ=="}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_input_text(self) -> None:
+        turn = await run_codex_turn(
+            events=[
+                _tool_call_request(42, "band_read_room_file", {"file_id": "f1"}),
+                _turn_completed(),
+            ]
+        )
+
+        assert turn.content_items[0]["type"] == "inputText"

@@ -33,6 +33,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -87,6 +88,7 @@ def make_stream_events(
                 event.part = MagicMock()
                 event.part.tool_name = tool_name
                 event.part.args = args
+                event.part.args_as_dict = MagicMock(return_value=args)
                 event.part.tool_call_id = tool_call_id
                 yield event
 
@@ -693,6 +695,159 @@ class TestAdvertisedToolSchemas:
         assert blurbs == {name: get_tool_description(name).strip() for name in blurbs}
 
 
+class TestFileTools:
+    """band_list_room_files/band_read_room_file/band_send_room_file, the
+    hand-written wrappers gated behind Capability.FILES.
+
+    Drives each tool function directly (grabbed off the real, started agent's
+    function toolset) rather than through a full mocked agent run, since the
+    behavior under test is each wrapper's own argument plumbing to
+    AgentToolsProtocol -- not pydantic-ai's tool-calling loop.
+    """
+
+    @pytest.fixture
+    def file_tools(self):
+        """Mock AgentToolsProtocol with the three room-file methods."""
+        tools = MagicMock()
+        tools.list_room_files = AsyncMock(
+            return_value={"data": [{"id": "file-1", "name": "report.txt"}]}
+        )
+        tools.read_room_file = AsyncMock(
+            return_value={"name": "report.txt", "text": "hello world"}
+        )
+        tools.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        return tools
+
+    async def _tool_functions(self) -> dict[str, Any]:
+        adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
+        await adapter.on_started(agent_name="Probe", agent_description="probe")
+        return {
+            name: tool.function
+            for name, tool in adapter._agent._function_toolset.tools.items()
+        }
+
+    @pytest.mark.asyncio
+    async def test_agent_has_file_tools_registered_only_with_capability(self):
+        without_files = PydanticAIAdapter(model="test")
+        await without_files.on_started(agent_name="Probe", agent_description="probe")
+        names = set(without_files._agent._function_toolset.tools)
+
+        assert "band_list_room_files" not in names
+        assert "band_read_room_file" not in names
+        assert "band_send_room_file" not in names
+
+        with_files = await self._tool_functions()
+
+        assert "band_list_room_files" in with_files
+        assert "band_read_room_file" in with_files
+        assert "band_send_room_file" in with_files
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_forwards_cursor(self, file_tools):
+        functions = await self._tool_functions()
+
+        result = await functions["band_list_room_files"](
+            SimpleNamespace(deps=file_tools), cursor="cursor-1"
+        )
+
+        file_tools.list_room_files.assert_called_once_with("cursor-1")
+        assert result == {"data": [{"id": "file-1", "name": "report.txt"}]}
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_handles_exception(self, file_tools):
+        file_tools.list_room_files.side_effect = Exception("backend unavailable")
+        functions = await self._tool_functions()
+
+        result = await functions["band_list_room_files"](
+            SimpleNamespace(deps=file_tools), cursor=None
+        )
+
+        assert "Error listing room files" in result
+        assert "backend unavailable" in result
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_forwards_file_id(self, file_tools):
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="file-1"
+        )
+
+        file_tools.read_room_file.assert_called_once_with("file-1")
+        assert result == {"name": "report.txt", "text": "hello world"}
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_result_becomes_binary_content(self, file_tools):
+        file_tools.read_room_file = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="file-1"
+        )
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], BinaryContent)
+        assert result[0].data == b"fake"
+        assert result[0].media_type == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_handles_exception(self, file_tools):
+        file_tools.read_room_file.side_effect = Exception("not found")
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="missing"
+        )
+
+        assert "Error reading room file" in result
+        assert "not found" in result
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_forwards_args_in_protocol_order(self, file_tools):
+        """Regression pin: the wrapper's own signature order (content, filename,
+        mentions, caption) differs from the positional order AgentToolsProtocol
+        wants (content, filename, caption, mentions) -- assert the call site
+        reorders correctly rather than passing mentions where caption goes."""
+        functions = await self._tool_functions()
+
+        result = await functions["band_send_room_file"](
+            SimpleNamespace(deps=file_tools),
+            content="file body",
+            filename="notes.txt",
+            mentions=["Alice", "Bob"],
+            caption="here's a file",
+        )
+
+        file_tools.send_room_file.assert_called_once_with(
+            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
+        )
+        assert result == {"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_handles_exception(self, file_tools):
+        file_tools.send_room_file.side_effect = Exception("upload failed")
+        functions = await self._tool_functions()
+
+        result = await functions["band_send_room_file"](
+            SimpleNamespace(deps=file_tools),
+            content="body",
+            filename="notes.txt",
+            mentions=["Alice"],
+        )
+
+        assert "Error sending room file 'notes.txt'" in result
+        assert "upload failed" in result
+
+
 class TestOnMessage:
     """Tests for on_message() method."""
 
@@ -1066,6 +1221,49 @@ class TestExecutionReporting:
         )
 
     @pytest.mark.asyncio
+    async def test_tool_call_event_redacts_send_room_file_content(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """band_send_room_file's content arg can carry up to
+        MAX_SEND_CONTENT_BYTES of real file bytes; the tool_call event must
+        report a bounded placeholder instead of the raw content."""
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            emit=Emit.TOOL_CALLS,
+        )
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_calls=[
+                    (
+                        "band_send_room_file",
+                        {"content": "SECRET FILE BYTES", "filename": "f.txt"},
+                        "call-123",
+                    )
+                ],
+            )
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        reported_content = mock_tools.send_event.call_args_list[0].kwargs["content"]
+        assert "SECRET FILE BYTES" not in reported_content
+        assert "byte file content" in reported_content
+        assert '"filename": "f.txt"' in reported_content
+
+    @pytest.mark.asyncio
     async def test_emits_tool_result_events_when_enabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
@@ -1100,6 +1298,46 @@ class TestExecutionReporting:
         # Verify send_event was called with tool_result
         mock_tools.send_event.assert_any_call(
             content='{"name": "band_send_message", "output": "Message sent successfully", "tool_call_id": "call-123"}',
+            message_type="tool_result",
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_result_event_redacts_binary_content(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """band_read_room_file's image result is a list[BinaryContent]; str()
+        on that embeds the raw image bytes via BinaryContent.__repr__. The
+        tool_result event must report a bounded placeholder instead."""
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            emit=Emit.TOOL_CALLS,
+        )
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        image = BinaryContent(
+            data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, media_type="image/png"
+        )
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_results=[("band_read_room_file", [image], "call-1")],
+            )
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_event.assert_any_call(
+            content='{"name": "band_read_room_file", "output": "<1 image content block(s)>", "tool_call_id": "call-1"}',
             message_type="tool_result",
         )
 

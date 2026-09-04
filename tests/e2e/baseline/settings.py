@@ -209,6 +209,28 @@ class LLMModels(BaseSettings):
         return self
 
 
+class DeploymentFeatures(BaseSettings):
+    """Which optional platform features the connected Band deployment serves.
+
+    Declared, not probed -- the same reason ``Backends.opencode_bash_asks`` is:
+    the platform only reports a flag through an authenticated ``/me`` call made
+    after an agent exists, and a collection-time gate has neither.
+    """
+
+    model_config = SettingsConfigDict(
+        env_ignore_empty=True,
+        env_prefix="E2E_",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # ``ff_file_transfer`` is on-prem-only and off everywhere on SaaS today, so
+    # ``prune_unsupported`` drops ``Capability.FILES`` before a file tool ever
+    # reaches the model and the file/image cells cannot pass there. Opt in when
+    # the run targets a deployment that has the flag on.
+    file_transfer: bool = False  # E2E_FILE_TRANSFER
+
+
 class BaselineSettings(BaseSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
 
@@ -229,3 +251,4 @@ class BaselineSettings(BaseSettings):
     llm_credentials: LLMCredentials = Field(default_factory=LLMCredentials)
     llm_models: LLMModels = Field(default_factory=LLMModels)
     backends: Backends = Field(default_factory=Backends)
+    deployment: DeploymentFeatures = Field(default_factory=DeploymentFeatures)
