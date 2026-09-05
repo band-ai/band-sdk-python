@@ -42,8 +42,11 @@ validation; build a `kwargs` dict and omit the key instead. See
 The SDK subscribes to Phoenix Channels (agent/chat/user rooms, participants,
 tasks) and hydrates each event's payload into a typed, rule-free
 `WirePayload` projection without re-validating. See
-[docs/websocket-events.md](docs/websocket-events.md) for the channel table
-and payload field reference.
+[docs/websocket-events.md](docs/websocket-events.md) for the channel table,
+payload field reference, and `band-sdk-core`'s delivery-lifecycle decisions.
+Whenever code here starts calling a `band_sdk_core` symbol it didn't use
+before, extend `.github/workflows/ci.yml`'s wheel-smoke step to prove that
+symbol is callable from the isolated pinned wheel, not just importable.
 
 ## Contact Event Handling
 

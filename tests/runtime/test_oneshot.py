@@ -112,6 +112,7 @@ def _msg_body(
             "sender_type": sender_type,
             "message_type": "user",
             "inserted_at": "2026-05-21T10:00:00Z",
+            "updated_at": "2026-05-21T10:00:00Z",
         },
     }
 
@@ -331,14 +332,27 @@ class TestHandleEventRouting:
         )
         assert result["status"] == "cleaned_up"
 
+    async def test_room_removed_with_no_resolvable_room_id_raises_envelope_error(
+        self,
+    ) -> None:
+        """A room-cleanup event with no room identity anywhere (envelope nor
+        payload) is a malformed envelope, not a silent no-op — unlike the
+        pre-band_sdk_core behavior, which returned ``{"status": "cleaned_up",
+        "room_id": None}`` without calling ``on_cleanup``.
+        """
+        link = make_link_mock()
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        with pytest.raises(OneShotEnvelopeError, match="room_id"):
+            await invoker.handle_event({"event_type": "room_removed", "payload": {}})
+        adapter.on_cleanup.assert_not_awaited()
+
     async def test_missing_room_id_raises_envelope_error(self) -> None:
         link = make_link_mock()
         invoker = await _make_invoker(link)
-        body = {
-            "event_type": "message_created",
-            "agent_id": "agent-1",
-            "payload": {"id": "msg-1", "sender_id": "u", "content": "x"},
-        }
+        body = _msg_body()
+        del body["room_id"]
         with pytest.raises(OneShotEnvelopeError, match="room_id"):
             await invoker.handle_event(body)
 
@@ -357,18 +371,10 @@ class TestHandleEventRouting:
     async def test_falls_back_to_payload_chat_room_id(self) -> None:
         link = make_link_mock(next_messages=[platform_msg("msg-1"), None])
         invoker = await _make_invoker(link)
-        body = {
-            "event_type": "message_created",
-            "agent_id": "agent-1",
-            "payload": {
-                "id": "msg-1",
-                "chat_room_id": "fallback-room",
-                "sender_id": "u",
-                "sender_type": "User",
-                "content": "hi",
-                "inserted_at": "2026-05-21T10:00:00Z",
-            },
-        }
+        body = _msg_body()
+        del body["room_id"]
+        body["payload"]["chat_room_id"] = "fallback-room"
+
         result = await invoker.handle_event(body)
         assert result["room_id"] == "fallback-room"
 

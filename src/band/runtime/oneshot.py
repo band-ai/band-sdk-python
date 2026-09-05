@@ -42,9 +42,19 @@ from __future__ import annotations
 import logging
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any
+from enum import StrEnum
+from typing import Any, cast
+
+from band_sdk_core import (
+    DrainCandidate,
+    evaluate_adapter_result,
+    evaluate_delivery_event,
+    evaluate_drain_candidate,
+    evaluate_next_message,
+)
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.logging_config import current_traceparent
 from band.runtime.capabilities import prune_unsupported
 from band.runtime.participants import participant_snapshot
 from band.core.protocols import FrameworkAdapter
@@ -63,7 +73,28 @@ from band.runtime.formatters import (
 )
 from band.runtime.tools import AgentTools
 
+# BandLink.get_next_message returns this dataclass, not band.core.types'
+# same-named one that _build_platform_message below constructs.
+from band.runtime.types import PlatformMessage as RestPlatformMessage
+
 logger = logging.getLogger(__name__)
+
+
+class OneShotStatus(StrEnum):
+    """``handle_event``/``_process_message_event``'s ``status`` vocabulary.
+
+    A public contract hosts branch on (e.g. ``result["status"] == "done"``),
+    kept spelled exactly as it always has been — deliberately not renamed to
+    band_sdk_core's own decision literals (``skip_self``, ``cleanup``),
+    which are a distinct vocabulary consumed inline at each call site.
+    """
+
+    IGNORED = "ignored"
+    CLEANED_UP = "cleaned_up"
+    SKIPPED_SELF = "skipped_self"
+    NO_PENDING = "no_pending"
+    ALREADY_PROCESSED = "already_processed"
+    DONE = "done"
 
 
 # Defensive cap on the drain loop. The platform shouldn't backlog dozens of
@@ -193,67 +224,101 @@ class OneShotInvoker:
     async def handle_event(self, body: dict[str, Any]) -> dict[str, Any]:
         """Process one forwarded platform event from the bridge envelope.
 
-        Non-message events return ``{"status": "ignored", ...}`` without side
-        effects; in v1 only ``message_created`` drives an LLM call.
+        Routing is band_sdk_core's ``evaluate_delivery_event`` — see
+        ``docs/websocket-events.md``. Non-message events return
+        ``{"status": "ignored", ...}`` without side effects; in v1 only
+        ``message_created`` drives an LLM call.
 
         Raises:
-            OneShotEnvelopeError: envelope is missing ``room_id`` or
-                ``payload.id`` for a ``message_created`` event.
+            OneShotEnvelopeError: the envelope fails core's validation —
+                missing/empty ``room_id`` or ``payload.id`` for a
+                ``message_created`` or room-cleanup event, or a
+                ``message_created`` payload missing a required field.
             RuntimeError: ``startup()`` was not called first.
         """
         if not self._started:
             raise RuntimeError("OneShotInvoker.startup() not called")
 
-        event_type = body.get("event_type")
+        event_type: str = body.get("event_type") or ""
+        payload = body.get("payload") or {}
+        try:
+            decision = evaluate_delivery_event(
+                event_type,
+                body.get("room_id"),
+                payload,
+                self._agent_id,
+                current_traceparent(),
+            )
+        except ValueError as exc:
+            raise OneShotEnvelopeError(str(exc)) from exc
 
-        # Long-running containers keep one invoker (and one adapter) alive
-        # across many rooms over the container's lifetime. Adapters cache
-        # per-room state on ``self`` (e.g. Anthropic's ``_message_history``,
-        # Claude SDK's live per-room sessions, langgraph checkpoints); the
-        # only thing that frees those entries is ``adapter.on_cleanup``.
-        # Without this hookup the cache grows unbounded — and for adapters
-        # that spawn subprocesses per room, those subprocesses leak too.
-        # Mirrors ``AgentRuntime._destroy_execution``'s cleanup-callback hook
-        # in the long-running path.
-        if event_type in {"room_removed", "room_deleted"}:
-            room_id = body.get("room_id") or (body.get("payload") or {}).get("id")
-            if room_id:
-                try:
-                    await self._adapter.on_cleanup(room_id)
-                except Exception:
-                    logger.warning(
-                        "Adapter on_cleanup failed for room %s",
-                        room_id,
-                        exc_info=True,
-                    )
-            return {
-                "status": "cleaned_up",
-                "event_type": event_type,
-                "room_id": room_id,
-            }
-
-        # Other forwardable event types intentionally fall through to
-        # "ignored":
+        # Other forwardable event types intentionally route to "ignored":
         #   - room_added: bridge already subscribed the WS; no per-room
         #     context to create on this side.
         #   - participant_added/removed: OneShot fetches participants fresh
         #     on every invocation, so there's no cache to update.
         #   - contact_*: routed via the separate ContactEventConfig flow in
         #     long-running mode; not wired into OneShot.
-        if event_type != "message_created":
-            logger.debug("Ignoring non-message event: %s", event_type)
-            return {"status": "ignored", "event_type": event_type}
-
-        payload = body.get("payload") or {}
-        room_id = body.get("room_id") or payload.get("chat_room_id")
-        if not room_id:
-            raise OneShotEnvelopeError("missing room_id")
-        if not payload.get("id"):
-            raise OneShotEnvelopeError("missing message id in payload")
-
-        return await self._process_message_event(room_id=room_id, payload=payload)
+        match decision:
+            case {"decision": "ignored", "event_type": ignored_event_type}:
+                logger.debug("Ignoring non-message event: %s", ignored_event_type)
+                return {
+                    "status": OneShotStatus.IGNORED,
+                    "event_type": ignored_event_type,
+                }
+            case {"decision": "cleanup", "room_id": room_id}:
+                # Long-running containers keep one invoker (and one adapter)
+                # alive across many rooms over the container's lifetime.
+                # Adapters cache per-room state on ``self`` (e.g. Anthropic's
+                # ``_message_history``, Claude SDK's live per-room sessions,
+                # langgraph checkpoints); the only thing that frees those
+                # entries is ``adapter.on_cleanup``. Without this hookup the
+                # cache grows unbounded — and for adapters that spawn
+                # subprocesses per room, those subprocesses leak too. Mirrors
+                # ``AgentRuntime._destroy_execution``'s cleanup-callback hook
+                # in the long-running path.
+                return await self._cleanup_room(event_type, cast(str, room_id))
+            case {"decision": "skip_self", "message_id": message_id}:
+                logger.debug("Skipping self-message %s", message_id)
+                return {"status": OneShotStatus.SKIPPED_SELF, "message_id": message_id}
+            case {"decision": "invocation", "room_id": room_id}:
+                return await self._process_message_event(
+                    room_id=cast(str, room_id), payload=payload
+                )
+            case _:
+                raise AssertionError(f"unreachable delivery decision: {decision!r}")
 
     # --- Internal: the lifecycle dance ---
+
+    async def _cleanup_room(self, event_type: str, room_id: str) -> dict[str, Any]:
+        try:
+            await self._adapter.on_cleanup(room_id)
+        except Exception:
+            logger.warning(
+                "Adapter on_cleanup failed for room %s", room_id, exc_info=True
+            )
+        return {
+            "status": OneShotStatus.CLEANED_UP,
+            "event_type": event_type,
+            "room_id": room_id,
+        }
+
+    async def _acknowledge(
+        self, *, room_id: str, message_id: str, succeeded: bool, error: str = ""
+    ) -> None:
+        match evaluate_adapter_result(room_id, message_id, succeeded):
+            case {"decision": "processed"}:
+                await self._link.mark_processed(room_id, message_id)
+            case {"decision": "failed"}:
+                try:
+                    await self._link.mark_failed(room_id, message_id, error)
+                except Exception:
+                    logger.warning(
+                        "Could not mark %s failed in room %s",
+                        message_id,
+                        room_id,
+                        exc_info=True,
+                    )
 
     async def _process_message_event(
         self, *, room_id: str, payload: dict[str, Any]
@@ -261,62 +326,54 @@ class OneShotInvoker:
         """Run the SDK agent loop for one forwarded message_created event.
 
         Steps (the message case of ``ExecutionContext._process_event``,
-        adapted for request/response):
+        adapted for request/response); self-filtering already happened in
+        ``handle_event`` via ``evaluate_delivery_event``:
 
-        1. Self-filter — skip the agent's own echo without an LLM call.
-        2. ``get_next_message`` — if the triggering message isn't the next
+        1. ``get_next_message`` — if the triggering message isn't the next
            open one for this agent, exit early (a sibling invocation already
            claimed it, or there's an older unprocessed message ahead of it).
-        3. ``mark_processing`` — claim it.
-        4. Fetch participants + history, build ``AgentInput``, run adapter.
-        5. ``mark_processed`` on success.
-        6. Drain — only swallow messages the LLM actually saw (``seen_ids``).
+        2. ``mark_processing`` — claim it.
+        3. Fetch participants + history, build ``AgentInput``, run adapter.
+        4. ``mark_processed`` on success.
+        5. Drain — only swallow messages the LLM actually saw (``seen_ids``).
            A message that arrived after the history snapshot is left open so
            the next invocation handles it with fresh context.
-        7. ``mark_failed`` on exception.
+        6. ``mark_failed`` on exception.
         """
         msg_id = payload["id"]
 
-        # 1. Self-message filter — Band echoes the agent's own outbound
-        # messages back on its WS subscription, which the bridge forwards here.
-        if (
-            payload.get("sender_type") == "Agent"
-            and payload.get("sender_id") == self._agent_id
-        ):
-            return {"status": "skipped_self", "message_id": msg_id}
-
-        # 2. Verify the triggering message is the next open one for this agent.
         # The platform's ``/next`` returns the oldest actionable message —
         # anything not yet in ``processed`` state, including ones stuck in
         # ``processing`` from a previous crash — so a single call covers both
         # the normal claim case and stuck-message reclaim.
         next_msg = await self._link.get_next_message(room_id)
-        if next_msg is None:
-            logger.info(
-                "Skip: room %s has no pending messages (triggering=%s)",
-                room_id,
-                msg_id,
-            )
-            return {"status": "no_pending", "message_id": msg_id}
-        if next_msg.id != msg_id:
-            logger.info(
-                "Skip: room %s next-open=%s != triggering=%s",
-                room_id,
-                next_msg.id,
-                msg_id,
-            )
-            return {
-                "status": "already_processed",
-                "message_id": msg_id,
-                "next_open": next_msg.id,
-            }
+        match evaluate_next_message(msg_id, next_msg.id if next_msg else None):
+            case {"decision": "no_pending"}:
+                logger.info(
+                    "Skip: room %s has no pending messages (triggering=%s)",
+                    room_id,
+                    msg_id,
+                )
+                return {"status": OneShotStatus.NO_PENDING, "message_id": msg_id}
+            case {"decision": "already_processed", "next_open_id": next_open_id}:
+                logger.info(
+                    "Skip: room %s next-open=%s != triggering=%s",
+                    room_id,
+                    next_open_id,
+                    msg_id,
+                )
+                return {
+                    "status": OneShotStatus.ALREADY_PROCESSED,
+                    "message_id": msg_id,
+                    "next_open": next_open_id,
+                }
+            case {"decision": "ready_to_claim"}:
+                pass
 
-        # 3. Claim.
         logger.info("Claiming msg %s in room %s", msg_id, room_id)
         await self._link.mark_processing(room_id, msg_id)
 
         try:
-            # 4. Build AgentInput and run the adapter.
             participants = await self._fetch_participants(room_id)
             sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
 
@@ -350,25 +407,20 @@ class OneShotInvoker:
 
             await self._adapter.on_event(inp)
 
-            # 5. Mark the triggering message processed.
-            await self._link.mark_processed(room_id, msg_id)
+            await self._acknowledge(room_id=room_id, message_id=msg_id, succeeded=True)
         except Exception as exc:
-            # 7. Mark failed so the platform can surface the error.
             logger.exception(
                 "Adapter failed for message %s in room %s", msg_id, room_id
             )
-            try:
-                await self._link.mark_failed(room_id, msg_id, str(exc)[:500] or "error")
-            except Exception:
-                logger.warning(
-                    "Could not mark %s failed in room %s",
-                    msg_id,
-                    room_id,
-                    exc_info=True,
-                )
+            await self._acknowledge(
+                room_id=room_id,
+                message_id=msg_id,
+                succeeded=False,
+                error=str(exc)[:500] or "error",
+            )
             raise
 
-        # 6. Drain — scoped to what the LLM saw (seen_ids). A message that
+        # Drain is scoped to what the LLM saw (seen_ids). A message that
         # arrived after the history snapshot is NOT swallowed; it's left open
         # so the next invocation processes it with fresh context.
         drained: list[str] = []
@@ -386,22 +438,29 @@ class OneShotInvoker:
                     exc_info=True,
                 )
                 break
-            if stale is None:
-                break
-            # Defensive: the platform shouldn't return our own messages here,
-            # but the SDK guards against it (execution.py self-message skip).
-            if stale.sender_type == "Agent" and stale.sender_id == self._agent_id:
-                continue
-            if stale.id not in seen_ids:
-                logger.info(
-                    "Drain stopped at %s in room %s — arrived after history snapshot",
-                    stale.id,
-                    room_id,
-                )
-                break
-            await self._link.mark_processing(room_id, stale.id)
-            await self._link.mark_processed(room_id, stale.id)
-            drained.append(stale.id)
+            match evaluate_drain_candidate(
+                _drain_candidate(stale), seen_ids, self._agent_id
+            ):
+                case {"decision": "no_candidate"}:
+                    break
+                case {"decision": "self_echo"}:
+                    # Defensive: the platform shouldn't return our own
+                    # messages here, but the SDK guards against it
+                    # (execution.py self-message skip). An echo never halts
+                    # the drain, so it consumes a cap iteration and continues.
+                    continue
+                case {"decision": "out_of_snapshot", "message_id": stale_id}:
+                    logger.info(
+                        "Drain stopped at %s in room %s — arrived after history snapshot",
+                        stale_id,
+                        room_id,
+                    )
+                    break
+                case {"decision": "drain", "message_id": stale_id}:
+                    stale_id = cast(str, stale_id)
+                    await self._link.mark_processing(room_id, stale_id)
+                    await self._link.mark_processed(room_id, stale_id)
+                    drained.append(stale_id)
         else:
             drain_truncated = True
             logger.warning(
@@ -418,7 +477,7 @@ class OneShotInvoker:
             )
 
         result: dict[str, Any] = {
-            "status": "done",
+            "status": OneShotStatus.DONE,
             "room_id": room_id,
             "message_id": msg_id,
         }
@@ -542,6 +601,26 @@ class OneShotInvoker:
 
 
 # --- Module-level helpers (no state, easy to unit-test) ---
+
+
+def _drain_candidate(msg: RestPlatformMessage | None) -> DrainCandidate | None:
+    """``/next``'s dataclass fields are unvalidated; core rejects a non-string.
+
+    ``PlatformMessage`` declares ``sender_id``/``sender_type`` as ``str``, but
+    it's a plain dataclass filled from Fern models — a backend null reaches
+    here as ``None`` and would otherwise raise ``TypeError`` mid-drain, after
+    the triggering message was already marked processed. ``or ""`` keeps
+    today's behavior: an empty sender never matches self-echo, so it falls
+    through to the snapshot check exactly as a real "no match" candidate
+    would.
+    """
+    if msg is None:
+        return None
+    return {
+        "id": msg.id,
+        "sender_id": msg.sender_id or "",
+        "sender_type": msg.sender_type or "",
+    }
 
 
 def _lookup_sender_name(

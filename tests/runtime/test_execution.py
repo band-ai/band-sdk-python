@@ -10,6 +10,7 @@ import pytest
 
 from band_sdk_core import ClaimRegistry, RetryTracker
 
+from band.client.streaming import MessageMetadata
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
     Execution,
@@ -18,7 +19,7 @@ from band.runtime.execution import (
     BacklogProcessResult,
     _error_label,
 )
-from band.runtime.types import ConversationContext, SessionConfig
+from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import (
@@ -689,8 +690,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Sync should process backlog messages from /next."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         # Setup get_next_message to return one backlog message, then None
         backlog_msg = PlatformMessage(
@@ -731,8 +730,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """When sync point is reached, marker is cleared and dedupe is preserved."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         # Setup: WS message arrives, then /next returns same message
         sync_msg = PlatformMessage(
@@ -776,8 +773,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Sync should dedupe when non-message events are ahead of sync-point WS copy."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         sync_msg = PlatformMessage(
             id="msg-sync-001",
@@ -851,7 +846,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Processed WebSocket replay should not call mark_processing or execute."""
-        from band.client.streaming import MessageMetadata
 
         ctx = ExecutionContext(
             "room-123",
@@ -919,11 +913,74 @@ class TestCrashRecoverySync:
 
         await ctx.stop()
 
+    async def test_ws_skips_self_authored_message(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The live-event self-echo guard (band_sdk_core.is_self_echo) must
+        never reach the handler or mark anything."""
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        await ctx.start()
+        await asyncio.sleep(0.05)
+
+        event = make_message_event(
+            room_id="room-123",
+            msg_id="msg-self-echo",
+            sender_id="agent-123",
+            sender_type="Agent",
+        )
+        await ctx.on_event(event)
+        await asyncio.sleep(0.1)
+
+        mock_handler.assert_not_called()
+        mock_link_with_next.mark_processing.assert_not_called()
+        assert "msg-self-echo" not in ctx.claims.completed_ids(ctx.room_id)
+
+        await ctx.stop()
+
+    async def test_backlog_skips_self_authored_message(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The backlog self-echo guard (band_sdk_core.is_self_echo) must
+        never reach the handler or mark anything."""
+
+        msg = PlatformMessage(
+            id="msg-backlog-self-echo",
+            room_id="room-123",
+            content="echo",
+            sender_id="agent-123",
+            sender_type="Agent",
+            sender_name=None,
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == BacklogProcessResult.ADVANCED
+        mock_handler.assert_not_awaited()
+        mock_link_with_next.mark_processing.assert_not_awaited()
+        mock_link_with_next.mark_processed.assert_not_awaited()
+
+        await ctx.stop()
+
     async def test_pending_next_message_present_in_context_still_executes(
         self, mock_link_with_next, mock_handler
     ):
         """A pending /next message is work even when it appears in room context."""
-        from band.runtime.types import PlatformMessage
 
         pending_msg = PlatformMessage(
             id="msg-pending-down",
@@ -981,7 +1038,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Only one path should execute when /next and WebSocket race on an id."""
-        from band.runtime.types import PlatformMessage
 
         processing_started = asyncio.Event()
         release_processing = asyncio.Event()
@@ -1036,7 +1092,6 @@ class TestCrashRecoverySync:
         WebSocket copy arrives while that execution is still in flight. The
         second delivery must be deduplicated, not re-executed.
         """
-        from band.runtime.types import PlatformMessage
 
         handler_started = asyncio.Event()
         release_handler = asyncio.Event()
@@ -1186,7 +1241,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Local success without durable processed ack must not enter processed dedupe."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-ack-fails",
@@ -1246,7 +1300,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Redelivery after local success should retry only the processed ack."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-backlog-ack-retry",
@@ -1282,7 +1335,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Permanent processed ack failure should not deadlock or replay local side effects."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-ack-budget",
@@ -1423,7 +1475,6 @@ class TestCrashRecoverySync:
         before processing a newer /next backlog message -- normal resync
         cannot get past a stuck pending ACK to reach newer backlog. Once the
         ACK confirms, resync proceeds normally to the newer message."""
-        from band.runtime.types import PlatformMessage
 
         newer_msg = PlatformMessage(
             id="msg-newer",
@@ -1465,7 +1516,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """A failed durable claim is not a completed sync point."""
-        from band.runtime.types import PlatformMessage
 
         sync_msg = PlatformMessage(
             id="msg-sync-claim-fails",
@@ -1503,7 +1553,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Startup sync should stop after one unclaimable non-sync backlog message."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-startup-claim-fails",
@@ -1540,7 +1589,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Startup sync should not switch to WebSocket after an unclaimable backlog message."""
-        from band.runtime.types import PlatformMessage
 
         backlog_msg = PlatformMessage(
             id="msg-older-claim-fails",
@@ -1584,7 +1632,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Resync should stop after one unclaimable /next message."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-resync-claim-fails",
@@ -1620,7 +1667,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Phase 2 resync should block queued WebSocket events behind older /next work."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-resync-older-claim-fails",
@@ -1665,8 +1711,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Sync should skip permanently failed messages."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         failed_msg = PlatformMessage(
             id="msg-failed-001",
@@ -1702,8 +1746,6 @@ class TestCrashRecoverySync:
 
     async def test_retry_tracker_records_failures(self, mock_link_with_next):
         """Retry tracker should record failed processing attempts."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         # Handler that fails
         failing_handler = AsyncMock(side_effect=Exception("Processing failed"))
@@ -1743,7 +1785,6 @@ class TestCrashRecoverySync:
         """Once a message's attempts exceed max_retries it becomes permanently
         failed, and a *subsequent* delivery of that same message must skip the
         handler entirely rather than invoke it again."""
-        from band.runtime.types import PlatformMessage
 
         failing_handler = AsyncMock(side_effect=Exception("Processing failed"))
         msg = PlatformMessage(
