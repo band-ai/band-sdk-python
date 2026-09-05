@@ -699,6 +699,8 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         async def band_get_task(
             context: ToolContext,
             id: str,
+            # str, not Literal["history"] | None: Parlant's own schema builder
+            # raises at registration time for a bare Literal type.
             include: str | None = None,
         ) -> ToolResult:
             tools = require_session_tools(context)
@@ -750,6 +752,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         @band_tool("getting board")
         async def band_get_board(
             context: ToolContext,
+            # See band_get_task's `include` for why this is str, not Literal.
             include: str | None = None,
         ) -> ToolResult:
             tools = require_session_tools(context)

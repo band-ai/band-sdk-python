@@ -6,11 +6,15 @@ every input model in this package.
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field, model_validator
 
-from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
+from band.core.task_types import (
+    TaskAssignmentStatus,
+    TaskIncludeOption,
+    TaskLifecycleState,
+    TaskListState,
+)
+from band.core.validation import at_least_one_of
 
 
 class ListTasksInput(BaseModel):
@@ -60,7 +64,7 @@ class GetTaskInput(BaseModel):
     """
 
     id: str = Field(..., description="Task UUID or board number")
-    include: Literal["history"] | None = Field(
+    include: TaskIncludeOption | None = Field(
         None, description="Set to 'history' to embed the recent event history"
     )
 
@@ -101,21 +105,14 @@ class UpdateTaskInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_at_least_one_field(self) -> "UpdateTaskInput":
-        if all(
-            field is None
-            for field in (
-                self.status,
-                self.active_form,
-                self.comment,
-                self.subject,
-                self.detail,
-                self.state,
-            )
-        ):
-            raise ValueError(
-                "At least one of status, active_form, comment, subject, detail, "
-                "or state must be set"
-            )
+        at_least_one_of(
+            status=self.status,
+            active_form=self.active_form,
+            comment=self.comment,
+            subject=self.subject,
+            detail=self.detail,
+            state=self.state,
+        )
         return self
 
 
@@ -144,7 +141,7 @@ class GetBoardInput(BaseModel):
     yet. Pass include="history" to embed the goal's audit trail.
     """
 
-    include: Literal["history"] | None = Field(
+    include: TaskIncludeOption | None = Field(
         None, description="Set to 'history' to embed the goal-audit trail"
     )
 
@@ -161,6 +158,5 @@ class SetBoardInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_at_least_one_field(self) -> "SetBoardInput":
-        if self.goal_title is None and self.goal_summary is None:
-            raise ValueError("At least one of goal_title or goal_summary must be set")
+        at_least_one_of(goal_title=self.goal_title, goal_summary=self.goal_summary)
         return self

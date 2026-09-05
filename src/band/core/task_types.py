@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal, get_args
 
 
 class TaskListState(StrEnum):
@@ -24,6 +25,27 @@ class TaskLifecycleState(StrEnum):
     ACTIVE = "active"
     CANCELLED = "cancelled"
     ARCHIVED = "archived"
+
+
+TaskIncludeOption = Literal["history"]
+"""The single ``include`` value ``band_get_task``/``band_get_board`` accept.
+
+The canonical type for ``include`` everywhere it appears -- GetTaskInput/
+GetBoardInput's fields and AgentTools.get_task/get_board's parameter.
+"""
+
+
+def validate_include(include: str | None) -> None:
+    """Raise ``ValueError`` unless *include* is ``None`` or a valid ``TaskIncludeOption``.
+
+    Backstops GetTaskInput/GetBoardInput's typing for adapters (Parlant,
+    pydantic-ai) that hand-register ``AgentTools.get_task``/``get_board`` as
+    plain functions and never construct/validate the input model.
+    """
+    if include is not None and include not in get_args(TaskIncludeOption):
+        raise ValueError(
+            f"include must be {get_args(TaskIncludeOption)[0]!r} or omitted"
+        )
 
 
 class TaskAssignmentStatus(StrEnum):

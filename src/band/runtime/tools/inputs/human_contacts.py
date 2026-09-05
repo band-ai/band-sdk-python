@@ -6,9 +6,10 @@ applies to every human-tool input model.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from band.core.types import ContactRequestSentStatus
+from band.core.validation import at_least_one_of
 
 
 class ListMyContactsInput(BaseModel):
@@ -113,3 +114,8 @@ class RemoveMyContactInput(BaseModel):
         None,
         description="The contact's handle (optional, provide this or contact_id).",
     )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_field(self) -> "RemoveMyContactInput":
+        at_least_one_of(contact_id=self.contact_id, handle=self.handle)
+        return self

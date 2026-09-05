@@ -14,7 +14,7 @@ import re
 import warnings
 from datetime import datetime, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import band_sdk_core
 from async_lru import alru_cache
@@ -43,9 +43,16 @@ from band.core.memory_types import (
     validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
+from band.core.task_types import (
+    TaskAssignmentStatus,
+    TaskIncludeOption,
+    TaskLifecycleState,
+    TaskListState,
+    validate_include,
+)
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import Capability
+from band.core.validation import at_least_one_of
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -1459,7 +1466,7 @@ class AgentTools(AgentToolsProtocol):
             raise RuntimeError("Failed to create task - no response data")
         return response.data
 
-    async def get_task(self, id: str, include: Literal["history"] | None = None) -> Any:
+    async def get_task(self, id: str, include: TaskIncludeOption | None = None) -> Any:
         """
         Read one task by UUID or board number.
 
@@ -1472,6 +1479,7 @@ class AgentTools(AgentToolsProtocol):
             Serialized to dict by execute_tool_call() at the adapter boundary.
         """
         logger.debug("Getting task: id=%s, include=%s", id, include)
+        validate_include(include)
         response = await self.rest.agent_api_chat_tasks.get_chat_task(
             chat_id=self.room_id,
             id=id,
@@ -1514,14 +1522,14 @@ class AgentTools(AgentToolsProtocol):
         # pydantic-ai) hand-register this as a plain function and never
         # construct/validate an UpdateTaskInput, so the "at least one field"
         # rule has to also live here to apply to every caller.
-        if all(
-            field is None
-            for field in (status, active_form, comment, subject, detail, state)
-        ):
-            raise ValueError(
-                "At least one of status, active_form, comment, subject, detail, "
-                "or state must be set"
-            )
+        at_least_one_of(
+            status=status,
+            active_form=active_form,
+            comment=comment,
+            subject=subject,
+            detail=detail,
+            state=state,
+        )
         kwargs: dict[str, Any] = {}
         if status is not None:
             kwargs["status"] = status
@@ -1572,7 +1580,7 @@ class AgentTools(AgentToolsProtocol):
         )
         return response
 
-    async def get_board(self, include: Literal["history"] | None = None) -> Any:
+    async def get_board(self, include: TaskIncludeOption | None = None) -> Any:
         """
         Read this room's goal (the team mission).
 
@@ -1584,6 +1592,7 @@ class AgentTools(AgentToolsProtocol):
             Serialized to dict by execute_tool_call() at the adapter boundary.
         """
         logger.debug("Getting board: include=%s", include)
+        validate_include(include)
         response = await self.rest.agent_api_chat_tasks.get_chat_board(
             chat_id=self.room_id,
             include=include,
@@ -1612,8 +1621,7 @@ class AgentTools(AgentToolsProtocol):
         )
         # Backstops SetBoardInput's model_validator -- see update_task's
         # identical note on why this can't rely on the input model alone.
-        if goal_title is None and goal_summary is None:
-            raise ValueError("At least one of goal_title or goal_summary must be set")
+        at_least_one_of(goal_title=goal_title, goal_summary=goal_summary)
         kwargs: dict[str, Any] = {}
         if goal_title is not None:
             kwargs["goal_title"] = goal_title

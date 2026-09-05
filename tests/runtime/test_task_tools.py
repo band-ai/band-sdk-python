@@ -156,6 +156,20 @@ class TestGetTask:
         with pytest.raises(RuntimeError, match="Failed to get task"):
             await tools.get_task("task-1")
 
+    @pytest.mark.asyncio
+    async def test_get_task_rejects_an_invalid_include_value(
+        self, mock_rest_client
+    ) -> None:
+        """Guards every caller, not just ones that go through GetTaskInput's
+        Literal["history"] typing -- Parlant and pydantic-ai hand this
+        through as an unchecked `str` cast instead."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="include must be"):
+            await tools.get_task("task-1", include="anything")
+
+        mock_rest_client.agent_api_chat_tasks.get_chat_task.assert_not_awaited()
+
 
 class TestUpdateTask:
     @pytest.mark.asyncio
@@ -294,6 +308,17 @@ class TestGetBoard:
 
         with pytest.raises(RuntimeError, match="Failed to get board"):
             await tools.get_board()
+
+    @pytest.mark.asyncio
+    async def test_get_board_rejects_an_invalid_include_value(
+        self, mock_rest_client
+    ) -> None:
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="include must be"):
+            await tools.get_board(include="anything")
+
+        mock_rest_client.agent_api_chat_tasks.get_chat_board.assert_not_awaited()
 
 
 class TestSetBoard:

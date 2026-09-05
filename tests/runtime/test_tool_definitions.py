@@ -16,6 +16,7 @@ from band.runtime.tools import (
     AddParticipantInput,
     GetTaskInput,
     LookupPeersInput,
+    RemoveMyContactInput,
     SendEventInput,
     SendMessageInput,
     SendMyChatMessageInput,
@@ -174,6 +175,22 @@ class TestSetBoardInput:
     def test_one_field_is_sufficient(self):
         board = SetBoardInput(goal_title="Ship v2")
         assert board.goal_title == "Ship v2"
+
+
+class TestRemoveMyContactInput:
+    """Tests for RemoveMyContactInput model."""
+
+    def test_requires_contact_id_or_handle(self):
+        with pytest.raises(ValidationError, match="At least one of"):
+            RemoveMyContactInput()
+
+    def test_contact_id_alone_is_sufficient(self):
+        remove = RemoveMyContactInput(contact_id="c-1")
+        assert remove.contact_id == "c-1"
+
+    def test_handle_alone_is_sufficient(self):
+        remove = RemoveMyContactInput(handle="@bob")
+        assert remove.handle == "@bob"
 
 
 class TestLookupPeersInput:
