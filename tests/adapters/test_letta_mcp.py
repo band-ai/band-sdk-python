@@ -13,6 +13,7 @@ import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest_httpx import HTTPXMock
 
 from band.adapters.letta import (
     LettaAdapter,
@@ -31,6 +32,7 @@ from tests.adapters.lettakit import (
     make_mock_mcp_tool,
     make_mock_tool_page,
     make_platform_message,
+    mock_org_user_provisioned,
 )
 
 
@@ -191,6 +193,118 @@ class TestLettaAdapterOnStarted:
         with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
             with pytest.raises(RuntimeError, match="MCP server registration failed"):
                 await adapter.on_started("TestBot", "A test bot")
+
+    @pytest.mark.asyncio
+    async def test_on_started_self_hosted_org_scoped_by_default(
+        self, httpx_mock: HTTPXMock
+    ) -> None:
+        """A self-hosted base_url auto-enables org scoping: a dedicated
+        org+user is provisioned and its user_id becomes the client's default
+        header — this is what isolates MCP tool storage between instances."""
+        base_url = "http://localhost:8283"
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url=base_url, mcp=LettaMCPConfig(mode="external")
+            )
+        )
+
+        mock_org_user_provisioned(
+            httpx_mock,
+            base_url=base_url,
+            org_id="org-1",
+            user_id="user-1",
+            name="band-TestBot",
+        )
+
+        mock_client = AsyncMock()
+        mock_server = make_mock_mcp_server()
+        mock_client.mcp_servers.create.return_value = mock_server
+        mock_client.mcp_servers.tools.list.return_value = []
+
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_letta_module.AsyncLetta.assert_called_once_with(
+            base_url=base_url,
+            default_headers={"user_id": "user-1"},
+        )
+        # Base tools must be force-seeded for the fresh org before any room
+        # can reach agents.create(include_base_tools=True).
+        mock_client.tools.list.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.letta.com",
+            "https://API.LETTA.COM/",
+            "  https://api.letta.com  ",
+        ],
+    )
+    async def test_on_started_cloud_stays_unscoped(self, base_url: str) -> None:
+        """Regression guard: a Cloud base_url must never invoke org-scope
+        resolution — the Cloud path stays byte-for-byte unchanged."""
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url=base_url, mcp=LettaMCPConfig(mode="external")
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_server = make_mock_mcp_server()
+        mock_client.mcp_servers.create.return_value = mock_server
+        mock_client.mcp_servers.tools.list.return_value = []
+
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with (
+            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
+            patch("band.adapters.letta.resolve_org_scoped_headers") as mock_resolve,
+        ):
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_resolve.assert_not_called()
+        mock_letta_module.AsyncLetta.assert_called_once_with(
+            base_url=base_url,
+        )
+        mock_client.tools.list.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_started_org_scoped_false_opts_out_on_self_hosted(
+        self,
+    ) -> None:
+        """org_scoped=False is the escape hatch: it opts a self-hosted
+        deployment back out of org scoping."""
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(
+                base_url="http://localhost:8283",
+                org_scoped=False,
+                mcp=LettaMCPConfig(mode="external"),
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_server = make_mock_mcp_server()
+        mock_client.mcp_servers.create.return_value = mock_server
+        mock_client.mcp_servers.tools.list.return_value = []
+
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with (
+            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
+            patch("band.adapters.letta.resolve_org_scoped_headers") as mock_resolve,
+        ):
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_resolve.assert_not_called()
+        mock_letta_module.AsyncLetta.assert_called_once_with(
+            base_url="http://localhost:8283",
+        )
 
     @pytest.mark.asyncio
     async def test_on_started_import_error(self) -> None:

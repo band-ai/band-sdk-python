@@ -1,8 +1,9 @@
 """Shared factories for the Letta adapter tests.
 
 Mock builders for Letta API objects (messages, responses, agents,
-conversations, MCP servers/tools, async streams) and platform messages,
-used by both ``test_letta_adapter.py`` and ``test_letta_mcp.py``.
+conversations, MCP servers/tools, async streams) and platform messages, used
+by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
+``test_letta_orgscope.py``.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+from pytest_httpx import HTTPXMock
 
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.core.types import PlatformMessage
@@ -125,6 +128,35 @@ def default_enforcement(room_id: str | None = None) -> str:
     """The enforcement preamble with the default (band_*) tool names."""
     return render_tool_enforcement(
         "band_send_message", "band_send_event", room_id=room_id
+    )
+
+
+def mock_org_user_provisioned(
+    httpx_mock: HTTPXMock,
+    *,
+    base_url: str,
+    org_id: str,
+    user_id: str,
+    name: str,
+) -> None:
+    """Wire httpx_mock for a fresh org+user provisioned under ``name``.
+
+    Matches the one-shot "no existing org/user" happy path that
+    ``resolve_org_scoped_headers`` exercises the first time an agent name is
+    seen. Tests covering pagination or name-conflict edge cases stay inline
+    next to what they cover — only the plain happy path is shared here.
+    """
+    httpx_mock.add_response(method="GET", url=f"{base_url}/v1/admin/orgs/", json=[])
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{base_url}/v1/admin/orgs/",
+        json={"id": org_id, "name": name},
+    )
+    httpx_mock.add_response(method="GET", url=f"{base_url}/v1/admin/users/", json=[])
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{base_url}/v1/admin/users/",
+        json={"id": user_id, "name": name, "organization_id": org_id},
     )
 
 

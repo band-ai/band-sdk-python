@@ -37,14 +37,15 @@ rehydration itself works — the gap is specific to replying after a reboot in a
 live multi-agent room). Tracked as a langgraph-adapter behaviour to investigate;
 excluded here so the scenario stays green for the adapters that support it.
 
-Excludes ``letta`` for a different reason confirmed live: the self-hosted Letta
-adapter registers its Band MCP tool server per instance, but Letta stores MCP tools
-by name at organization scope and re-points the shared ``band_send_message`` row to
-whichever instance registered most recently. With two Letta agents live in one org,
-the rebooted agent *does* answer, but its send routes through the peer's MCP server
-and posts under the peer's identity, so the stayer-scoped reply is never observed.
-Fixing it needs per-instance tool-name isolation (or per-agent Letta project/org
-scoping); until then two Letta agents cannot keep separate identities in one org.
+``letta`` was previously excluded here for a different reason, confirmed live: the
+self-hosted Letta adapter registered its Band MCP tool server per instance, but
+Letta stored MCP tools by name at organization scope and re-pointed the shared
+``band_send_message`` row to whichever instance registered most recently. With two
+Letta agents live in one org, the rebooted agent *did* answer, but its send routed
+through the peer's MCP server and posted under the peer's identity, so the
+stayer-scoped reply was never observed. INT-985 fixed this by provisioning each
+adapter instance its own Letta organization/user, so ``letta`` now runs this
+scenario like every other adapter.
 
 Wording note: a neutral "note", not a "secret code" (models refuse to echo a
 credential-shaped value — an unrelated false failure).
@@ -86,14 +87,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
             Adapter.LANGGRAPH,
             "emits no chat reply after a reboot in a live multi-agent room "
             "(langgraph-adapter behaviour under investigation)",
-        ),
-        ExcludedAdapter(
-            Adapter.LETTA,
-            "self-hosted Letta shares one org-wide send-message tool across "
-            "co-located agents, so a second live agent's reply routes through the "
-            "most-recently-registered adapter's MCP server and posts under the "
-            "wrong identity — the stayer-scoped reply is never observed. Needs "
-            "per-instance tool-name isolation to run two Letta agents in one org",
         ),
         ExcludedAdapter(
             Adapter.CREWAI_FLOW,

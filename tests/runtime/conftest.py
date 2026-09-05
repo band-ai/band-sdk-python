@@ -16,10 +16,12 @@ conftest when building oneshot/REST-side fixtures.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from band_rest import (
     AgentMe,
     ChatMessage,
@@ -32,6 +34,18 @@ from band_rest import (
 
 from band.core.types import PlatformConnection, PlatformMessage
 from band.runtime.presence import RoomPresence
+
+
+async def wait_for_condition(
+    predicate, *, timeout: float = 1.0, interval: float = 0.01
+) -> None:
+    """Wait until a predicate becomes true, failing fast on timeout."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(interval)
+    pytest.fail("Timed out waiting for condition")
 
 
 def admit_room(presence: RoomPresence, room_id: str) -> None:
