@@ -369,11 +369,11 @@ async def test_aenter_caches_probe_result_across_repeated_connect_failures(
     rejection blocks for up to open_timeout=5s -- rerunning it on every
     backoff retry of the very same rejection would stack a fresh network
     round trip onto every computed delay. A repeat bare PHXConnectionError
-    must reuse the first probe's classification instead of probing again."""
+    must reuse the first probe's classification instead of probing again,
+    as long as that classification carries no retry_after to go stale."""
     upgrade_exc = _upgrade_exception(
-        429,
-        b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429"}}',
-        {"Retry-After": "5"},
+        503,
+        b'{"error":{"code":"tracking_failed","message":"tracking unavailable","request_id":"req-503"}}',
     )
     connect = scripted_connect(
         PHXConnectionError("Connection supervisor stopped before connecting"),
@@ -390,6 +390,33 @@ async def test_aenter_caches_probe_result_across_repeated_connect_failures(
     # but the probe only ran once -- the second failure's classification
     # came from the cache.
     assert probe.probed_urls == [("wss://test/socket&agent_id=agent-123", 5)]
+
+    await client.__aexit__(None, None, None)
+
+
+async def test_aenter_reprobes_repeated_429_for_current_retry_after(
+    scripted_connect, scripted_probe, no_real_sleep
+):
+    """A repeated 429 always gets a fresh probe, even with an unchanged
+    wrapped message: the wrapper's message is just "HTTP 429" -- it can't
+    carry Retry-After -- so a cached 429 could silently reuse a stale delay
+    while the server's current Retry-After has since grown."""
+    stale = _upgrade_exception(429, b"", {"Retry-After": "5"})
+    current = _upgrade_exception(429, b"", {"Retry-After": "60"})
+    connect = scripted_connect(
+        PHXConnectionError("Connection supervisor stopped before connecting"),
+        PHXConnectionError("Connection supervisor stopped before connecting"),
+        SUCCEEDS,
+    )
+    probe = scripted_probe(stale, current)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert connect.attempts == 3
+    assert len(probe.probed_urls) == 2
+    assert len(no_real_sleep) == 2
+    assert no_real_sleep[1] >= 60.0
 
     await client.__aexit__(None, None, None)
 

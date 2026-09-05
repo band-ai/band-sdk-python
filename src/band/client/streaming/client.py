@@ -460,20 +460,27 @@ class WebSocketClient:
     async def _classify_connect_failure(
         self, exc: Exception
     ) -> WebSocketUpgradeError | None:
-        """Classify one failed connect exception. Reuses the previous
-        live-socket probe result only while the wrapped PHXConnectionError's
-        message is unchanged -- a different message means the underlying
-        failure may have changed, so it must be probed again."""
+        """Classify one failed connect exception via a live-socket probe,
+        reusing the previous result only while the wrapped message is
+        unchanged and that result carries no retry_after -- a retry_after
+        (e.g. a 429's Retry-After) can differ between two occurrences of the
+        same status, and Session's backoff needs the current value, so any
+        cached classification carrying one always gets a fresh probe."""
         upgrade_error = WebSocketUpgradeError.from_exception(exc)
         if upgrade_error is not None or not isinstance(exc, PHXConnectionError):
             return upgrade_error
         message = str(exc)
-        if message != self._probed_failure_message:
-            self._cached_connect_failure = await probe_upgrade_error(
+        cached = self._cached_connect_failure
+        cache_is_valid = message == self._probed_failure_message and (
+            cached is None or cached.retry_after is None
+        )
+        if not cache_is_valid:
+            cached = await probe_upgrade_error(
                 self._require_client().channel_socket_url
             )
+            self._cached_connect_failure = cached
             self._probed_failure_message = message
-        return self._cached_connect_failure
+        return cached
 
     async def _resolve_failed_connect_attempt(
         self, exc: Exception, epoch: int
