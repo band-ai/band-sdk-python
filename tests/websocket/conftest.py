@@ -8,7 +8,7 @@ SUCCEEDS = object()
 """Sentinel meaning a scripted connect attempt or probe finds no error."""
 
 
-class _Script:
+class Script:
     """Advances through a fixed sequence of outcomes, one per `next()`
     call; the last entry repeats once the sequence is exhausted."""
 
@@ -27,7 +27,7 @@ class ScriptedPHXClient:
     SUCCEEDS."""
 
     def __init__(self, *script: Exception | object):
-        self._script = _Script(script)
+        self._script = Script(script)
         self.auto_reconnect: bool | None = None
         self.channel_socket_url = "wss://test/socket"
 
@@ -61,7 +61,7 @@ def scripted_connect(monkeypatch):
     return use
 
 
-class _ScriptedProbeConnection:
+class ScriptedProbeConnection:
     def __init__(self, outcome: Exception | object):
         self._outcome = outcome
 
@@ -80,12 +80,12 @@ class ScriptedProbe:
     the next scripted exception, or finds a clean handshake on SUCCEEDS."""
 
     def __init__(self, *script: Exception | object):
-        self._script = _Script(script)
-        self.probed_urls: list[tuple[str, int]] = []
+        self._script = Script(script)
+        self.probed_urls: list[tuple[str, float]] = []
 
-    def __call__(self, url: str, *, open_timeout: float) -> _ScriptedProbeConnection:
+    def __call__(self, url: str, *, open_timeout: float) -> ScriptedProbeConnection:
         self.probed_urls.append((url, open_timeout))
-        return _ScriptedProbeConnection(self._script.next())
+        return ScriptedProbeConnection(self._script.next())
 
 
 @pytest.fixture

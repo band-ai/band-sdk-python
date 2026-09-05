@@ -522,9 +522,10 @@ class WebSocketClient:
                 raise_exc,
             )
             if raise_exc is exc:
-                # Re-raising the exception already being handled -- no new
-                # object, so no chaining to add (bare raise).
-                raise raise_exc
+                # Bare raise: re-raising the exception already being handled
+                # via `raise raise_exc` would add a spurious extra frame to
+                # its traceback.
+                raise
             # A newly-built WebSocketUpgradeError -- chain it to the
             # original exception, same as the pre-Session code did.
             raise raise_exc from exc
