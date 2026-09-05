@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -100,6 +102,25 @@ async def stream(*events: StreamResponse):
         yield event
 
 
+@asynccontextmanager
+async def started_adapter(
+    adapter: A2AAdapter,
+) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    """Start ``adapter`` against a patched ``ClientFactory`` and clean it up
+    afterward -- yields ``(client, factory_type)`` so a test states only its
+    own setup and assertions, not the patch/cleanup dance."""
+    client = MagicMock()
+    with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
+        factory = factory_type.return_value
+        factory.create_from_url = AsyncMock(return_value=client)
+        await adapter.on_started("Agent", "Description")
+    try:
+        yield client, factory_type
+    finally:
+        client.close = AsyncMock()
+        await adapter.cleanup_all()
+
+
 class TestA2AAuth:
     def test_to_headers_combines_authentication_methods(self) -> None:
         auth = A2AAuth(
@@ -122,26 +143,18 @@ class TestA2AAdapterStartup:
             remote_url="http://localhost:10000",
             auth=A2AAuth(api_key="key"),
         )
-        client = MagicMock()
 
-        with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
-            factory = factory_type.return_value
-            factory.create_from_url = AsyncMock(return_value=client)
-
-            await adapter.on_started("Agent", "Description")
-
-        assert adapter._client is client
-        config = factory_type.call_args.args[0]
-        assert config.streaming is True
-        assert adapter._http_client is not None
-        assert adapter._http_client.headers["X-API-Key"] == "key"
-        assert config.httpx_client is adapter._http_client, (
-            "the factory must receive the adapter's own client — this identity "
-            "is what carries auth to card resolution and every A2A request"
-        )
-
-        client.close = AsyncMock()
-        await adapter.cleanup_all()
+        async with started_adapter(adapter) as (client, factory_type):
+            assert adapter._client is client
+            config = factory_type.call_args.args[0]
+            assert config.streaming is True
+            assert adapter._http_client is not None
+            assert adapter._http_client.headers["X-API-Key"] == "key"
+            assert config.httpx_client is adapter._http_client, (
+                "the factory must receive the adapter's own client — this "
+                "identity is what carries auth to card resolution and every "
+                "A2A request"
+            )
 
     @pytest.mark.asyncio
     async def test_owned_http_client_has_a_generous_bounded_read_timeout(self) -> None:
@@ -151,19 +164,10 @@ class TestA2AAdapterStartup:
         must still be finite, though, so a peer that hangs after accepting
         the connection fails the turn instead of blocking the room forever."""
         adapter = A2AAdapter(remote_url="http://localhost:10000")
-        client = MagicMock()
 
-        with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
-            factory = factory_type.return_value
-            factory.create_from_url = AsyncMock(return_value=client)
-
-            await adapter.on_started("Agent", "Description")
-
-        assert adapter._http_client is not None
-        assert adapter._http_client.timeout.read == _SSE_READ_TIMEOUT_S
-
-        client.close = AsyncMock()
-        await adapter.cleanup_all()
+        async with started_adapter(adapter):
+            assert adapter._http_client is not None
+            assert adapter._http_client.timeout.read == _SSE_READ_TIMEOUT_S
 
 
 class TestA2AAdapterMessageFlow:

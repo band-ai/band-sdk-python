@@ -56,10 +56,18 @@ def make_request(content: str = "What is the weather?") -> RequestContext:
     return RequestContext(None, request=SendMessageRequest(message=message))
 
 
-def configure_room_creation(adapter: A2AGatewayAdapter) -> None:
+def room_creation_response(room_id: str) -> MagicMock:
     response = MagicMock()
-    response.data.id = "room-123"
-    adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(return_value=response)
+    response.data.id = room_id
+    return response
+
+
+def configure_room_creation(
+    adapter: A2AGatewayAdapter, *, room_id: str = "room-123"
+) -> None:
+    adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
+        return_value=room_creation_response(room_id)
+    )
     adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
     adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock()
     adapter._rest.agent_api_events.create_agent_chat_event = AsyncMock()
@@ -97,10 +105,8 @@ class TestGatewayStartup:
     @pytest.mark.asyncio
     async def test_discovers_peers_and_starts_server(self) -> None:
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
-        response = MagicMock()
-        response.data = [make_peer("weather", "Weather Agent")]
         adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
-            return_value=response
+            return_value=peers_page([make_peer("weather", "Weather Agent")])
         )
 
         with patch(
@@ -389,12 +395,7 @@ class TestGatewayRoomState:
             "weather": make_peer("weather", "Weather Agent"),
             "data": make_peer("data", "Data Agent"),
         }
-        response = MagicMock()
-        response.data.id = "new-room"
-        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
-            return_value=response
-        )
-        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
+        configure_room_creation(adapter, room_id="new-room")
         return adapter
 
     @pytest.mark.asyncio
@@ -417,13 +418,11 @@ class TestGatewayRoomState:
     async def test_different_contexts_get_different_rooms(
         self, adapter: A2AGatewayAdapter
     ) -> None:
-        responses = []
-        for room_id in ("room-a", "room-b"):
-            response = MagicMock()
-            response.data.id = room_id
-            responses.append(response)
         adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
-            side_effect=responses
+            side_effect=[
+                room_creation_response("room-a"),
+                room_creation_response("room-b"),
+            ]
         )
 
         room_a, _ = await adapter._get_or_create_room("ctx-a", "weather")
