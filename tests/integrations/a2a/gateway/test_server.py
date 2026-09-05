@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from uuid import uuid4
 
@@ -19,6 +19,7 @@ from httpx import ASGITransport
 
 from band.integrations.a2a.gateway.server import SERVER_STOP_TIMEOUT_S, GatewayServer
 from tests.integrations.a2a.gateway.helpers import make_peer
+from tests.lifecycle import elapsed, held_open, running
 
 
 class FakeExecutor(AgentExecutor):
@@ -42,13 +43,17 @@ class FakeExecutor(AgentExecutor):
         raise NotImplementedError
 
 
-def build_server() -> GatewayServer:
+def build_server(
+    *,
+    port: int = 10000,
+    executor_factory: Callable[[str], AgentExecutor] | None = None,
+) -> GatewayServer:
     peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
     return GatewayServer(
         peers={"weather-agent": peer},
-        gateway_url="http://localhost:10000",
-        port=10000,
-        executor_factory=lambda _slug: FakeExecutor(),
+        gateway_url=f"http://localhost:{port}",
+        port=port,
+        executor_factory=executor_factory or (lambda _slug: FakeExecutor()),
     )
 
 
@@ -406,21 +411,10 @@ async def test_start_returns_only_once_the_server_is_listening() -> None:
     """A caller dialing in right after ``on_started()`` returns (e.g. a real
     A2A client, or one of the E2E smokes) must not race a socket that isn't
     accepting connections yet."""
-    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
-    server = GatewayServer(
-        peers={"weather-agent": peer},
-        gateway_url="http://localhost:0",
-        port=0,
-        executor_factory=lambda _slug: FakeExecutor(),
-    )
-
-    await server.start()
-    try:
+    async with running(build_server(port=0)) as server:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"http://127.0.0.1:{server.bound_port}/peers")
         assert response.status_code == 200
-    finally:
-        await server.stop()
 
 
 class DelayedTwoStepExecutor(AgentExecutor):
@@ -458,24 +452,17 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
     the flag from test_disables_sse_starlette_automatic_graceful_drain: a
     second GatewayServer's live stream, opened only after a first one has
     stopped in the same process, must still deliver every event."""
-    first = GatewayServer(
-        peers={"weather-agent": make_peer("uuid-weather", "Weather Agent", "")},
-        gateway_url="http://localhost:0",
-        port=0,
-        executor_factory=lambda _slug: FakeExecutor(),
-    )
-    await first.start()
-    port1 = first.bound_port
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream(
-            "POST",
-            f"http://127.0.0.1:{port1}/agents/weather-agent/message:stream",
-            headers={"A2A-Version": "1.0"},
-            json=hello_message_body(),
-        ) as response:
-            async for _ in response.aiter_bytes():
-                pass
-    await first.stop()
+    async with running(build_server(port=0)) as first:
+        port1 = first.bound_port
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"http://127.0.0.1:{port1}/agents/weather-agent/message:stream",
+                headers={"A2A-Version": "1.0"},
+                json=hello_message_body(),
+            ) as response:
+                async for _ in response.aiter_bytes():
+                    pass
 
     second = GatewayServer(
         peers={"other-agent": make_peer("uuid-other", "Other Agent", "")},
@@ -483,8 +470,7 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
         port=0,
         executor_factory=lambda _slug: DelayedTwoStepExecutor(),
     )
-    await second.start()
-    try:
+    async with running(second):
         port2 = second.bound_port
         events: list[str] = []
         async with httpx.AsyncClient(timeout=None) as client:
@@ -502,8 +488,6 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
             f"got {len(events)} events, expected 3 (task, working, completed) -- "
             "the second server's stream was cut short by the first server's shutdown"
         )
-    finally:
-        await second.stop()
 
 
 class NeverFinishingExecutor(AgentExecutor):
@@ -536,51 +520,36 @@ async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
     outside and mask a real hang as a false pass) -- same rationale as
     LocalMCPServer's own equivalent regression test.
     """
-    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
-    server = GatewayServer(
-        peers={"weather-agent": peer},
-        gateway_url="http://localhost:0",
-        port=0,
-        executor_factory=lambda _slug: NeverFinishingExecutor(),
+    server = build_server(
+        port=0, executor_factory=lambda _slug: NeverFinishingExecutor()
     )
-    await server.start()
-    port = server.bound_port
+    async with running(server):
+        port = server.bound_port
 
-    connection_ready = asyncio.Event()
+        async def connect(ready: asyncio.Event) -> None:
+            with suppress(Exception):
+                # timeout=None: httpx's default 5s read timeout would otherwise
+                # give up waiting for the next chunk and disconnect on its own
+                # around the same mark as SERVER_STOP_TIMEOUT_S -- masking a
+                # real server-side hang as a false pass, since the connection
+                # would end for the wrong reason (a bored client) rather than
+                # proving stop() itself is bounded.
+                async with (
+                    httpx.AsyncClient(timeout=None) as client,
+                    client.stream(
+                        "POST",
+                        f"http://127.0.0.1:{port}/agents/weather-agent/message:stream",
+                        headers={"A2A-Version": "1.0"},
+                        json=hello_message_body(),
+                    ) as response,
+                ):
+                    async for _ in response.aiter_bytes():
+                        ready.set()
 
-    async def hold_connection_open() -> None:
-        with suppress(Exception):
-            # timeout=None: httpx's default 5s read timeout would otherwise
-            # give up waiting for the next chunk and disconnect on its own
-            # around the same mark as SERVER_STOP_TIMEOUT_S -- masking a real
-            # server-side hang as a false pass, since the connection would
-            # end for the wrong reason (a bored client) rather than proving
-            # stop() itself is bounded.
-            async with (
-                httpx.AsyncClient(timeout=None) as client,
-                client.stream(
-                    "POST",
-                    f"http://127.0.0.1:{port}/agents/weather-agent/message:stream",
-                    headers={"A2A-Version": "1.0"},
-                    json=hello_message_body(),
-                ) as response,
-            ):
-                async for _ in response.aiter_bytes():
-                    connection_ready.set()
+        async with held_open(connect):
+            stop_elapsed = await elapsed(server.stop())
 
-    holder = asyncio.create_task(hold_connection_open())
-    try:
-        await asyncio.wait_for(connection_ready.wait(), timeout=5.0)
-
-        started_at = asyncio.get_running_loop().time()
-        await server.stop()
-        elapsed = asyncio.get_running_loop().time() - started_at
-
-        assert elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
-            f"stop() took {elapsed:.1f}s -- graceful shutdown is not "
+        assert stop_elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
+            f"stop() took {stop_elapsed:.1f}s -- graceful shutdown is not "
             "bounded by SERVER_STOP_TIMEOUT_S"
         )
-    finally:
-        holder.cancel()
-        with suppress(asyncio.CancelledError):
-            await holder

@@ -9,13 +9,14 @@ re-deriving (and re-testing) the same startup/shutdown correctness.
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 
 import httpx
 import pytest
 from sse_starlette.sse import AppStatus
 
 from band.integrations.uvicorn_server import ManagedUvicornServer, wait_until_started
+
+from tests.lifecycle import backgrounded, running
 
 
 class FakeUvicornServer:
@@ -33,22 +34,18 @@ async def _minimal_asgi_app(scope: dict, receive: object, send: object) -> None:
 @pytest.mark.asyncio
 async def test_returns_once_the_server_flips_ready() -> None:
     server = FakeUvicornServer()
-    serve_task = asyncio.create_task(asyncio.sleep(10))
 
     async def flip_ready_soon() -> None:
         await asyncio.sleep(0.1)
         server.started = True
 
-    flipper = asyncio.create_task(flip_ready_soon())
-    try:
+    async with (
+        backgrounded(asyncio.sleep(10)) as serve_task,
+        backgrounded(flip_ready_soon()),
+    ):
         await asyncio.wait_for(
             wait_until_started(server, serve_task, timeout_s=5.0), timeout=2.0
         )
-    finally:
-        for task in (serve_task, flipper):
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
 
 
 @pytest.mark.asyncio
@@ -90,14 +87,9 @@ async def test_surfaces_a_clean_task_completion_that_never_started() -> None:
 @pytest.mark.asyncio
 async def test_times_out_if_the_server_never_reports_ready() -> None:
     server = FakeUvicornServer()
-    serve_task = asyncio.create_task(asyncio.sleep(10))
-    try:
+    async with backgrounded(asyncio.sleep(10)) as serve_task:
         with pytest.raises(TimeoutError):
             await wait_until_started(server, serve_task, timeout_s=0.2)
-    finally:
-        serve_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await serve_task
 
 
 @pytest.mark.asyncio
@@ -109,13 +101,10 @@ async def test_managed_server_starts_and_bound_port_resolves_real_port() -> None
         start_timeout_s=5.0,
         stop_timeout_s=5,
     )
-    await server.start()
-    try:
+    async with running(server):
         async with httpx.AsyncClient() as client:
             response = await client.get(f"http://127.0.0.1:{server.bound_port}/")
         assert response.status_code == 200
-    finally:
-        await server.stop()
 
 
 @pytest.mark.asyncio

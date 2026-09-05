@@ -37,6 +37,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.lifecycle import running
 
 
 # A2A isn't in the adapter registry (NON_AGENT_ADAPTERS), so the lane selector
@@ -54,9 +55,7 @@ async def test_a2a_adapter_relays_a_real_counterparty_reply(
 ) -> None:
     """A live ``A2AAdapter`` forwards a Band room message to a real,
     independent A2A server and relays its reply back into the room."""
-    counterparty = A2ACounterparty()
-    try:
-        await counterparty.start()
+    async with running(A2ACounterparty()) as counterparty:
         adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
         async with running_provisioned_agent(
             adapter, resource_manager, label="a2a"
@@ -74,8 +73,6 @@ async def test_a2a_adapter_relays_a_real_counterparty_reply(
                 replies = await capture.wait_for_reply(
                     mid, agent.id, deadline_s=baseline_settings.e2e_timeout
                 )
-    finally:
-        await counterparty.stop()
 
     replies.assert_contains_any([CANNED_REPLY])
 
@@ -91,9 +88,7 @@ async def test_a2a_adapter_surfaces_a_remote_task_failure(
 ) -> None:
     """A terminal FAILED task from the remote A2A server surfaces as a room
     error event, not a silently dropped turn."""
-    counterparty = A2ACounterparty()
-    try:
-        await counterparty.start()
+    async with running(A2ACounterparty()) as counterparty:
         adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
         async with running_provisioned_agent(
             adapter, resource_manager, label="a2a"
@@ -112,7 +107,5 @@ async def test_a2a_adapter_surfaces_a_remote_task_failure(
                     mid, agent.id, deadline_s=baseline_settings.e2e_timeout
                 )
                 errors = await capture.errors(sender_id=agent.id)
-    finally:
-        await counterparty.stop()
 
     errors.assert_present()
