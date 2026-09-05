@@ -299,6 +299,123 @@ class TestCustomTools:
         mock_tools.execute_tool_call.assert_not_called()
 
 
+class TestReadRoomFileImagePassthrough:
+    @pytest.mark.asyncio
+    async def test_image_result_passes_through_as_inline_data(self, mock_tools):
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        adapter = GeminiAdapter(provider_key="test-key")
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.parts is not None
+        assert len(function_response.parts) == 1
+        inline_data = function_response.parts[0].inline_data
+        assert inline_data is not None
+        assert inline_data.mime_type == "image/png"
+        assert inline_data.data == b"fake"
+
+    @pytest.mark.asyncio
+    async def test_non_image_result_stays_text(self, mock_tools):
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={"name": "notes.txt", "content_type": "text/plain"}
+        )
+        adapter = GeminiAdapter(provider_key="test-key")
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        parts = await adapter._process_function_calls(function_calls, mock_tools)
+
+        function_response = parts[0].function_response
+        assert function_response is not None
+        assert function_response.parts is None
+        assert function_response.response == {
+            "output": '{"name": "notes.txt", "content_type": "text/plain"}'
+        }
+
+
+class TestToolEventRedaction:
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_result_reports_placeholder_not_raw_base64(
+        self, mock_tools
+    ):
+        """The tool_result event for an image band_read_room_file call must
+        report a bounded placeholder, not the raw base64 payload -- the LLM-
+        facing inline_data content block (asserted in
+        TestReadRoomFileImagePassthrough above) is a separate path from what
+        gets reported to the platform-visible event."""
+        import json
+
+        from band.core.types import ToolEventKey
+
+        mock_tools.execute_tool_call = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        adapter = GeminiAdapter(provider_key="test-key", emit=Emit.TOOL_CALLS)
+        function_calls = [
+            types.FunctionCall(
+                name="band_read_room_file", args={"file_id": "f1"}, id="c1"
+            )
+        ]
+
+        await adapter._process_function_calls(function_calls, mock_tools)
+
+        result_event = mock_tools.send_event.call_args_list[-1]
+        reported = json.loads(result_event.kwargs["content"])
+        assert reported[ToolEventKey.OUTPUT] == "<1 image content block(s)>"
+        assert "ZmFrZQ==" not in result_event.kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self, mock_tools
+    ):
+        """The tool_call event for band_send_room_file must report a bounded
+        placeholder for `args`, not the raw file text -- real file bytes
+        (up to ~1MB) have no business in a platform-visible log event."""
+        import json
+
+        from band.core.types import ToolEventKey
+
+        mock_tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
+        adapter = GeminiAdapter(provider_key="test-key", emit=Emit.TOOL_CALLS)
+        raw_content = "the quick brown fox" * 100
+        function_calls = [
+            types.FunctionCall(
+                name="band_send_room_file",
+                args={"content": raw_content, "filename": "notes.txt"},
+                id="c1",
+            )
+        ]
+
+        await adapter._process_function_calls(function_calls, mock_tools)
+
+        call_event = mock_tools.send_event.call_args_list[0]
+        reported = json.loads(call_event.kwargs["content"])
+        assert reported[ToolEventKey.ARGS]["content"] == (
+            f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in call_event.kwargs["content"]
+
+
 class TestOnCleanup:
     @pytest.mark.asyncio
     async def test_removes_room_history(self):

@@ -25,6 +25,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -60,9 +61,13 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
+    decode_image_block,
+    image_block_placeholder,
+    is_mcp_content_result,
     is_terminal_success,
     missing_reply_error,
     platform_tool,
+    redact_tool_call_args,
     serialize_tool_result,
 )
 
@@ -216,7 +221,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -639,6 +644,58 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
             agent.tool(band_archive_memory)
 
+        # Room-file tools (opt-in via Capability.FILES)
+        if Capability.FILES in self.features.capabilities:
+
+            @platform_tool
+            async def band_list_room_files(
+                ctx: RunContext[AgentToolsProtocol],
+                cursor: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return await ctx.deps.list_room_files(cursor)
+                except Exception as e:
+                    return f"Error listing room files: {e}"
+
+            agent.tool(band_list_room_files)
+
+            @platform_tool
+            async def band_read_room_file(
+                ctx: RunContext[AgentToolsProtocol],
+                file_id: str,
+            ) -> dict[str, Any] | str | list[BinaryContent]:
+                try:
+                    result = await ctx.deps.read_room_file(file_id)
+                    if is_mcp_content_result(result):
+                        return [
+                            BinaryContent(data=data, media_type=mime_type)
+                            for data, mime_type in (
+                                decode_image_block(block) for block in result["content"]
+                            )
+                        ]
+                    return result
+                except Exception as e:
+                    return f"Error reading room file: {e}"
+
+            agent.tool(band_read_room_file)
+
+            @platform_tool
+            async def band_send_room_file(
+                ctx: RunContext[AgentToolsProtocol],
+                content: str,
+                filename: str,
+                mentions: list[str],
+                caption: str = "",
+            ) -> dict[str, Any] | str:
+                try:
+                    return await ctx.deps.send_room_file(
+                        content, filename, caption, mentions
+                    )
+                except Exception as e:
+                    return f"Error sending room file '{filename}': {e}"
+
+            agent.tool(band_send_room_file)
+
         # Register custom tools (user-provided PydanticAI-compatible functions) on
         # the path their signature calls for — pydantic-ai keeps the two apart.
         for custom_tool in self._custom_tools:
@@ -756,7 +813,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.ARGS: event.part.args,
+                                            ToolEventKey.ARGS: redact_tool_call_args(
+                                                event.part.tool_name,
+                                                event.part.args_as_dict(),
+                                            ),
                                             ToolEventKey.TOOL_CALL_ID: event.part.tool_call_id,
                                         }
                                     ),
@@ -778,14 +838,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         ):
                             tool_executed = True
                         if Emit.TOOL_CALLS in self.features.emit:
+                            output = event.part.content
+                            if (
+                                isinstance(output, list)
+                                and output
+                                and all(
+                                    isinstance(item, BinaryContent) for item in output
+                                )
+                            ):
+                                # str() on BinaryContent embeds its raw `data`
+                                # bytes -- band_read_room_file's image result
+                                # would otherwise dump the full file into this
+                                # event instead of a bounded placeholder.
+                                output = image_block_placeholder(len(output))
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.OUTPUT: str(
-                                                event.part.content
-                                            ),
+                                            ToolEventKey.OUTPUT: str(output),
                                             ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
                                         }
                                     ),

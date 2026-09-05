@@ -34,6 +34,7 @@ from typing import Annotated, Any, Literal, Protocol
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ImageContent
 from pydantic import AliasChoices, BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import SkipJsonSchema
@@ -49,11 +50,12 @@ from band.runtime.custom_tools import (
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
-    SEND_MESSAGE_TOOL_NAME,
+    BandTool,
     SendEventInput,
     Surface,
     ToolDefinition,
     append_available_mention_handles,
+    is_mcp_content_result,
     iter_tool_definitions,
     serialize_tool_result,
     validate_tool_arguments,
@@ -77,6 +79,9 @@ class MCPToolRegistration:
     description: str
     input_model: type[BaseModel]
     execute: MCPToolExecutor
+    # False only for band_read_room_file: its image branch returns MCP content
+    # blocks, which the schema FastMCP infers from ``-> str`` would reject.
+    structured_output: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -204,7 +209,7 @@ def enrich_send_message_error(
     ``EmbeddedResolver`` above and the CLI's ``StandaloneResolver`` can call
     this with whatever tools instance they hold.
     """
-    if definition.name != SEND_MESSAGE_TOOL_NAME:
+    if definition.name != BandTool.SEND_MESSAGE:
         return error
     message = append_available_mention_handles(
         str(error),
@@ -457,6 +462,8 @@ def build_tool_registration(
       when set (CLI-only feature; the embedded door never pins).
     """
 
+    is_read_room_file = definition.name == BandTool.READ_ROOM_FILE
+
     async def execute(arguments: dict[str, Any]) -> Any:
         kwargs = dict(arguments)
         if pinned_room_id is not None:
@@ -468,6 +475,8 @@ def build_tool_registration(
             else validated.get(CHAT_ID_FIELD_NAME)
         )
         result = await resolver.invoke(definition, chat_id, validated)
+        if is_read_room_file and is_mcp_content_result(result):
+            return _mcp_content_blocks(result)
         return _serialize(result)
 
     return MCPToolRegistration(
@@ -475,6 +484,7 @@ def build_tool_registration(
         description=(input_model.__doc__ or "").strip(),
         input_model=input_model,
         execute=execute,
+        structured_output=False if is_read_room_file else None,
     )
 
 
@@ -606,6 +616,15 @@ def build_resolved_band_mcp_tool_registrations(
     return registrations
 
 
+def _mcp_content_blocks(result: dict[str, Any]) -> list[ImageContent]:
+    """Rebuild an MCP-content-shaped tool result as real ``ContentBlock``s.
+
+    FastMCP passes a ``ContentBlock`` instance through to the client verbatim;
+    the equivalent plain dict falls through to JSON-text encoding instead.
+    """
+    return [ImageContent(**block) for block in result["content"]]
+
+
 def _serialize(result: Any) -> str:
     """Serialize a tool method's return value to a JSON string for the wire.
 
@@ -686,6 +705,9 @@ def build_engine(
     for registration in spec.tools:
         handler = _make_dispatch_function(registration)
         mcp.add_tool(
-            handler, name=registration.name, description=registration.description
+            handler,
+            name=registration.name,
+            description=registration.description,
+            structured_output=registration.structured_output,
         )
     return mcp
