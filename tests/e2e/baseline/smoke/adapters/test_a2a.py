@@ -1,17 +1,14 @@
-"""A2AAdapter showcase smoke -- a live A2AAdapter driven against a real,
-independent A2A counterparty (not Band's own gateway).
+"""A2AAdapter showcase smoke -- a live A2AAdapter driven against
+``a2aServer.A2ACounterparty``, a minimal scripted A2A server (not Band's
+own gateway), proving the outbound adapter against an independent
+implementation. Deterministic, not LLM-backed, so neither side needs an
+LLM key.
 
-A2A is a protocol bridge, not an LLM-agent adapter (listed in
-``NON_AGENT_ADAPTERS``), so this is a bespoke, non-matrix smoke like
-``test_parlant.py``: the adapter is built directly and handed to the
-toolkit's ``running_provisioned_agent`` so provisioning, capture, and reaping
-share the same plumbing as every other baseline test.
-
-The counterparty is ``a2aServer.A2ACounterparty``: a minimal, scripted A2A
-server built on a2a-sdk's own primitives (not Band), so this proves the
-outbound ``A2AAdapter`` against a real, independent A2A implementation --
-not just our own gateway. It is deterministic, not LLM-backed, so neither
-side of this smoke needs an LLM key.
+A2A is a protocol bridge, not an LLM-agent adapter (``NON_AGENT_ADAPTERS``),
+so this is a bespoke, non-matrix smoke like ``test_parlant.py``: the
+adapter is built directly and handed to ``running_provisioned_agent`` so
+provisioning, capture, and reaping share the same plumbing as every other
+baseline test.
 
 Run with:
     E2E_TESTS_ENABLED=true uv run pytest \\
@@ -40,10 +37,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.lifecycle import running
 
 
-# A2A isn't in the adapter registry (NON_AGENT_ADAPTERS), so the lane selector
-# can't derive its home lane and would run it in every lane. Pin it to core --
-# this smoke needs no provider key (the counterparty is scripted, not
-# LLM-backed), only the always-on Band-platform gate.
+# Not in the adapter registry, so the lane selector can't derive a home
+# lane and would run it in every lane. Pin to core -- needs no provider key
+# (the counterparty is scripted), only the always-on Band-platform gate.
 @lane(Lane.CORE)
 @pytest.mark.timeout(extra=60)
 @pytest.mark.asyncio(loop_scope="session")

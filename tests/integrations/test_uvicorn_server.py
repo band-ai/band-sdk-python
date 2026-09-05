@@ -152,16 +152,12 @@ async def test_start_cleans_up_when_the_startup_wait_fails(
 
 
 def test_disables_sse_starlette_automatic_graceful_drain() -> None:
-    """Regression, traced live on Windows CI: sse_starlette's
-    AppStatus.should_exit is a bare process-global class attribute with no
-    notion of "which server" -- ANY OTHER uvicorn.Server's signal handler
-    firing handle_exit() anywhere in the process (not just ours) used to
-    latch it, closing every subsequent SSE response -- including a fresh,
-    healthy server's that never touched that other one -- right after its
-    headers. Importing this module must disable the automatic drain so
-    handle_exit() (the real 2-argument signal-handler call, not our own)
-    becomes a no-op for this flag; original_handler is swapped out for the
-    duration since it expects a bound Server instance, not this direct call.
+    """Regression: AppStatus.should_exit is a process-global with no notion
+    of "which server" -- any uvicorn.Server's handle_exit() latches it,
+    cutting off every other embedded server's SSE responses too. Importing
+    this module must disable the automatic drain so handle_exit() (the real
+    signal-handler call) is a no-op for this flag; original_handler is
+    swapped since it expects a bound Server, not this direct call.
     """
     assert AppStatus.enable_automatic_graceful_drain is False
 

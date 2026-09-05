@@ -1,15 +1,10 @@
 """Shared lifecycle for integrations that embed their own uvicorn server.
 
-``wait_until_started`` and ``ManagedUvicornServer`` are used by
-``band.integrations.mcp.local_server``, ``band.integrations.a2a.gateway.server``,
-and the A2A baseline test fixture, so the correctness-sensitive pieces --
-surfacing a serve task that never came up, and cleaning up after a failed
-start -- are each fixed in one place, not re-derived per caller.
-
-Importing this module also disables sse_starlette's automatic
-graceful-drain watcher (see the ``AppStatus`` call below): every consumer
-here embeds its own ``uvicorn.Server`` the same way, and that watcher's
-shutdown signal is a bare process-global with no notion of "which server."
+Used by ``mcp.local_server``, ``a2a.gateway.server``, and the A2A baseline
+test fixture. Importing this module also disables sse_starlette's
+automatic graceful-drain watcher (see the ``AppStatus`` call below): its
+shutdown signal is a bare process-global with no notion of "which server,"
+so every embedder needs it disabled once, not per caller.
 """
 
 from __future__ import annotations
@@ -25,13 +20,7 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_S = 0.05
 
-# sse_starlette's shutdown watcher polls whichever uvicorn.Server owns the
-# process's SIGTERM slot and promotes its should_exit to the process-global
-# AppStatus.should_exit -- so one embedded server's stop() (which sets
-# should_exit directly, not via a signal) can poison every other embedded
-# server's SSE streams in the same process. Every caller here embeds its own
-# uvicorn.Server this same way, so this is disabled once, on import, rather
-# than duplicated per caller.
+# Process-global footgun -- see module docstring. Disabled once, on import.
 AppStatus.disable_automatic_graceful_drain()
 
 
@@ -43,12 +32,10 @@ async def wait_until_started(
 ) -> None:
     """Block until ``server`` reports ready.
 
-    ``serve_task`` only returns once the server stops, so readiness is
-    polled via ``server.started`` instead of awaiting the task directly.
-    But a task that ends before ever setting ``started`` -- raising (a port
-    already in use, a bad TLS config) or not (an early shutdown signal) --
-    means the server will never start; either way that's fatal immediately,
-    not something worth busy-waiting the full timeout to discover.
+    Polls ``server.started`` since ``serve_task`` only returns once the
+    server stops. A task that ends first -- raising or not -- means the
+    server will never start, so that's fatal immediately rather than
+    busy-waited to the timeout.
     """
     deadline = asyncio.get_running_loop().time() + timeout_s
     while not server.started:

@@ -448,10 +448,9 @@ class DelayedTwoStepExecutor(AgentExecutor):
 
 
 async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> None:
-    """Regression, reproducing the real failure directly rather than just
-    the flag from test_disables_sse_starlette_automatic_graceful_drain: a
-    second GatewayServer's live stream, opened only after a first one has
-    stopped in the same process, must still deliver every event."""
+    """Regression: a second GatewayServer's live stream, opened only after a
+    first one has stopped in the same process, must still deliver every
+    event."""
     async with running(build_server(port=0)) as first:
         port1 = first.bound_port
         async with httpx.AsyncClient(timeout=None) as client:
@@ -510,15 +509,12 @@ class NeverFinishingExecutor(AgentExecutor):
 
 @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
 async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
-    """Regression: gateway/server.py disables sse_starlette's cooperative
-    shutdown drain, so a live message:stream connection has no other way to
-    end on its own -- stop() must bound its wait via timeout_graceful_shutdown
-    instead of hanging forever.
+    """Regression: disabling sse_starlette's drain means a live
+    message:stream connection has no other way to end -- stop() must bound
+    its wait via timeout_graceful_shutdown instead of hanging forever.
 
-    Measures wall-clock time around a bare ``await server.stop()`` (no
-    wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
-    outside and mask a real hang as a false pass) -- same rationale as
-    LocalMCPServer's own equivalent regression test.
+    Measures wall-clock time around a bare ``server.stop()`` (wrapping it
+    in ``asyncio.wait_for`` would cancel it externally and mask a real hang).
     """
     server = build_server(
         port=0, executor_factory=lambda _slug: NeverFinishingExecutor()

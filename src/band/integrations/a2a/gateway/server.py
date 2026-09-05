@@ -27,19 +27,16 @@ logger = logging.getLogger(__name__)
 
 ExecutorFactory = Callable[[str], AgentExecutor]
 
-# The process-global sse_starlette shutdown-drain footgun (see
-# band.integrations.uvicorn_server's docstring) is disabled by importing
-# that module above, not here -- ManagedUvicornServer's every caller shares
-# the fix.
+# sse_starlette's shutdown-drain footgun (see uvicorn_server's docstring)
+# is disabled by importing that module, not here.
 
 # A live message:stream response has no other way to end on stop() --
 # uvicorn's own default (None) would wait forever for it to close on its own.
 SERVER_STOP_TIMEOUT_S = 5
 
-# How long start() waits for uvicorn to report ready before giving up. Without
-# this wait, start() returns as soon as serve() is merely scheduled -- a caller
-# (e.g. an A2A client dialing in immediately after on_started()) can then race
-# a socket that isn't listening yet.
+# How long start() waits for uvicorn to report ready -- without it, a caller
+# dialing in right after start() returns could race a socket that isn't
+# listening yet.
 SERVER_START_TIMEOUT_S = 5
 
 # The REST endpoints the gateway serves per peer: the messaging binding and
@@ -47,12 +44,10 @@ SERVER_START_TIMEOUT_S = 5
 # and push-config routes — an unauthenticated window into past conversations.
 MESSAGING_REST_SUFFIXES = ("/message:send", "/message:stream", "/card")
 
-# The JSON-RPC methods the gateway serves (1.0 names and their v0.3-compat
-# spellings). Sends create work; the per-task operations are gated by the
-# unguessable task UUID the server minted for the caller. Everything else
-# stays closed: with no auth layer every caller shares one identity, so
-# enumeration (ListTasks) and the push-config/extended-card methods would
-# disclose or disrupt other callers' conversations.
+# JSON-RPC methods the gateway serves (1.0 + v0.3-compat spellings). Sends
+# create work; per-task ops are gated by the unguessable task UUID. Everything
+# else stays closed -- with no auth layer, enumeration/push-config methods
+# would disclose or disrupt other callers' conversations.
 ALLOWED_JSONRPC_METHODS = frozenset(
     {
         "SendMessage",
@@ -198,10 +193,9 @@ class GatewayServer:
     ) -> list[BaseRoute]:
         """The REST binding, reduced to the endpoints this gateway serves.
 
-        Beyond the unauthenticated task routes, the upstream factory ends with
-        a multi-tenant catch-all ``Mount("/{tenant}")``; peers here are
-        namespaced by path, and the first alias's mount would shadow every
-        later alias's flat routes.
+        The upstream factory also returns a catch-all ``Mount("/{tenant}")``;
+        since peers are namespaced by path here, the first alias's mount
+        would shadow every later alias's routes.
         """
         return [
             route

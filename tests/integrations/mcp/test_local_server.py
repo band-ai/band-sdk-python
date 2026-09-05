@@ -219,19 +219,16 @@ class TestLocalMcpServer:
     async def test_stop_returns_promptly_with_a_still_open_sse_connection(
         self,
     ) -> None:
-        """Regression: an MCP client (e.g. OpenCode) holds its `/sse` GET open
-        for the life of its own session and may never close it after we ask
-        it to deregister. uvicorn's own graceful-shutdown wait is unbounded by
-        default, so ``stop()`` used to hang forever waiting for a connection
-        that never closes on its own; it must now force it closed instead.
+        """Regression: an MCP client (e.g. OpenCode) holds its `/sse` GET
+        open for the life of its session and may never close it -- stop()
+        must force it closed rather than hang on uvicorn's unbounded default
+        graceful-shutdown wait.
 
-        Measures wall-clock time around a bare ``await server.stop()`` (no
-        wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
-        outside and let its own ``except CancelledError`` swallow that
-        cancellation -- masking a real hang as a false pass). The
-        ``pytest.mark.timeout`` above is the sole backstop, matching how the
-        live baseline run actually surfaced this hang (pytest-timeout, not an
-        internal asyncio timeout).
+        Measures wall-clock time around a bare ``server.stop()`` (wrapping
+        it in ``asyncio.wait_for`` would cancel it externally and mask a
+        real hang). ``pytest.mark.timeout`` above is the backstop, matching
+        how this hang is actually caught (pytest-timeout, not an asyncio
+        timeout).
         """
         server = LocalMCPServer(
             name="test-local-mcp-stop",
@@ -334,11 +331,10 @@ class TestLocalMcpServer:
     async def test_start_forwards_real_host_to_build_engine(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Regression (found live via the Letta lane): build_engine must be
-        told the real bind host, or FastMCP wrongly assumes loopback and
-        locks DNS-rebinding protection to 127.0.0.1/localhost only -- even
-        for a server explicitly bound to a non-loopback host for a Docker
-        callback (see LocalMCPServer's own class docstring)."""
+        """Regression: build_engine must be told the real bind host, or
+        FastMCP wrongly assumes loopback and locks DNS-rebinding protection
+        to 127.0.0.1/localhost only -- even for a non-loopback Docker-
+        callback bind (see LocalMCPServer's class docstring)."""
         import band.integrations.mcp.local_server as local_server_mod
 
         seen_hosts: list[str] = []
