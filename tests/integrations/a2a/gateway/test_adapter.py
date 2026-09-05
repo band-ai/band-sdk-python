@@ -26,7 +26,7 @@ from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterCo
 from band.integrations.a2a.gateway.adapter import BandAgentExecutor
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
-from tests.integrations.a2a.gateway.helpers import make_peer
+from tests.integrations.a2a.gateway.helpers import make_peer, peers_page
 
 
 def make_platform_message(
@@ -303,12 +303,10 @@ class TestGatewayExecution:
     @pytest.mark.asyncio
     async def test_fetch_all_peers_accumulates_across_pages(self) -> None:
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
-        page1 = MagicMock()
-        page1.data = [make_peer(f"peer-{i}", f"Peer {i}") for i in range(100)]
-        page2 = MagicMock()
-        page2.data = [make_peer("peer-100", "Peer 100")]
+        full_page = [make_peer(f"peer-{i}", f"Peer {i}") for i in range(100)]
+        partial_page = [make_peer("peer-100", "Peer 100")]
         adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
-            side_effect=[page1, page2]
+            side_effect=[peers_page(full_page), peers_page(partial_page)]
         )
 
         peers = await adapter._fetch_all_peers()
