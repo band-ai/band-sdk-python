@@ -24,19 +24,7 @@ from band.runtime.presence import RoomPresence
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage, SessionConfig
 
-from tests.runtime.conftest import admit_room
-
-
-async def wait_for_condition(
-    predicate, *, timeout: float = 1.0, interval: float = 0.01
-) -> None:
-    """Wait until a predicate becomes true, failing fast on timeout."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate():
-            return
-        await asyncio.sleep(interval)
-    pytest.fail("Timed out waiting for condition")
+from tests.runtime.conftest import admit_room, wait_for_condition
 
 
 # ---------------------------------------------------------------------------
