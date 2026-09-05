@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_S = 0.05
 
+# How long start() waits for uvicorn to report ready -- without it, a caller
+# dialing in right after start() returns could race a socket that isn't
+# listening yet.
+SERVER_START_TIMEOUT_S = 5.0
+
+# uvicorn's own default (None) waits forever for an open connection to close
+# on stop() -- fatal for a caller holding one open on purpose (a live
+# message:stream response, an MCP client's long-lived /sse GET). Bound it so
+# stop() force-closes the connection instead of hanging indefinitely.
+SERVER_STOP_TIMEOUT_S = 5
+
 # Process-global footgun -- see module docstring. Disabled once, on import.
 AppStatus.disable_automatic_graceful_drain()
 
@@ -62,8 +73,8 @@ class ManagedUvicornServer:
         *,
         host: str,
         port: int,
-        start_timeout_s: float,
-        stop_timeout_s: int,
+        start_timeout_s: float = SERVER_START_TIMEOUT_S,
+        stop_timeout_s: int = SERVER_STOP_TIMEOUT_S,
     ) -> None:
         self._app = app
         self._host = host

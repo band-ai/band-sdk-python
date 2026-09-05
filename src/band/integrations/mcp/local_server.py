@@ -31,7 +31,11 @@ from band.integrations.mcp.engine import (
     build_engine,
     validate_unique_tool_names,
 )
-from band.integrations.uvicorn_server import wait_until_started
+from band.integrations.uvicorn_server import (
+    SERVER_START_TIMEOUT_S,
+    SERVER_STOP_TIMEOUT_S,
+    wait_until_started,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +46,6 @@ LOCAL_MCP_SSE_PATH = "/sse"
 LOCAL_MCP_HTTP_PATH = "/mcp"
 LOCAL_MCP_MESSAGE_PATH = "/messages/"
 LOCAL_MCP_HEALTH_PATH = "/healthz"
-SERVER_START_TIMEOUT_S = 5.0
-# uvicorn's own default (None) waits forever for existing connections to close
-# on `stop()` -- fatal here, since an MCP client (e.g. OpenCode) holds its `/sse`
-# GET open for the life of its session and may never close it on its own after
-# we deregister. Bound it so `stop()` force-cancels that connection instead of
-# hanging the adapter's cleanup indefinitely.
-SERVER_STOP_TIMEOUT_S = 5
 
 # The process-global sse_starlette shutdown-drain footgun (see
 # band.integrations.uvicorn_server's docstring) is disabled by importing

@@ -20,7 +20,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
-from band.integrations.uvicorn_server import ManagedUvicornServer
+from band.integrations.uvicorn_server import (
+    SERVER_START_TIMEOUT_S,
+    SERVER_STOP_TIMEOUT_S,
+    ManagedUvicornServer,
+)
 from band_rest import Peer
 
 logger = logging.getLogger(__name__)
@@ -29,15 +33,6 @@ ExecutorFactory = Callable[[str], AgentExecutor]
 
 # sse_starlette's shutdown-drain footgun (see uvicorn_server's docstring)
 # is disabled by importing that module, not here.
-
-# A live message:stream response has no other way to end on stop() --
-# uvicorn's own default (None) would wait forever for it to close on its own.
-SERVER_STOP_TIMEOUT_S = 5
-
-# How long start() waits for uvicorn to report ready -- without it, a caller
-# dialing in right after start() returns could race a socket that isn't
-# listening yet.
-SERVER_START_TIMEOUT_S = 5
 
 # The REST endpoints the gateway serves per peer: the messaging binding and
 # the compat card. The upstream factory also returns task read/cancel/list

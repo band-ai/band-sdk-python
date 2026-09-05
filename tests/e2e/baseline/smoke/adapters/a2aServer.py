@@ -28,20 +28,16 @@ from a2a.types import (
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT
 from starlette.applications import Starlette
 
-from band.integrations.uvicorn_server import ManagedUvicornServer
+from band.integrations.uvicorn_server import (
+    SERVER_START_TIMEOUT_S,
+    SERVER_STOP_TIMEOUT_S,
+    ManagedUvicornServer,
+)
 
 from tests.ports import reserve_port
 
 CANNED_REPLY = "a2a-fixture-canned-reply"
 ERROR_MARKER = "a2a-fixture-trigger-error"
-
-# Mirrors band.integrations.a2a.gateway.server.SERVER_STOP_TIMEOUT_S: uvicorn's
-# own default (None) waits forever for an open connection to close on stop(),
-# and a live message:stream response has no other way to end on its own.
-STOP_TIMEOUT_S = 5
-
-# How long start() waits for uvicorn to report ready before giving up.
-START_TIMEOUT_S = 5
 
 
 class ScriptedExecutor(AgentExecutor):
@@ -130,8 +126,8 @@ class A2ACounterparty:
             self._build_app(),
             host="127.0.0.1",
             port=self.port,
-            start_timeout_s=START_TIMEOUT_S,
-            stop_timeout_s=STOP_TIMEOUT_S,
+            start_timeout_s=SERVER_START_TIMEOUT_S,
+            stop_timeout_s=SERVER_STOP_TIMEOUT_S,
         )
         await self._runtime.start()
 
