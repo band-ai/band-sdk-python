@@ -18,6 +18,7 @@ from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
 from sse_starlette.sse import AppStatus
 
+import band.integrations.a2a.gateway.server as gateway_server_module
 from band.integrations.a2a.gateway.server import SERVER_STOP_TIMEOUT_S, GatewayServer
 from tests.integrations.a2a.gateway.helpers import make_peer
 
@@ -420,6 +421,34 @@ async def test_start_returns_only_once_the_server_is_listening() -> None:
         assert server._uvicorn.started
     finally:
         await server.stop()
+
+
+async def test_start_cleans_up_when_startup_wait_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed startup wait must still tell uvicorn to exit and clear
+    server state, not leave a listening socket and stray task behind."""
+
+    async def failing_wait_until_started(*args: object, **kwargs: object) -> None:
+        raise TimeoutError("simulated startup failure")
+
+    monkeypatch.setattr(
+        gateway_server_module, "wait_until_started", failing_wait_until_started
+    )
+
+    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
+    server = GatewayServer(
+        peers={"weather-agent": peer},
+        gateway_url="http://localhost:0",
+        port=0,
+        executor_factory=lambda _slug: FakeExecutor(),
+    )
+
+    with pytest.raises(TimeoutError, match="simulated startup failure"):
+        await server.start()
+
+    assert server._uvicorn is None
+    assert server._server_task is None
 
 
 def test_disables_sse_starlette_automatic_graceful_drain() -> None:

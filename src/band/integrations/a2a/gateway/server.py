@@ -266,7 +266,15 @@ class GatewayServer:
         server_task = asyncio.create_task(server.serve())
         self._uvicorn = server
         self._server_task = server_task
-        await wait_until_started(server, server_task, timeout_s=SERVER_START_TIMEOUT_S)
+        try:
+            await wait_until_started(
+                server, server_task, timeout_s=SERVER_START_TIMEOUT_S
+            )
+        except BaseException:
+            # A failed/timed-out startup still leaves server_task running and
+            # the socket bound; stop() already unwinds both.
+            await self.stop()
+            raise
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
             self.port,
