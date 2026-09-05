@@ -189,7 +189,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         )
         await self._server.start()
 
-        logger.info("Gateway HTTP server started on port %d", self.port)
+        logger.info("Gateway HTTP server started on port %d", self._server.bound_port)
 
     @property
     def rest(self) -> AsyncRestClient:

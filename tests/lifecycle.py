@@ -10,6 +10,10 @@ from typing import Any, Protocol
 
 
 class Startable(Protocol):
+    """``stop()`` must be a safe no-op if ``start()`` was never called or
+    failed partway -- ``running()`` below relies on that to clean up
+    unconditionally after a failed start."""
+
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
 
@@ -17,8 +21,8 @@ class Startable(Protocol):
 @asynccontextmanager
 async def running(server: Startable) -> AsyncIterator[Startable]:
     """Start ``server``, yield it, and always stop it -- even on failure."""
-    await server.start()
     try:
+        await server.start()
         yield server
     finally:
         await server.stop()

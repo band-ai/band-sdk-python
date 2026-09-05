@@ -251,7 +251,7 @@ class GatewayServer:
         await self._runtime.start()
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
-            self.port,
+            self.bound_port,
             len(self.peers),
         )
 
