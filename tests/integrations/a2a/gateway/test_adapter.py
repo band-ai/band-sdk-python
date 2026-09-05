@@ -287,6 +287,8 @@ class TestGatewayExecution:
         terminal = await queue.dequeue_event()
         assert initial.status.state == TaskState.TASK_STATE_WORKING
         assert terminal.status.state == TaskState.TASK_STATE_FAILED
+        assert terminal.status.message.parts[0].text == "A2A request failed"
+        assert "Band unavailable" not in terminal.status.message.parts[0].text
         assert adapter._pending_tasks == {}
 
     @pytest.mark.asyncio
