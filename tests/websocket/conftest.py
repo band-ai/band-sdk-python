@@ -1,6 +1,115 @@
 from __future__ import annotations
 
+import pytest
+
 from band_sdk_core import SessionPolicy
+
+SUCCEEDS = object()
+"""Sentinel meaning a scripted connect attempt or probe finds no error."""
+
+
+class _Script:
+    """Advances through a fixed sequence of outcomes, one per `next()`
+    call; the last entry repeats once the sequence is exhausted."""
+
+    def __init__(self, outcomes: tuple[Exception | object, ...]):
+        self._outcomes = outcomes
+        self.calls = 0
+
+    def next(self) -> Exception | object:
+        self.calls += 1
+        return self._outcomes[min(self.calls, len(self._outcomes)) - 1]
+
+
+class ScriptedPHXClient:
+    """Fake PHXChannelsClient driven by a script of outcomes: each
+    __aenter__ call raises the next scripted exception, or succeeds on
+    SUCCEEDS."""
+
+    def __init__(self, *script: Exception | object):
+        self._script = _Script(script)
+        self.auto_reconnect: bool | None = None
+        self.channel_socket_url = "wss://test/socket"
+
+    @property
+    def attempts(self) -> int:
+        return self._script.calls
+
+    def __call__(self, *args, **kwargs):
+        self.auto_reconnect = kwargs["auto_reconnect"]
+        return self
+
+    async def __aenter__(self):
+        outcome = self._script.next()
+        if outcome is SUCCEEDS:
+            return self
+        raise outcome
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+
+@pytest.fixture
+def scripted_connect(monkeypatch):
+    """Patch PHXChannelsClient with a ScriptedPHXClient driven by `script`."""
+
+    def use(*script: Exception | object) -> ScriptedPHXClient:
+        client = ScriptedPHXClient(*script)
+        monkeypatch.setattr("band.client.streaming.client.PHXChannelsClient", client)
+        return client
+
+    return use
+
+
+class _ScriptedProbeConnection:
+    def __init__(self, outcome: Exception | object):
+        self._outcome = outcome
+
+    async def __aenter__(self):
+        if self._outcome is SUCCEEDS:
+            return self
+        raise self._outcome
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+
+class ScriptedProbe:
+    """Fake live-socket probe (the `connect()` call inside
+    probe_upgrade_error) driven by a script of outcomes: each call raises
+    the next scripted exception, or finds a clean handshake on SUCCEEDS."""
+
+    def __init__(self, *script: Exception | object):
+        self._script = _Script(script)
+        self.probed_urls: list[tuple[str, int]] = []
+
+    def __call__(self, url: str, *, open_timeout: float) -> _ScriptedProbeConnection:
+        self.probed_urls.append((url, open_timeout))
+        return _ScriptedProbeConnection(self._script.next())
+
+
+@pytest.fixture
+def scripted_probe(monkeypatch):
+    """Patch errors.connect with a ScriptedProbe driven by `script`."""
+
+    def use(*script: Exception | object) -> ScriptedProbe:
+        probe = ScriptedProbe(*script)
+        monkeypatch.setattr("band.client.streaming.errors.connect", probe)
+        return probe
+
+    return use
+
+
+@pytest.fixture
+def no_real_sleep(monkeypatch) -> list[float]:
+    """Patch asyncio.sleep to return immediately, recording each delay."""
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
+    return delays
 
 
 def fast_session_policy(

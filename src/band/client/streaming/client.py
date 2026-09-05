@@ -387,7 +387,7 @@ class WebSocketClient:
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
         self._watchdog = HeartbeatWatchdog(session_policy or SessionPolicy.default())
         self._session = Session(self._watchdog.policy)
-        self._connect_failure_probed: bool = False
+        self._probed_failure_message: str | None = None
         self._cached_connect_failure: WebSocketUpgradeError | None = None
 
     @property
@@ -460,22 +460,19 @@ class WebSocketClient:
     async def _classify_connect_failure(
         self, exc: Exception
     ) -> WebSocketUpgradeError | None:
-        """Classify one failed connect exception, reusing the previous
-        live-socket probe result for a repeat unclassifiable
-        PHXConnectionError.
-
-        probe_upgrade_error blocks for up to open_timeout=5s; without this
-        cache it reran on every backoff retry of the very same rejection,
-        stacking its own network latency on top of every computed delay.
-        """
+        """Classify one failed connect exception. Reuses the previous
+        live-socket probe result only while the wrapped PHXConnectionError's
+        message is unchanged -- a different message means the underlying
+        failure may have changed, so it must be probed again."""
         upgrade_error = WebSocketUpgradeError.from_exception(exc)
         if upgrade_error is not None or not isinstance(exc, PHXConnectionError):
             return upgrade_error
-        if not self._connect_failure_probed:
+        message = str(exc)
+        if message != self._probed_failure_message:
             self._cached_connect_failure = await probe_upgrade_error(
                 self._require_client().channel_socket_url
             )
-            self._connect_failure_probed = True
+            self._probed_failure_message = message
         return self._cached_connect_failure
 
     async def _resolve_failed_connect_attempt(
@@ -576,7 +573,7 @@ class WebSocketClient:
         start a new connection lifecycle, not resume a now-Dead one.
         """
         self._session = Session(self._watchdog.policy)
-        self._connect_failure_probed = False
+        self._probed_failure_message = None
         self._cached_connect_failure = None
         while True:
             now = asyncio.get_running_loop().time()
