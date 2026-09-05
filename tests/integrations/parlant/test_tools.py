@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.core.exceptions import BandToolError
+from band.core.memory_types import enum_values
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.parlant.tools import (
     _session_message_sent,
@@ -19,7 +21,7 @@ from band.integrations.parlant.tools import (
     set_session_tools,
     was_message_sent,
 )
-from band.runtime.tools import TOOL_MODELS, ListContactRequestsInput
+from band.runtime.tools import TASK_TOOL_NAMES, TOOL_MODELS, ListContactRequestsInput
 
 try:
     import parlant.sdk  # noqa: F401
@@ -443,6 +445,38 @@ class TestCreateParlantTools:
 
         assert "band_list_contacts" in tool_names
         assert "band_respond_contact_request" in tool_names
+
+    def test_excludes_task_tools_without_capability(self):
+        """Task tools excluded when TASKS capability is absent."""
+        tools = create_parlant_tools(features=AdapterFeatures())
+        tool_names = {t.tool.name for t in tools}
+
+        assert "band_send_message" in tool_names
+        assert not TASK_TOOL_NAMES & tool_names
+
+    def test_includes_task_tools_with_capability(self):
+        """Task tools included when TASKS capability is present."""
+        tools = create_parlant_tools(
+            features=AdapterFeatures(capabilities={Capability.TASKS})
+        )
+        tool_names = {t.tool.name for t in tools}
+
+        assert TASK_TOOL_NAMES <= tool_names
+
+    def test_update_task_status_and_state_are_real_enums(self):
+        """status/state are real StrEnum fields, so Parlant renders them as a
+        JSON-Schema enum directly -- no Literal-choices-in-prose fallback needed.
+        """
+        tools = create_parlant_tools(
+            features=AdapterFeatures(capabilities={Capability.TASKS})
+        )
+        entry = next(t for t in tools if t.tool.name == "band_update_task")
+
+        status_schema = entry.tool.parameters["status"][0]
+        state_schema = entry.tool.parameters["state"][0]
+
+        assert set(status_schema["enum"]) == set(enum_values(TaskAssignmentStatus))
+        assert set(state_schema["enum"]) == set(enum_values(TaskLifecycleState))
 
 
 @pytest.mark.skipif(

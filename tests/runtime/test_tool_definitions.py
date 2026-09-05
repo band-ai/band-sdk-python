@@ -13,16 +13,22 @@ from pydantic import ValidationError
 
 from band.runtime.tools import (
     TOOL_MODELS,
-    SendMessageInput,
-    SendEventInput,
     AddParticipantInput,
+    GetTaskInput,
     LookupPeersInput,
+    RemoveMyContactInput,
+    SendEventInput,
+    SendMessageInput,
+    SendMyChatMessageInput,
+    SetBoardInput,
+    UpdateTaskInput,
     format_arg_doc,
     get_tool_description,
     get_tool_docstring_with_args,
     platform_args_schema,
     platform_tool,
 )
+from tests.content import BLANK_CONTENT_CASES
 
 
 class TestSendMessageInput:
@@ -50,6 +56,13 @@ class TestSendMessageInput:
         """Empty mentions pass Pydantic validation (runtime validates instead)."""
         model = SendMessageInput(content="Hello", mentions=[])
         assert model.mentions == []
+
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    def test_rejects_content_with_no_visible_characters(self, content):
+        """Content must have at least one visible character, not just be non-empty."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendMessageInput(content=content, mentions=["Alice"])
+        assert "content" in str(exc_info.value)
 
 
 class TestSendEventInput:
@@ -83,6 +96,33 @@ class TestSendEventInput:
         event = SendEventInput(content="Test", message_type="thought")
         assert event.metadata is None
 
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    def test_rejects_content_with_no_visible_characters(self, content):
+        """Content must have at least one visible character, not just be non-empty."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendEventInput(content=content, message_type="thought")
+        assert "content" in str(exc_info.value)
+
+
+class TestSendMyChatMessageInput:
+    """Tests for the human-scope SendMyChatMessageInput model."""
+
+    def test_valid_message(self):
+        msg = SendMyChatMessageInput(
+            chat_id="room-1", content="Hello", recipients="Alice"
+        )
+        assert msg.content == "Hello"
+
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    def test_rejects_content_with_no_visible_characters(self, content):
+        """The human messages endpoint enforces the same visible-content rule
+        as the agent one, and is not covered by the posting choke point."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendMyChatMessageInput(
+                chat_id="room-1", content=content, recipients="Alice"
+            )
+        assert "content" in str(exc_info.value)
+
 
 class TestAddParticipantInput:
     """Tests for AddParticipantInput model."""
@@ -101,6 +141,56 @@ class TestAddParticipantInput:
 
         with pytest.raises(ValidationError):
             AddParticipantInput(identifier="Bob", role="invalid")
+
+
+class TestUpdateTaskInput:
+    """Tests for UpdateTaskInput model."""
+
+    def test_requires_at_least_one_field_besides_id(self):
+        """id alone is a no-op write; the model rejects it up front so an
+        agent gets a clear error instead of the call silently doing nothing."""
+        with pytest.raises(ValidationError, match="At least one of"):
+            UpdateTaskInput(id="task-1")
+
+    def test_one_field_besides_id_is_sufficient(self):
+        update = UpdateTaskInput(id="task-1", comment="progress note")
+        assert update.comment == "progress note"
+
+    def test_explicit_empty_string_counts_as_set(self):
+        """An explicit "" is a real value, not an omission -- must not trip
+        the at-least-one-field check the same way an unset field does."""
+        update = UpdateTaskInput(id="task-1", comment="")
+        assert update.comment == ""
+
+
+class TestSetBoardInput:
+    """Tests for SetBoardInput model."""
+
+    def test_requires_at_least_one_field(self):
+        """No fields is a no-op write; the model rejects it up front so an
+        agent gets a clear error instead of the call silently doing nothing."""
+        with pytest.raises(ValidationError, match="At least one of"):
+            SetBoardInput()
+
+    def test_one_field_is_sufficient(self):
+        board = SetBoardInput(goal_title="Ship v2")
+        assert board.goal_title == "Ship v2"
+
+
+class TestRemoveMyContactInput:
+    """Tests for RemoveMyContactInput model."""
+
+    def test_requires_contact_id_or_handle(self):
+        with pytest.raises(ValidationError, match="At least one of"):
+            RemoveMyContactInput()
+
+    def test_contact_id_alone_is_sufficient(self):
+        remove = RemoveMyContactInput(contact_id="c-1")
+        assert remove.contact_id == "c-1"
+
+    def test_handle_alone_is_sufficient(self):
+        remove = RemoveMyContactInput(handle="@bob")
+        assert remove.handle == "@bob"
 
 
 class TestLookupPeersInput:
@@ -144,6 +234,13 @@ class TestToolModelsRegistry:
             "band_list_room_files",
             "band_read_room_file",
             "band_send_room_file",
+            "band_list_tasks",
+            "band_create_task",
+            "band_get_task",
+            "band_update_task",
+            "band_get_task_history",
+            "band_get_board",
+            "band_set_board",
         }
         assert set(TOOL_MODELS.keys()) == expected
 
@@ -276,8 +373,44 @@ class TestPlatformTool:
 
 
 class TestPlatformArgsSchema:
-    def test_returns_master_model_unchanged_without_validators(self):
-        assert platform_args_schema("band_send_message") is SendMessageInput
+    def test_subclasses_master_model_unchanged_without_validators(self):
+        """Not the same object as the master model (it's always wrapped to
+        sanitize its schema -- see the const/enum test below), but a subclass
+        that keeps the master's fields, docstring, and validation behavior."""
+        schema = platform_args_schema("band_send_message")
+
+        assert schema is not SendMessageInput
+        assert issubclass(schema, SendMessageInput)
+        assert schema.__doc__ == SendMessageInput.__doc__
+        assert schema.model_fields.keys() == SendMessageInput.model_fields.keys()
+        assert (
+            schema(content="hi", mentions=["@alice"]).model_dump()
+            == SendMessageInput(content="hi", mentions=["@alice"]).model_dump()
+        )
+
+    def test_sanitizes_single_value_literal_to_enum(self):
+        """A single-value Literal field renders as JSON-Schema `const` by
+        default (a Pydantic quirk); some providers' restricted JSON-Schema
+        subsets (e.g. Gemini) reject `const`, so every args_schema must widen
+        it to `enum` before reaching a framework -- not just the master
+        model/MCP paths that already call sanitize_tool_schema() directly."""
+        schema = platform_args_schema("band_get_task")
+
+        assert "const" not in str(schema.model_json_schema())
+        assert schema.model_json_schema()["properties"]["include"]["anyOf"][0][
+            "enum"
+        ] == ["history"]
+
+    def test_get_task_input_still_declares_const_before_sanitizing(self):
+        """Guards the premise of the test above: if Pydantic ever stops
+        emitting `const` for this field shape, the sanitize path would be
+        exercising nothing."""
+        assert (
+            GetTaskInput.model_json_schema()["properties"]["include"]["anyOf"][0][
+                "const"
+            ]
+            == "history"
+        )
 
     def test_subclass_keeps_master_description_and_field_text(self):
         from pydantic import field_validator

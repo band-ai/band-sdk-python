@@ -61,6 +61,7 @@ from tests.e2e.baseline.toolkit.observations import (
     MemoryObservation,
     MemoryToolCalls,
     Replies,
+    TaskToolCalls,
     Tasks,
     Thoughts,
     ToolCalls,
@@ -406,6 +407,27 @@ class ReplyCapture:
             since=since,
             limit=limit,
             include_memory=include_memory,
+        )
+
+    async def task_calls(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> TaskToolCalls:
+        """Read this room's task-board tool calls (call after the turn settles).
+
+        Same read contract as ``tool_calls``, restricted to the task-board tools
+        (``TaskTool``). Not to be confused with ``tasks()``, which reads ``task``
+        *events* (``band_send_event``) -- an unrelated, pre-existing mechanism.
+        """
+        return await TaskToolCalls.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
         )
 
     async def usage(

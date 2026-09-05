@@ -12,11 +12,12 @@ from __future__ import annotations
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable, Literal, cast
 
 from pydantic import BaseModel, field_validator
 
 from band.core.protocols import AgentToolsProtocol
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.integrations.crewai.reporting import CrewAIToolReporter
 from band.runtime.tools import (
     BandTool,
@@ -503,6 +504,95 @@ async def _send_room_file(
     result = await call.tools.send_room_file(content, filename, caption, mentions)
     await call.reporter.report_result(call.tools, BandTool.SEND_ROOM_FILE, result)
     return result
+
+
+# --- Task board tools ---
+
+
+@band_tool(BandTool.LIST_TASKS)
+async def _list_tasks(
+    call: Invocation,
+    *,
+    state: TaskListState | None = None,
+    cursor: str | None = None,
+    limit: int | None = None,
+) -> Any:
+    return await call.tools.list_tasks(state=state, cursor=cursor, limit=limit)
+
+
+@band_tool(BandTool.CREATE_TASK)
+async def _create_task(
+    call: Invocation,
+    *,
+    subject: str = "",
+    detail: str | None = None,
+    supersedes_id: str | None = None,
+) -> Any:
+    return await call.tools.create_task(
+        subject, detail=detail, supersedes_id=supersedes_id
+    )
+
+
+@band_tool(BandTool.GET_TASK)
+async def _get_task(
+    call: Invocation, *, id: str = "", include: str | None = None
+) -> Any:
+    # See pydantic_ai's identical band_get_task for why this is str, not
+    # Literal -- some schema builders emit an unsanitized JSON-Schema `const`
+    # for a single-value Literal that restricted providers reject.
+    return await call.tools.get_task(
+        id, include=cast(Literal["history"] | None, include)
+    )
+
+
+@band_tool(BandTool.UPDATE_TASK)
+async def _update_task(
+    call: Invocation,
+    *,
+    id: str = "",
+    status: TaskAssignmentStatus | None = None,
+    active_form: str | None = None,
+    comment: str | None = None,
+    subject: str | None = None,
+    detail: str | None = None,
+    state: TaskLifecycleState | None = None,
+) -> Any:
+    return await call.tools.update_task(
+        id,
+        status=status,
+        active_form=active_form,
+        comment=comment,
+        subject=subject,
+        detail=detail,
+        state=state,
+    )
+
+
+@band_tool(BandTool.GET_TASK_HISTORY)
+async def _get_task_history(
+    call: Invocation,
+    *,
+    id: str = "",
+    cursor: str | None = None,
+    limit: int | None = None,
+) -> Any:
+    return await call.tools.get_task_history(id, cursor=cursor, limit=limit)
+
+
+@band_tool(BandTool.GET_BOARD)
+async def _get_board(call: Invocation, *, include: str | None = None) -> Any:
+    # See _get_task's `include` for why this is str, not Literal.
+    return await call.tools.get_board(include=cast(Literal["history"] | None, include))
+
+
+@band_tool(BandTool.SET_BOARD)
+async def _set_board(
+    call: Invocation,
+    *,
+    goal_title: str | None = None,
+    goal_summary: str | None = None,
+) -> Any:
+    return await call.tools.set_board(goal_title=goal_title, goal_summary=goal_summary)
 
 
 if frozenset(spec.name for spec in PLATFORM_TOOLS) != frozenset(BandTool):

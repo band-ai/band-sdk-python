@@ -1,19 +1,20 @@
 # Platform Tools
 
-Every Band agent gets a standard set of tools for chat, contacts, memory, and
-file management. This page documents the tool inventory and the rule that
-keeps their descriptions consistent across every framework adapter.
+Every Band agent gets a standard set of tools for chat, contacts, memory,
+files, and the room task board. This page documents the tool inventory and
+the rule that keeps their descriptions consistent across every framework
+adapter.
 
 ## Tool text is never written in an adapter
 
-`src/band/runtime/tools.py` owns every word an LLM reads about a platform tool:
+`src/band/runtime/tools/` owns every word an LLM reads about a platform tool:
 the input model's class docstring is the tool description, and each
 `Field(description=...)` is an argument description. An adapter must reach for
 whichever of these fits its framework instead of retyping the text:
 
 | Framework wants | Use | Result |
 |---|---|---|
-| A Pydantic `args_schema` class | `platform_args_schema(name)` | the master model itself |
+| A Pydantic `args_schema` class | `platform_args_schema(name)` | a schema-sanitized subclass of the master model |
 | The same, but its tool layer emits a value the master won't parse | `platform_args_schema(name, validators={...})` | a subclass with the master's text plus the extra validators |
 | Schema derived from a function docstring | `@platform_tool` (bare — reads `fn.__name__`, takes no name argument) | docstring = master description + a rendered `Args:` section |
 | A raw JSON/dict schema | `iter_tool_definitions()`, `get_openai_tool_schemas()`, `get_anthropic_tool_schemas()` | built live from the master |
@@ -31,7 +32,7 @@ from band.runtime.tools import SendMessageInput, platform_args_schema, platform_
 async def band_send_message(content: str, mentions: list[str]) -> None: ...
 
 
-assert platform_args_schema("band_send_message") is SendMessageInput
+assert issubclass(platform_args_schema("band_send_message"), SendMessageInput)
 assert "Args:" in (band_send_message.__doc__ or "")
 ```
 
@@ -72,3 +73,16 @@ through untouched.
 `Capability.FILES` gates the three file tools above — see
 [Capability Negotiation](capability-negotiation.md) for when it's actually
 usable against a real deployment.
+
+## Task Board Tools
+- `band_list_tasks`: List the shared tasks on this room's task board
+- `band_create_task`: Create a shared task on this room's task board
+- `band_get_task`: Read one task by UUID or board number
+- `band_update_task`: Update a task's status, active_form, comment, subject, detail, or lifecycle state
+- `band_get_task_history`: The append-only history of one task
+- `band_get_board`: Read this room's goal (the team mission)
+- `band_set_board`: Set or update this room's goal (upsert)
+
+`Capability.TASKS` gates the seven task-board tools above, room-scoped like
+the file tools — see [Capability Negotiation](capability-negotiation.md) for
+how a request gets pruned against `AgentMe.feature_flags`.

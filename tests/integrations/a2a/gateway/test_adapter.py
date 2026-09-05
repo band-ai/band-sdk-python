@@ -23,7 +23,7 @@ from a2a.types import (
 from band.core.types import PlatformMessage
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
-from band.integrations.a2a.gateway.adapter import BandAgentExecutor
+from band.integrations.a2a.gateway.adapter import BandAgentExecutor, GatewayRequest
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
 from tests.integrations.a2a.gateway.helpers import make_peer
@@ -132,7 +132,7 @@ class TestGatewayExecution:
         configure_room_creation(adapter)
         tools = FakeAgentTools()
 
-        async def send_message(**_kwargs: object) -> None:
+        async def send_message(**_kwargs: object) -> MagicMock:
             await adapter.on_message(
                 make_platform_message("Sunny"),
                 tools,
@@ -142,6 +142,7 @@ class TestGatewayExecution:
                 is_session_bootstrap=False,
                 room_id="room-123",
             )
+            return MagicMock(data=MagicMock())
 
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=send_message
@@ -162,8 +163,9 @@ class TestGatewayExecution:
         configure_room_creation(adapter)
         sent = asyncio.Event()
 
-        async def send_message(**_kwargs: object) -> None:
+        async def send_message(**_kwargs: object) -> MagicMock:
             sent.set()
+            return MagicMock(data=MagicMock())
 
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=send_message
@@ -194,6 +196,29 @@ class TestGatewayExecution:
         assert adapter._pending_tasks == {}
 
     @pytest.mark.asyncio
+    async def test_send_to_band_fails_fast_when_post_message_refuses_blank_content(
+        self,
+    ) -> None:
+        """Mirrors ACP's handle_prompt: a refused send must not fall through
+        to _await_response and hang for response_timeout_s waiting on a
+        reply to a message that was never posted."""
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+        peer = make_peer("weather", "Weather Agent")
+        request = GatewayRequest(
+            peer=peer,
+            room_id="room-123",
+            context_id="ctx-123",
+            pending=make_pending(EventQueueLegacy()),
+        )
+
+        with patch(
+            "band.integrations.a2a.gateway.adapter.post_message",
+            AsyncMock(return_value=None),
+        ):
+            with pytest.raises(ValueError, match="blank"):
+                await adapter._send_to_band(request, make_request())
+
+    @pytest.mark.asyncio
     async def test_keeps_stream_open_for_non_final_updates(self) -> None:
         # Generous timeout: the test never needs it to fire, and a tight one
         # turns a loaded CI runner into a spurious FAILED terminal event.
@@ -206,8 +231,9 @@ class TestGatewayExecution:
         queue = EventQueueLegacy()
         sent = asyncio.Event()
 
-        async def send_message(**_kwargs: object) -> None:
+        async def send_message(**_kwargs: object) -> MagicMock:
             sent.set()
+            return MagicMock(data=MagicMock())
 
         adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
             side_effect=send_message

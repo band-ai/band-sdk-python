@@ -30,6 +30,7 @@ from band.adapters.claude_sdk import (
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
     BAND_MEMORY_TOOLS,
+    BAND_TASK_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.runtime.tools import (
@@ -758,14 +759,15 @@ class TestBandTools:
         )
 
     def test_band_all_tools_combines_base_and_memory(self):
-        """BAND_ALL_TOOLS should combine base, memory, and file tools without
-        duplicates."""
+        """BAND_ALL_TOOLS should combine base, memory, file, and task tools
+        without duplicates."""
         from band.runtime.tools import mcp_tool_names
 
         assert set(BAND_ALL_TOOLS) == (
             set(BAND_BASE_TOOLS)
             | set(BAND_MEMORY_TOOLS)
             | set(mcp_tool_names(FILE_TOOL_NAMES))
+            | set(BAND_TASK_TOOLS)
         )
         assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
         assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (

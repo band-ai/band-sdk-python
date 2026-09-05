@@ -258,6 +258,7 @@ Examples:
   band-mcp --transport sse                 # Run as HTTP server on 127.0.0.1:8000
   band-mcp --scope agent,human             # Serve both scopes
   band-mcp --scope agent --tools contacts  # Agent + opt-in contacts tools
+  band-mcp --scope agent --tools tasks     # Agent + opt-in task-board tools
   band-mcp --scope agent --room-id r_123   # Pin to a single room
 
 Environment Variables:

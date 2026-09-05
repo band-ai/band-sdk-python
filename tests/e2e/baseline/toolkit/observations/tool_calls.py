@@ -39,6 +39,7 @@ from band.runtime.tools import (
     FILE_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
+    TASK_TOOL_NAMES,
 )
 
 from tests.e2e.baseline.toolkit.observations.matching import (
@@ -121,6 +122,25 @@ if not {tool.value for tool in RosterTool} <= set(READ_ONLY_TOOL_NAMES):
     raise ValueError(
         "RosterTool drifted from band.runtime.tools.READ_ONLY_TOOL_NAMES: "
         f"{({tool.value for tool in RosterTool}) - set(READ_ONLY_TOOL_NAMES)}"
+    )
+
+
+class TaskTool(StrEnum):
+    """Canonical task-board platform-tool names for capability scenarios."""
+
+    LIST = "band_list_tasks"
+    CREATE = "band_create_task"
+    GET = "band_get_task"
+    UPDATE = "band_update_task"
+    GET_HISTORY = "band_get_task_history"
+    GET_BOARD = "band_get_board"
+    SET_BOARD = "band_set_board"
+
+
+if {tool.value for tool in TaskTool} != set(TASK_TOOL_NAMES):
+    raise ValueError(
+        "TaskTool drifted from band.runtime.tools.TASK_TOOL_NAMES: "
+        f"{set(TASK_TOOL_NAMES) ^ {tool.value for tool in TaskTool}}"
     )
 
 
@@ -333,3 +353,72 @@ class MemoryToolCalls(ToolCalls):
     def assert_archive_called(self) -> None:
         """Assert ``band_archive_memory`` fired."""
         self.assert_fired(MemoryTool.ARCHIVE)
+
+
+class TaskToolCalls(ToolCalls):
+    """The call-layer task-board view: an agent's task-board tool calls for a turn.
+
+    Restricts the view to ``TASK_TOOL_NAMES`` and adds operation-named
+    assertions, mirroring :class:`MemoryToolCalls`.
+    """
+
+    TOOL_NAMES: ClassVar[frozenset[str] | None] = TASK_TOOL_NAMES
+
+    def assert_set_board_called(
+        self, *, goal_title: str | None = None, goal_summary: str | None = None
+    ) -> None:
+        """Assert ``band_set_board`` fired, optionally with the given fields."""
+        with_args = {
+            key: value
+            for key, value in {
+                "goal_title": goal_title,
+                "goal_summary": goal_summary,
+            }.items()
+            if value is not None
+        }
+        self.assert_fired(TaskTool.SET_BOARD, with_args=with_args or None)
+
+    def assert_get_board_called(self) -> None:
+        """Assert ``band_get_board`` fired."""
+        self.assert_fired(TaskTool.GET_BOARD)
+
+    def assert_create_called(self, *, subject: str | None = None) -> None:
+        """Assert ``band_create_task`` fired, optionally for a given subject."""
+        with_args = {"subject": subject} if subject is not None else None
+        self.assert_fired(TaskTool.CREATE, with_args=with_args)
+
+    def assert_update_called(
+        self,
+        *,
+        id: str | None = None,
+        status: Any | None = None,
+        comment: str | None = None,
+        active_form: str | None = None,
+    ) -> None:
+        """Assert ``band_update_task`` fired, optionally with the given fields."""
+        with_args = {
+            key: value
+            for key, value in {
+                "id": id,
+                "status": status,
+                "comment": comment,
+                "active_form": active_form,
+            }.items()
+            if value is not None
+        }
+        self.assert_fired(TaskTool.UPDATE, with_args=with_args or None)
+
+    def assert_list_called(self, *, state: Any | None = None) -> None:
+        """Assert ``band_list_tasks`` fired, optionally for a given state filter."""
+        with_args = {"state": state} if state is not None else None
+        self.assert_fired(TaskTool.LIST, with_args=with_args)
+
+    def assert_get_called(self, *, id: str | None = None) -> None:
+        """Assert ``band_get_task`` fired, optionally for a given task id."""
+        with_args = {"id": id} if id is not None else None
+        self.assert_fired(TaskTool.GET, with_args=with_args)
+
+    def assert_get_history_called(self, *, id: str | None = None) -> None:
+        """Assert ``band_get_task_history`` fired, optionally for a given task id."""
+        with_args = {"id": id} if id is not None else None
+        self.assert_fired(TaskTool.GET_HISTORY, with_args=with_args)

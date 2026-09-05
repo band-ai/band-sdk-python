@@ -27,9 +27,11 @@ from band.client.rest import (
     ParticipantRequest,
 )
 from band.converters.a2a_gateway import GatewayHistoryConverter
+from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
+from band.platform.posting import post_event, post_message
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -385,9 +387,10 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> None:
         """Send the A2A request text to the selected Band peer."""
         content = context.get_user_input()
-        await self.rest.agent_api_messages.create_agent_chat_message(
-            chat_id=request.room_id,
-            message=ChatMessageRequest(
+        sent = await post_message(
+            rest=self.rest,
+            room_id=request.room_id,
+            request=ChatMessageRequest(
                 content=f"@{request.peer.name} {content}",
                 mentions=[
                     ChatMessageRequestMentionsItem(
@@ -395,8 +398,13 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                     )
                 ],
             ),
-            request_options=DEFAULT_REQUEST_OPTIONS,
         )
+        if sent is None:
+            # post_message refused blank content instead of posting -- fail
+            # now rather than have _await_response wait out the full
+            # response_timeout_s for a reply to a message that was never
+            # sent (mirrors ACP's handle_prompt).
+            raise ValueError(BLANK_CONTENT_ERROR)
         logger.debug(
             "A2A request sent to Band: room=%s task=%s",
             request.room_id,
@@ -560,9 +568,10 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             room_id: The room ID.
             context_id: The A2A context ID.
         """
-        await self.rest.agent_api_events.create_agent_chat_event(
-            chat_id=room_id,
-            event=ChatEventRequest(
+        await post_event(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="A2A gateway context",
                 message_type="task",
                 metadata={

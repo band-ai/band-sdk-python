@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.content import BLANK_CONTENT_ERROR
 from band.integrations.acp.router import AgentRouter
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 from band.testing.platform import platform_connection_stub
 
+from tests.content import BLANK_CONTENT_CASES
 from tests.integrations.acp.conftest import (
     make_platform_message,
     make_tool_call_message,
@@ -201,6 +203,28 @@ class TestBandACPServerAdapterHandlePrompt:
 
         with pytest.raises(KeyError):
             await adapter.handle_prompt("unknown-session", "Hello")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text", BLANK_CONTENT_CASES)
+    async def test_handle_prompt_raises_fast_on_blank_content(
+        self, mock_rest_client: MagicMock, text: str
+    ) -> None:
+        """A blank prompt with no other participants to @mention combines
+        into blank content, which post_message refuses. handle_prompt must
+        fail fast with a clear error instead of waiting out the reply
+        timeout for a message that was never sent."""
+        mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+            data=[]
+        )
+        adapter = BandACPServerAdapter()
+        adapter._rest = mock_rest_client
+        adapter._session_to_room["session-1"] = "room-123"
+
+        with pytest.raises(ValueError, match=BLANK_CONTENT_ERROR):
+            await asyncio.wait_for(adapter.handle_prompt("session-1", text), timeout=1)
+
+        mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_called()
+        assert "room-123" not in adapter._pending_prompts
 
 
 class TestBandACPServerAdapterOnMessage:

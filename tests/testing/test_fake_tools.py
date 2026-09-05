@@ -10,6 +10,7 @@ from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools
+from tests.content import BLANK_CONTENT_CASES
 
 
 async def store_fact(tools: FakeAgentTools, content: str) -> None:
@@ -186,6 +187,18 @@ class TestSendMessage:
         assert tools.messages_sent[0]["id"] == "msg-0"
         assert tools.messages_sent[1]["id"] == "msg-1"
 
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    async def test_refuses_content_with_no_visible_characters(self, content):
+        """Same fidelity rule as the mention requirement: the real send
+        refuses blank content and returns None, so a fake that recorded it
+        would hide the bug until production."""
+        tools = FakeAgentTools()
+
+        result = await tools.send_message(content=content, mentions=["user-1"])
+
+        assert result is None
+        assert tools.messages_sent == []
+
 
 class TestSendEvent:
     """Tests for send_event tracking."""
@@ -212,6 +225,15 @@ class TestSendEvent:
         )
 
         assert tools.events_sent[0]["metadata"] == {"tool_name": "search"}
+
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    async def test_refuses_content_with_no_visible_characters(self, content):
+        tools = FakeAgentTools()
+
+        result = await tools.send_event(content=content, message_type="thought")
+
+        assert result is None
+        assert tools.events_sent == []
 
 
 class TestParticipantOperations:

@@ -23,8 +23,9 @@ adapter = AgnoAdapter(agent, capabilities=Capability.MEMORY)
   usage — whichever that adapter supports). Pass `emit=()` for silence, or a
   narrower `Emit` combination to select specific kinds.
 - **`capabilities` is opt-in**: omitted, it defaults to empty. Turning on
-  `Capability.MEMORY`/`Capability.CONTACTS`/`Capability.FILES` puts extra tool
-  schemas in front of the model on every turn, so it stays off by default.
+  `Capability.MEMORY`/`Capability.CONTACTS`/`Capability.FILES`/`Capability.TASKS`
+  puts extra tool schemas in front of the model on every turn, so it stays off
+  by default.
 - Requesting an `emit`/`capabilities` value outside the adapter's
   `SUPPORTED_EMIT`/`SUPPORTED_CAPABILITIES` raises `BandConfigError`
   immediately at construction — never a silent no-op.
@@ -54,6 +55,16 @@ feature_flags)` function:
 - `feature_flags` present, key `False` **or missing entirely** → prune it. A
   missing key means the connected deployment predates that capability, which
   is exactly as unsupported as an explicit `False`.
+
+Only `Capability.FILES` has an entry today. `Capability.MEMORY`,
+`Capability.CONTACTS`, and `Capability.TASKS` have none: the real
+Fern-generated `AgentMe.feature_flags` field (`band_rest.types.AgentMe`)
+currently documents only `ff_file_transfer`, so those three capabilities are
+always advertised regardless of deployment. Add an entry here only once the
+platform actually ships a corresponding `ff_*` flag for one of them — never
+invent a flag key ahead of the platform, since a name with no matching key in
+`feature_flags` prunes the capability everywhere (a missing key reads as
+unsupported, per the rule above).
 
 `Agent.start()` and `OneShotInvoker.startup()` both call
 `adapter.apply_effective_features(prune_unsupported(adapter.features,

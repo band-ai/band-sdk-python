@@ -52,6 +52,7 @@ from band.integrations.slack.block_kit import (
 )
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
+from band.platform.posting import post_event
 from band.runtime.tools import AgentTools
 
 if TYPE_CHECKING:
@@ -960,9 +961,10 @@ class SlackAdapter(SimpleAdapter[Any]):
         thread_ts: str,
         slack_user: str,
     ) -> None:
-        await self.rest.agent_api_events.create_agent_chat_event(
-            chat_id=room_id,
-            event=ChatEventRequest(
+        await post_event(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="Slack thread context",
                 message_type="task",
                 metadata={
@@ -1018,9 +1020,10 @@ class SlackAdapter(SimpleAdapter[Any]):
         content = f"💬 Slack · {channel_label} — {who}: {text}"
 
         try:
-            await self.rest.agent_api_events.create_agent_chat_event(
-                chat_id=room_id,
-                event=ChatEventRequest(
+            await post_event(
+                rest=self.rest,
+                room_id=room_id,
+                request=ChatEventRequest(
                     content=content,
                     message_type="thought",
                     metadata={

@@ -1,6 +1,6 @@
 """Conformance tests that detect tool-name drift between the central registry and adapters.
 
-When a new tool is added to ``TOOL_MODELS`` in ``runtime/tools.py``, these
+When a new tool is added to ``TOOL_MODELS`` in ``runtime/tools/``, these
 tests will fail for any adapter or integration that is missing it — surfacing
 the gap before it reaches production.
 
@@ -30,6 +30,7 @@ from band.runtime.tools import (
     CONTACT_TOOL_NAMES,
     FILE_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
+    TASK_TOOL_NAMES,
     iter_tool_definitions,
 )
 
@@ -252,8 +253,10 @@ class TestParlantToolDrift:
 class TestToolRegistryConsistency:
     """Verify the derived sets are consistent with TOOL_MODELS."""
 
-    def test_all_equals_base_plus_memory_plus_files(self):
-        assert ALL_TOOL_NAMES == BASE_TOOL_NAMES | MEMORY_TOOL_NAMES | FILE_TOOL_NAMES
+    def test_all_equals_base_plus_memory_plus_files_plus_tasks(self):
+        assert ALL_TOOL_NAMES == (
+            BASE_TOOL_NAMES | MEMORY_TOOL_NAMES | FILE_TOOL_NAMES | TASK_TOOL_NAMES
+        )
 
     def test_base_equals_chat_plus_contact(self):
         assert BASE_TOOL_NAMES == CHAT_TOOL_NAMES | CONTACT_TOOL_NAMES
@@ -264,11 +267,17 @@ class TestToolRegistryConsistency:
     def test_no_overlap_base_memory(self):
         assert not (BASE_TOOL_NAMES & MEMORY_TOOL_NAMES)
 
+    def test_no_overlap_base_task(self):
+        assert not (BASE_TOOL_NAMES & TASK_TOOL_NAMES)
+
     def test_memory_tools_subset_of_all(self):
         assert MEMORY_TOOL_NAMES <= ALL_TOOL_NAMES
 
     def test_contact_tools_subset_of_all(self):
         assert CONTACT_TOOL_NAMES <= ALL_TOOL_NAMES
+
+    def test_task_tools_subset_of_all(self):
+        assert TASK_TOOL_NAMES <= ALL_TOOL_NAMES
 
     def test_all_memory_prefixed_tools_in_memory_set(self):
         """Catch new memory tools not added to MEMORY_TOOL_NAMES."""
@@ -284,4 +293,12 @@ class TestToolRegistryConsistency:
         assert contact_like <= CONTACT_TOOL_NAMES, (
             f"Tools matching contact naming convention not in CONTACT_TOOL_NAMES: "
             f"{contact_like - CONTACT_TOOL_NAMES}"
+        )
+
+    def test_all_task_prefixed_tools_in_task_set(self):
+        """Catch new task tools not added to TASK_TOOL_NAMES."""
+        task_like = {n for n in ALL_TOOL_NAMES if "task" in n}
+        assert task_like <= TASK_TOOL_NAMES, (
+            f"Tools matching task naming convention not in TASK_TOOL_NAMES: "
+            f"{task_like - TASK_TOOL_NAMES}"
         )

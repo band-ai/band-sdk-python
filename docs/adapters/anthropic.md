@@ -112,6 +112,7 @@ Requesting a value this adapter doesn't support raises `BandConfigError` immedia
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
+| `Capability.TASKS` | Yes | Exposes the room task-board tools (list/create/get/update tasks, task history, get/set the room goal). |
 | `Emit.TOOL_CALLS` | Yes | Sends `tool_call` and `tool_result` events with tool name, arguments/output, and a `tool_call_id`. |
 | `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 | `Emit.THOUGHTS` | No | Not supported by this adapter. |

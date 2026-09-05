@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
     from band.client.rest import (
+        GetChatTaskHistoryResponse,
         ListAgentContactRequestsResponse,
         ListAgentContactsResponse,
         ListAgentMemoriesResponse,
         ListAgentPeersResponse,
+        ListChatTasksResponse,
+    )
+    from band.core.task_types import (
+        TaskAssignmentStatus,
+        TaskLifecycleState,
+        TaskListState,
     )
     from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
@@ -250,6 +257,60 @@ class AgentToolsProtocol(Protocol):
 
     async def archive_memory(self, memory_id: str) -> Any:
         """Archive a memory (hide but preserve)."""
+        ...
+
+    # Task board tools
+    async def list_tasks(
+        self,
+        state: "TaskListState | None" = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> "ListChatTasksResponse":
+        """List the shared tasks on this room's task board, in the Fern
+        response envelope."""
+        ...
+
+    async def create_task(
+        self,
+        subject: str,
+        detail: str | None = None,
+        supersedes_id: str | None = None,
+    ) -> Any:
+        """Create a shared task on this room's task board."""
+        ...
+
+    async def get_task(self, id: str, include: Literal["history"] | None = None) -> Any:
+        """Read one task by UUID or board number."""
+        ...
+
+    async def update_task(
+        self,
+        id: str,
+        status: "TaskAssignmentStatus | None" = None,
+        active_form: str | None = None,
+        comment: str | None = None,
+        subject: str | None = None,
+        detail: str | None = None,
+        state: "TaskLifecycleState | None" = None,
+    ) -> Any:
+        """Update a task's status, active_form, comment, subject, detail, or
+        lifecycle state."""
+        ...
+
+    async def get_task_history(
+        self, id: str, cursor: str | None = None, limit: int | None = None
+    ) -> "GetChatTaskHistoryResponse":
+        """The append-only history of one task, in the Fern response envelope."""
+        ...
+
+    async def get_board(self, include: Literal["history"] | None = None) -> Any:
+        """Read this room's goal (the team mission)."""
+        ...
+
+    async def set_board(
+        self, goal_title: str | None = None, goal_summary: str | None = None
+    ) -> Any:
+        """Set or update this room's goal (upsert)."""
         ...
 
 

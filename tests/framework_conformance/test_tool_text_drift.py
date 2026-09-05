@@ -1,6 +1,6 @@
 """Conformance test that the text adapters advertise came from the master models.
 
-``runtime/tools.py`` is the single source of truth for what an LLM reads about
+``runtime/tools/`` is the single source of truth for what an LLM reads about
 a platform tool: the input model's docstring is the tool description and each
 ``Field(description=...)`` is an argument description. An adapter can lose that
 in two ways, and both have shipped: retyping the text locally (where it drifts)

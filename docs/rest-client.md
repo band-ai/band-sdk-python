@@ -11,11 +11,52 @@ The SDK uses Fern-generated REST client with property-based namespace API:
 ```python notest
 # Pattern: agent_api_<resource>.method()
 await link.rest.agent_api_chats.create_agent_chat(...)
-await link.rest.agent_api_messages.create_agent_chat_message(...)
 await link.rest.agent_api_participants.list_agent_chat_participants(...)
 ```
 
 **Sub-clients**: `identity`, `peers`, `contacts`, `chats`, `messages`, `events`, `participants`, `context`, `memories`, `files`, `profile`, `agents`
+
+### Exception: chat-room sends
+
+Posting a message or event to a room is the one place that does **not** call
+the Fern client directly. `create_agent_chat_message` /
+`create_agent_chat_event` go through `band.platform.posting`, which enforces
+the platform's content rules (visible content, the events content cap) once
+for every caller:
+
+```python notest
+from band.platform.posting import post_event, post_message
+
+# rest / room_id / request are keyword-only.
+await post_message(rest=link.rest, room_id=room_id, request=ChatMessageRequest(...))
+await post_event(rest=link.rest, room_id=room_id, request=ChatEventRequest(...))
+```
+
+Both return `None` without making a request when the content has no visible
+characters (whitespace-only, zero-width), rather than letting the platform
+reject it:
+
+```python fixture:client
+from band.client.rest import ChatEventRequest, ChatMessageRequest
+from band.platform.posting import post_event, post_message
+
+message = await post_message(
+    rest=client,
+    room_id="room-1",
+    request=ChatMessageRequest(content="   ", mentions=[]),
+)
+event = await post_event(
+    rest=client,
+    room_id="room-1",
+    request=ChatEventRequest(content="\u200b", message_type="thought"),
+)
+
+assert message is None
+assert event is None
+```
+
+A new direct call to either Fern method inside `src/band` fails
+`tests/platform/test_posting_boundary.py`.
 
 ## REST Client OMIT vs Null
 

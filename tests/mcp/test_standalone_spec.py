@@ -17,10 +17,19 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from band.integrations.mcp.engine import build_engine
-from band.runtime.tools import TOOL_DEFINITIONS, ToolDefinition, iter_tool_definitions
+from band.runtime.tools import (
+    CONTACT_TOOL_NAMES,
+    HUMAN_SURFACE_CONTACT_TOOL_NAMES,
+    HUMAN_SURFACE_MEMORY_TOOL_NAMES,
+    MEMORY_TOOL_NAMES,
+    TASK_TOOL_NAMES,
+    TOOL_DEFINITIONS,
+    ToolDefinition,
+    iter_tool_definitions,
+)
 from band.testing.fake_tools import FakeAgentTools
 from band_mcp import server as server_mod
-from band_mcp.config import Config, ConfigError
+from band_mcp.config import Config, ConfigError, ToolGroup
 from band_mcp.server import standalone_spec
 from band_mcp.shared import StandaloneResolver
 
@@ -88,30 +97,56 @@ class TestScopeFiltering:
 
 
 class TestToolsGroups:
+    """Membership is checked against the registry's own canonical name-sets
+    (CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES, TASK_TOOL_NAMES, and their
+    human-surface counterparts) rather than hand-typed tool-name strings, so
+    these tests can't drift from the single source of truth those sets
+    already are elsewhere in the registry.
+    """
+
     def test_contacts_registers_contact_tools(self) -> None:
-        names = _spec_names(Config(scope=["agent", "human"], tools=["contacts"]))
-        assert "band_list_my_contacts" in names
-        assert "band_resolve_handle" in names
-        assert "band_list_memories" not in names
-        assert "band_list_user_memories" not in names
+        names = _spec_names(
+            Config(scope=["agent", "human"], tools=[ToolGroup.CONTACTS])
+        )
+        assert (CONTACT_TOOL_NAMES | HUMAN_SURFACE_CONTACT_TOOL_NAMES) <= names
+        assert not (MEMORY_TOOL_NAMES | HUMAN_SURFACE_MEMORY_TOOL_NAMES) & names
+        assert not TASK_TOOL_NAMES & names
 
     def test_memory_registers_memory_tools(self) -> None:
-        names = _spec_names(Config(scope=["agent", "human"], tools=["memory"]))
-        assert "band_list_memories" in names
-        assert "band_list_user_memories" in names
-        assert "band_list_my_contacts" not in names
+        names = _spec_names(Config(scope=["agent", "human"], tools=[ToolGroup.MEMORY]))
+        assert (MEMORY_TOOL_NAMES | HUMAN_SURFACE_MEMORY_TOOL_NAMES) <= names
+        assert not (CONTACT_TOOL_NAMES | HUMAN_SURFACE_CONTACT_TOOL_NAMES) & names
+        assert not TASK_TOOL_NAMES & names
 
-    def test_both_registers_both_groups(self) -> None:
+    def test_tasks_registers_task_tools(self) -> None:
+        """Tasks has no human-surface mirror -- opting in only reaches the
+        agent-surface tools, unlike contacts/memory above."""
+        names = _spec_names(Config(scope=["agent", "human"], tools=[ToolGroup.TASKS]))
+        assert TASK_TOOL_NAMES <= names
+        assert not (MEMORY_TOOL_NAMES | HUMAN_SURFACE_MEMORY_TOOL_NAMES) & names
+        assert not (CONTACT_TOOL_NAMES | HUMAN_SURFACE_CONTACT_TOOL_NAMES) & names
+
+    def test_all_three_registers_all_groups(self) -> None:
         names = _spec_names(
-            Config(scope=["agent", "human"], tools=["contacts", "memory"])
+            Config(
+                scope=["agent", "human"],
+                tools=[ToolGroup.CONTACTS, ToolGroup.MEMORY, ToolGroup.TASKS],
+            )
         )
-        assert "band_list_my_contacts" in names
-        assert "band_list_memories" in names
+        assert (CONTACT_TOOL_NAMES | HUMAN_SURFACE_CONTACT_TOOL_NAMES) <= names
+        assert (MEMORY_TOOL_NAMES | HUMAN_SURFACE_MEMORY_TOOL_NAMES) <= names
+        assert TASK_TOOL_NAMES <= names
 
-    def test_empty_disables_both(self) -> None:
+    def test_empty_disables_all_groups(self) -> None:
         names = _spec_names(Config(scope=["agent", "human"], tools=[]))
-        assert "band_list_memories" not in names
-        assert "band_list_my_contacts" not in names
+        all_optional_names = (
+            CONTACT_TOOL_NAMES
+            | HUMAN_SURFACE_CONTACT_TOOL_NAMES
+            | MEMORY_TOOL_NAMES
+            | HUMAN_SURFACE_MEMORY_TOOL_NAMES
+            | TASK_TOOL_NAMES
+        )
+        assert not all_optional_names & names
 
 
 class TestSchemaShape:

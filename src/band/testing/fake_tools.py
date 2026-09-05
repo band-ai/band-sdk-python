@@ -6,12 +6,15 @@ import hashlib
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from band.client.rest import (
     AgentContact,
     AgentMemory,
     Attachment,
+    Board,
+    GetChatTaskHistoryResponse,
+    GetChatTaskHistoryResponseMetadata,
     ListAgentContactRequestsResponse,
     ListAgentContactRequestsResponseData,
     ListAgentContactRequestsResponseMetadata,
@@ -23,9 +26,15 @@ from band.client.rest import (
     ListAgentMemoriesResponseMeta,
     ListAgentPeersResponse,
     ListAgentPeersResponseMetadata,
+    ListChatTasksResponse,
+    ListChatTasksResponseMetadata,
     Peer,
+    Task,
+    TaskActor,
 )
+from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import Capability
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
@@ -33,6 +42,12 @@ from band.runtime.tools import (
     ToolCallOutcome,
     append_mention_handles_hint,
     available_mention_handles,
+)
+
+# Synthetic identity FakeAgentTools uses for the "joins you to the task on
+# first status/active_form write" semantics band_update_task documents.
+_FAKE_ACTOR = TaskActor(
+    id="fake-agent", name="Fake Agent", type="Agent", handle="fake-agent"
 )
 
 
@@ -79,6 +94,8 @@ class FakeAgentTools:
         room_context: list[dict[str, Any]] | None = None,
         memories: list[dict[str, Any]] | None = None,
         files: list[dict[str, Any]] | None = None,
+        tasks: list[dict[str, Any]] | None = None,
+        board: dict[str, Any] | None = None,
     ):
         self.room_id = room_id
         self._hub_room_id = hub_room_id
@@ -102,6 +119,15 @@ class FakeAgentTools:
         self.files: list[dict[str, Any]] = [
             Attachment.model_validate(file).model_dump() for file in (files or [])
         ]
+        self.tasks: list[dict[str, Any]] = [
+            Task.model_validate(task).model_dump() for task in (tasks or [])
+        ]
+        self._task_seq: int = max((t["number"] for t in self.tasks), default=0)
+        self.board: dict[str, Any] = (
+            Board.model_validate(board).model_dump()
+            if board is not None
+            else Board(chat_room_id=self.room_id).model_dump()
+        )
         self.participants_added: list[dict[str, Any]] = []
         self.participants_removed: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
@@ -119,8 +145,9 @@ class FakeAgentTools:
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
-    ) -> dict[str, Any]:
-        """Record a sent message, enforcing the platform's mention requirement.
+    ) -> dict[str, Any] | None:
+        """Record a sent message, enforcing the platform's mention and
+        visible-content requirements.
 
         The API rejects a mention-less message, so ``AgentTools.send_message``
         raises before any request. A fake that accepts one lets that bug pass
@@ -128,7 +155,19 @@ class FakeAgentTools:
         *resolution* is deliberately not mirrored: a fake that dropped
         unresolvable handles would force every test to configure a participant
         roster, and it is emptiness the platform rejects universally.
+
+        Content with no visible characters is refused the same way, returning
+        ``None`` without recording anything — mirroring the real send's
+        non-throwing refusal at ``band.platform.posting.post_message``.
         """
+        self._require_mentions(mentions)
+        if not has_visible_content(content):
+            return None
+        return self._record_message(content, mentions)
+
+    def _require_mentions(
+        self, mentions: list[str] | list[dict[str, str]] | None
+    ) -> None:
         if not (mentions or []):
             raise BandToolError(
                 append_mention_handles_hint(
@@ -136,6 +175,10 @@ class FakeAgentTools:
                     available_mention_handles(self._participants),
                 )
             )
+
+    def _record_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None
+    ) -> dict[str, Any]:
         msg = {
             "id": f"msg-{len(self.messages_sent)}",
             "content": content,
@@ -149,7 +192,14 @@ class FakeAgentTools:
         content: str,
         message_type: str,
         metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
+        """Record a sent event, refusing content with no visible characters.
+
+        Same fidelity rationale as ``send_message``: the real send returns
+        ``None`` without a request rather than letting the platform 422.
+        """
+        if not has_visible_content(content):
+            return None
         event = {
             "id": f"evt-{len(self.events_sent)}",
             "content": content,
@@ -399,11 +449,14 @@ class FakeAgentTools:
         caption: str = "",
         mentions: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Store the file and send it the same way the real tool does --
-        via ``send_message``, so the fake's mention requirement applies
-        before the file is recorded, same as the real tool validates
-        mentions before uploading."""
-        caption = caption or DEFAULT_FILE_CAPTION.format(filename=filename)
+        """Store the file and post it as a message, in the real tool's order:
+        mentions are validated before the file is recorded, so a rejected
+        call leaves no orphaned upload behind. A caption with no visible
+        characters falls back to the default -- the send would refuse it
+        otherwise, leaving nothing to report a message id from."""
+        self._require_mentions(mentions)
+        if not has_visible_content(caption):
+            caption = DEFAULT_FILE_CAPTION.format(filename=filename)
         body = content.encode("utf-8")
         attachment = Attachment(
             id=str(uuid.uuid4()),
@@ -413,9 +466,158 @@ class FakeAgentTools:
             sha256=hashlib.sha256(body).hexdigest(),
             has_thumb=False,
         ).model_dump()
-        message = await self.send_message(content=caption, mentions=mentions or [])
+        message = self._record_message(caption, mentions)
         self.files.append(attachment)
         return {"attachment": deepcopy(attachment), "message_id": message["id"]}
+
+    def _find_task(self, id: str) -> dict[str, Any]:
+        task = next(
+            (t for t in self.tasks if t["id"] == id or str(t["number"]) == id), None
+        )
+        if task is None:
+            raise RuntimeError(f"Failed to find task {id!r} - no response data")
+        return task
+
+    async def list_tasks(
+        self,
+        state: TaskListState | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> ListChatTasksResponse:
+        """Return seeded tasks in the real SDK's Fern envelope (data/metadata).
+
+        Defaults to active tasks, like the real endpoint; "all" returns every
+        lifecycle state. No cursor pagination -- the fake returns everything
+        that matches in one page.
+        """
+        resolved_state = state or TaskListState.ACTIVE
+        matching = (
+            list(self.tasks)
+            if resolved_state == TaskListState.ALL
+            else [t for t in self.tasks if t["state"] == resolved_state]
+        )
+        return ListChatTasksResponse(
+            data=matching,
+            metadata=ListChatTasksResponseMetadata(
+                has_more=False, limit=limit or 50, next_cursor=None
+            ),
+        )
+
+    async def create_task(
+        self,
+        subject: str,
+        detail: str | None = None,
+        supersedes_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create and store a task in the real serialized Task shape.
+
+        Never auto-assigned, matching the real tool -- call update_task to
+        join. ``supersedes_id`` marks the replaced task "superseded" and
+        points its ``superseded_by_id`` at the new task, like the real API.
+        """
+        self._task_seq += 1
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        new_id = str(uuid.uuid4())
+        task = Task(
+            id=new_id,
+            number=self._task_seq,
+            chat_room_id=self.room_id,
+            subject=subject,
+            detail=detail or "",
+            state="active",
+            overall_status="pending",
+            assignments=[],
+            created_by=_FAKE_ACTOR,
+            inserted_at=now,
+            updated_at=now,
+        ).model_dump()
+        self.tasks.append(task)
+        if supersedes_id is not None:
+            old_task = self._find_task(supersedes_id)
+            old_task["state"] = "superseded"
+            old_task["superseded_by_id"] = new_id
+        return deepcopy(task)
+
+    async def get_task(
+        self, id: str, include: Literal["history"] | None = None
+    ) -> dict[str, Any]:
+        return deepcopy(self._find_task(id))
+
+    async def update_task(
+        self,
+        id: str,
+        status: TaskAssignmentStatus | None = None,
+        active_form: str | None = None,
+        comment: str | None = None,
+        subject: str | None = None,
+        detail: str | None = None,
+        state: TaskLifecycleState | None = None,
+    ) -> dict[str, Any]:
+        """Apply the given fields to the stored task, joining the fake actor's
+        assignment on first status/active_form write, like the real tool."""
+        task = self._find_task(id)
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        if subject is not None:
+            task["subject"] = subject
+        if detail is not None:
+            task["detail"] = detail
+        if state is not None:
+            task["state"] = state
+        if status is not None or active_form is not None:
+            assignment = next(
+                (
+                    a
+                    for a in task["assignments"]
+                    if a["assignee"]["id"] == _FAKE_ACTOR.id
+                ),
+                None,
+            )
+            if assignment is None:
+                assignment = {
+                    "assignee": _FAKE_ACTOR.model_dump(),
+                    "status": "pending",
+                    "active_form": "",
+                    "linked_native_id": "",
+                    "updated_at": now,
+                }
+                task["assignments"].append(assignment)
+            if status is not None:
+                assignment["status"] = status
+                task["overall_status"] = status
+            if active_form is not None:
+                assignment["active_form"] = active_form
+            assignment["updated_at"] = now
+        task["updated_at"] = now
+        return deepcopy(task)
+
+    async def get_task_history(
+        self, id: str, cursor: str | None = None, limit: int | None = None
+    ) -> GetChatTaskHistoryResponse:
+        """Return an empty history envelope; the fake tracks no event ledger."""
+        self._find_task(id)
+        return GetChatTaskHistoryResponse(
+            data=[],
+            metadata=GetChatTaskHistoryResponseMetadata(
+                has_more=False, limit=limit or 50, next_cursor=None
+            ),
+        )
+
+    async def get_board(
+        self, include: Literal["history"] | None = None
+    ) -> dict[str, Any]:
+        return deepcopy(self.board)
+
+    async def set_board(
+        self, goal_title: str | None = None, goal_summary: str | None = None
+    ) -> dict[str, Any]:
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        if goal_title is not None:
+            self.board["goal_title"] = goal_title
+        if goal_summary is not None:
+            self.board["goal_summary"] = goal_summary
+        self.board["updated_at"] = now
+        self.board["updated_by"] = _FAKE_ACTOR.model_dump()
+        return deepcopy(self.board)
 
     def get_tool_schemas(
         self,

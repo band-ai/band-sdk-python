@@ -39,7 +39,12 @@ from tests.e2e.baseline.toolkit.tools import ToolSpec
 # `supports` is a claim the capability-scoped matrices select on, so a newly
 # added capability should be a deliberate per-adapter decision, not one every
 # adapter here silently starts claiming.
-_EVERY_CAPABILITY = (Capability.MEMORY, Capability.CONTACTS, Capability.FILES)
+_EVERY_CAPABILITY = (
+    Capability.MEMORY,
+    Capability.CONTACTS,
+    Capability.TASKS,
+    Capability.FILES,
+)
 
 
 @adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_EVERY_CAPABILITY)

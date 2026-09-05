@@ -36,17 +36,20 @@ from band.core.memory_types import (
     MemoryType,
     enum_values,
 )
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.integrations.mcp.engine import WideEventMessageType, build_engine
 from band.runtime.tools import (
     AGENT_ROOM_BOUND_TOOL_NAMES,
     CHAT_ID_FIELD_NAME,
     FILE_TOOL_NAMES,
     AddParticipantInput,
+    GetBoardInput,
+    GetTaskInput,
     ListContactRequestsInput,
     ListSentContactRequestsInput,
     RespondContactRequestInput,
 )
-from band_mcp.config import Config
+from band_mcp.config import Config, Scope, ToolGroup
 from band_mcp.server import standalone_spec
 from band_mcp.shared import build_standalone_resolver
 from tests.mcp.conftest import advertised_schemas
@@ -103,8 +106,13 @@ def _load_bearing_shapes(
 # the broadest published surface. "pinned": the CLI's --room-id mode, which
 # hides chat_id from the advertised schema entirely.
 _PROFILES: dict[str, Config] = {
-    "full": Config(scope=["agent", "human"], tools=["contacts", "memory"]),
-    "pinned": Config(scope=["agent"], tools=[], room_id="r_pinned_snapshot"),
+    "full": Config(
+        scope=[Scope.AGENT, Scope.HUMAN],
+        tools=[ToolGroup.CONTACTS, ToolGroup.MEMORY, ToolGroup.TASKS],
+    ),
+    "pinned": Config(
+        scope=[Scope.AGENT], tools=[ToolGroup.TASKS], room_id="r_pinned_snapshot"
+    ),
 }
 
 # band-mcp's `--tools` vocabulary has no `files` group yet (Capability.FILES
@@ -239,6 +247,45 @@ CONTRACTS: dict[str, ToolContract] = {
             "status": FieldContract(
                 type="string",
                 enum=_field_literal_values(ListSentContactRequestsInput, "status"),
+                nullable=True,
+            )
+        },
+    ),
+    "band_list_tasks": ToolContract(
+        fields={
+            "state": FieldContract(
+                type="string", enum=enum_values(TaskListState), nullable=True
+            )
+        },
+    ),
+    "band_create_task": ToolContract(required=frozenset({"subject"})),
+    "band_get_task": ToolContract(
+        required=frozenset({"id"}),
+        fields={
+            "include": FieldContract(
+                type="string",
+                enum=_field_literal_values(GetTaskInput, "include"),
+                nullable=True,
+            )
+        },
+    ),
+    "band_update_task": ToolContract(
+        required=frozenset({"id"}),
+        fields={
+            "status": FieldContract(
+                type="string", enum=enum_values(TaskAssignmentStatus), nullable=True
+            ),
+            "state": FieldContract(
+                type="string", enum=enum_values(TaskLifecycleState), nullable=True
+            ),
+        },
+    ),
+    "band_get_task_history": ToolContract(required=frozenset({"id"})),
+    "band_get_board": ToolContract(
+        fields={
+            "include": FieldContract(
+                type="string",
+                enum=_field_literal_values(GetBoardInput, "include"),
                 nullable=True,
             )
         },

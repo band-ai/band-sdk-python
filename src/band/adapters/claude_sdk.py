@@ -89,6 +89,7 @@ from band.runtime.tools import (
     MAX_INLINE_IMAGE_BYTES,
     MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
+    TASK_TOOL_NAMES,
     band_tool_errored,
     is_terminal_success,
     iter_tool_definitions,
@@ -103,8 +104,9 @@ logger = logging.getLogger(__name__)
 # Derived from TOOL_MODELS — single source of truth
 BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
 BAND_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
-# All tools: chat + contacts + memory + files (20 total). For chat-only
-# tools (7), see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
+BAND_TASK_TOOLS: list[str] = mcp_tool_names(TASK_TOOL_NAMES)
+# All tools: chat + contacts + memory + files + tasks (27 total). For
+# chat-only tools (7), see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
 BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
@@ -237,7 +239,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES, Capability.TASKS}
     )
 
     def __init__(

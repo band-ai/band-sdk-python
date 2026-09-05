@@ -18,6 +18,7 @@ import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
 from band.core.memory_types import MemoryListScope
+from band.core.task_types import TaskAssignmentStatus
 from band.core.types import Capability
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
@@ -26,6 +27,7 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     FILES_AGENT,
     IMAGE_COLORS,
     MEMORY_AGENT,
+    TASK_AGENT,
     file_round_trip_instruction,
     image_round_trip_instruction,
     list_contacts_instruction,
@@ -33,6 +35,8 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     retrieve_memory_instruction,
     solid_color_png,
     store_memory_instruction,
+    task_lifecycle_instruction,
+    task_read_instruction,
     unique_marker,
 )
 from tests.e2e.baseline.settings import BaselineSettings
@@ -217,6 +221,48 @@ async def test_list_contacts_across_contacts_adapters(
         calls = await capture.tool_calls(sender_id=agent.id)
 
     calls.assert_fired(ContactTool.LIST.value)
+
+
+@per_adapter(supports={Capability.TASKS}, **TASK_AGENT)
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@pytest.mark.asyncio(loop_scope="session")
+async def test_task_lifecycle_across_task_adapters(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Every task-capable adapter can drive the full task-board tool set: create,
+    claim, complete, then list/get/get-history/get-board."""
+    marker = unique_marker("xtask")
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-tasks-{agent.adapter_id}", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        create_mid = await user_ops.send_message(
+            room_id,
+            task_lifecycle_instruction(marker),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(create_mid, agent.id)
+
+        read_mid = await user_ops.send_message(
+            room_id,
+            task_read_instruction(),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(read_mid, agent.id)
+        calls = await capture.task_calls(sender_id=agent.id)
+
+    calls.assert_create_called(subject=marker)
+    calls.assert_update_called(status=TaskAssignmentStatus.IN_PROGRESS.value)
+    calls.assert_update_called(status=TaskAssignmentStatus.COMPLETED.value)
+    calls.assert_list_called()
+    calls.assert_get_called()
+    calls.assert_get_history_called()
+    calls.assert_get_board_called()
 
 
 @per_adapter(supports={Capability.FILES}, **FILES_AGENT)

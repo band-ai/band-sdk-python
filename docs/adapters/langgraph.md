@@ -165,6 +165,7 @@ Requesting a value this adapter doesn't support raises `BandConfigError` immedia
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to the graph. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
+| `Capability.TASKS` | Yes | Exposes the room task-board tools (list/create/get/update tasks, task history, get/set the room goal). |
 | `Emit.TOOL_CALLS` | Yes | Emits LangGraph tool start/end/error events as Band `tool_call` and `tool_result` events with shared `{name, args|output, tool_call_id}` payloads. |
 | `Emit.USAGE` | Yes | Sends a `task` event carrying token-usage metadata (`metadata.band_usage`). |
 | `Emit.THOUGHTS` | No | Not supported by this adapter. |

@@ -204,6 +204,7 @@ Requesting a value this adapter doesn't support raises `BandConfigError` immedia
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Codex. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
+| `Capability.TASKS` | Yes | Exposes the room task-board tools (list/create/get/update tasks, task history, get/set the room goal). |
 | `Emit.TOOL_CALLS` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
 | `Emit.THOUGHTS` | Yes | Sends completed reasoning, plan, and review-mode events as `thought` events. |
 | `Emit.TASK_EVENTS` | Yes | Sends lifecycle, thread-resume, approval, diff-summary, token-usage, and error task events. Required for persisted Codex thread mapping. |

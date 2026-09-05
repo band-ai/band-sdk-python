@@ -10,7 +10,7 @@ import inspect
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, ClassVar, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, cast, get_origin, get_type_hints
 
 import httpx
 from pydantic_ai import (
@@ -40,6 +40,7 @@ from typing_extensions import Unpack
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import (
     Capability,
     Emit,
@@ -221,7 +222,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -643,6 +644,145 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     return f"Error archiving memory: {e}"
 
             agent.tool(band_archive_memory)
+
+        # Task board tools (opt-in via Capability.TASKS)
+        if Capability.TASKS in self.features.capabilities:
+
+            @platform_tool
+            async def band_list_tasks(
+                ctx: RunContext[AgentToolsProtocol],
+                state: TaskListState | None = None,
+                cursor: str | None = None,
+                limit: int | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.list_tasks(
+                            state=state, cursor=cursor, limit=limit
+                        )
+                    )
+                except Exception as e:
+                    return f"Error listing tasks: {e}"
+
+            agent.tool(band_list_tasks)
+
+            @platform_tool
+            async def band_create_task(
+                ctx: RunContext[AgentToolsProtocol],
+                subject: str,
+                detail: str | None = None,
+                supersedes_id: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.create_task(
+                            subject, detail=detail, supersedes_id=supersedes_id
+                        )
+                    )
+                except Exception as e:
+                    return f"Error creating task '{subject}': {e}"
+
+            agent.tool(band_create_task)
+
+            @platform_tool
+            async def band_get_task(
+                ctx: RunContext[AgentToolsProtocol],
+                id: str,
+                # str, not Literal["history"] | None: pydantic-ai's own schema
+                # builder emits an unsanitized JSON-Schema `const` for a
+                # single-value Literal (unlike the master model/MCP paths,
+                # which run sanitize_tool_schema()), which providers with a
+                # restricted JSON-Schema subset (e.g. Gemini) reject.
+                include: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.get_task(
+                            id, include=cast(Literal["history"] | None, include)
+                        )
+                    )
+                except Exception as e:
+                    return f"Error getting task '{id}': {e}"
+
+            agent.tool(band_get_task)
+
+            @platform_tool
+            async def band_update_task(
+                ctx: RunContext[AgentToolsProtocol],
+                id: str,
+                status: TaskAssignmentStatus | None = None,
+                active_form: str | None = None,
+                comment: str | None = None,
+                subject: str | None = None,
+                detail: str | None = None,
+                state: TaskLifecycleState | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.update_task(
+                            id,
+                            status=status,
+                            active_form=active_form,
+                            comment=comment,
+                            subject=subject,
+                            detail=detail,
+                            state=state,
+                        )
+                    )
+                except Exception as e:
+                    return f"Error updating task '{id}': {e}"
+
+            agent.tool(band_update_task)
+
+            @platform_tool
+            async def band_get_task_history(
+                ctx: RunContext[AgentToolsProtocol],
+                id: str,
+                cursor: str | None = None,
+                limit: int | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.get_task_history(id, cursor=cursor, limit=limit)
+                    )
+                except Exception as e:
+                    return f"Error getting task history for '{id}': {e}"
+
+            agent.tool(band_get_task_history)
+
+            @platform_tool
+            async def band_get_board(
+                ctx: RunContext[AgentToolsProtocol],
+                # See band_get_task's `include` for why this is str, not Literal.
+                include: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.get_board(
+                            include=cast(Literal["history"] | None, include)
+                        )
+                    )
+                except Exception as e:
+                    return f"Error getting board: {e}"
+
+            agent.tool(band_get_board)
+
+            @platform_tool
+            async def band_set_board(
+                ctx: RunContext[AgentToolsProtocol],
+                goal_title: str | None = None,
+                goal_summary: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.set_board(
+                            goal_title=goal_title, goal_summary=goal_summary
+                        )
+                    )
+                except Exception as e:
+                    return f"Error setting board: {e}"
+
+            agent.tool(band_set_board)
 
         # Room-file tools (opt-in via Capability.FILES)
         if Capability.FILES in self.features.capabilities:

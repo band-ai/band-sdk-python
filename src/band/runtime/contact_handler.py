@@ -32,6 +32,7 @@ from band.platform.event import (
     ContactRemovedEvent,
     MessageEvent,
 )
+from band.platform.posting import post_event
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import (
     ContactEventConfig,
@@ -360,14 +361,14 @@ class ContactEventHandler:
             event_type: Contact event type for metadata
         """
         try:
-            await self._link.rest.agent_api_events.create_agent_chat_event(
-                chat_id=room_id,
-                event=ChatEventRequest(
+            await post_event(
+                rest=self._link.rest,
+                room_id=room_id,
+                request=ChatEventRequest(
                     content=content,
                     message_type="task",
                     metadata={"contact_event_type": event_type},
                 ),
-                request_options=DEFAULT_REQUEST_OPTIONS,
             )
             logger.debug("Task event posted to hub room: %s", event_type)
         except Exception as e:
