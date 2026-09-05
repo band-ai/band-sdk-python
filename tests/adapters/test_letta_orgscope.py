@@ -13,10 +13,12 @@ import json
 import pytest
 from pytest_httpx import HTTPXMock
 
+from band.integrations.letta import orgscope
 from band.integrations.letta.orgscope import (
     LettaOrgScopeClient,
     resolve_org_scoped_headers,
 )
+from tests.adapters.lettakit import mock_org_user_provisioned
 
 _BASE_URL = "http://localhost:8283"
 
@@ -191,6 +193,24 @@ class TestFindOrCreateUser:
         assert user_id == "user-new"
         assert len(httpx_mock.get_requests(method="GET")) == 2
 
+    async def test_pagination_gives_up_after_max_pages(
+        self, httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression guard: a cursor that keeps advancing without ever
+        emptying or stalling must not loop forever — a page-count circuit
+        breaker bounds it and fails loud instead."""
+        monkeypatch.setattr(orgscope, "_MAX_PAGINATION_PAGES", 2)
+        for i in range(2):
+            after = f"?after=user-{i - 1}" if i else ""
+            httpx_mock.add_response(
+                method="GET",
+                url=f"{_BASE_URL}/v1/admin/users/{after}",
+                json=[{"id": f"user-{i}", "name": "other", "organization_id": "org-1"}],
+            )
+
+        with pytest.raises(RuntimeError, match="did not terminate"):
+            await _client().find_or_create_user("band-x", organization_id="org-1")
+
 
 class TestAuthPassthrough:
     async def test_bearer_token_sent_when_set(self, httpx_mock: HTTPXMock) -> None:
@@ -230,21 +250,12 @@ class TestResolveOrgScopedHeaders:
     async def test_end_to_end_provisions_org_then_user(
         self, httpx_mock: HTTPXMock
     ) -> None:
-        httpx_mock.add_response(
-            method="GET", url=f"{_BASE_URL}/v1/admin/orgs/", json=[]
-        )
-        httpx_mock.add_response(
-            method="POST",
-            url=f"{_BASE_URL}/v1/admin/orgs/",
-            json={"id": "org-1", "name": "band-my-agent"},
-        )
-        httpx_mock.add_response(
-            method="GET", url=f"{_BASE_URL}/v1/admin/users/", json=[]
-        )
-        httpx_mock.add_response(
-            method="POST",
-            url=f"{_BASE_URL}/v1/admin/users/",
-            json={"id": "user-1", "name": "band-my-agent", "organization_id": "org-1"},
+        mock_org_user_provisioned(
+            httpx_mock,
+            base_url=_BASE_URL,
+            org_id="org-1",
+            user_id="user-1",
+            name="band-my-agent",
         )
 
         headers = await resolve_org_scoped_headers(

@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 _ADMIN_PREFIX = "/v1/admin"
 _DEFAULT_TIMEOUT_S = 30.0
+# Bounds _paginated_find against a pagination cursor that keeps advancing
+# without ever emptying or stalling -- a second, undiscovered quirk in
+# Letta's admin API pagination (the same surface that already produced the
+# null-created_at stall this client works around) would otherwise hang here
+# forever instead of failing loud.
+_MAX_PAGINATION_PAGES = 10_000
 _Match = Callable[[dict], bool]
 
 
@@ -118,7 +124,7 @@ class LettaOrgScopeClient:
         response shape this client does not otherwise need to know).
         """
         after: str | None = None
-        while True:
+        for _ in range(_MAX_PAGINATION_PAGES):
             response = await client.get(
                 path, params={"after": after} if after else None
             )
@@ -133,6 +139,10 @@ class LettaOrgScopeClient:
             if next_after == after:
                 return None
             after = next_after
+        raise RuntimeError(
+            f"Letta admin API pagination for {path!r} did not terminate after "
+            f"{_MAX_PAGINATION_PAGES} pages"
+        )
 
 
 async def resolve_org_scoped_headers(

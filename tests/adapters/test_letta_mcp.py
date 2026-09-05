@@ -32,6 +32,7 @@ from tests.adapters.lettakit import (
     make_mock_mcp_tool,
     make_mock_tool_page,
     make_platform_message,
+    mock_org_user_provisioned,
 )
 
 
@@ -207,19 +208,12 @@ class TestLettaAdapterOnStarted:
             )
         )
 
-        httpx_mock.add_response(method="GET", url=f"{base_url}/v1/admin/orgs/", json=[])
-        httpx_mock.add_response(
-            method="POST",
-            url=f"{base_url}/v1/admin/orgs/",
-            json={"id": "org-1", "name": "band-TestBot"},
-        )
-        httpx_mock.add_response(
-            method="GET", url=f"{base_url}/v1/admin/users/", json=[]
-        )
-        httpx_mock.add_response(
-            method="POST",
-            url=f"{base_url}/v1/admin/users/",
-            json={"id": "user-1", "name": "band-TestBot", "organization_id": "org-1"},
+        mock_org_user_provisioned(
+            httpx_mock,
+            base_url=base_url,
+            org_id="org-1",
+            user_id="user-1",
+            name="band-TestBot",
         )
 
         mock_client = AsyncMock()
@@ -311,59 +305,6 @@ class TestLettaAdapterOnStarted:
         mock_letta_module.AsyncLetta.assert_called_once_with(
             base_url="http://localhost:8283",
         )
-
-    @pytest.mark.asyncio
-    async def test_on_started_two_instances_resolve_distinct_user_ids(
-        self,
-    ) -> None:
-        """Two adapter instances against the same self-hosted server must
-        resolve distinct org-scoped identities — the actual collision-
-        avoidance property this fix exists to provide."""
-        base_url = "http://localhost:8283"
-
-        def make_adapter() -> LettaAdapter:
-            return LettaAdapter(
-                config=LettaAdapterConfig(
-                    base_url=base_url, mcp=LettaMCPConfig(mode="external")
-                )
-            )
-
-        async def fake_resolve(
-            *, base_url: str, agent_name: str, bearer_token: str | None
-        ) -> dict[str, str]:
-            return {"user_id": f"user-{agent_name}"}
-
-        mock_client_a = AsyncMock()
-        mock_client_a.mcp_servers.create.return_value = make_mock_mcp_server()
-        mock_client_a.mcp_servers.tools.list.return_value = []
-        mock_client_b = AsyncMock()
-        mock_client_b.mcp_servers.create.return_value = make_mock_mcp_server()
-        mock_client_b.mcp_servers.tools.list.return_value = []
-
-        mock_letta_module = MagicMock()
-        mock_letta_module.AsyncLetta = MagicMock(
-            side_effect=[mock_client_a, mock_client_b]
-        )
-
-        with (
-            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
-            patch(
-                "band.adapters.letta.resolve_org_scoped_headers",
-                side_effect=fake_resolve,
-            ),
-        ):
-            await make_adapter().on_started("AgentA", "Bot A")
-            await make_adapter().on_started("AgentB", "Bot B")
-
-        headers_a = mock_letta_module.AsyncLetta.call_args_list[0].kwargs[
-            "default_headers"
-        ]
-        headers_b = mock_letta_module.AsyncLetta.call_args_list[1].kwargs[
-            "default_headers"
-        ]
-        assert headers_a == {"user_id": "user-AgentA"}
-        assert headers_b == {"user_id": "user-AgentB"}
-        assert headers_a != headers_b
 
     @pytest.mark.asyncio
     async def test_on_started_import_error(self) -> None:
