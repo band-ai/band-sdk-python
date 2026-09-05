@@ -57,8 +57,8 @@ async def test_a2a_adapter_relays_a_real_counterparty_reply(
     """A live ``A2AAdapter`` forwards a Band room message to a real,
     independent A2A server and relays its reply back into the room."""
     counterparty = A2ACounterparty()
-    await counterparty.start()
     try:
+        await counterparty.start()
         adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
         async with running_provisioned_agent(
             adapter, resource_manager, label="a2a"
@@ -95,8 +95,8 @@ async def test_a2a_adapter_surfaces_a_remote_task_failure(
     """A terminal FAILED task from the remote A2A server surfaces as a room
     error event, not a silently dropped turn."""
     counterparty = A2ACounterparty()
-    await counterparty.start()
     try:
+        await counterparty.start()
         adapter = A2AAdapter(remote_url=counterparty.url, streaming=True)
         async with running_provisioned_agent(
             adapter, resource_manager, label="a2a"
