@@ -25,7 +25,6 @@ import pytest
 from band.integrations.a2a import A2AAdapter
 
 from tests.e2e.baseline.agents import Lane, lane
-from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.adapters.a2aServer import (
     CANNED_REPLY,
@@ -45,7 +44,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # this smoke needs no provider key (the counterparty is scripted, not
 # LLM-backed), only the always-on Band-platform gate.
 @lane(Lane.CORE)
-@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=60)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a2a_adapter_relays_a_real_counterparty_reply(
@@ -83,7 +81,6 @@ async def test_a2a_adapter_relays_a_real_counterparty_reply(
 
 
 @lane(Lane.CORE)
-@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=60)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_a2a_adapter_surfaces_a_remote_task_failure(
