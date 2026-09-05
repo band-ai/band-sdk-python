@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from agno.media import Image
+from agno.tools.function import ToolResult
 from typing_extensions import Unpack
 
 from band.core.protocols import AgentToolsProtocol
@@ -26,7 +28,14 @@ from band.core.types import (
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import SEND_MESSAGE_TOOL_NAME, get_band_tool_category
+from band.runtime.tools import (
+    BandTool,
+    decode_image_block,
+    get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 try:
     from agno.models.message import Message
@@ -88,12 +97,29 @@ def _tool_name(execution: Any) -> str:
     return getattr(execution, "tool_name", None) or ""
 
 
-def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
-    async def _entrypoint(**kwargs: Any) -> str:
+def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolResult]]:
+    async def _entrypoint(**kwargs: Any) -> str | ToolResult:
         active = _current_tools.get()
         if active is None:
             return f"Error: no active Band context for tool {tool_name}"
         result = await active.execute_tool_call(tool_name, kwargs)
+        if is_image_passthrough_result(tool_name, result):
+            try:
+                images = [
+                    Image(content=data, mime_type=mime_type)
+                    for data, mime_type in (
+                        decode_image_block(block) for block in result["content"]
+                    )
+                ]
+            except Exception as error:
+                # A malformed or future-extended image block (see
+                # is_mcp_content_result's docstring) must degrade to the
+                # adapter's usual error string, not raise uncaught out of
+                # the tool entrypoint Agno invokes directly.
+                return f"Error reading room file: {error}"
+            return ToolResult(
+                content=image_block_placeholder(len(images)), images=images
+            )
         return result if isinstance(result, str) else json.dumps(result, default=str)
 
     _entrypoint.__name__ = tool_name
@@ -132,7 +158,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -330,7 +356,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._persist_turn(room_id, response)
 
         if not any(
-            _tool_name(execution) == SEND_MESSAGE_TOOL_NAME
+            _tool_name(execution) == BandTool.SEND_MESSAGE
             for execution in _tool_executions(response)
         ):
             logger.debug(
@@ -735,7 +761,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 "tool_call",
                 {
                     ToolEventKey.NAME: ex.tool_name or "",
-                    ToolEventKey.ARGS: ex.tool_args or {},
+                    ToolEventKey.ARGS: redact_tool_call_args(
+                        ex.tool_name or "", ex.tool_args or {}
+                    ),
                     ToolEventKey.TOOL_CALL_ID: ex.tool_call_id or "",
                 },
                 room_id=room_id,

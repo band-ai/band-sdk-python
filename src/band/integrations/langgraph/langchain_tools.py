@@ -11,6 +11,7 @@ import logging
 import warnings
 from typing import Any
 
+from langchain_core.messages import ImageContentBlock
 from langchain_core.tools import StructuredTool
 
 from band.core.exceptions import BandToolError
@@ -27,6 +28,7 @@ from band.runtime.tools import (
     format_tool_validation_error,
     get_band_tool_category,
     get_tool_description,
+    is_image_passthrough_result,
     iter_tool_definitions,
 )
 
@@ -38,6 +40,16 @@ def _with_capability(
 ) -> frozenset[Capability]:
     """``capabilities`` with ``capability`` forced on or off per ``enabled``."""
     return capabilities | {capability} if enabled else capabilities - {capability}
+
+
+def _image_content_blocks(result: dict[str, Any]) -> list[ImageContentBlock]:
+    """LangChain image content blocks for an MCP-content-shaped tool result."""
+    return [
+        ImageContentBlock(
+            type="image", mime_type=block["mimeType"], base64=block["data"]
+        )
+        for block in result["content"]
+    ]
 
 
 def agent_tools_to_langchain(
@@ -106,13 +118,18 @@ def agent_tools_to_langchain(
             definition.name
         )
 
+        # ``execute_tool_call`` is typed ``Any`` by ``AgentToolsProtocol``, so the
+        # pass-through branch below cannot honestly be narrowed here.
         async def execute_definition(
             *,
             _tool_name: str = definition.name,
             **kwargs: Any,
         ) -> Any:
             try:
-                return await tools.execute_tool_call(_tool_name, kwargs)
+                result = await tools.execute_tool_call(_tool_name, kwargs)
+                if is_image_passthrough_result(_tool_name, result):
+                    return _image_content_blocks(result)
+                return result
             except (BandToolError, ValueError) as e:
                 return str(e)
             except Exception:

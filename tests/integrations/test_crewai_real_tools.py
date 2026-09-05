@@ -44,6 +44,25 @@ def test_platform_tools_build_against_the_real_base_tool() -> None:
     assert "band_send_message" in {tool.name for tool in tools}
 
 
+def test_file_tools_build_against_the_real_base_tool() -> None:
+    """The three room-file tool models also resolve and instantiate for real --
+    same "not fully defined" failure mode this file exists to catch."""
+    from band.core.types import Capability
+
+    tools = build_band_crewai_tools(
+        get_context=lambda: None,
+        reporter=NoopReporter(),
+        features=AdapterFeatures(capabilities={Capability.FILES}),
+    )
+
+    names = {tool.name for tool in tools}
+    assert {
+        "band_list_room_files",
+        "band_read_room_file",
+        "band_send_room_file",
+    }.issubset(names)
+
+
 def test_a_mocked_crewai_window_does_not_poison_a_later_real_build() -> None:
     """Faking crewai for one test must leave the next one a working real package.
 

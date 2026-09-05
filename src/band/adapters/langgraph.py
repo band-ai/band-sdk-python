@@ -23,6 +23,11 @@ from band.core.types import (
 )
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    BandTool,
+    image_block_placeholder,
+    redact_tool_call_args,
+)
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -32,6 +37,35 @@ logger = logging.getLogger(__name__)
 
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
+
+
+def _redacted_tool_end_output(tool_name: str, data: dict[str, Any]) -> Any:
+    """The value a tool_result event reports for one on_tool_end/on_tool_error.
+
+    ``data["output"]`` may be a langchain ``ToolMessage`` whose ``.content``
+    is the ``list[ImageContentBlock]`` that ``langchain_tools.py``'s
+    ``execute_definition`` builds for ``band_read_room_file``'s image branch
+    (a *different* shape than the platform's own MCP content blocks --
+    ``mime_type``/``base64`` keys, not ``mimeType``/``data``). That object
+    isn't JSON-serializable, so ``json.dumps``'s ``default=str`` would
+    otherwise fall back to ``str(ToolMessage(...))``, embedding the full
+    base64 payload.
+    """
+    if data.get("error"):
+        return data["error"]
+    output = data.get("output", "")
+    if tool_name == BandTool.READ_ROOM_FILE:
+        content = getattr(output, "content", output)
+        if (
+            isinstance(content, list)
+            and content
+            and all(
+                isinstance(block, dict) and block.get("type") == "image"
+                for block in content
+            )
+        ):
+            return image_block_placeholder(len(content))
+    return output
 
 
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
@@ -80,7 +114,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -381,7 +415,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             payload = {
                 ToolEventKey.NAME: tool_name,
-                ToolEventKey.ARGS: data.get("input", {}),
+                ToolEventKey.ARGS: redact_tool_call_args(
+                    tool_name, data.get("input", {})
+                ),
                 ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
             }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
@@ -402,7 +438,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             is_error = event_type == "on_tool_error" or bool(data.get("error"))
             payload = {
                 ToolEventKey.NAME: tool_name,
-                ToolEventKey.OUTPUT: data.get("error") or data.get("output", ""),
+                ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),
                 ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
                 ToolEventKey.IS_ERROR: is_error,
             }

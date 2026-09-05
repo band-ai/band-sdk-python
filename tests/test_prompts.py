@@ -198,6 +198,27 @@ class TestCapabilityGatedSections:
 
         assert "## Contact Management Tools" not in prompt
 
+    def test_files_section_included_when_enabled(self):
+        """File tool instructions included when Capability.FILES is set."""
+        features = AdapterFeatures(capabilities={Capability.FILES})
+        prompt = render_system_prompt(
+            agent_name="Bot",
+            agent_description="helper",
+            features=features,
+        )
+
+        assert "## Room File Tools" in prompt
+        assert "band_read_room_file" in prompt
+
+    def test_files_section_absent_by_default(self):
+        """File tool instructions absent when no features."""
+        prompt = render_system_prompt(
+            agent_name="Bot",
+            agent_description="helper",
+        )
+
+        assert "## Room File Tools" not in prompt
+
     def test_both_capabilities_included(self):
         """Both sections included when both capabilities enabled."""
         features = AdapterFeatures(
@@ -211,6 +232,22 @@ class TestCapabilityGatedSections:
 
         assert "## Memory Tools" in prompt
         assert "## Contact Management Tools" in prompt
+
+    def test_all_three_capabilities_included(self):
+        """Memory, contact, and file sections all included when all three
+        capabilities are enabled."""
+        features = AdapterFeatures(
+            capabilities={Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
+        )
+        prompt = render_system_prompt(
+            agent_name="Bot",
+            agent_description="helper",
+            features=features,
+        )
+
+        assert "## Memory Tools" in prompt
+        assert "## Contact Management Tools" in prompt
+        assert "## Room File Tools" in prompt
 
     def test_capability_sections_included_without_base_instructions(self):
         """Capability sections still render when include_base_instructions=False --

@@ -45,11 +45,20 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
     is_room_posting_tool,
+    redact_tool_call_args,
 )
 
 try:
-    from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
+    from copilot import (
+        CopilotClient,
+        PermissionHandler,
+        Tool,
+        ToolBinaryResult,
+        ToolResult,
+    )
     from copilot.generated.session_events import (
         AssistantReasoningData,
         AssistantUsageData,
@@ -214,7 +223,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.FILES}
     )
 
     def __init__(
@@ -743,14 +752,35 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 room_tools, invocation, f"Error: {exc}", report=should_report
             )
 
-        text_result = (
-            result if isinstance(result, str) else json.dumps(result, default=str)
-        )
+        binary_results: list[ToolBinaryResult] | None = None
+        if is_image_passthrough_result(tool_name, result):
+            # Same failure path as the tool-execution try/except above: a
+            # malformed or future-extended content block must still route
+            # through _fail_tool_call, not raise uncaught past it.
+            try:
+                binary_results = [
+                    ToolBinaryResult(
+                        data=block["data"], mime_type=block["mimeType"], type="image"
+                    )
+                    for block in result["content"]
+                ]
+            except (KeyError, TypeError) as exc:
+                logger.exception("Malformed image content block for %s", tool_name)
+                return await self._fail_tool_call(
+                    room_tools, invocation, f"Error: {exc}", report=should_report
+                )
+            text_result = image_block_placeholder(len(binary_results))
+        else:
+            text_result = (
+                result if isinstance(result, str) else json.dumps(result, default=str)
+            )
         if is_room_posting_tool(tool_name) and turn is not None:
             self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)
-        return ToolResult(text_result_for_llm=text_result)
+        return ToolResult(
+            text_result_for_llm=text_result, binary_results_for_llm=binary_results
+        )
 
     async def _fail_tool_call(
         self,
@@ -783,7 +813,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             json.dumps(
                 {
                     ToolEventKey.NAME: invocation.tool_name,
-                    ToolEventKey.ARGS: arguments,
+                    ToolEventKey.ARGS: redact_tool_call_args(
+                        invocation.tool_name, arguments
+                    ),
                     ToolEventKey.TOOL_CALL_ID: invocation.tool_call_id,
                 }
             ),

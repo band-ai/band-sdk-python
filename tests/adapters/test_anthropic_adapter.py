@@ -278,6 +278,146 @@ class TestToolExecution:
         assert mock_tools.send_event.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_read_room_file_image_result_passes_through_as_vision_content(
+        self, mock_tools
+    ):
+        """An image band_read_room_file result must reach the model as a
+        real Anthropic image content block, not get json.dumps'd into text
+        (which would send the model a giant base64 string it can't see)."""
+        from anthropic.types import ToolUseBlock
+
+        adapter = AnthropicAdapter(emit=())
+
+        mock_response = MagicMock()
+        mock_response.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="tool-1",
+                name="band_read_room_file",
+                input={"file_id": "f1"},
+            )
+        ]
+        mock_tools.execute_tool_call.return_value = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+
+        results = await adapter._process_tool_calls(mock_response, mock_tools)
+
+        assert len(results) == 1
+        assert results[0]["is_error"] is False
+        assert results[0]["content"] == [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "ZmFrZQ==",
+                },
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_result_reports_placeholder_not_raw_base64(
+        self, mock_tools
+    ):
+        """The tool_result event for an image band_read_room_file call must
+        report a bounded placeholder, not the raw base64 payload -- the LLM-
+        facing content block (asserted above) is a separate path from what
+        gets reported to the platform-visible event."""
+        import json
+
+        from anthropic.types import ToolUseBlock
+
+        from band.core.types import ToolEventKey
+
+        adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
+
+        mock_response = MagicMock()
+        mock_response.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="tool-1",
+                name="band_read_room_file",
+                input={"file_id": "f1"},
+            )
+        ]
+        mock_tools.execute_tool_call.return_value = {
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+
+        await adapter._process_tool_calls(mock_response, mock_tools)
+
+        result_event = mock_tools.send_event.call_args_list[-1]
+        reported = json.loads(result_event.kwargs["content"])
+        assert reported[ToolEventKey.OUTPUT] == "<1 image content block(s)>"
+        assert "ZmFrZQ==" not in result_event.kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self, mock_tools
+    ):
+        """The tool_call event for band_send_room_file must report a bounded
+        placeholder for `content`, not the raw file text -- real file bytes
+        (up to ~1MB) have no business in a platform-visible log event."""
+        import json
+
+        from anthropic.types import ToolUseBlock
+
+        from band.core.types import ToolEventKey
+
+        adapter = AnthropicAdapter(emit=Emit.TOOL_CALLS)
+
+        raw_content = "the quick brown fox" * 100
+        mock_response = MagicMock()
+        mock_response.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="tool-1",
+                name="band_send_room_file",
+                input={"content": raw_content, "filename": "notes.txt"},
+            )
+        ]
+        mock_tools.execute_tool_call.return_value = {"status": "success"}
+
+        await adapter._process_tool_calls(mock_response, mock_tools)
+
+        call_event = mock_tools.send_event.call_args_list[0]
+        reported = json.loads(call_event.kwargs["content"])
+        assert reported[ToolEventKey.ARGS]["content"] == (
+            f"<{len(raw_content.encode('utf-8'))} byte file content>"
+        )
+        assert raw_content not in call_event.kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_non_image_result_stays_text(self, mock_tools):
+        """A description-only (non-image) read_room_file result keeps the
+        ordinary json.dumps'd text content -- the image branch only fires
+        for the real MCP-content shape."""
+        from anthropic.types import ToolUseBlock
+
+        adapter = AnthropicAdapter(emit=())
+
+        mock_response = MagicMock()
+        mock_response.content = [
+            ToolUseBlock(
+                type="tool_use",
+                id="tool-1",
+                name="band_read_room_file",
+                input={"file_id": "f1"},
+            )
+        ]
+        mock_tools.execute_tool_call.return_value = {
+            "name": "notes.txt",
+            "description": "File not shown inline: too large.",
+        }
+
+        results = await adapter._process_tool_calls(mock_response, mock_tools)
+
+        assert len(results) == 1
+        assert isinstance(results[0]["content"], str)
+        assert "notes.txt" in results[0]["content"]
+
+    @pytest.mark.asyncio
     async def test_send_event_403_does_not_crash_tool_execution(self, mock_tools):
         """send_event 403 should not prevent tool from executing."""
         from anthropic.types import ToolUseBlock
