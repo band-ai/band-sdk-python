@@ -1,15 +1,12 @@
 """The embedded MCP front door: run one ``LocalMCPServer`` per adapter.
 
 Ephemeral-port scanning starts from a random offset (dodges a just-freed-
-port wedge). Mounts ``engine.py``'s FastMCP app rather than hand-rolling a
-lowlevel ``Server``; building the tool-registration list itself is
-``engine.py``'s job too (``build_band_mcp_tool_registrations`` /
-``build_resolved_band_mcp_tool_registrations``) -- this module only runs
-the server once it has that list.
+port wedge). Mounts ``engine.py``'s FastMCP app; ``engine.py`` also builds
+the tool-registration list, this module only runs the server once it has one.
 
-Every lifecycle transition (``start()``/``stop()``) routes through one lock,
-with cleanup in ``finally`` -- so a serve-task crash always closes the
-socket and resets state, and concurrent start/stop calls can't race.
+Every ``start()``/``stop()`` routes through one lock with cleanup in
+``finally``, so a serve-task crash always closes the socket and resets
+state, and concurrent start/stop calls can't race.
 """
 
 from __future__ import annotations
@@ -23,7 +20,6 @@ from contextlib import asynccontextmanager, contextmanager
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
-from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -35,6 +31,11 @@ from band.integrations.mcp.engine import (
     build_engine,
     validate_unique_tool_names,
 )
+from band.integrations.uvicorn_server import (
+    SERVER_START_TIMEOUT_S,
+    SERVER_STOP_TIMEOUT_S,
+    wait_until_started,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,50 +46,22 @@ LOCAL_MCP_SSE_PATH = "/sse"
 LOCAL_MCP_HTTP_PATH = "/mcp"
 LOCAL_MCP_MESSAGE_PATH = "/messages/"
 LOCAL_MCP_HEALTH_PATH = "/healthz"
-SERVER_START_TIMEOUT_S = 5.0
-# uvicorn's own default (None) waits forever for existing connections to close
-# on `stop()` -- fatal here, since an MCP client (e.g. OpenCode) holds its `/sse`
-# GET open for the life of its session and may never close it on its own after
-# we deregister. Bound it so `stop()` force-cancels that connection instead of
-# hanging the adapter's cleanup indefinitely.
-SERVER_STOP_TIMEOUT_S = 5
 
-# sse_starlette's EventSourceResponse watches a process-global AppStatus for a
-# shutdown signal, closing every open SSE stream right after its headers once
-# latched -- from either of two sources: our own signal handler (neutralized
-# by EmbeddedUvicornServer.capture_signals below), or *any other*
-# uvicorn.Server anywhere in this process whose handle_exit() ever fires,
-# since AppStatus.should_exit is a bare class attribute with no notion of
-# "which server." The second case is real: a Windows CI hang traced to
-# exactly this, a live SSE connection closing right after its headers with no
-# code of ours involved. LocalMCPServer.stop() already forces its own socket
-# closed and cancels its serve task directly, so it never needed
-# sse_starlette's automatic drain-on-shutdown; disabling it here removes the
-# dependency on that global entirely. Process-wide and one-time by nature
-# (AppStatus has no per-instance scope), hence a module-level call rather than
-# something threaded through LocalMCPServer's API.
-#
-# Cost of that global scope: any *other* sse_starlette consumer in the same
-# process -- e.g. the A2A gateway's own message:stream responses
-# (src/band/integrations/a2a/gateway/server.py) -- loses this same
-# cooperative-drain signal too, permanently, the moment this module is
-# imported anywhere in the process. That server's own uvicorn.Config sets
-# timeout_graceful_shutdown precisely so its stop() still bounds how long it
-# waits on a live stream, rather than relying on the now-disabled signal.
-AppStatus.disable_automatic_graceful_drain()
+# The process-global sse_starlette shutdown-drain footgun (see
+# band.integrations.uvicorn_server's docstring) is disabled by importing
+# that module above, not here -- a Windows CI hang was traced to exactly
+# this before that fix existed.
 
 
 class EmbeddedUvicornServer(uvicorn.Server):
     """A uvicorn server that leaves process signal handling to its host.
 
-    uvicorn's ``serve()`` captures SIGINT/SIGTERM for itself -- fine for a
-    standalone process, but this server is embedded in a host that may run
-    several servers over its lifetime and already owns its own signal
-    handling. It's also the other half of the sse_starlette bug documented at
-    the ``AppStatus.disable_automatic_graceful_drain()`` call above: capturing
-    signals here would let sse_starlette latch its process-global shutdown
-    flag through *this* server's handler too. Shutdown is driven
-    programmatically instead, via ``should_exit`` (see ``LocalMCPServer.stop``).
+    uvicorn's ``serve()`` captures SIGINT/SIGTERM by default -- wrong for a
+    server embedded in a host that already owns signal handling, and it's
+    the other half of the sse_starlette footgun (see uvicorn_server's
+    docstring): capturing signals here would let sse_starlette latch its
+    shutdown flag through this server's handler too. Shutdown goes through
+    ``should_exit`` instead (see ``LocalMCPServer.stop``).
     """
 
     @contextmanager
@@ -200,9 +173,8 @@ class LocalMCPServer:
                 return
 
             reserved_socket, port = self._reserve_socket()
-            # Tracked immediately, before anything below can raise: `stop()`'s
-            # cleanup closes `self._socket` unconditionally, so a failure in
-            # engine/app/uvicorn construction still gets the socket closed
+            # Tracked immediately: stop()'s cleanup closes self._socket
+            # unconditionally, so a failure below still gets it closed
             # instead of leaking a bound-and-listening fd.
             self._socket = reserved_socket
             self._port = port
@@ -238,7 +210,9 @@ class LocalMCPServer:
                 self._uvicorn_server = uvicorn_server
                 self._serve_task = serve_task
 
-                await self._wait_until_started()
+                await wait_until_started(
+                    uvicorn_server, serve_task, timeout_s=SERVER_START_TIMEOUT_S
+                )
             except Exception:
                 await self._stop_locked()
                 raise
@@ -259,9 +233,9 @@ class LocalMCPServer:
     async def _stop_locked(self) -> None:
         """The actual teardown, run only while ``_lifecycle_lock`` is held.
 
-        Cleanup lives in ``finally``: the previous version's bare ``await
-        self._serve_task`` re-raised past the socket-close/state-reset code
-        below it whenever the serve task crashed with anything but
+        Cleanup lives in ``finally`` -- a bare ``await self._serve_task``
+        outside one would re-raise past the socket-close/state-reset code
+        below it if the serve task crashed with anything but
         ``CancelledError``, leaking the socket and leaving stale state for
         the next ``start()``.
         """
@@ -288,11 +262,10 @@ class LocalMCPServer:
     def _build_app(self, mcp: FastMCP) -> Starlette:
         """Mount the engine's SSE + streamable-HTTP routes onto one host app.
 
-        ``streamable_http_app()`` lazily creates ``mcp.session_manager`` and
-        returns its own Starlette app whose lifespan runs it -- but a mounted
-        sub-app's lifespan is never invoked by the ASGI server, only the
-        top-level app's is. So the host lifespan below enters
-        ``session_manager.run()`` itself (verified by the step-1 spike).
+        ``streamable_http_app()`` lazily creates ``mcp.session_manager``, but
+        a mounted sub-app's lifespan is never invoked by the ASGI server --
+        only the top-level app's is. So the host lifespan below enters
+        ``session_manager.run()`` itself.
         """
         sse_routes = list(mcp.sse_app().routes)
         http_routes = list(mcp.streamable_http_app().routes)
@@ -322,11 +295,10 @@ class LocalMCPServer:
             port = reserved_socket.getsockname()[1]
             return _listen(reserved_socket), port
 
-        # Scan the range from a random starting offset (wrapping around), not
-        # first-fit from port_min: first-fit hands a new server the port a
-        # just-stopped sibling freed moments ago, and that port's previous
-        # consumers (e.g. an MCP client subprocess still winding down) keep
-        # sending stale session traffic that wedges the new server's transport.
+        # Random starting offset, not first-fit from port_min: first-fit
+        # reuses the port a just-stopped sibling freed, and that port's old
+        # consumers (an MCP client subprocess still winding down) keep
+        # sending stale traffic that wedges the new server's transport.
         last_error: OSError | None = None
         span = self._port_max - self._port_min + 1
         start = random.randrange(span)
@@ -345,15 +317,3 @@ class LocalMCPServer:
             "Could not find a free localhost MCP port in range "
             f"{self._port_min}-{self._port_max}"
         ) from last_error
-
-    async def _wait_until_started(self) -> None:
-        if self._serve_task is None or self._uvicorn_server is None:
-            raise RuntimeError("Local MCP server task not initialized")
-
-        deadline = asyncio.get_running_loop().time() + SERVER_START_TIMEOUT_S
-        while not self._uvicorn_server.started:
-            if self._serve_task.done():
-                await self._serve_task
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("Timed out waiting for local MCP server startup")
-            await asyncio.sleep(0.05)

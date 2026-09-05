@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from uuid import uuid4
 
@@ -17,16 +17,9 @@ from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
 
-# Side effect, not used directly: importing this module disables
-# sse_starlette's automatic graceful drain process-wide (see its own
-# AppStatus.disable_automatic_graceful_drain() call) -- the exact real-world
-# coexistence (an ACP/opencode backend in the same process as this gateway)
-# that test_stop_returns_promptly_with_a_still_open_message_stream guards
-# against. Imported explicitly so the test is deterministic regardless of
-# whether some other test file happened to import it first.
-import band.integrations.mcp.local_server  # noqa: F401
 from band.integrations.a2a.gateway.server import SERVER_STOP_TIMEOUT_S, GatewayServer
 from tests.integrations.a2a.gateway.helpers import make_peer
+from tests.lifecycle import elapsed, held_open, running
 
 
 class FakeExecutor(AgentExecutor):
@@ -50,13 +43,17 @@ class FakeExecutor(AgentExecutor):
         raise NotImplementedError
 
 
-def build_server() -> GatewayServer:
+def build_server(
+    *,
+    port: int = 10000,
+    executor_factory: Callable[[str], AgentExecutor] | None = None,
+) -> GatewayServer:
     peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
     return GatewayServer(
         peers={"weather-agent": peer},
-        gateway_url="http://localhost:10000",
-        port=10000,
-        executor_factory=lambda _slug: FakeExecutor(),
+        gateway_url=f"http://localhost:{port}",
+        port=port,
+        executor_factory=executor_factory or (lambda _slug: FakeExecutor()),
     )
 
 
@@ -180,6 +177,79 @@ async def test_jsonrpc_method_errors_are_upstream_owned(
 
     assert response.status_code == 200
     assert response.json()["error"]["code"] == -32601
+
+
+async def test_malformed_json_body_falls_through_to_upstream_dispatch(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    """A body ``request.json()`` can't parse degrades ``method`` to ``None``,
+    which skips the closed-method guard entirely -- the upstream dispatcher
+    owns reporting the parse error, same as any other non-blocked method."""
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0", "Content-Type": "application/json"},
+        content=b"{not valid json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32700
+
+
+async def test_non_scalar_request_id_is_normalized_to_null(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": [1, 2, 3],
+            "method": "ListTasks",
+            "params": {},
+        },
+    )
+
+    body = response.json()
+    assert body["id"] is None, "a non-str/int id must not be echoed back verbatim"
+    assert body["error"]["code"] == -32601
+
+
+async def test_send_streaming_message_runs_through_official_handler(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0"},
+        json={
+            "jsonrpc": "2.0",
+            "id": "request-1",
+            "method": "SendStreamingMessage",
+            "params": {
+                "message": {
+                    "role": "ROLE_USER",
+                    "messageId": "message-1",
+                    "parts": [{"text": "Hello"}],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+
+@pytest.mark.parametrize("method", ["GetTask", "CancelTask"])
+async def test_task_methods_without_id_are_rejected_by_upstream_handler(
+    gateway_client: httpx.AsyncClient, method: str
+) -> None:
+    response = await gateway_client.post(
+        "/agents/weather-agent",
+        headers={"A2A-Version": "1.0"},
+        json={"jsonrpc": "2.0", "id": "request-1", "method": method, "params": {}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32602
 
 
 async def test_jsonrpc_send_runs_through_official_handler_and_executor(
@@ -337,6 +407,88 @@ async def test_v03_jsonrpc_stream_accepts_legacy_payload(
     assert "text/event-stream" in response.headers["content-type"]
 
 
+async def test_start_returns_only_once_the_server_is_listening() -> None:
+    """A caller dialing in right after ``on_started()`` returns (e.g. a real
+    A2A client, or one of the E2E smokes) must not race a socket that isn't
+    accepting connections yet."""
+    async with running(build_server(port=0)) as server:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"http://127.0.0.1:{server.bound_port}/peers")
+        assert response.status_code == 200
+
+
+class DelayedTwoStepExecutor(AgentExecutor):
+    """Task, then a working update, then (after a pause) completion -- three
+    distinct SSE events, so a stream cut short is distinguishable from a
+    healthy one."""
+
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        if context.message is None:
+            raise ValueError("A2A request is missing its message")
+        task = new_task_from_user_message(context.message)
+        await event_queue.enqueue_event(task)
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task.id,
+                context_id=task.context_id,
+                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+            )
+        )
+        await asyncio.sleep(0.3)
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=task.id,
+                context_id=task.context_id,
+                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+            )
+        )
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise NotImplementedError
+
+
+async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> None:
+    """Regression: a second GatewayServer's live stream, opened only after a
+    first one has stopped in the same process, must still deliver every
+    event."""
+    async with running(build_server(port=0)) as first:
+        port1 = first.bound_port
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"http://127.0.0.1:{port1}/agents/weather-agent/message:stream",
+                headers={"A2A-Version": "1.0"},
+                json=hello_message_body(),
+            ) as response:
+                async for _ in response.aiter_bytes():
+                    pass
+
+    second = GatewayServer(
+        peers={"other-agent": make_peer("uuid-other", "Other Agent", "")},
+        gateway_url="http://localhost:0",
+        port=0,
+        executor_factory=lambda _slug: DelayedTwoStepExecutor(),
+    )
+    async with running(second):
+        port2 = second.bound_port
+        events: list[str] = []
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"http://127.0.0.1:{port2}/agents/other-agent/message:stream",
+                headers={"A2A-Version": "1.0"},
+                json=hello_message_body(),
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        events.append(line)
+
+        assert len(events) >= 3, (
+            f"got {len(events)} events, expected 3 (task, working, completed) -- "
+            "the second server's stream was cut short by the first server's shutdown"
+        )
+
+
 class NeverFinishingExecutor(AgentExecutor):
     """Enqueues one event, then never returns -- holding the SSE response
     open indefinitely, the way a real long-running agent task would."""
@@ -357,71 +509,43 @@ class NeverFinishingExecutor(AgentExecutor):
 
 @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
 async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
-    """Regression: sse_starlette's cooperative shutdown drain is a process-
-    global switch that band.integrations.mcp.local_server permanently
-    disables the moment it's imported anywhere in the process -- a real
-    coexistence scenario (an ACP/opencode backend sharing the process with
-    this gateway). A live message:stream connection then has no other way
-    to end on its own, so stop() must bound its wait via
-    timeout_graceful_shutdown instead of hanging forever.
+    """Regression: disabling sse_starlette's drain means a live
+    message:stream connection has no other way to end -- stop() must bound
+    its wait via timeout_graceful_shutdown instead of hanging forever.
 
-    Measures wall-clock time around a bare ``await server.stop()`` (no
-    wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
-    outside and mask a real hang as a false pass) -- same rationale as
-    LocalMCPServer's own equivalent regression test.
+    Measures wall-clock time around a bare ``server.stop()`` (wrapping it
+    in ``asyncio.wait_for`` would cancel it externally and mask a real hang).
     """
-    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
-    server = GatewayServer(
-        peers={"weather-agent": peer},
-        gateway_url="http://localhost:0",
-        port=0,
-        executor_factory=lambda _slug: NeverFinishingExecutor(),
+    server = build_server(
+        port=0, executor_factory=lambda _slug: NeverFinishingExecutor()
     )
-    await server.start()
-    # start() doesn't wait for uvicorn's own startup phase to finish -- it
-    # only schedules serve() as a background task. Poll for it directly
-    # since GatewayServer exposes no readiness signal of its own.
-    for _ in range(50):
-        if server._uvicorn.started:
-            break
-        await asyncio.sleep(0.05)
-    port = server._uvicorn.servers[0].sockets[0].getsockname()[1]
+    async with running(server):
+        port = server.bound_port
 
-    connection_ready = asyncio.Event()
+        async def connect(ready: asyncio.Event) -> None:
+            with suppress(Exception):
+                # timeout=None: httpx's default 5s read timeout would otherwise
+                # give up waiting for the next chunk and disconnect on its own
+                # around the same mark as SERVER_STOP_TIMEOUT_S -- masking a
+                # real server-side hang as a false pass, since the connection
+                # would end for the wrong reason (a bored client) rather than
+                # proving stop() itself is bounded.
+                async with (
+                    httpx.AsyncClient(timeout=None) as client,
+                    client.stream(
+                        "POST",
+                        f"http://127.0.0.1:{port}/agents/weather-agent/message:stream",
+                        headers={"A2A-Version": "1.0"},
+                        json=hello_message_body(),
+                    ) as response,
+                ):
+                    async for _ in response.aiter_bytes():
+                        ready.set()
 
-    async def hold_connection_open() -> None:
-        with suppress(Exception):
-            # timeout=None: httpx's default 5s read timeout would otherwise
-            # give up waiting for the next chunk and disconnect on its own
-            # around the same mark as SERVER_STOP_TIMEOUT_S -- masking a real
-            # server-side hang as a false pass, since the connection would
-            # end for the wrong reason (a bored client) rather than proving
-            # stop() itself is bounded.
-            async with (
-                httpx.AsyncClient(timeout=None) as client,
-                client.stream(
-                    "POST",
-                    f"http://127.0.0.1:{port}/agents/weather-agent/message:stream",
-                    headers={"A2A-Version": "1.0"},
-                    json=hello_message_body(),
-                ) as response,
-            ):
-                async for _ in response.aiter_bytes():
-                    connection_ready.set()
+        async with held_open(connect):
+            stop_elapsed = await elapsed(server.stop())
 
-    holder = asyncio.create_task(hold_connection_open())
-    try:
-        await asyncio.wait_for(connection_ready.wait(), timeout=5.0)
-
-        started_at = asyncio.get_running_loop().time()
-        await server.stop()
-        elapsed = asyncio.get_running_loop().time() - started_at
-
-        assert elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
-            f"stop() took {elapsed:.1f}s -- graceful shutdown is not "
+        assert stop_elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
+            f"stop() took {stop_elapsed:.1f}s -- graceful shutdown is not "
             "bounded by SERVER_STOP_TIMEOUT_S"
         )
-    finally:
-        holder.cancel()
-        with suppress(asyncio.CancelledError):
-            await holder

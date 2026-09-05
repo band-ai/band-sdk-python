@@ -15,7 +15,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
-from sse_starlette.sse import AppStatus
 
 from band.core.exceptions import BandToolError
 from band.integrations.mcp.engine import (
@@ -31,6 +30,8 @@ from band.integrations.mcp.local_server import (
 )
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools
+
+from tests.lifecycle import elapsed, held_open, running
 
 
 class EchoInput(BaseModel):
@@ -195,31 +196,6 @@ class TestLocalMcpServer:
         )
         assert server._host == "0.0.0.0"
 
-    def test_disables_sse_starlette_automatic_graceful_drain(self) -> None:
-        """Regression, traced live on Windows CI: sse_starlette's
-        AppStatus.should_exit is a bare process-global class attribute with
-        no notion of "which server" -- ANY OTHER uvicorn.Server's signal
-        handler firing handle_exit() anywhere in the process (not just
-        ours) used to latch it, closing every subsequent SSE response --
-        including a fresh, healthy LocalMCPServer's that never touched that
-        other server -- right after its headers. Importing local_server
-        must disable the automatic drain so handle_exit() (the real
-        2-argument signal-handler call, not our own) becomes a no-op for
-        this flag; original_handler is swapped out for the duration since
-        it expects a bound Server instance, not this direct call.
-        """
-        assert AppStatus.enable_automatic_graceful_drain is False
-
-        original_should_exit = AppStatus.should_exit
-        original_handler = AppStatus.original_handler
-        AppStatus.original_handler = None
-        try:
-            AppStatus.handle_exit(0, None)
-            assert AppStatus.should_exit is False
-        finally:
-            AppStatus.should_exit = original_should_exit
-            AppStatus.original_handler = original_handler
-
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
         server = LocalMCPServer(
@@ -229,8 +205,7 @@ class TestLocalMcpServer:
             port_max=0,
         )
 
-        await server.start()
-        try:
+        async with running(server):
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
             async with sse_client(server.url) as (read_stream, write_stream):
@@ -238,27 +213,22 @@ class TestLocalMcpServer:
                     await session.initialize()
                     await _session_lists_only_echo(session)
                     await _call_echo(session, "hello")
-        finally:
-            await server.stop()
 
     @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
     @pytest.mark.asyncio
     async def test_stop_returns_promptly_with_a_still_open_sse_connection(
         self,
     ) -> None:
-        """Regression: an MCP client (e.g. OpenCode) holds its `/sse` GET open
-        for the life of its own session and may never close it after we ask
-        it to deregister. uvicorn's own graceful-shutdown wait is unbounded by
-        default, so ``stop()`` used to hang forever waiting for a connection
-        that never closes on its own; it must now force it closed instead.
+        """Regression: an MCP client (e.g. OpenCode) holds its `/sse` GET
+        open for the life of its session and may never close it -- stop()
+        must force it closed rather than hang on uvicorn's unbounded default
+        graceful-shutdown wait.
 
-        Measures wall-clock time around a bare ``await server.stop()`` (no
-        wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
-        outside and let its own ``except CancelledError`` swallow that
-        cancellation -- masking a real hang as a false pass). The
-        ``pytest.mark.timeout`` above is the sole backstop, matching how the
-        live baseline run actually surfaced this hang (pytest-timeout, not an
-        internal asyncio timeout).
+        Measures wall-clock time around a bare ``server.stop()`` (wrapping
+        it in ``asyncio.wait_for`` would cancel it externally and mask a
+        real hang). ``pytest.mark.timeout`` above is the backstop, matching
+        how this hang is actually caught (pytest-timeout, not an asyncio
+        timeout).
         """
         server = LocalMCPServer(
             name="test-local-mcp-stop",
@@ -266,34 +236,23 @@ class TestLocalMcpServer:
             port_min=0,
             port_max=0,
         )
-        await server.start()
+        async with running(server):
 
-        connection_ready = asyncio.Event()
+            async def connect(ready: asyncio.Event) -> None:
+                with suppress(Exception):
+                    async with sse_client(server.url) as (read_stream, write_stream):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            await session.initialize()
+                            ready.set()
+                            await asyncio.sleep(60)  # never closes on its own
 
-        async def hold_connection_open() -> None:
-            with suppress(Exception):
-                async with sse_client(server.url) as (read_stream, write_stream):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        connection_ready.set()
-                        await asyncio.sleep(60)  # never closes on its own
+            async with held_open(connect):
+                stop_elapsed = await elapsed(server.stop())
 
-        holder = asyncio.create_task(hold_connection_open())
-        try:
-            await asyncio.wait_for(connection_ready.wait(), timeout=5.0)
-
-            started_at = asyncio.get_running_loop().time()
-            await server.stop()
-            elapsed = asyncio.get_running_loop().time() - started_at
-
-            assert elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
-                f"stop() took {elapsed:.1f}s -- graceful shutdown is not "
+            assert stop_elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
+                f"stop() took {stop_elapsed:.1f}s -- graceful shutdown is not "
                 "bounded by SERVER_STOP_TIMEOUT_S"
             )
-        finally:
-            holder.cancel()
-            with suppress(asyncio.CancelledError):
-                await holder
 
     # 30s default barely fits on GitHub Actions Python 3.12 runners — the
     # streamable-HTTP loopback initialization spends most of that on uvicorn
@@ -309,8 +268,7 @@ class TestLocalMcpServer:
             port_max=0,
         )
 
-        await server.start()
-        try:
+        async with running(server):
             assert server.http_url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
             async with streamablehttp_client(server.http_url) as (
@@ -322,8 +280,6 @@ class TestLocalMcpServer:
                     await session.initialize()
                     await _session_lists_only_echo(session)
                     await _call_echo(session, "hello")
-        finally:
-            await server.stop()
 
     @pytest.mark.asyncio
     async def test_stop_cleans_up_state_even_if_serve_task_crashed(self) -> None:
@@ -375,11 +331,10 @@ class TestLocalMcpServer:
     async def test_start_forwards_real_host_to_build_engine(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Regression (found live via the Letta lane): build_engine must be
-        told the real bind host, or FastMCP wrongly assumes loopback and
-        locks DNS-rebinding protection to 127.0.0.1/localhost only -- even
-        for a server explicitly bound to a non-loopback host for a Docker
-        callback (see LocalMCPServer's own class docstring)."""
+        """Regression: build_engine must be told the real bind host, or
+        FastMCP wrongly assumes loopback and locks DNS-rebinding protection
+        to 127.0.0.1/localhost only -- even for a non-loopback Docker-
+        callback bind (see LocalMCPServer's class docstring)."""
         import band.integrations.mcp.local_server as local_server_mod
 
         seen_hosts: list[str] = []
@@ -413,10 +368,8 @@ class TestLocalMcpServer:
             port_min=0,
             port_max=0,
         )
-        try:
-            await server.start()
-        finally:
-            await server.stop()
+        async with running(server):
+            pass
 
         assert seen_hosts == ["0.0.0.0"]
 
@@ -497,8 +450,7 @@ class TestLocalMcpServer:
 
         await server.start()
         await server.stop()
-        await server.start()
-        try:
+        async with running(server):
             async with streamablehttp_client(server.http_url) as (
                 read_stream,
                 write_stream,
@@ -507,5 +459,3 @@ class TestLocalMcpServer:
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     await _call_echo(session, "hi")
-        finally:
-            await server.stop()

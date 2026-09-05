@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -21,32 +20,29 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
+from band.integrations.uvicorn_server import (
+    SERVER_START_TIMEOUT_S,
+    SERVER_STOP_TIMEOUT_S,
+    ManagedUvicornServer,
+)
 from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 
 ExecutorFactory = Callable[[str], AgentExecutor]
 
-# uvicorn's own default (None) waits forever for existing connections to close
-# on stop() -- and a live message:stream SSE response has no other way to end
-# on its own. sse_starlette normally closes it cooperatively on shutdown, but
-# that mechanism is a process-global switch any co-located
-# band.integrations.mcp.local_server permanently disables (see that module's
-# AppStatus.disable_automatic_graceful_drain() call) -- so this bound is the
-# only thing that keeps stop() from hanging once that happens.
-SERVER_STOP_TIMEOUT_S = 5
+# sse_starlette's shutdown-drain footgun (see uvicorn_server's docstring)
+# is disabled by importing that module, not here.
 
 # The REST endpoints the gateway serves per peer: the messaging binding and
 # the compat card. The upstream factory also returns task read/cancel/list
 # and push-config routes — an unauthenticated window into past conversations.
 MESSAGING_REST_SUFFIXES = ("/message:send", "/message:stream", "/card")
 
-# The JSON-RPC methods the gateway serves (1.0 names and their v0.3-compat
-# spellings). Sends create work; the per-task operations are gated by the
-# unguessable task UUID the server minted for the caller. Everything else
-# stays closed: with no auth layer every caller shares one identity, so
-# enumeration (ListTasks) and the push-config/extended-card methods would
-# disclose or disrupt other callers' conversations.
+# JSON-RPC methods the gateway serves (1.0 + v0.3-compat spellings). Sends
+# create work; per-task ops are gated by the unguessable task UUID. Everything
+# else stays closed -- with no auth layer, enumeration/push-config methods
+# would disclose or disrupt other callers' conversations.
 ALLOWED_JSONRPC_METHODS = frozenset(
     {
         "SendMessage",
@@ -78,8 +74,7 @@ class GatewayServer:
         self.port = port
         self.executor_factory = executor_factory
         self._app: Starlette | None = None
-        self._uvicorn: Any | None = None
-        self._server_task: asyncio.Task[Any] | None = None
+        self._runtime: ManagedUvicornServer | None = None
 
     def _agent_card(self, slug: str, peer: Peer) -> AgentCard:
         rpc_url = f"{self.gateway_url}/agents/{slug}"
@@ -193,10 +188,9 @@ class GatewayServer:
     ) -> list[BaseRoute]:
         """The REST binding, reduced to the endpoints this gateway serves.
 
-        Beyond the unauthenticated task routes, the upstream factory ends with
-        a multi-tenant catch-all ``Mount("/{tenant}")``; peers here are
-        namespaced by path, and the first alias's mount would shadow every
-        later alias's flat routes.
+        The upstream factory also returns a catch-all ``Mount("/{tenant}")``;
+        since peers are namespaced by path here, the first alias's mount
+        would shadow every later alias's routes.
         """
         return [
             route
@@ -237,38 +231,33 @@ class GatewayServer:
         ]
         return JSONResponse({"peers": peers, "count": len(peers)})
 
-    async def start(self) -> None:
-        import uvicorn
+    @property
+    def bound_port(self) -> int:
+        """The actual listening port -- resolves ``port=0`` to whatever the
+        OS assigned."""
+        if self._runtime is None:
+            raise RuntimeError("A2A Gateway server has not started")
+        return self._runtime.bound_port
 
+    async def start(self) -> None:
         self._app = self._build_app()
-        self._uvicorn = uvicorn.Server(
-            uvicorn.Config(
-                self._app,
-                host="0.0.0.0",
-                port=self.port,
-                log_level="warning",
-                timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
-            )
+        self._runtime = ManagedUvicornServer(
+            self._app,
+            host="0.0.0.0",
+            port=self.port,
+            start_timeout_s=SERVER_START_TIMEOUT_S,
+            stop_timeout_s=SERVER_STOP_TIMEOUT_S,
         )
-        self._server_task = asyncio.create_task(self._uvicorn.serve())
+        await self._runtime.start()
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
-            self.port,
+            self.bound_port,
             len(self.peers),
         )
 
     async def stop(self) -> None:
-        if self._uvicorn is None or self._server_task is None:
+        if self._runtime is None:
             return
-        # Ask uvicorn to exit rather than cancelling serve(): cancellation
-        # skips its shutdown phase and leaks the listening socket.
-        self._uvicorn.should_exit = True
-        try:
-            await self._server_task
-        except asyncio.CancelledError:
-            raise
-        except BaseException:  # uvicorn raises SystemExit on startup failure
-            logger.exception("A2A Gateway server exited with error")
-        self._uvicorn = None
-        self._server_task = None
+        await self._runtime.stop()
+        self._runtime = None
         logger.info("A2A Gateway server stopped")

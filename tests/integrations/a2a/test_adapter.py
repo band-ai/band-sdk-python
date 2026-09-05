@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -22,6 +24,7 @@ from a2a.types import (
 
 from band.core.types import PlatformMessage
 from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
+from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
 from band.testing import FakeAgentTools
 
 
@@ -99,6 +102,25 @@ async def stream(*events: StreamResponse):
         yield event
 
 
+@asynccontextmanager
+async def started_adapter(
+    adapter: A2AAdapter,
+) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    """Start ``adapter`` against a patched ``ClientFactory`` and clean it up
+    afterward -- yields ``(client, factory_type)`` so a test states only its
+    own setup and assertions, not the patch/cleanup dance."""
+    client = MagicMock()
+    with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
+        factory = factory_type.return_value
+        factory.create_from_url = AsyncMock(return_value=client)
+        await adapter.on_started("Agent", "Description")
+    try:
+        yield client, factory_type
+    finally:
+        client.close = AsyncMock()
+        await adapter.cleanup_all()
+
+
 class TestA2AAuth:
     def test_to_headers_combines_authentication_methods(self) -> None:
         auth = A2AAuth(
@@ -121,26 +143,31 @@ class TestA2AAdapterStartup:
             remote_url="http://localhost:10000",
             auth=A2AAuth(api_key="key"),
         )
-        client = MagicMock()
 
-        with patch("band.integrations.a2a.adapter.ClientFactory") as factory_type:
-            factory = factory_type.return_value
-            factory.create_from_url = AsyncMock(return_value=client)
+        async with started_adapter(adapter) as (client, factory_type):
+            assert adapter._client is client
+            config = factory_type.call_args.args[0]
+            assert config.streaming is True
+            assert adapter._http_client is not None
+            assert adapter._http_client.headers["X-API-Key"] == "key"
+            assert config.httpx_client is adapter._http_client, (
+                "the factory must receive the adapter's own client — this "
+                "identity is what carries auth to card resolution and every "
+                "A2A request"
+            )
 
-            await adapter.on_started("Agent", "Description")
+    @pytest.mark.asyncio
+    async def test_owned_http_client_has_a_generous_bounded_read_timeout(self) -> None:
+        """A real remote turn (a live LLM call, a tool loop) routinely leaves
+        several seconds of silence between SSE events -- httpx's 5s default
+        read timeout would misreport that as a dead connection. The bound
+        must still be finite, though, so a peer that hangs after accepting
+        the connection fails the turn instead of blocking the room forever."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
 
-        assert adapter._client is client
-        config = factory_type.call_args.args[0]
-        assert config.streaming is True
-        assert adapter._http_client is not None
-        assert adapter._http_client.headers["X-API-Key"] == "key"
-        assert config.httpx_client is adapter._http_client, (
-            "the factory must receive the adapter's own client — this identity "
-            "is what carries auth to card resolution and every A2A request"
-        )
-
-        client.close = AsyncMock()
-        await adapter.cleanup_all()
+        async with started_adapter(adapter):
+            assert adapter._http_client is not None
+            assert adapter._http_client.timeout.read == _SSE_READ_TIMEOUT_S
 
 
 class TestA2AAdapterMessageFlow:
@@ -282,6 +309,32 @@ class TestA2AAdapterMessageFlow:
         assert adapter._tasks == {}, "next turn must start a fresh task"
         assert adapter._task_cache == {}
         assert adapter._task_senders == {}
+
+    @pytest.mark.asyncio
+    async def test_auth_required_task_is_posted_as_error_event(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+
+        await adapter._handle_event(
+            task_event(
+                make_task(
+                    TaskState.TASK_STATE_AUTH_REQUIRED,
+                    status_message="Please authenticate",
+                )
+            ),
+            tools,
+            "room-123",
+            "user-456",
+            "Test User",
+        )
+
+        error_events = [
+            event for event in tools.events_sent if event["message_type"] == "error"
+        ]
+        assert error_events, "an auth-required task must produce an error event"
+        assert error_events[-1]["content"] == "Please authenticate"
+        assert error_events[-1]["metadata"]["a2a_state"] == "TASK_STATE_AUTH_REQUIRED"
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(
@@ -438,6 +491,28 @@ class TestA2AAdapterShutdown:
         await adapter.cleanup_all()
 
         assert http_client.is_closed, "owned httpx client must be closed"
+        assert adapter._client is None
+        assert adapter._http_client is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_closes_http_transport_even_if_client_close_fails(
+        self,
+    ) -> None:
+        """A broken remote client must not leak the owned httpx transport."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.close = AsyncMock(
+            side_effect=RuntimeError("client close failed")
+        )
+        adapter._http_client = httpx.AsyncClient()
+        http_client = adapter._http_client
+
+        with pytest.raises(RuntimeError, match="client close failed"):
+            await adapter.cleanup_all()
+
+        assert http_client.is_closed, (
+            "http transport must close even if client.close() raises"
+        )
         assert adapter._client is None
         assert adapter._http_client is None
 

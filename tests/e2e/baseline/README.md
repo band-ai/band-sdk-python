@@ -239,7 +239,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
-| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_opencode.py`, `test_parlant.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_opencode.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
