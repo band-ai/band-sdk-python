@@ -16,9 +16,7 @@ from a2a.helpers import new_task_from_user_message
 from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
-from sse_starlette.sse import AppStatus
 
-import band.integrations.a2a.gateway.server as gateway_server_module
 from band.integrations.a2a.gateway.server import SERVER_STOP_TIMEOUT_S, GatewayServer
 from tests.integrations.a2a.gateway.helpers import make_peer
 
@@ -418,56 +416,11 @@ async def test_start_returns_only_once_the_server_is_listening() -> None:
 
     await server.start()
     try:
-        assert server._uvicorn.started
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"http://127.0.0.1:{server.bound_port}/peers")
+        assert response.status_code == 200
     finally:
         await server.stop()
-
-
-async def test_start_cleans_up_when_startup_wait_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed startup wait must still tell uvicorn to exit and clear
-    server state, not leave a listening socket and stray task behind."""
-
-    async def failing_wait_until_started(*args: object, **kwargs: object) -> None:
-        raise TimeoutError("simulated startup failure")
-
-    monkeypatch.setattr(
-        gateway_server_module, "wait_until_started", failing_wait_until_started
-    )
-
-    peer = make_peer("uuid-weather", "Weather Agent", "Gets weather info")
-    server = GatewayServer(
-        peers={"weather-agent": peer},
-        gateway_url="http://localhost:0",
-        port=0,
-        executor_factory=lambda _slug: FakeExecutor(),
-    )
-
-    with pytest.raises(TimeoutError, match="simulated startup failure"):
-        await server.start()
-
-    assert server._uvicorn is None
-    assert server._server_task is None
-
-
-def test_disables_sse_starlette_automatic_graceful_drain() -> None:
-    """AppStatus.should_exit is process-global with no notion of "which
-    server" -- a GatewayServer.stop() sets its own uvicorn.Server.should_exit
-    directly, and sse_starlette's shutdown watcher promotes that to the
-    global flag, cancelling every later GatewayServer's SSE streams in the
-    same process. Importing this module must disable that."""
-    assert AppStatus.enable_automatic_graceful_drain is False
-
-    original_should_exit = AppStatus.should_exit
-    original_handler = AppStatus.original_handler
-    AppStatus.original_handler = None
-    try:
-        AppStatus.handle_exit(0, None)
-        assert AppStatus.should_exit is False
-    finally:
-        AppStatus.should_exit = original_should_exit
-        AppStatus.original_handler = original_handler
 
 
 class DelayedTwoStepExecutor(AgentExecutor):
@@ -512,7 +465,7 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
         executor_factory=lambda _slug: FakeExecutor(),
     )
     await first.start()
-    port1 = first._uvicorn.servers[0].sockets[0].getsockname()[1]
+    port1 = first.bound_port
     async with httpx.AsyncClient(timeout=None) as client:
         async with client.stream(
             "POST",
@@ -532,7 +485,7 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
     )
     await second.start()
     try:
-        port2 = second._uvicorn.servers[0].sockets[0].getsockname()[1]
+        port2 = second.bound_port
         events: list[str] = []
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
@@ -591,7 +544,7 @@ async def test_stop_returns_promptly_with_a_still_open_message_stream() -> None:
         executor_factory=lambda _slug: NeverFinishingExecutor(),
     )
     await server.start()
-    port = server._uvicorn.servers[0].sockets[0].getsockname()[1]
+    port = server.bound_port
 
     connection_ready = asyncio.Event()
 

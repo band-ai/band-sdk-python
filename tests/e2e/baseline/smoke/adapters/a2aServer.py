@@ -10,10 +10,6 @@ request completes with ``CANNED_REPLY``.
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
-import uvicorn
 from a2a.helpers import get_message_text, new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -32,7 +28,7 @@ from a2a.types import (
 from a2a.utils.constants import PROTOCOL_VERSION_CURRENT
 from starlette.applications import Starlette
 
-from band.integrations.uvicorn_server import wait_until_started
+from band.integrations.uvicorn_server import ManagedUvicornServer
 
 from tests.ports import reserve_port
 
@@ -86,8 +82,7 @@ class A2ACounterparty:
 
     def __init__(self) -> None:
         self.port = reserve_port()
-        self._uvicorn: uvicorn.Server | None = None
-        self._server_task: asyncio.Task[Any] | None = None
+        self._runtime: ManagedUvicornServer | None = None
 
     @property
     def url(self) -> str:
@@ -131,31 +126,17 @@ class A2ACounterparty:
         return Starlette(routes=routes)
 
     async def start(self) -> None:
-        server = uvicorn.Server(
-            uvicorn.Config(
-                self._build_app(),
-                host="127.0.0.1",
-                port=self.port,
-                log_level="warning",
-                timeout_graceful_shutdown=STOP_TIMEOUT_S,
-            )
+        self._runtime = ManagedUvicornServer(
+            self._build_app(),
+            host="127.0.0.1",
+            port=self.port,
+            start_timeout_s=START_TIMEOUT_S,
+            stop_timeout_s=STOP_TIMEOUT_S,
         )
-        server_task = asyncio.create_task(server.serve())
-        self._uvicorn = server
-        self._server_task = server_task
-        await wait_until_started(server, server_task, timeout_s=START_TIMEOUT_S)
+        await self._runtime.start()
 
     async def stop(self) -> None:
-        if self._uvicorn is None or self._server_task is None:
+        if self._runtime is None:
             return
-        # Ask uvicorn to exit rather than cancelling serve(): cancellation
-        # skips its shutdown phase and leaks the listening socket.
-        self._uvicorn.should_exit = True
-        try:
-            await self._server_task
-        except asyncio.CancelledError:
-            raise
-        except BaseException:  # uvicorn raises SystemExit on startup failure
-            pass
-        self._uvicorn = None
-        self._server_task = None
+        await self._runtime.stop()
+        self._runtime = None

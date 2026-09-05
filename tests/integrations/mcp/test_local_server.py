@@ -15,7 +15,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
-from sse_starlette.sse import AppStatus
 
 from band.core.exceptions import BandToolError
 from band.integrations.mcp.engine import (
@@ -194,31 +193,6 @@ class TestLocalMcpServer:
             host="0.0.0.0",
         )
         assert server._host == "0.0.0.0"
-
-    def test_disables_sse_starlette_automatic_graceful_drain(self) -> None:
-        """Regression, traced live on Windows CI: sse_starlette's
-        AppStatus.should_exit is a bare process-global class attribute with
-        no notion of "which server" -- ANY OTHER uvicorn.Server's signal
-        handler firing handle_exit() anywhere in the process (not just
-        ours) used to latch it, closing every subsequent SSE response --
-        including a fresh, healthy LocalMCPServer's that never touched that
-        other server -- right after its headers. Importing local_server
-        must disable the automatic drain so handle_exit() (the real
-        2-argument signal-handler call, not our own) becomes a no-op for
-        this flag; original_handler is swapped out for the duration since
-        it expects a bound Server instance, not this direct call.
-        """
-        assert AppStatus.enable_automatic_graceful_drain is False
-
-        original_should_exit = AppStatus.should_exit
-        original_handler = AppStatus.original_handler
-        AppStatus.original_handler = None
-        try:
-            AppStatus.handle_exit(0, None)
-            assert AppStatus.should_exit is False
-        finally:
-            AppStatus.should_exit = original_should_exit
-            AppStatus.original_handler = original_handler
 
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:

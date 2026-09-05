@@ -23,7 +23,6 @@ from contextlib import asynccontextmanager, contextmanager
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
-from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -54,27 +53,10 @@ SERVER_START_TIMEOUT_S = 5.0
 # hanging the adapter's cleanup indefinitely.
 SERVER_STOP_TIMEOUT_S = 5
 
-# sse_starlette's EventSourceResponse watches a process-global AppStatus for a
-# shutdown signal, closing every open SSE stream right after its headers once
-# latched -- from either of two sources: our own signal handler (neutralized
-# by EmbeddedUvicornServer.capture_signals below), or *any other*
-# uvicorn.Server anywhere in this process whose handle_exit() ever fires,
-# since AppStatus.should_exit is a bare class attribute with no notion of
-# "which server." The second case is real: a Windows CI hang traced to
-# exactly this, a live SSE connection closing right after its headers with no
-# code of ours involved. LocalMCPServer.stop() already forces its own socket
-# closed and cancels its serve task directly, so it never needed
-# sse_starlette's automatic drain-on-shutdown; disabling it here removes the
-# dependency on that global entirely. Process-wide and one-time by nature
-# (AppStatus has no per-instance scope), hence a module-level call rather than
-# something threaded through LocalMCPServer's API.
-#
-# Cost of that global scope: any *other* sse_starlette consumer in the same
-# process loses this same signal too, the moment this module is imported.
-# The A2A gateway (src/band/integrations/a2a/gateway/server.py) hits the
-# identical bug independently and disables this itself; the call here is
-# redundant with that one but harmless (idempotent, process-wide).
-AppStatus.disable_automatic_graceful_drain()
+# The process-global sse_starlette shutdown-drain footgun (see
+# band.integrations.uvicorn_server's docstring) is disabled by importing
+# that module above, not here -- a Windows CI hang was traced to exactly
+# this before that fix existed.
 
 
 class EmbeddedUvicornServer(uvicorn.Server):
@@ -83,11 +65,11 @@ class EmbeddedUvicornServer(uvicorn.Server):
     uvicorn's ``serve()`` captures SIGINT/SIGTERM for itself -- fine for a
     standalone process, but this server is embedded in a host that may run
     several servers over its lifetime and already owns its own signal
-    handling. It's also the other half of the sse_starlette bug documented at
-    the ``AppStatus.disable_automatic_graceful_drain()`` call above: capturing
-    signals here would let sse_starlette latch its process-global shutdown
-    flag through *this* server's handler too. Shutdown is driven
-    programmatically instead, via ``should_exit`` (see ``LocalMCPServer.stop``).
+    handling. It's also the other half of the sse_starlette bug documented in
+    ``band.integrations.uvicorn_server``: capturing signals here would let
+    sse_starlette latch its process-global shutdown flag through *this*
+    server's handler too. Shutdown is driven programmatically instead, via
+    ``should_exit`` (see ``LocalMCPServer.stop``).
     """
 
     @contextmanager

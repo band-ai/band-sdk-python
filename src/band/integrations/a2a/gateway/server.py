@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -16,31 +15,25 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.compat.v0_3.conversions import to_compat_agent_card
 from a2a.utils.constants import PROTOCOL_VERSION_0_3, PROTOCOL_VERSION_CURRENT
-from sse_starlette.sse import AppStatus
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
-from band.integrations.uvicorn_server import wait_until_started
+from band.integrations.uvicorn_server import ManagedUvicornServer
 from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 
 ExecutorFactory = Callable[[str], AgentExecutor]
 
-# sse_starlette's shutdown watcher polls whichever uvicorn.Server owns the
-# process's SIGTERM slot and promotes its should_exit to the process-global
-# AppStatus.should_exit -- so a GatewayServer.stop() (which sets should_exit
-# directly, not via a signal) can poison every later GatewayServer's SSE
-# streams in the same process. band.integrations.mcp.local_server disables
-# this for the same reason; calling it here too avoids depending on that
-# import (idempotent, process-wide).
-AppStatus.disable_automatic_graceful_drain()
+# The process-global sse_starlette shutdown-drain footgun (see
+# band.integrations.uvicorn_server's docstring) is disabled by importing
+# that module above, not here -- ManagedUvicornServer's every caller shares
+# the fix.
 
-# The automatic drain above is disabled, so a live message:stream response
-# has no other way to end on stop() -- uvicorn's own default (None) would
-# wait forever for it to close on its own.
+# A live message:stream response has no other way to end on stop() --
+# uvicorn's own default (None) would wait forever for it to close on its own.
 SERVER_STOP_TIMEOUT_S = 5
 
 # How long start() waits for uvicorn to report ready before giving up. Without
@@ -91,8 +84,7 @@ class GatewayServer:
         self.port = port
         self.executor_factory = executor_factory
         self._app: Starlette | None = None
-        self._uvicorn: Any | None = None
-        self._server_task: asyncio.Task[Any] | None = None
+        self._runtime: ManagedUvicornServer | None = None
 
     def _agent_card(self, slug: str, peer: Peer) -> AgentCard:
         rpc_url = f"{self.gateway_url}/agents/{slug}"
@@ -250,31 +242,24 @@ class GatewayServer:
         ]
         return JSONResponse({"peers": peers, "count": len(peers)})
 
-    async def start(self) -> None:
-        import uvicorn
+    @property
+    def bound_port(self) -> int:
+        """The actual listening port -- resolves ``port=0`` to whatever the
+        OS assigned."""
+        if self._runtime is None:
+            raise RuntimeError("A2A Gateway server has not started")
+        return self._runtime.bound_port
 
+    async def start(self) -> None:
         self._app = self._build_app()
-        server = uvicorn.Server(
-            uvicorn.Config(
-                self._app,
-                host="0.0.0.0",
-                port=self.port,
-                log_level="warning",
-                timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
-            )
+        self._runtime = ManagedUvicornServer(
+            self._app,
+            host="0.0.0.0",
+            port=self.port,
+            start_timeout_s=SERVER_START_TIMEOUT_S,
+            stop_timeout_s=SERVER_STOP_TIMEOUT_S,
         )
-        server_task = asyncio.create_task(server.serve())
-        self._uvicorn = server
-        self._server_task = server_task
-        try:
-            await wait_until_started(
-                server, server_task, timeout_s=SERVER_START_TIMEOUT_S
-            )
-        except BaseException:
-            # A failed/timed-out startup still leaves server_task running and
-            # the socket bound; stop() already unwinds both.
-            await self.stop()
-            raise
+        await self._runtime.start()
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
             self.port,
@@ -282,17 +267,8 @@ class GatewayServer:
         )
 
     async def stop(self) -> None:
-        if self._uvicorn is None or self._server_task is None:
+        if self._runtime is None:
             return
-        # Ask uvicorn to exit rather than cancelling serve(): cancellation
-        # skips its shutdown phase and leaks the listening socket.
-        self._uvicorn.should_exit = True
-        try:
-            await self._server_task
-        except asyncio.CancelledError:
-            raise
-        except BaseException:  # uvicorn raises SystemExit on startup failure
-            logger.exception("A2A Gateway server exited with error")
-        self._uvicorn = None
-        self._server_task = None
+        await self._runtime.stop()
+        self._runtime = None
         logger.info("A2A Gateway server stopped")
