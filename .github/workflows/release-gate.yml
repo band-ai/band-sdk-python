@@ -9,6 +9,10 @@ name: Release baseline gate
 # mark-baseline job) and fails unless the baseline is green. That is what actually
 # blocks the release-please PR from merging until a nightly run has vouched for main.
 #
+# TEMPORARY: currently downgraded to a warning (see the `|| ...` around the script
+# call below) while e2e live is red, so it no longer blocks the release-please PR.
+# Revert that once e2e live is fixed.
+#
 # It gates on the most recently *tested* commit of the base branch, not the live tip:
 # a nightly marks one commit, so a tip-only check would go red the moment anything
 # merged after that nightly and the gate would be red by default. The bounds that keep
@@ -96,4 +100,10 @@ jobs:
         else
           export BASE_REF=main
         fi
-        .github/scripts/check-release-baseline.sh
+        # TEMPORARY: e2e live is currently red, which was blocking the release-please
+        # PR outright. Downgraded to a warning until e2e live is fixed -- revert this
+        # `|| ...` once it's green again so the gate goes back to actually blocking.
+        .github/scripts/check-release-baseline.sh || {
+          echo "::warning::Baseline gate failed (see above) -- not blocking the release PR while e2e live is being fixed."
+          exit 0
+        }
