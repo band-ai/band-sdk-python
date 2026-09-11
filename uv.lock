@@ -595,6 +595,8 @@ bridge-agentcore = [
 ]
 claude-sdk = [
     { name = "claude-agent-sdk" },
+    { name = "mcp", version = "1.28.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai' or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-parlant' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "mcp", version = "1.29.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 codex = [
     { name = "websockets" },
@@ -772,10 +774,10 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'bridge-agentcore'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
-    { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
-    { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
-    { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0,<1" },
+    { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0,<1" },
+    { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0,<1" },
+    { name = "anthropic", marker = "extra == 'dev-parlant'", specifier = ">=0.75.0,<1" },
     { name = "async-lru", specifier = ">=2.3.0" },
     { name = "band-client-rest", specifier = "==0.0.27" },
     { name = "band-sdk-core", specifier = "==2.2.0" },
@@ -827,6 +829,7 @@ requires-dist = [
     { name = "letta-client", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "letta-client", marker = "extra == 'letta'", specifier = ">=0.1.0" },
     { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.28.1,<2" },
+    { name = "mcp", marker = "extra == 'claude-sdk'", specifier = ">=1.28.1,<2" },
     { name = "mcp", marker = "extra == 'desktop'", specifier = ">=1.28.1,<2" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.28.1,<2" },
     { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.28.1,<2" },
