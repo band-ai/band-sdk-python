@@ -71,9 +71,6 @@ pydantic-ai = [
     "openai>=2.0.0",
 ]
 anthropic = [
-    # Ceiling: anthropic 1.0.0 (2026-08-20) migrated the SDK's HTTP layer from
-    # httpx to httpx2 (an API-compatible fork) -- a documented breaking change
-    # per its MIGRATION.md. Capped until that migration is verified here.
     "anthropic>=0.75.0,<1",
 ]
 langgraph = [
@@ -89,10 +86,6 @@ langgraph = [
 ]
 claude_sdk = [
     "claude-agent-sdk>=0.1.81",  # Floor: ResultMessage.errors/api_error_status (used by the failure path). Requires Node.js 20+ and @anthropic-ai/claude-code CLI
-    # Capped like every other mcp consumer here: 2.x drops the lowlevel Server
-    # decorator registration that band.integrations.mcp.engine's FastMCP usage
-    # depends on. Floor pinned to crewai's own transitive pin -- see `desktop`
-    # extra above for the full rationale.
     "mcp>=1.28.1,<2",
 ]
 copilot_sdk = [
@@ -201,8 +194,7 @@ dev = [
     "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=2.18.0",
-    # Include anthropic for testing; capped like the anthropic extra above --
-    # see its comment for the httpx2 breaking-change rationale.
+    # Include anthropic for testing
     "anthropic>=0.75.0,<1",
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.1.81",
@@ -286,8 +278,6 @@ dev-crewai = [
     "pillow>=12.1.1",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no crewai conflict.
-    # Capped like the anthropic extra above -- see its comment for the httpx2
-    # breaking-change rationale.
     "anthropic>=0.75.0,<1",
     # A2A e2e smokes import band.integrations.a2a at module load, no crewai conflict
     "a2a-sdk>=1.1.2,<2",
@@ -318,8 +308,6 @@ dev-parlant = [
     "werkzeug>=3.1.6",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no parlant conflict.
-    # Capped like the anthropic extra above -- see its comment for the httpx2
-    # breaking-change rationale.
     "anthropic>=0.75.0,<1",
     # A2A e2e smokes import band.integrations.a2a at module load, no parlant conflict
     "a2a-sdk>=1.1.2,<2",
