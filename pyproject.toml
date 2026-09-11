@@ -71,7 +71,7 @@ pydantic-ai = [
     "openai>=2.0.0",
 ]
 anthropic = [
-    "anthropic>=0.75.0",
+    "anthropic>=0.75.0,<1",
 ]
 langgraph = [
     "langchain>=1.0.0",
@@ -86,6 +86,7 @@ langgraph = [
 ]
 claude_sdk = [
     "claude-agent-sdk>=0.1.81",  # Floor: ResultMessage.errors/api_error_status (used by the failure path). Requires Node.js 20+ and @anthropic-ai/claude-code CLI
+    "mcp>=1.28.1,<2",
 ]
 copilot_sdk = [
     "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
@@ -194,7 +195,7 @@ dev = [
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=2.18.0",
     # Include anthropic for testing
-    "anthropic>=0.75.0",
+    "anthropic>=0.75.0,<1",
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.1.81",
     # Include copilot_sdk for testing
@@ -277,7 +278,7 @@ dev-crewai = [
     "pillow>=12.1.1",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no crewai conflict.
-    "anthropic>=0.75.0",
+    "anthropic>=0.75.0,<1",
     # A2A e2e smokes import band.integrations.a2a at module load, no crewai conflict
     "a2a-sdk>=1.1.2,<2",
     # Pretty E2E test output
@@ -307,7 +308,7 @@ dev-parlant = [
     "werkzeug>=3.1.6",
     # Anthropic client: the baseline E2E conftest imports it at module load and
     # the LLM judge needs it. A thin client (pydantic <3), so no parlant conflict.
-    "anthropic>=0.75.0",
+    "anthropic>=0.75.0,<1",
     # A2A e2e smokes import band.integrations.a2a at module load, no parlant conflict
     "a2a-sdk>=1.1.2,<2",
     # Pretty E2E test output
