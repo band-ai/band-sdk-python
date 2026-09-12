@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 from band.platform.link import BandLink
 from band.platform.event import (
@@ -22,25 +22,6 @@ from band.client.streaming import (
 from band_sdk_core import AgentTopicKind, AgentTopicStatus
 
 from tests.platform.conftest import cancelled_mid_await
-
-
-@pytest.fixture
-def mock_ws_client():
-    """Mock WebSocketClient for testing."""
-    ws = AsyncMock()
-    ws.__aenter__ = AsyncMock(return_value=ws)
-    ws.__aexit__ = AsyncMock(return_value=None)
-    ws.join_agent_contacts_channel = AsyncMock()
-    ws.leave_agent_contacts_channel = AsyncMock()
-    ws.run_forever = AsyncMock()
-    # joined_topics() is synchronous on the real client; a bare AsyncMock
-    # attribute would make it awaitable instead, which _recover_agent_control
-    # (called from _on_reconnected) would then fail to iterate. Reports
-    # agent_control as already present -- this file's tests aren't about it.
-    ws.joined_topics = MagicMock(
-        return_value=frozenset({AgentTopicKind.Control.topic("agent-123")})
-    )
-    return ws
 
 
 class TestContactSubscription:
@@ -219,7 +200,7 @@ class TestContactTopicRaceAndReconciliation:
 
         topic = AgentTopicKind.Contacts.topic("agent-123")
         assert (
-            link._subscriptions.agent_topic_status(topic)
+            link._subscriptions_manager._subscriptions.agent_topic_status(topic)
             == AgentTopicStatus.NeedsReconciliation
         )
 
