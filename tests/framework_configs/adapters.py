@@ -625,10 +625,10 @@ def _build_codex_config() -> AdapterConfig:
             "config": CodexAdapterConfig(),
         },
         custom_kwargs={
-            "config": CodexAdapterConfig(structured_errors=False),
+            "config": CodexAdapterConfig(stream_plan_events=True),
         },
         custom_expected={
-            "config": CodexAdapterConfig(structured_errors=False),
+            "config": CodexAdapterConfig(stream_plan_events=True),
         },
         has_custom_tools_attr=True,
         custom_tools_attr="_custom_tools",

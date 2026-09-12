@@ -9,6 +9,7 @@ import warnings
 from typing import Any, ClassVar, cast
 
 import httpx
+from band_sdk_core import AgentFailure
 from pydantic import ValidationError
 from typing_extensions import Unpack
 
@@ -24,7 +25,7 @@ except ImportError as e:
     ) from e
 
 from band.core.exceptions import BandConfigError
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -69,6 +70,17 @@ def _image_function_response_parts(
             )
         )
     return parts
+
+
+def _to_agent_failure(e: Exception) -> AgentFailure:
+    """Parse a turn-ending exception into the shared provider-failure shape.
+
+    ``ServerError`` carries an HTTP status and message that a plain
+    exception's text alone does not.
+    """
+    if isinstance(e, ServerError):
+        return AgentFailure("gemini", str(e), e.status, e.message)
+    return AgentFailure("gemini", GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -240,10 +252,12 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         try:
             while True:
                 if tool_rounds >= self.max_tool_rounds:
-                    raise RuntimeError(
+                    message = (
                         f"Exceeded max tool rounds ({self.max_tool_rounds}) "
                         f"in room {room_id}"
                     )
+                    await tools.send_failure(AgentFailure("gemini", message))
+                    raise RuntimeError(message)
 
                 try:
                     response = await self._call_gemini(
@@ -251,7 +265,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                     )
                 except Exception as e:
                     logger.exception("Error calling Gemini: %s", e)
-                    await self._report_error(tools, str(e))
+                    await tools.send_failure(_to_agent_failure(e))
                     raise
 
                 turn_usage = turn_usage + self._usage_from_response(response)
@@ -591,10 +605,3 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             )
 
         return tool_response_parts
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
-            logger.warning("Failed to send error event: %s", e)

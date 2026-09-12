@@ -22,12 +22,13 @@ from band.adapters.letta import (
     RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.integrations.letta.prompts import (
     SEND_EVENT_TOOL_NAMES,
     SEND_MESSAGE_TOOL_NAMES,
 )
 from band.runtime.tools import BandTool
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
     make_assistant_message,
     make_fake_mcp_backend,
@@ -519,18 +520,21 @@ class TestSelfHostedMCPLifecycle:
         mock_client.agents.tools.list.side_effect = ConnectionError("letta hiccup")
 
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            LettaSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="not attached"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         mock_client.agents.messages.create.assert_not_called()
 
     @pytest.mark.asyncio
@@ -765,18 +769,21 @@ class TestSelfHostedMCPLifecycle:
         mock_client.mcp_servers.list.side_effect = ConnectionError("letta down")
 
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            LettaSessionState(),
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="MCP server registration failed"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         mock_client.agents.messages.create.assert_not_called()
 
     @pytest.mark.asyncio

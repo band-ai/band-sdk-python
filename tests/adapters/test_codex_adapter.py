@@ -23,6 +23,10 @@ from band.adapters.codex import (
     CodexAdapterConfig,
     PendingApproval,
 )
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import AgentInput, Emit, HistoryProvider, PlatformMessage
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.integrations.codex.types import (
@@ -30,12 +34,12 @@ from band.integrations.codex.types import (
     CodexItemType,
     CodexSessionState,
     CodexTokenUsage,
-    build_structured_error_metadata,
+    build_agent_failure,
     parse_plan_steps,
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import ToolCallOutcome
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type, reported_failures
 
 
 def make_platform_message(
@@ -52,11 +56,6 @@ def make_platform_message(
         metadata={},
         created_at=datetime.now(),
     )
-
-
-def events_of_type(tools: FakeAgentTools, message_type: str) -> list[dict[str, Any]]:
-    """Events of ``message_type`` captured on ``tools.events_sent``."""
-    return [e for e in tools.events_sent if e["message_type"] == message_type]
 
 
 class ToolSchemaFakeTools(FakeAgentTools):
@@ -987,20 +986,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_reasoning_effort_passed_in_turn_overrides(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
+        fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = CodexAdapter(
             config=CodexAdapterConfig(
                 transport="ws",
@@ -1028,20 +1014,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_reasoning_effort_omitted_when_none(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
+        fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
@@ -1109,20 +1082,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_self_config_tools_registered_when_enabled(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
+        fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws", enable_self_config_tools=True),
             client_factory=lambda _config: fake_client,
@@ -1150,20 +1110,7 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_self_config_tools_not_registered_when_disabled(self) -> None:
-        events = [
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "t1",
-                        "threadId": "th1",
-                        "status": "completed",
-                    },
-                    "text": "Done",
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
+        fake_client = FakeCodexClient(events=[_turn_completed()])
         adapter = CodexAdapter(
             config=CodexAdapterConfig(transport="ws", enable_self_config_tools=False),
             client_factory=lambda _config: fake_client,
@@ -1398,20 +1345,20 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        # Adapter should send a failure message mentioning the disconnect.
-        assert any(
-            "transport closed" in msg["content"].lower() for msg in tools.messages_sent
-        )
+        # Adapter should report a failure mentioning the disconnect.
+        failures = reported_failures(tools)
+        assert any("transport closed" in f["message"].lower() for f in failures)
 
     @pytest.mark.asyncio
     async def test_transport_closed_resets_client_state(self) -> None:
@@ -1431,15 +1378,16 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         # After transport/closed, client state should be reset
         assert adapter._client is None
@@ -1469,15 +1417,16 @@ class TestCodexAdapter:
         adapter._room_threads["room-1"] = "old-thread-id"
         adapter._raw_history_by_room["room-1"] = [{"role": "user", "content": "hi"}]
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         # Per-room state should be cleared so next turn starts fresh.
         assert "room-1" not in adapter._room_threads
@@ -1513,15 +1462,16 @@ class TestCodexAdapter:
             input_tokens=100, total_tokens=150
         )
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         # Dead thread's usage entry must be gone even without a matching
         # on_cleanup (the room id can no longer look up the thread id).
@@ -1529,7 +1479,9 @@ class TestCodexAdapter:
 
     @pytest.mark.asyncio
     async def test_turn_timeout_sends_interrupt_and_clean_error(self) -> None:
-        """When recv_event times out, the adapter sends turn/interrupt and reports cleanly."""
+        """When recv_event times out, the adapter sends turn/interrupt, reports
+        the failure, and fails the turn so the platform retries -- same as
+        every sibling adapter's own turn-timeout handling."""
         # No events means FakeCodexClient raises asyncio.TimeoutError immediately.
         fake_client = FakeCodexClient(events=[])
         adapter = CodexAdapter(
@@ -1539,15 +1491,16 @@ class TestCodexAdapter:
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         # Adapter should have sent turn/interrupt with both identifiers.
         interrupt_requests = [
@@ -1557,8 +1510,14 @@ class TestCodexAdapter:
             ("turn/interrupt", {"threadId": "thr-1", "turnId": "turn-1"})
         ]
 
-        # Adapter should send a user-facing message about stopping.
-        assert any("stopped" in msg["content"].lower() for msg in tools.messages_sent)
+        # The turn fails the platform's turn, so no separate "I stopped..."
+        # chat reply goes out alongside the structured failure event.
+        assert not tools.messages_sent
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["code"] == "timeout"
 
     @pytest.mark.asyncio
     async def test_item_completed_text_overrides_accumulated_deltas(self) -> None:
@@ -3320,6 +3279,11 @@ class TestHistoryInjection:
         model_list_calls = [m for m, _ in fake_client.requests if m == "model/list"]
         assert len(model_list_calls) == 0
 
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert "not available" in failures[0]["message"]
+
     @pytest.mark.asyncio
     async def test_model_selection_uses_default_when_model_list_empty(self) -> None:
         """Auto-selection uses the adapter default when Codex returns no visible models."""
@@ -3440,15 +3404,16 @@ class TestHistoryInjection:
         await adapter.on_started("Agent", "An agent")
 
         msg = make_platform_message(room_id="room-1", content="do something")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg,
+                tools,
+                CodexSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         error_events = events_of_type(tools, "error")
         assert len(error_events) == 1
@@ -3581,7 +3546,7 @@ class TestStructuredErrors:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -3597,13 +3562,12 @@ class TestStructuredErrors:
             room_id="room-1",
         )
 
-        error_events = events_of_type(tools, "error")
-        assert len(error_events) == 1
-        meta = error_events[0]["metadata"]
-        assert meta["codex_error_type"] == "ContextWindowExceeded"
-        assert meta["codex_suggested_action"] == "compact_context"
-        assert meta["codex_is_retryable"] is False
-        assert "context window" in error_events[0]["content"].lower()
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["code"] == "ContextWindowExceeded"
+        assert failures[0]["detail"]["codex_is_retryable"] is False
+        assert "context window" in failures[0]["message"].lower()
 
     @pytest.mark.asyncio
     async def test_structured_error_from_failed_turn(self) -> None:
@@ -3629,67 +3593,93 @@ class TestStructuredErrors:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = events_of_type(tools, "error")
-        assert len(error_events) == 1
-        assert error_events[0]["metadata"]["codex_error_type"] == "UsageLimitExceeded"
-        assert (
-            error_events[0]["metadata"]["codex_suggested_action"] == "wait_or_upgrade"
-        )
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == "UsageLimitExceeded"
 
     @pytest.mark.asyncio
-    async def test_structured_errors_disabled_falls_back_to_plain_text(self) -> None:
-        """When structured_errors=False, errors use plain text format."""
+    async def test_structured_error_from_failed_turn_with_no_error_key(self) -> None:
+        """turn/completed with status=failed but no "error" key at all must
+        still report a failure before raising, not just claim it did."""
         events = [
             _event_notification(
-                "error",
-                {
-                    "error": {
-                        "message": "Something failed",
-                        "codexErrorInfo": {"type": "ContextWindowExceeded"},
-                    },
-                    "willRetry": False,
-                },
+                "turn/completed",
+                {"turn": {"id": "turn-1", "status": "failed", "items": []}},
             ),
-            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=False),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
 
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
-        error_events = events_of_type(tools, "error")
-        assert len(error_events) == 1
-        assert error_events[0]["content"] == "Codex error: Something failed"
-        assert "codex_error_type" not in error_events[0]["metadata"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_reports_and_propagates(self) -> None:
+        """A bare exception outside Codex's structured-error paths (not a
+        CodexJsonRpcError, not a delivery/already-reported failure) must
+        still surface via the generic fallback and propagate."""
+        fake_client = FakeCodexClient(
+            events=[],
+            turn_start_error=RuntimeError("transport hiccup"),
+            turn_start_error_once=False,
+        )
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        with pytest.raises(RuntimeError, match="transport hiccup"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "transport hiccup" not in failures[0]["message"]
 
 
 # ===========================================================================
@@ -4649,7 +4639,7 @@ class TestDiffsAndTokenUsage:
 
 
 class TestCodexTypes:
-    def test_build_structured_error_metadata_known_type(self) -> None:
+    def test_build_agent_failure_known_type(self) -> None:
 
         error_obj = {
             "message": "Context overflow",
@@ -4659,25 +4649,22 @@ class TestCodexTypes:
                 "retryable": False,
             },
         }
-        content, meta = build_structured_error_metadata(
-            error_obj, thread_id="t1", turn_id="turn-1"
-        )
-        assert "context window" in content.lower()
-        assert meta["codex_error_type"] == "ContextWindowExceeded"
-        assert meta["codex_suggested_action"] == "compact_context"
-        assert meta["codex_thread_id"] == "t1"
-        assert meta["codex_turn_id"] == "turn-1"
+        failure = build_agent_failure(error_obj, thread_id="t1", turn_id="turn-1")
+        assert failure.provider == "codex"
+        assert "context overflow" in failure.message.lower()
+        assert failure.code == "ContextWindowExceeded"
+        assert failure.detail["codex_thread_id"] == "t1"
+        assert failure.detail["codex_turn_id"] == "turn-1"
 
-    def test_build_structured_error_metadata_unknown_type(self) -> None:
+    def test_build_agent_failure_unknown_type(self) -> None:
 
         error_obj = {
             "message": "Something weird happened",
             "codexErrorInfo": {"type": "UnknownError"},
         }
-        content, meta = build_structured_error_metadata(error_obj)
-        assert content == "Something weird happened"
-        assert meta["codex_error_type"] == "UnknownError"
-        assert meta["codex_suggested_action"] is None
+        failure = build_agent_failure(error_obj)
+        assert failure.message == "Something weird happened"
+        assert failure.code == "UnknownError"
 
     def test_parse_plan_steps(self) -> None:
 
@@ -4758,9 +4745,8 @@ class TestCodexTypes:
         assert usage.total_tokens == 14822
 
     def test_config_new_flags_default_false(self) -> None:
-        """All new config flags default to False (except structured_errors=True)."""
+        """All new config flags default to False."""
         config = CodexAdapterConfig()
-        assert config.structured_errors is True
         assert config.stream_reasoning_events is False
         assert config.stream_plan_events is False
         assert config.stream_commentary_events is False
@@ -5720,7 +5706,7 @@ class TestTokenUsageEmission:
 
 
 class TestStructuredErrorNormalization:
-    """build_structured_error_metadata handling of non-standard inputs."""
+    """build_agent_failure handling of non-standard inputs."""
 
     def test_structured_error_with_string_error_obj(self) -> None:
         """_handle_error_event normalizes string error_obj before structuring.
@@ -5731,12 +5717,12 @@ class TestStructuredErrorNormalization:
         """
 
         # Simulate the normalization the adapter performs: convert string to
-        # {"message": <str>} before passing to build_structured_error_metadata.
+        # {"message": <str>} before passing to build_agent_failure.
         error_obj: dict[str, Any] = {"message": "raw string error"}
-        content, meta = build_structured_error_metadata(error_obj)
-        assert "raw string error" in content
+        failure = build_agent_failure(error_obj)
+        assert "raw string error" in failure.message
         # No codexErrorInfo -> no known error type.
-        assert meta["codex_error_type"] is None
+        assert failure.code is None
 
 
 class TestSessionApprovalKeying:
@@ -5789,6 +5775,7 @@ class TestSessionApprovalKeying:
                 "item/fileChange/requestApproval",
                 {"reason": "write something"},
             ),
+            _turn_completed(),
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
@@ -5885,58 +5872,50 @@ class TestApprovalAuditRecording:
 
 
 class TestStructuredErrorMappings:
-    """Cover every entry in CODEX_ERROR_REMEDIATION plus the fallback path."""
+    """build_agent_failure passes codexErrorInfo through verbatim -- no
+    remediation/suggested-action policy; that belongs to a consumer, not
+    this shared shape."""
 
     @pytest.mark.parametrize(
-        ("error_type", "expected_action", "expected_phrase"),
+        "error_type",
         [
-            ("HttpConnectionFailed", "check_connectivity", "http connection"),
-            ("SandboxError", "review_sandbox_policy", "sandbox"),
-            ("Unauthorized", "re_authenticate", "unauthorized"),
-            ("BadRequest", "check_input_format", "bad request"),
-            (
-                "ResponseTooManyFailedAttempts",
-                "retry_different_approach",
-                "failed attempts",
-            ),
+            "HttpConnectionFailed",
+            "SandboxError",
+            "Unauthorized",
+            "BadRequest",
+            "ResponseTooManyFailedAttempts",
         ],
     )
-    def test_known_error_type_maps_to_remediation(
-        self, error_type: str, expected_action: str, expected_phrase: str
-    ) -> None:
-
-        content, meta = build_structured_error_metadata(
+    def test_error_type_becomes_the_failure_code(self, error_type: str) -> None:
+        failure = build_agent_failure(
             {"codexErrorInfo": {"type": error_type, "retryable": True}}
         )
-        assert meta["codex_error_type"] == error_type
-        assert meta["codex_suggested_action"] == expected_action
-        assert meta["codex_is_retryable"] is True
-        assert expected_phrase in content.lower()
+        assert failure.code == error_type
+        assert failure.detail["codex_is_retryable"] is True
 
     def test_non_dict_codex_error_info_is_tolerated(self) -> None:
 
-        content, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {"message": "boom", "codexErrorInfo": "not-a-dict"}
         )
-        assert meta["codex_error_type"] is None
-        assert content == "boom"
+        assert failure.code is None
+        assert failure.message == "boom"
 
     def test_missing_codex_error_info_falls_back_to_message(self) -> None:
 
-        content, meta = build_structured_error_metadata({"message": "network down"})
-        assert meta["codex_error_type"] is None
-        assert meta["codex_suggested_action"] is None
-        assert content == "network down"
+        failure = build_agent_failure({"message": "network down"})
+        assert failure.code is None
+        assert failure.message == "network down"
 
-    def test_additional_details_preserved_in_metadata(self) -> None:
+    def test_additional_details_preserved_in_detail(self) -> None:
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": {"hint": "refresh token"},
             }
         )
-        assert meta["codex_additional_details"] == {"hint": "refresh token"}
+        assert failure.detail["codex_additional_details"] == {"hint": "refresh token"}
 
 
 class TestSlashCommandCoverage:
@@ -6050,6 +6029,92 @@ class TestSlashCommandCoverage:
         assert len(perm_msgs) == 1
         assert "read-only" in perm_msgs[0]["content"]
 
+    @pytest.mark.asyncio
+    async def test_local_command_reply_delivery_failure_is_not_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """/help's answer failing to post is Band-side delivery, not a Codex
+        provider failure -- deliver_reply's DeliveryFailedError must be
+        recognized and left unreported here. The original cause still
+        propagates (the message still fails/retries at the platform level),
+        just never misreported as a Codex AgentFailure."""
+
+        class FailingSendMessageTools(ToolSchemaFakeTools):
+            async def send_message(
+                self, content: str, mentions: list[dict[str, str]] | None = None
+            ) -> Any:
+                raise RuntimeError("platform rejected the message")
+
+        fake_client = FakeCodexClient()
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FailingSendMessageTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        with (
+            caplog.at_level(logging.ERROR, logger="band.core.delivery"),
+            pytest.raises(RuntimeError, match="platform rejected the message"),
+        ):
+            await adapter.on_message(
+                make_platform_message(content="/help"),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert not tools.messages_sent
+        assert not reported_failures(tools)
+        assert any(
+            "Reply delivery failed" in record.message for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_approval_command_reply_delivery_failure_is_not_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Same delivery-vs-provider-failure split as slash commands, but for
+        the approval-command path, which runs outside on_message's main
+        try/except and needs its own DeliveryFailedError handling."""
+
+        class FailingSendMessageTools(ToolSchemaFakeTools):
+            async def send_message(
+                self, content: str, mentions: list[dict[str, str]] | None = None
+            ) -> Any:
+                raise RuntimeError("platform rejected the message")
+
+        fake_client = FakeCodexClient()
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FailingSendMessageTools()
+
+        await adapter.on_started("Agent", "A coding agent")
+        with (
+            caplog.at_level(logging.ERROR, logger="band.core.delivery"),
+            pytest.raises(RuntimeError, match="platform rejected the message"),
+        ):
+            await adapter.on_message(
+                make_platform_message(content="/approvals"),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert not tools.messages_sent
+        assert not reported_failures(tools)
+        assert any(
+            "Reply delivery failed" in record.message for record in caplog.records
+        )
+
 
 class TestMalformedPayloadTolerance:
     """Adapter must survive notifications that are missing or misshapen."""
@@ -6063,7 +6128,7 @@ class TestMalformedPayloadTolerance:
         ]
         fake_client = FakeCodexClient(events=events)
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", structured_errors=True),
+            config=CodexAdapterConfig(transport="ws"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -6078,6 +6143,91 @@ class TestMalformedPayloadTolerance:
             is_session_bootstrap=True,
             room_id="room-1",
         )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == "oops"
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_after_error_notification_reports_once(self) -> None:
+        """An `error` notification followed by a `turn/completed` with
+        status=failed for the same incident must report only one failure."""
+        events = [
+            _event_notification("error", {"error": {"message": "boom"}}),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "failed",
+                        "items": [],
+                        "error": {"message": "boom"},
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert len(reported_failures(tools)) == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_with_falsy_scalar_error_uses_clean_fallback(
+        self,
+    ) -> None:
+        """A falsy, non-dict `error` (e.g. ``False``) must not become the
+        literal string "False" in the reported failure message."""
+        events = [
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "failed",
+                        "items": [],
+                        "error": False,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == "Codex error: unknown"
 
     @pytest.mark.asyncio
     async def test_turn_completed_without_items_key(self) -> None:
@@ -6256,13 +6406,13 @@ class TestStructuredErrorDetailCap:
     def test_long_additional_details_string_is_truncated(self) -> None:
 
         long_detail = "x" * (_MAX_ERROR_DETAIL_CHARS + 500)
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": long_detail,
             }
         )
-        detail = meta["codex_additional_details"]
+        detail = failure.detail["codex_additional_details"]
         assert isinstance(detail, str)
         assert len(detail) < len(long_detail)
         assert "truncated" in detail
@@ -6271,24 +6421,24 @@ class TestStructuredErrorDetailCap:
         """Only string details are capped; dict/list payloads pass through."""
 
         payload = {"hint": "refresh token", "code": 401}
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": payload,
             }
         )
-        assert meta["codex_additional_details"] == payload
+        assert failure.detail["codex_additional_details"] == payload
 
     def test_empty_additional_details_is_dropped(self) -> None:
-        """Empty strings are not echoed into metadata."""
+        """Empty strings are not echoed into detail."""
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": "",
             }
         )
-        assert "codex_additional_details" not in meta
+        assert failure.detail is None
 
     def test_oversized_dict_additional_details_is_replaced_with_marker(
         self,
@@ -6305,13 +6455,13 @@ class TestStructuredErrorDetailCap:
         oversized_value = "x" * (_MAX_ERROR_DETAIL_CHARS + 500)
         payload = {"nested": {"blob": oversized_value}}
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": payload,
             }
         )
-        detail = meta["codex_additional_details"]
+        detail = failure.detail["codex_additional_details"]
         assert isinstance(detail, str)
         assert "truncated" in detail
         assert len(detail) < len(oversized_value)
@@ -6325,13 +6475,13 @@ class TestStructuredErrorDetailCap:
         circular: dict[str, Any] = {}
         circular["self"] = circular
 
-        _, meta = build_structured_error_metadata(
+        failure = build_agent_failure(
             {
                 "codexErrorInfo": {"type": "Unauthorized"},
                 "additionalDetails": circular,
             }
         )
-        assert "codex_additional_details" not in meta
+        assert failure.detail is None
 
 
 class TestDiffByteCap:

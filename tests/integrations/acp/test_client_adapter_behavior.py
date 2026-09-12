@@ -813,7 +813,9 @@ async def test_replay_after_midrun_respawn() -> None:
 
     async with acp_adapter(agent) as session:
         await session.send("My favorite color is blue.", bootstrap=True)
-        crashed = await session.send("anything")  # prompt raises -> adapter stop()
+        with pytest.raises(RequestError):
+            await session.send("anything")  # prompt raises -> adapter stop()
+        crashed = session.last_reply
         reply = await session.send(
             "What is my favorite color?", room_context=transcript
         )

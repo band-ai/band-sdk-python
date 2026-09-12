@@ -500,6 +500,7 @@ class TestParlantToolFunctions:
         tools = MagicMock()
         tools.send_message = AsyncMock()
         tools.send_event = AsyncMock()
+        tools.send_failure = AsyncMock()
         tools.add_participant = AsyncMock(return_value={"status": "added"})
         tools.remove_participant = AsyncMock()
         tools.lookup_peers = AsyncMock(

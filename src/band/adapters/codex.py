@@ -12,13 +12,25 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import ClassVar, Any, Callable, Literal, NamedTuple, Protocol
 
+from band_sdk_core import AgentFailure
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.protocols import AgentToolsProtocol
+from band.core.delivery import (
+    DeliveryFailedError,
+    deliver_reply,
+    reraise_delivery_cause,
+)
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+    send_event_safe,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AgentInput,
@@ -42,7 +54,7 @@ from band.integrations.codex.types import (
     CodexItemType,
     CodexSessionState,
     CodexTokenUsage,
-    build_structured_error_metadata,
+    build_agent_failure,
     parse_plan_steps,
 )
 from band.runtime.custom_tools import (
@@ -356,8 +368,6 @@ class CodexAdapterConfig(BaseSettings):
     # File-change approvals always key on the sorted set of paths being
     # modified, independent of this flag.
     session_approval_granularity: Literal["binary", "full_command"] = "full_command"
-    # --- Phase 1: Structured errors & enriched approvals ---
-    structured_errors: bool = True
     # --- Phase 2: Plan & task lifecycle ---
     stream_plan_events: bool = False
     emit_turn_lifecycle_events: bool = False
@@ -525,7 +535,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             "execution_reporting=%s, self_config_tools=%s, "
             "task_events=%s, turn_markers=%s, thought_events=%s, "
             "stream_reasoning=%s, stream_plan=%s, stream_commentary=%s, "
-            "diffs=%s, token_usage=%s, structured_errors=%s",
+            "diffs=%s, token_usage=%s",
             agent_name,
             self.config.transport,
             self._selected_model or self.config.model or "auto",
@@ -541,7 +551,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self.config.stream_commentary_events,
             self.config.emit_diff_events,
             self.config.emit_token_usage_events,
-            self.config.structured_errors,
         )
 
     async def on_event(self, inp: AgentInput) -> None:
@@ -571,88 +580,97 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             "decline",
             "approvals",
         }:
-            handled = await self._handle_approval_command(
-                tools=tools,
-                msg=msg,
-                room_id=room_id,
-                command=command[0],
-                args=command[1],
-            )
-            if handled:
-                return
-
-        async with self._rpc_lock:
-            await self._ensure_client_ready()
-            if self._client is None:
-                raise RuntimeError(
-                    "Codex client not initialized after _ensure_client_ready"
-                )
-
-            if command is not None:
-                handled = await self._handle_local_command(
+            try:
+                handled = await self._handle_approval_command(
                     tools=tools,
                     msg=msg,
-                    history=history,
                     room_id=room_id,
                     command=command[0],
                     args=command[1],
                 )
-                if handled:
-                    return
+            except DeliveryFailedError as e:
+                reraise_delivery_cause(e)
+            if handled:
+                return
 
-            thread_id = await self._ensure_thread(
-                room_id=room_id,
-                history=history,
-                tools=tools,
-                is_session_bootstrap=is_session_bootstrap,
-            )
+        async with self._rpc_lock:
+            try:
+                await self._ensure_client_ready()
+                if self._client is None:
+                    raise RuntimeError(
+                        "Codex client not initialized after _ensure_client_ready"
+                    )
 
-            turn_input, has_pending_prompt_injection = self._build_turn_input(
-                msg=msg,
-                participants_msg=participants_msg,
-                contacts_msg=contacts_msg,
-                room_id=room_id,
-            )
+                if command is not None:
+                    handled = await self._handle_local_command(
+                        tools=tools,
+                        msg=msg,
+                        history=history,
+                        room_id=room_id,
+                        command=command[0],
+                        args=command[1],
+                    )
+                    if handled:
+                        return
 
-            turn_params: dict[str, Any] = {
-                "threadId": thread_id,
-                "input": turn_input,
-            }
-            self._apply_turn_overrides(turn_params, room_id=room_id)
-
-            turn_started = await self._start_turn(turn_params)
-            if has_pending_prompt_injection:
-                self._prompt_injected_rooms.add(room_id)
-            turn = turn_started.get("turn") if isinstance(turn_started, dict) else {}
-            turn_id = str((turn or {}).get("id") or "")
-
-            if (
-                Emit.TASK_EVENTS in self.features.emit
-                and self.config.emit_turn_task_markers
-            ):
-                await tools.send_event(
-                    content=self._build_task_event_content(
-                        task_id=turn_id or None,
-                        task="Codex turn",
-                        status="started",
-                        summary=f"Thread: {thread_id}",
-                    ),
-                    message_type="task",
-                    metadata={
-                        "codex_thread_id": thread_id,
-                        "codex_turn_id": turn_id or None,
-                        "codex_room_id": room_id,
-                    },
+                thread_id = await self._ensure_thread(
+                    room_id=room_id,
+                    history=history,
+                    tools=tools,
+                    is_session_bootstrap=is_session_bootstrap,
                 )
 
-            # Phase 2: Turn STARTED lifecycle event with input summary
-            if (
-                self.config.emit_turn_lifecycle_events
-                and Emit.TASK_EVENTS in self.features.emit
-            ):
-                input_summary = (msg.content or "")[:200]
-                try:
-                    await tools.send_event(
+                turn_input, has_pending_prompt_injection = self._build_turn_input(
+                    msg=msg,
+                    participants_msg=participants_msg,
+                    contacts_msg=contacts_msg,
+                    room_id=room_id,
+                )
+
+                turn_params: dict[str, Any] = {
+                    "threadId": thread_id,
+                    "input": turn_input,
+                }
+                self._apply_turn_overrides(turn_params, room_id=room_id)
+
+                turn_started = await self._start_turn(turn_params)
+                if has_pending_prompt_injection:
+                    self._prompt_injected_rooms.add(room_id)
+                turn = (
+                    turn_started.get("turn") if isinstance(turn_started, dict) else {}
+                )
+                turn_id = str((turn or {}).get("id") or "")
+
+                if (
+                    Emit.TASK_EVENTS in self.features.emit
+                    and self.config.emit_turn_task_markers
+                ):
+                    await send_event_safe(
+                        tools,
+                        content=self._build_task_event_content(
+                            task_id=turn_id or None,
+                            task="Codex turn",
+                            status="started",
+                            summary=f"Thread: {thread_id}",
+                        ),
+                        message_type="task",
+                        metadata={
+                            "codex_thread_id": thread_id,
+                            "codex_turn_id": turn_id or None,
+                            "codex_room_id": room_id,
+                        },
+                        log_label="turn started task event",
+                        log_level=logging.DEBUG,
+                    )
+
+                # Phase 2: Turn STARTED lifecycle event with input summary
+                if (
+                    self.config.emit_turn_lifecycle_events
+                    and Emit.TASK_EVENTS in self.features.emit
+                ):
+                    input_summary = (msg.content or "")[:200]
+                    await send_event_safe(
+                        tools,
                         content=self._build_task_event_content(
                             task_id=turn_id or None,
                             task="Codex turn lifecycle",
@@ -668,56 +686,74 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             "codex_turn_status": "started",
                             "codex_input_summary": input_summary,
                         },
+                        log_label="turn started lifecycle event",
+                        log_level=logging.DEBUG,
                     )
+
+                # Reset per-turn token deltas for the new turn.
+                usage_obj = self._token_usage.get(thread_id)
+                if usage_obj is not None:
+                    usage_obj.reset_turn_deltas()
+
+                # perf_counter (not monotonic): highest-resolution clock, so a fast
+                # turn still measures a non-zero duration on Windows, where
+                # monotonic()'s coarse tick can round an instant turn to 0.0.
+                _turn_start = _time.perf_counter()
+                try:
+                    result = await self._process_turn_events(
+                        tools=tools,
+                        msg=msg,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id or None,
+                        turn_start=_turn_start,
+                    )
+                except TurnResultAlreadyReported:
+                    # A nested handler (e.g. the turn-timeout branch) already
+                    # reported this failure via send_failure; propagate it
+                    # without emitting a friendly _emit_turn_outcome reply or
+                    # a generic "Internal error" fallback.
+                    raise
                 except Exception:
-                    logger.debug(
-                        "Failed to emit turn started lifecycle event",
-                        exc_info=True,
+                    logger.exception(
+                        "Unexpected error during Codex turn event processing "
+                        "(thread=%s, turn=%s)",
+                        thread_id,
+                        turn_id,
+                    )
+                    result = TurnResult(
+                        turn_status="failed",
+                        turn_error="Internal error during turn processing",
                     )
 
-            # Reset per-turn token deltas for the new turn.
-            usage_obj = self._token_usage.get(thread_id)
-            if usage_obj is not None:
-                usage_obj.reset_turn_deltas()
-
-            # perf_counter (not monotonic): highest-resolution clock, so a fast
-            # turn still measures a non-zero duration on Windows, where
-            # monotonic()'s coarse tick can round an instant turn to 0.0.
-            _turn_start = _time.perf_counter()
-            try:
-                result = await self._process_turn_events(
+                _turn_duration_s = _time.perf_counter() - _turn_start
+                await self._emit_turn_outcome(
                     tools=tools,
                     msg=msg,
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_id=turn_id or None,
-                    turn_start=_turn_start,
+                    turn_status=result.turn_status,
+                    turn_error=result.turn_error,
+                    final_text=result.final_text,
+                    saw_send_message_tool=result.saw_send_message_tool,
+                    duration_s=_turn_duration_s,
                 )
+            except DeliveryFailedError as e:
+                reraise_delivery_cause(e)
+            except TurnResultAlreadyReported:
+                raise
+            except CodexJsonRpcError as e:
+                # A structured RPC error from the app-server (e.g. "model not
+                # available") is safe, curated text -- unlike an arbitrary
+                # caught exception, it's worth showing verbatim.
+                await tools.send_failure(AgentFailure("codex", str(e)))
+                raise
             except Exception:
-                logger.exception(
-                    "Unexpected error during Codex turn event processing "
-                    "(thread=%s, turn=%s)",
-                    thread_id,
-                    turn_id,
+                await tools.send_failure(
+                    AgentFailure("codex", GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
-                result = TurnResult(
-                    turn_status="failed",
-                    turn_error="Internal error during turn processing",
-                )
-
-            _turn_duration_s = _time.perf_counter() - _turn_start
-            await self._emit_turn_outcome(
-                tools=tools,
-                msg=msg,
-                room_id=room_id,
-                thread_id=thread_id,
-                turn_id=turn_id or None,
-                turn_status=result.turn_status,
-                turn_error=result.turn_error,
-                final_text=result.final_text,
-                saw_send_message_tool=result.saw_send_message_tool,
-                duration_s=_turn_duration_s,
-            )
+                raise
 
     async def _process_turn_events(
         self,
@@ -734,6 +770,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise RuntimeError("CodexAdapter client is None during turn event loop")
 
         result = TurnResult()
+        failure_reported = False
         try:
             while True:
                 _remaining = max(
@@ -770,13 +807,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     continue
 
                 if event.method == "error":
-                    await self._handle_error_event(
+                    reported = await self._handle_error_event(
                         tools=tools,
                         params=params,
                         room_id=room_id,
                         thread_id=thread_id,
                         turn_id=turn_id,
                     )
+                    failure_reported = failure_reported or reported
                     continue
 
                 # --- Phase 3: Real-time streaming ---
@@ -787,45 +825,42 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     if self.config.stream_reasoning_events:
                         delta = params.get("delta", "")
                         item_id = str(params.get("itemId") or "")
-                        try:
-                            await tools.send_event(
-                                content=str(delta),
-                                message_type="thought",
-                                metadata={
-                                    "streaming": True,
-                                    "codex_item_id": item_id,
-                                    "codex_event_type": event.method,
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": thread_id,
-                                    "codex_turn_id": turn_id,
-                                },
-                            )
-                        except Exception:
-                            logger.debug(
-                                "Failed to stream reasoning delta",
-                                exc_info=True,
-                            )
+                        await send_event_safe(
+                            tools,
+                            content=str(delta),
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "codex_item_id": item_id,
+                                "codex_event_type": event.method,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                            log_label="reasoning delta",
+                            log_level=logging.DEBUG,
+                        )
                     continue
 
                 if event.method == "item/plan/delta":
                     if self.config.stream_plan_events:
                         delta = params.get("delta", "")
                         item_id = str(params.get("itemId") or "")
-                        try:
-                            await tools.send_event(
-                                content=str(delta),
-                                message_type="thought",
-                                metadata={
-                                    "streaming": True,
-                                    "subtype": "plan",
-                                    "codex_item_id": item_id,
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": thread_id,
-                                    "codex_turn_id": turn_id,
-                                },
-                            )
-                        except Exception:
-                            logger.debug("Failed to stream plan delta", exc_info=True)
+                        await send_event_safe(
+                            tools,
+                            content=str(delta),
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "subtype": "plan",
+                                "codex_item_id": item_id,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                            log_label="plan delta",
+                            log_level=logging.DEBUG,
+                        )
                     continue
 
                 # --- Phase 2: Plan step tracking ---
@@ -859,27 +894,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     ):
                         compacted_thread = str(params.get("threadId") or thread_id)
                         compacted_turn = str(params.get("turnId") or turn_id or "")
-                        try:
-                            await tools.send_event(
-                                content=self._build_task_event_content(
-                                    task_id=compacted_turn or None,
-                                    task="Codex context compaction",
-                                    status="completed",
-                                    summary=f"Thread: {compacted_thread}",
-                                ),
-                                message_type="task",
-                                metadata={
-                                    "codex_event_type": "context_compaction",
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": compacted_thread,
-                                    "codex_turn_id": compacted_turn or None,
-                                },
-                            )
-                        except Exception:
-                            logger.debug(
-                                "Failed to emit context compaction event",
-                                exc_info=True,
-                            )
+                        await send_event_safe(
+                            tools,
+                            content=self._build_task_event_content(
+                                task_id=compacted_turn or None,
+                                task="Codex context compaction",
+                                status="completed",
+                                summary=f"Thread: {compacted_thread}",
+                            ),
+                            message_type="task",
+                            metadata={
+                                "codex_event_type": "context_compaction",
+                                "codex_room_id": room_id,
+                                "codex_thread_id": compacted_thread,
+                                "codex_turn_id": compacted_turn or None,
+                            },
+                            log_label="context compaction event",
+                            log_level=logging.DEBUG,
+                        )
                     continue
 
                 # --- Phase 4: Aggregated diffs ---
@@ -906,26 +938,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             and self.config.stream_commentary_events
                         ):
                             # Stream as thought; exclude from final_text.
-                            try:
-                                await tools.send_event(
-                                    content=delta,
-                                    message_type="thought",
-                                    metadata={
-                                        "streaming": True,
-                                        "subtype": "commentary",
-                                        "codex_item_id": str(
-                                            params.get("itemId") or ""
-                                        ),
-                                        "codex_room_id": room_id,
-                                        "codex_thread_id": thread_id,
-                                        "codex_turn_id": turn_id,
-                                    },
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "Failed to stream commentary delta",
-                                    exc_info=True,
-                                )
+                            await send_event_safe(
+                                tools,
+                                content=delta,
+                                message_type="thought",
+                                metadata={
+                                    "streaming": True,
+                                    "subtype": "commentary",
+                                    "codex_item_id": str(params.get("itemId") or ""),
+                                    "codex_room_id": room_id,
+                                    "codex_thread_id": thread_id,
+                                    "codex_turn_id": turn_id,
+                                },
+                                log_label="commentary delta",
+                                log_level=logging.DEBUG,
+                            )
                         else:
                             # When streaming is disabled, commentary accumulates
                             # into final_text for backward compatibility.
@@ -971,7 +998,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         self._token_usage.pop(stale_thread, None)
                     for stale_room in stale_rooms:
                         self._clear_pending_approvals_for_room(stale_room)
-                    break
+                    await tools.send_failure(
+                        AgentFailure("codex", result.turn_error, "transport_closed")
+                    )
+                    raise TurnResultAlreadyReported(result.turn_error)
 
                 if event.method == "turn/completed":
                     turn_payload = (
@@ -984,8 +1014,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         continue
                     result.turn_status = str(turn_payload.get("status") or "failed")
                     result.turn_error = self._extract_turn_error(turn_payload)
-                    # Phase 1: structured error for failed turns
-                    if result.turn_status == "failed" and self.config.structured_errors:
+                    if result.turn_status != "failed":
+                        break
+                    # Skipped when an earlier "error" notification in this same
+                    # turn already reported one, so one incident isn't posted
+                    # twice -- but the turn still fails either way.
+                    if not failure_reported:
                         await self._emit_structured_turn_error(
                             tools=tools,
                             turn_payload=turn_payload,
@@ -993,7 +1027,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             thread_id=thread_id,
                             turn_id=turn_id,
                         )
-                    break
+                    raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
         except asyncio.TimeoutError:
             logger.error(
                 "Codex turn timed out after %ss (thread=%s, turn=%s)",
@@ -1012,8 +1046,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "Failed to send turn/interrupt after timeout",
                         exc_info=True,
                     )
-            result.turn_status = "interrupted"
-            result.turn_error = "Turn timed out"
+            await tools.send_failure(
+                AgentFailure(
+                    "codex",
+                    f"Codex turn timed out after {self.config.turn_timeout_s}s",
+                    FAILURE_CODE_TIMEOUT,
+                )
+            )
+            raise TurnResultAlreadyReported("Turn timed out")
         return result
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -1144,7 +1184,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     self._room_threads[room_id] = thread_id
                     self._raw_history_by_room.pop(room_id, None)
                     if Emit.TASK_EVENTS in self.features.emit:
-                        await tools.send_event(
+                        await send_event_safe(
+                            tools,
                             content=self._build_task_event_content(
                                 task_id=thread_id,
                                 task="Codex thread",
@@ -1157,6 +1198,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                                 "codex_room_id": room_id,
                                 "codex_resumed": True,
                             },
+                            log_label="thread resumed task event",
+                            log_level=logging.DEBUG,
                         )
                     return thread_id
             except CodexJsonRpcError as exc:
@@ -1191,7 +1234,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._room_threads[room_id] = thread_id
 
         if Emit.TASK_EVENTS in self.features.emit:
-            await tools.send_event(
+            await send_event_safe(
+                tools,
                 content=self._build_task_event_content(
                     task_id=thread_id,
                     task="Codex thread",
@@ -1205,6 +1249,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     "codex_created_at": datetime.now(timezone.utc).isoformat(),
                     "codex_transport": self.config.transport,
                 },
+                log_label="thread mapped task event",
+                log_level=logging.DEBUG,
             )
 
         return thread_id
@@ -1581,29 +1627,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 logger.exception("Failed to send approval policy notification")
 
         if Emit.THOUGHTS in self.features.emit:
-            try:
-                await tools.send_event(
-                    content=(
-                        f"Codex approval request handled automatically ({decision})."
-                    ),
-                    message_type="thought",
-                    metadata={
-                        "codex_approval_method": event.method,
-                        "codex_approval_type": self._approval_type(event.method),
-                        "codex_approval_options": [
-                            "accept",
-                            "acceptForSession",
-                            "decline",
-                        ],
-                    },
-                )
-            except Exception:
-                # Best-effort telemetry — never fail the turn on thought
-                # emission failures.
-                logger.debug(
-                    "Failed to emit approval thought event",
-                    exc_info=True,
-                )
+            # Best-effort telemetry — never fail the turn on thought emission
+            # failures.
+            await send_event_safe(
+                tools,
+                content=(f"Codex approval request handled automatically ({decision})."),
+                message_type="thought",
+                metadata={
+                    "codex_approval_method": event.method,
+                    "codex_approval_type": self._approval_type(event.method),
+                    "codex_approval_options": [
+                        "accept",
+                        "acceptForSession",
+                        "decline",
+                    ],
+                },
+                log_label="approval thought event",
+                log_level=logging.DEBUG,
+            )
 
     @staticmethod
     def _turn_usage(usage: CodexTokenUsage | None) -> TurnUsage:
@@ -1669,7 +1710,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 metadata["codex_duration_s"] = round(duration_s, 2)
             if has_usage:
                 metadata.update(usage.to_metadata())
-            await tools.send_event(
+            await send_event_safe(
+                tools,
                 content=self._build_task_event_content(
                     task_id=turn_id,
                     task="Codex turn",
@@ -1678,6 +1720,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 ),
                 message_type="task",
                 metadata=metadata,
+                log_label="turn outcome task event",
+                log_level=logging.DEBUG,
             )
 
         # Phase 2: Enriched turn lifecycle events
@@ -1702,19 +1746,19 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 lifecycle_metadata["codex_error"] = turn_error
             if has_usage:
                 lifecycle_metadata.update(usage.to_metadata())
-            try:
-                await tools.send_event(
-                    content=self._build_task_event_content(
-                        task_id=turn_id,
-                        task="Codex turn lifecycle",
-                        status=turn_status,
-                        summary=f"Duration: {duration_s:.1f}s | Thread: {thread_id}",
-                    ),
-                    message_type="task",
-                    metadata=lifecycle_metadata,
-                )
-            except Exception:
-                logger.debug("Failed to emit turn lifecycle event", exc_info=True)
+            await send_event_safe(
+                tools,
+                content=self._build_task_event_content(
+                    task_id=turn_id,
+                    task="Codex turn lifecycle",
+                    status=turn_status,
+                    summary=f"Duration: {duration_s:.1f}s | Thread: {thread_id}",
+                ),
+                message_type="task",
+                metadata=lifecycle_metadata,
+                log_label="turn lifecycle event",
+                log_level=logging.DEBUG,
+            )
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
@@ -1724,11 +1768,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 and final_text.strip()
                 and not saw_send_message_tool
             ):
-                await tools.send_message(final_text.strip(), mentions=mention)
+                await deliver_reply(tools, final_text.strip(), mentions=mention)
             return
 
         if turn_status == "interrupted":
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "I stopped before completing this request.",
                 mentions=mention,
             )
@@ -1739,7 +1784,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if not turn_error
             else f"I couldn't complete this request ({turn_status}): {turn_error}"
         )
-        await tools.send_message(error_text, mentions=mention)
+        await deliver_reply(tools, error_text, mentions=mention)
 
     async def _emit_item_completed_events(
         self,
@@ -2136,22 +2181,19 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 net_ctx = params.get("networkContext") or params.get("network_context")
                 if net_ctx:
                     approval_metadata["codex_network_context"] = net_ctx
-                try:
-                    await tools.send_event(
-                        content=self._build_task_event_content(
-                            task_id=token,
-                            task="Codex approval request",
-                            status="pending",
-                            summary=summary,
-                        ),
-                        message_type="task",
-                        metadata=approval_metadata,
-                    )
-                except Exception:
-                    logger.debug(
-                        "Failed to emit approval request task event",
-                        exc_info=True,
-                    )
+                await send_event_safe(
+                    tools,
+                    content=self._build_task_event_content(
+                        task_id=token,
+                        task="Codex approval request",
+                        status="pending",
+                        summary=summary,
+                    ),
+                    message_type="task",
+                    metadata=approval_metadata,
+                    log_label="approval request task event",
+                    log_level=logging.DEBUG,
+                )
             await tools.send_message(approval_msg, mentions=mention)
             decision_raw = await asyncio.wait_for(
                 pending.future,
@@ -2240,8 +2282,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         room_id: str,
         thread_id: str,
         turn_id: str | None,
-    ) -> None:
-        """Handle an ``error`` notification from Codex."""
+    ) -> bool:
+        """Handle an ``error`` notification from Codex.
+
+        Returns whether a failure was actually reported, so the turn loop can
+        skip a redundant second report if ``turn/completed`` also arrives with
+        a failed status for the same incident.
+        """
         error_obj = params.get("error") or {}
         if isinstance(error_obj, dict):
             error_msg = error_obj.get("message", "")
@@ -2263,29 +2310,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 turn_id,
                 error_msg,
             )
-            return
+            return False
 
         logger.error("Codex error: %s", error_msg)
-        if self.config.structured_errors:
-            content, err_meta = build_structured_error_metadata(
-                error_obj, thread_id=thread_id, turn_id=turn_id
+        await tools.send_failure(
+            build_agent_failure(
+                error_obj, thread_id=thread_id, turn_id=turn_id, room_id=room_id
             )
-            err_meta["codex_room_id"] = room_id
-            await tools.send_event(
-                content=content or f"Codex error: {error_msg}",
-                message_type="error",
-                metadata=err_meta,
-            )
-        else:
-            await tools.send_event(
-                content=f"Codex error: {error_msg}",
-                message_type="error",
-                metadata={
-                    "codex_room_id": room_id,
-                    "codex_thread_id": thread_id,
-                    "codex_turn_id": turn_id,
-                },
-            )
+        )
+        return True
 
     async def _emit_structured_turn_error(
         self,
@@ -2299,19 +2332,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         """Emit a structured error event when turn/completed reports failure."""
         error = turn_payload.get("error")
         if not isinstance(error, dict):
-            return
-        content, err_meta = build_structured_error_metadata(
-            error, thread_id=thread_id, turn_id=turn_id
+            # A falsy scalar (``""``, ``0``, ``None``) has no useful message to
+            # carry; build_agent_failure's own fallback covers it uniformly
+            # instead of shipping a degenerate literal string like "None".
+            error = {"message": str(error)} if error else {}
+        logger.error(
+            "Codex turn failed (thread=%s, turn=%s): %s",
+            thread_id,
+            turn_id,
+            error.get("message", ""),
         )
-        err_meta["codex_room_id"] = room_id
-        try:
-            await tools.send_event(
-                content=content,
-                message_type="error",
-                metadata=err_meta,
+        await tools.send_failure(
+            build_agent_failure(
+                error, thread_id=thread_id, turn_id=turn_id, room_id=room_id
             )
-        except Exception:
-            logger.debug("Failed to emit structured turn error", exc_info=True)
+        )
 
     # ------------------------------------------------------------------
     # Phase 2: Plan step tracking
@@ -2331,24 +2366,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if not steps:
             return
         step_dicts = [{"step": s.step, "status": s.status} for s in steps]
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex plan",
-                    status="updated",
-                    summary=f"{len(steps)} steps",
-                ),
-                message_type="task",
-                metadata={
-                    "codex_plan_steps": step_dicts,
-                    "codex_room_id": room_id,
-                    "codex_thread_id": thread_id,
-                    "codex_turn_id": turn_id,
-                },
-            )
-        except Exception:
-            logger.debug("Failed to forward plan steps", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=self._build_task_event_content(
+                task_id=turn_id,
+                task="Codex plan",
+                status="updated",
+                summary=f"{len(steps)} steps",
+            ),
+            message_type="task",
+            metadata={
+                "codex_plan_steps": step_dicts,
+                "codex_room_id": room_id,
+                "codex_thread_id": thread_id,
+                "codex_turn_id": turn_id,
+            },
+            log_label="plan steps",
+            log_level=logging.DEBUG,
+        )
 
     # ------------------------------------------------------------------
     # Phase 4: Token usage & diffs
@@ -2379,14 +2414,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         metadata = usage.to_metadata()
         metadata["codex_thread_id"] = thread_id
         metadata["codex_room_id"] = room_id
-        try:
-            await tools.send_event(
-                content=usage.format_summary(),
-                message_type="task",
-                metadata=metadata,
-            )
-        except Exception:
-            logger.debug("Failed to emit token usage event", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=usage.format_summary(),
+            message_type="task",
+            metadata=metadata,
+            log_label="token usage event",
+            log_level=logging.DEBUG,
+        )
 
     async def _forward_diff_event(
         self,
@@ -2442,19 +2477,19 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             metadata["codex_diff_truncated"] = True
             metadata["codex_diff_original_length"] = original_length
             metadata["codex_diff_original_bytes"] = original_byte_length
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex diff",
-                    status="updated",
-                    summary=summary,
-                ),
-                message_type="task",
-                metadata=metadata,
-            )
-        except Exception:
-            logger.debug("Failed to forward diff event", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=self._build_task_event_content(
+                task_id=turn_id,
+                task="Codex diff",
+                status="updated",
+                summary=summary,
+            ),
+            message_type="task",
+            metadata=metadata,
+            log_label="diff event",
+            log_level=logging.DEBUG,
+        )
 
     # ------------------------------------------------------------------
     # Phase 1: Approval audit trail
@@ -2515,27 +2550,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         """Emit a task event for an approval decision."""
         if Emit.TASK_EVENTS not in self.features.emit:
             return
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=str(entry.request_id),
-                    task="Codex approval",
-                    status=entry.decision,
-                    summary=entry.summary,
-                ),
-                message_type="task",
-                metadata={
-                    "codex_event_type": "approval_resolution",
-                    "codex_approval_method": entry.method,
-                    "codex_approval_decision": entry.decision,
-                    "codex_decided_by": entry.decided_by,
-                    "codex_session_level": entry.session_level,
-                    "codex_room_id": room_id,
-                    "codex_timestamp": entry.timestamp,
-                },
-            )
-        except Exception:
-            logger.debug("Failed to emit approval audit event", exc_info=True)
+        await send_event_safe(
+            tools,
+            content=self._build_task_event_content(
+                task_id=str(entry.request_id),
+                task="Codex approval",
+                status=entry.decision,
+                summary=entry.summary,
+            ),
+            message_type="task",
+            metadata={
+                "codex_event_type": "approval_resolution",
+                "codex_approval_method": entry.method,
+                "codex_approval_decision": entry.decision,
+                "codex_decided_by": entry.decided_by,
+                "codex_session_level": entry.session_level,
+                "codex_room_id": room_id,
+                "codex_timestamp": entry.timestamp,
+            },
+            log_label="approval audit event",
+            log_level=logging.DEBUG,
+        )
 
     async def _handle_local_command(
         self,
@@ -2550,7 +2585,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
         if command == "help":
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "Codex commands: "
                 "`/status`, `/model`, `/models`, `/model list`, `/models list`, `/model <id>`, "
                 "`/reasoning [none|minimal|low|medium|high|xhigh]`, "
@@ -2587,13 +2623,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 f"- token_usage: {usage_line}\n"
                 f"- turn_task_markers: {self.config.emit_turn_task_markers}"
             )
-            await tools.send_message(status_text, mentions=mention)
+            await deliver_reply(tools, status_text, mentions=mention)
             return True
 
         if command in {"model", "models"}:
             model_arg = args.strip()
             if not model_arg:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Current model: "
                     f"`{self._selected_model or 'unknown'}` "
                     f"(configured: `{self.config.model or 'auto'}`). "
@@ -2611,12 +2648,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     preview = ", ".join(models[:10])
                     if len(models) > 10:
                         preview += ", ..."
-                    await tools.send_message(
+                    await deliver_reply(
+                        tools,
                         f"Available models ({len(models)}): {preview}",
                         mentions=mention,
                     )
                 else:
-                    await tools.send_message(
+                    await deliver_reply(
+                        tools,
                         "No visible models returned by Codex app-server.",
                         mentions=mention,
                     )
@@ -2624,7 +2663,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
             self.config.model = model_arg
             self._selected_model = model_arg
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Model override set to `{model_arg}` for subsequent turns.",
                 mentions=mention,
             )
@@ -2633,7 +2673,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if command == "reasoning":
             effort_arg = args.strip().lower()
             if not effort_arg:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Current reasoning effort: `{self.config.reasoning_effort or 'default'}`. "
                     f"Summary: `{self.config.reasoning_summary or 'default'}`. "
                     f"Use `/reasoning <{'|'.join(sorted(_REASONING_EFFORTS))}>` to override.",
@@ -2641,14 +2682,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 )
                 return True
             if effort_arg not in _REASONING_EFFORTS:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Invalid reasoning effort `{effort_arg}`. "
                     f"Valid values: {', '.join(sorted(_REASONING_EFFORTS))}.",
                     mentions=mention,
                 )
                 return True
             self.config.reasoning_effort = effort_arg  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Reasoning effort set to `{effort_arg}` for subsequent turns.",
                 mentions=mention,
             )
@@ -2657,7 +2700,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # --- Phase 1: /sandbox and /permissions commands ---
         if command == "sandbox":
             if self.config.sandbox_policy is not None:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Cannot override sandbox: a `sandbox_policy` is configured. "
                     "Remove `sandbox_policy` from config to use per-room `/sandbox` overrides.",
                     mentions=mention,
@@ -2666,7 +2710,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             mode_arg = args.strip()
             if not mode_arg:
                 effective = self._effective_sandbox(room_id) or "default"
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Current sandbox: `{effective}`. "
                     "Use `/sandbox <read-only|workspace-write|danger-full-access>` to change.",
                     mentions=mention,
@@ -2678,7 +2723,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             confirm_flag = "--confirm" in tokens
             mode_tokens = [tok for tok in tokens if tok != "--confirm"]
             if len(mode_tokens) != 1:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Usage: `/sandbox <read-only|workspace-write|danger-full-access> "
                     "[--confirm]`.",
                     mentions=mention,
@@ -2687,14 +2733,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             mode_token = mode_tokens[0]
             normalized = self._normalize_sandbox_mode(mode_token)
             if normalized is None:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Invalid sandbox mode `{mode_token}`. "
                     "Valid: read-only, workspace-write, danger-full-access.",
                     mentions=mention,
                 )
                 return True
             if normalized == "danger-full-access" and not confirm_flag:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "Escalating to `danger-full-access` removes all sandbox "
                     "restrictions. Re-run with `--confirm` to proceed:\n"
                     "`/sandbox danger-full-access --confirm`",
@@ -2709,7 +2757,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     msg.sender_name or msg.sender_type or "unknown",
                 )
             self._sandbox_overrides[room_id] = normalized
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Sandbox mode set to `{normalized}` for subsequent turns in this room.",
                 mentions=mention,
             )
@@ -2733,7 +2782,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         f"  - [{entry.timestamp}] {entry.method}: "
                         f"{entry.decision} by {entry.decided_by}"
                     )
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
         # --- Phase 2: /threads, /thread info, /thread archive ---
@@ -2742,22 +2791,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if command == "threads" or not subcommand:
                 # List all room->thread mappings
                 if not self._room_threads:
-                    await tools.send_message(
-                        "No active thread mappings.", mentions=mention
+                    await deliver_reply(
+                        tools, "No active thread mappings.", mentions=mention
                     )
                     return True
                 lines = ["Active thread mappings:"]
                 for rid, tid in self._room_threads.items():
                     current = " (current)" if rid == room_id else ""
                     lines.append(f"- room `{rid}` → thread `{tid}`{current}")
-                await tools.send_message("\n".join(lines), mentions=mention)
+                await deliver_reply(tools, "\n".join(lines), mentions=mention)
                 return True
 
             if subcommand == "info":
                 mapped_thread = self._room_threads.get(room_id)
                 if not mapped_thread:
-                    await tools.send_message(
-                        "No thread mapped for this room.", mentions=mention
+                    await deliver_reply(
+                        tools, "No thread mapped for this room.", mentions=mention
                     )
                     return True
                 usage = self._token_usage.get(mapped_thread)
@@ -2772,7 +2821,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     f"- room_id: {room_id}\n"
                     f"- token_usage: {usage_line}"
                 )
-                await tools.send_message(info_text, mentions=mention)
+                await deliver_reply(tools, info_text, mentions=mention)
                 return True
 
             if subcommand == "archive":
@@ -2781,7 +2830,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._token_usage.pop(mapped_thread or "", None)
                 self._raw_history_by_room.pop(room_id, None)
                 self._needs_history_injection.discard(room_id)
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Thread `{mapped_thread or 'none'}` archived. "
                     "A new thread will be created on next message.",
                     mentions=mention,
@@ -2794,19 +2844,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if command == "usage":
             mapped_thread = self._room_threads.get(room_id)
             if not mapped_thread:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "No thread mapped for this room — no usage data.",
                     mentions=mention,
                 )
                 return True
             usage = self._token_usage.get(mapped_thread)
             if not usage or usage.total_tokens == 0:
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     "No token usage recorded for this thread.",
                     mentions=mention,
                 )
                 return True
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Thread `{mapped_thread}` — {usage.format_summary()}",
                 mentions=mention,
             )
@@ -2828,21 +2881,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
         if command == "approvals":
             if not pending:
-                await tools.send_message("No pending approvals.", mentions=mention)
+                await deliver_reply(tools, "No pending approvals.", mentions=mention)
                 return True
             lines = ["Pending approvals:"]
             now = datetime.now(timezone.utc)
             for token, item in list(pending.items()):
                 age_s = int((now - item.created_at).total_seconds())
                 lines.append(f"- {token}: {item.summary} ({age_s}s)")
-            await tools.send_message("\n".join(lines), mentions=mention)
+            await deliver_reply(tools, "\n".join(lines), mentions=mention)
             return True
 
         if command not in {"approve", "decline", "approve-session"}:
             return False
 
         if not pending:
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "No pending approvals to resolve.",
                 mentions=mention,
             )
@@ -2853,7 +2907,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             selected = pending.get(token)
             if selected is None:
                 available = ", ".join(sorted(pending.keys()))
-                await tools.send_message(
+                await deliver_reply(
+                    tools,
                     f"Unknown approval id `{token}`. Pending: {available}",
                     mentions=mention,
                 )
@@ -2862,7 +2917,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             token, selected = next(iter(pending.items()))
         else:
             available = ", ".join(sorted(pending.keys()))
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 "Multiple approvals pending. "
                 f"Use `/{command} <id>`. Pending: {available}",
                 mentions=mention,
@@ -2878,7 +2934,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # an empty string in _session_approved or report a misleading
         # "Future `` requests will be auto-approved" message to the user.
         if is_session and not selected.session_key:
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Approval `{token}` cannot be resolved as session-level: "
                 "this request has no command signature to match against. "
                 f"Use `/approve {token}` for a one-shot approval instead.",
@@ -2899,13 +2956,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Session-level: register the session key for auto-approval
         if is_session:
             self._record_session_approval(room_id, selected.session_key)
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Approval `{token}` resolved as `acceptForSession` (session-level). "
                 f"Future `{selected.session_key}` requests will be auto-approved.",
                 mentions=mention,
             )
         else:
-            await tools.send_message(
+            await deliver_reply(
+                tools,
                 f"Approval `{token}` resolved as `{decision_value}`.",
                 mentions=mention,
             )

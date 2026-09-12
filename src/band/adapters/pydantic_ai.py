@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, ClassVar, Literal, cast, get_origin, get_type_hints
 
-import httpx
+from band_sdk_core import AgentFailure
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
@@ -35,10 +35,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 
-from band_rest.core.api_error import ApiError
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import (
@@ -1025,18 +1028,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 room_id,
                                 dropped,
                             )
-        except UnexpectedModelBehavior as e:
+        except Exception as e:
             # A turn that already did its work must not fail over the reply the model
             # owes pydantic-ai. Allowing `None` — and normalizing blank text into it
             # — ends the ordinary nothing-left-to-say response cleanly, but some
             # other response the run cannot turn into output can still spend the
             # refused output budget. Once a terminal tool has run (a
             # band_send_message reply, a band_store_memory, ...) the work already went
-            # out, so that exhaustion is benign — swallow it. Genuine no-response
-            # failures (no terminal tool ran — only read-only lookups or failed
-            # tools) still propagate here, unlike the crewai adapter, which cannot
-            # tell them apart from the empty completion that ends its every turn.
-            if tool_executed and _is_output_retries_exhausted(e):
+            # out, so that exhaustion is benign — swallow it. Every other exception —
+            # a different UnexpectedModelBehavior, or any other type now that this
+            # catches broadly for send_failure reporting — still surfaces and
+            # propagates. Unlike the crewai adapter, which cannot tell a genuine
+            # failure apart from the empty completion that ends its every turn,
+            # pydantic-ai raises the exhausted-retries case as its own distinct type,
+            # so the isinstance check (not just the message match) is load-bearing.
+            if (
+                tool_executed
+                and isinstance(e, UnexpectedModelBehavior)
+                and _is_output_retries_exhausted(e)
+            ):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted its output retries after "
                     "the agent already did productive work this turn; treating as "
@@ -1056,6 +1066,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 return
+            await tools.send_failure(
+                AgentFailure("pydantic_ai", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
         finally:
             capture_cm.__exit__(None, None, None)
@@ -1075,7 +1088,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # either answered in plain text or said nothing at all. Surface it as an
         # error (mirrors the crewai adapter) instead of letting it vanish.
         if not tool_executed:
-            await self._report_error(tools, missing_reply_error("Pydantic AI"))
+            logger.warning(
+                "Room %s: Pydantic AI turn produced nothing for the room", room_id
+            )
+            detail = missing_reply_error("Pydantic AI")
+            await tools.send_failure(AgentFailure("pydantic_ai", detail))
+            raise TurnResultAlreadyReported(detail)
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
@@ -1150,18 +1168,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             if isinstance(message, ModelResponse):
                 total = total + PydanticAIAdapter._usage_from_usage_obj(message.usage)
         return total
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send an error event to the room (best effort).
-
-        Structurally mirrors the crewai adapter, but narrows the catch to the REST
-        call's real failure modes (ApiError = HTTP status, httpx = transport) so a
-        failed error-report never crashes the turn — while a real bug still raises.
-        """
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except (ApiError, httpx.HTTPError) as e:
-            logger.warning("Failed to send error event: %s", e)
 
     # --- Copied from BandPydanticAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:

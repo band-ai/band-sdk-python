@@ -327,11 +327,45 @@ class TestErrorHandling:
                     room_id="room-123",
                 )
 
-            # Should have tried to report an error event, AND that event
-            # must NOT include the raw exception text (it can carry DB
-            # strings, paths, tokens, etc.). The full traceback only goes
-            # to the agent log via logger.exception.
-            mock_tools.send_event.assert_awaited()
-            call_kwargs = mock_tools.send_event.call_args.kwargs
-            assert call_kwargs["message_type"] == "error"
-            assert "Graph error!" not in call_kwargs["content"]
+            # Should have tried to report a failure, AND that failure must
+            # NOT include the raw exception text anywhere -- message, code,
+            # or detail (it can carry DB strings, paths, tokens, etc.). The
+            # full traceback only goes to the agent log via logger.exception.
+            mock_tools.send_failure.assert_awaited_once()
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "langgraph"
+            assert "Graph error!" not in failure.message
+            assert failure.code is None
+            assert failure.detail is None
+
+    @pytest.mark.asyncio
+    async def test_reports_error_when_graph_factory_yields_no_graph(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """A bad graph factory's RuntimeError must be reported, not escape unreported."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
+        await adapter.on_started("TestBot", "Test bot")
+        adapter.graph_factory = MagicMock(return_value=None)
+
+        with patch(
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.return_value = []
+
+            with pytest.raises(RuntimeError, match="No graph available"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "langgraph"

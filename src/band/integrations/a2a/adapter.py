@@ -19,10 +19,20 @@ from a2a.types import (
     Task,
     TaskState,
 )
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.converters.a2a import A2AHistoryConverter
-from band.core.protocols import AgentToolsProtocol
+from band.core.delivery import (
+    DeliveryFailedError,
+    deliver_reply,
+    reraise_delivery_cause,
+)
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
@@ -172,13 +182,16 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                     event, tools, room_id, msg.sender_id, msg.sender_name
                 )
 
+        except DeliveryFailedError as e:
+            reraise_delivery_cause(e)
+        except TurnResultAlreadyReported:
+            raise
         except Exception as e:
             logger.exception("A2A agent error: %s", e)
-            await tools.send_event(
-                content=f"A2A agent error: {e}",
-                message_type="error",
-                metadata={"a2a_error": str(e)},
+            await tools.send_failure(
+                AgentFailure("a2a", GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
+            raise
 
     async def _handle_event(
         self,
@@ -208,8 +221,19 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         finally:
             # A terminal task must be persisted and released even when Band
             # delivery fails, or the room keeps addressing a finished task.
+            # Best-effort: a failure here must never replace an exception
+            # already propagating from the try block above, or a Band
+            # delivery outage gets misreported as a fabricated provider
+            # failure once it reaches on_message's except clauses.
             if state in TERMINAL_TASK_STATES:
-                await self._emit_task_event(tools, task, state)
+                try:
+                    await self._emit_task_event(tools, task, state)
+                except Exception:
+                    logger.exception(
+                        "Failed to emit terminal task event (room=%s, task=%s)",
+                        room_id,
+                        task.id,
+                    )
                 self._finalize_task(room_id, task.id)
 
     async def _deliver_message(
@@ -222,8 +246,9 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """Forward a direct A2A message to its Band sender."""
         text = get_message_text(message)
         if text:
-            await tools.send_message(
-                content=text,
+            await deliver_reply(
+                tools,
+                text,
                 mentions=[{"id": sender_id, "name": sender_name or ""}],
             )
 
@@ -259,22 +284,23 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         if state == TaskState.TASK_STATE_INPUT_REQUIRED:
             text = self._get_status_text(task) or "Please provide more information."
-            await tools.send_message(content=text, mentions=[sender])
+            await deliver_reply(tools, text, mentions=[sender])
             return
 
         if state == TaskState.TASK_STATE_COMPLETED:
             response = self._extract_response(task)
             if response:
-                await tools.send_message(content=response, mentions=[sender])
+                await deliver_reply(tools, response, mentions=[sender])
             return
 
         if state in TERMINAL_TASK_STATES:
-            error_text = self._get_status_text(task) or f"Task {state_name(state)}"
-            await tools.send_event(
-                content=error_text,
-                message_type="error",
-                metadata={"a2a_state": state_name(state)},
+            state_str = state_name(state)
+            error_text = self._get_status_text(task) or f"Task {state_str}"
+            logger.warning(
+                "Task %s: peer A2A task ended in state %s", task.id, state_str
             )
+            await tools.send_failure(AgentFailure("a2a", error_text, state_str))
+            raise TurnResultAlreadyReported(error_text)
 
     def _finalize_task(self, room_id: str, task_id: str) -> None:
         """Release a terminal task after its Band output and state are persisted."""

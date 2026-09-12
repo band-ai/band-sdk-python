@@ -14,9 +14,14 @@ import warnings
 from contextvars import ContextVar
 from typing import ClassVar, TYPE_CHECKING, Any
 
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
@@ -295,9 +300,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         logger.debug("Handling message %s in room %s", msg.id, room_id)
 
         if not self._crewai_agent:
-            raise RuntimeError(
-                "CrewAI agent not initialized - ensure on_started() was called"
-            )
+            message = "CrewAI agent not initialized - ensure on_started() was called"
+            await tools.send_failure(AgentFailure("crewai", message))
+            raise RuntimeError(message)
 
         # Set context variable for tool access (thread-safe room context).
         # Wrap in try/finally immediately to ensure cleanup even if code
@@ -414,7 +419,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             # failing the delivery so the platform retries it.
             if not (_is_empty_llm_response(e) and reply_tracker.any_tool_ran):
                 logger.error("Error processing message: %s", e, exc_info=True)
-                await self._report_error(tools, str(e))
+                await tools.send_failure(
+                    AgentFailure("crewai", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
                 raise
             # Keep the exception text: it is the only record that CrewAI raised,
             # and this turn is no longer marked failed for the runtime to log.
@@ -431,21 +438,23 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             )
 
         if not reply_tracker.did_productive_work:
-            # Warn, not debug: nothing reached the room, and the delivery is
-            # still acked as processed, so this log is the only operator signal.
             logger.warning(
                 "Room %s: CrewAI turn produced nothing for the room", room_id
             )
-            await self._report_error(
-                tools,
-                missing_reply_error(
-                    "CrewAI",
-                    detail=(
-                        "Repeated tool failures may also have exhausted "
-                        f"max_iter={self.max_iter}."
-                    ),
+            detail = missing_reply_error(
+                "CrewAI",
+                detail=(
+                    "Repeated tool failures may also have exhausted "
+                    f"max_iter={self.max_iter}."
                 ),
             )
+            await tools.send_failure(AgentFailure("crewai", detail))
+            if not reply_tracker.any_tool_ran:
+                # Some tool activity (even read-only) means the turn did what it
+                # was asked and correctly had nothing left to say -- report but
+                # don't fail the delivery. Only true silence, no tool call at
+                # all, is a genuine no-response failure worth a retry.
+                raise TurnResultAlreadyReported(detail)
 
         logger.info(
             "Room %s: CrewAI turn over for %s (output=%s chars, history=%s)",
@@ -460,10 +469,3 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         if room_id in self._message_history:
             del self._message_history[room_id]
             logger.debug("Room %s: Cleaned up CrewAI session", room_id)
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
-            logger.warning("Failed to send error event: %s", e)

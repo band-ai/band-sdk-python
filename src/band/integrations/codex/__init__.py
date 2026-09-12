@@ -10,21 +10,19 @@ from .rpc_base import (
 from .stdio_client import CodexStdioClient
 from .types import (
     CODEX_APPROVAL_METHODS,
-    CODEX_ERROR_REMEDIATION,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
     CodexPlanStep,
     CodexSessionState,
     CodexTokenUsage,
-    build_structured_error_metadata,
+    build_agent_failure,
     parse_plan_steps,
 )
 from .websocket_client import CodexWebSocketClient
 
 __all__ = [
     "CODEX_APPROVAL_METHODS",
-    "CODEX_ERROR_REMEDIATION",
     "ApprovalAuditEntry",
     "CodexApprovalMethod",
     "CodexItemType",
@@ -36,6 +34,6 @@ __all__ = [
     "CodexWebSocketClient",
     "OverloadRetryPolicy",
     "RpcEvent",
-    "build_structured_error_metadata",
+    "build_agent_failure",
     "parse_plan_steps",
 ]

@@ -147,10 +147,12 @@ class FakeCopilotClient:
         self,
         *,
         resume_error: Exception | None = None,
+        create_error: Exception | None = None,
         reply_content: str | None = "Hello from Copilot",
         turn_events: list[Any] | None = None,
     ):
         self.resume_error = resume_error
+        self.create_error = create_error
         self.reply_content = reply_content
         self.turn_events = turn_events or []
         self.started = False
@@ -168,6 +170,8 @@ class FakeCopilotClient:
     async def create_session(
         self, *, session_id: str | None = None, **kwargs: Any
     ) -> Any:
+        if self.create_error:
+            raise self.create_error
         session = FakeCopilotSession(
             session_id,
             kwargs,

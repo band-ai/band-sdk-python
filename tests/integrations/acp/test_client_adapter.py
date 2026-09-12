@@ -7,9 +7,11 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from acp.exceptions import RequestError
 from acp.helpers import update_agent_message_text
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
@@ -20,7 +22,7 @@ from band.integrations.acp.client_types import (
 )
 from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type, reported_failures
 
 from tests.integrations.acp.conftest import make_platform_message
 
@@ -37,11 +39,6 @@ def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
 def event_types(events: list[dict[str, object]]) -> list[object]:
     """The ordered ``message_type`` of each event — for asserting a pair's shape."""
     return [event["message_type"] for event in events]
-
-
-def events_of_type(tools: FakeAgentTools, message_type: str) -> list[dict[str, object]]:
-    """Events the handler sent, filtered to one message_type."""
-    return [e for e in tools.events_sent if e.get("message_type") == message_type]
 
 
 def metadata_values(events: list[dict[str, object]], key: str) -> list[object]:
@@ -745,7 +742,7 @@ class TestACPClientAdapterOnMessage:
     async def test_on_message_error_sends_error_event(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should send error event when ACP agent fails."""
+        """Should report an AgentFailure when the ACP agent fails."""
         adapter_with_mocks._runtime._conn.prompt = AsyncMock(
             side_effect=RuntimeError("Agent crashed")
         )
@@ -753,19 +750,50 @@ class TestACPClientAdapterOnMessage:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
+        with pytest.raises(RuntimeError, match="Agent crashed"):
+            await adapter_with_mocks.on_message(
+                msg,
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "acp"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_on_message_request_error_captures_code_and_data(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A JSON-RPC RequestError's code/data survive into the AgentFailure."""
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(
+            side_effect=RequestError(-32603, "Internal error", {"detail": "oom"})
         )
 
-        error_events = events_of_type(tools, "error")
-        assert len(error_events) == 1
-        assert "Agent crashed" in error_events[0]["content"]
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        with pytest.raises(RequestError):
+            await adapter_with_mocks.on_message(
+                msg,
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "acp"
+        assert failures[0]["code"] == "-32603"
+        assert failures[0]["detail"] == {"detail": "oom"}
 
     @pytest.mark.asyncio
     async def test_on_message_not_initialized_raises(self) -> None:
@@ -1311,23 +1339,115 @@ class TestACPClientAdapterDeadConnectionRecovery:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-1")
 
-        await adapter.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="Process died"):
+            await adapter.on_message(
+                msg,
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         # Connection should be cleared after error
         assert adapter._runtime._conn is None
         assert adapter._runtime._ctx is None
 
-        # Error event should be sent
-        error_events = events_of_type(tools, "error")
-        assert len(error_events) == 1
+        # AgentFailure should be reported
+        assert len(reported_failures(tools)) == 1
+
+    @pytest.mark.asyncio
+    async def test_reply_delivery_failure_leaves_connection_up(self) -> None:
+        """The agent answered fine; posting its reply to the room is what
+        failed. That must not tear down and respawn a healthy connection,
+        nor be reported as an ACP provider failure."""
+        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter._runtime._conn = AsyncMock()
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-1"
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._client = BandACPClient()
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        adapter._runtime._ctx = mock_ctx
+
+        async def prompt_with_reply(**kwargs):
+            session_id = kwargs["session_id"]
+            await adapter._runtime._client.session_update(
+                session_id, update_agent_message_text("Here's the answer")
+            )
+
+        adapter._runtime._conn.prompt = AsyncMock(side_effect=prompt_with_reply)
+
+        tools = FakeAgentTools()
+
+        async def _raise(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("platform rejected the message")
+
+        tools.send_message = _raise  # type: ignore[method-assign]
+
+        msg = make_platform_message("Hello", room_id="room-1")
+
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await adapter.on_message(
+                msg,
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert adapter._runtime._conn is not None
+        assert adapter._runtime._ctx is not None
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
+    async def test_turn_timeout_reports_failure_and_clears_connection(self) -> None:
+        """A silent/stuck agent must become an observable failure instead of
+        hanging the turn indefinitely, and the presumed-wedged connection is
+        torn down so the next turn respawns it."""
+        adapter = ACPClientAdapter(
+            command="codex", inject_band_tools=False, turn_timeout_s=0.01
+        )
+        adapter._runtime._conn = AsyncMock()
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-1"
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._client = BandACPClient()
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        adapter._runtime._ctx = mock_ctx
+
+        async def hang(**kwargs: object) -> None:
+            await asyncio.sleep(10)
+
+        adapter._runtime._conn.prompt = AsyncMock(side_effect=hang)
+
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-1")
+
+        with pytest.raises(TimeoutError):
+            await adapter.on_message(
+                msg,
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert adapter._runtime._conn is None
+        assert adapter._runtime._ctx is None
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "acp"
+        assert failures[0]["code"] == "timeout"
 
 
 class TestACPClientAdapterInjectToolsConfig:

@@ -9,6 +9,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from band_sdk_core import AgentFailure
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,46 +79,15 @@ class CodexSessionState:
 # Structured error types
 # ---------------------------------------------------------------------------
 
-# Mapping from Codex error type to (human description, suggested action).
-CODEX_ERROR_REMEDIATION: dict[str, tuple[str, str]] = {
-    "ContextWindowExceeded": (
-        "Context window exceeded — the conversation is too long for the model.",
-        "compact_context",
-    ),
-    "UsageLimitExceeded": (
-        "Usage limit exceeded — you have hit your API quota.",
-        "wait_or_upgrade",
-    ),
-    "HttpConnectionFailed": (
-        "HTTP connection failed — could not reach the API.",
-        "check_connectivity",
-    ),
-    "SandboxError": (
-        "Sandbox error — a sandbox policy violation occurred.",
-        "review_sandbox_policy",
-    ),
-    "Unauthorized": (
-        "Unauthorized — authentication failed or expired.",
-        "re_authenticate",
-    ),
-    "BadRequest": (
-        "Bad request — the input format is invalid.",
-        "check_input_format",
-    ),
-    "ResponseTooManyFailedAttempts": (
-        "Too many failed attempts — the model could not produce a valid response.",
-        "retry_different_approach",
-    ),
-}
 
-
-def build_structured_error_metadata(
+def build_agent_failure(
     error_obj: dict[str, Any],
     *,
     thread_id: str | None = None,
     turn_id: str | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """Parse a Codex error dict and return (content, metadata) for a structured error event.
+    room_id: str | None = None,
+) -> AgentFailure:
+    """Parse a Codex error dict into the shared provider-failure shape.
 
     The ``error_obj`` is typically the ``error`` field from a turn payload or an
     ``error`` notification.  It may contain a nested ``codexErrorInfo`` dict with
@@ -124,51 +95,47 @@ def build_structured_error_metadata(
 
     ``additionalDetails`` echoes upstream strings that may be attacker-controlled
     (e.g. error messages from a downstream HTTP target) and will be rendered by
-    downstream UIs.  Consumers MUST treat the resulting
-    ``codex_additional_details`` metadata field as untrusted — escape it before
-    rendering as HTML/Markdown.  This helper caps the length at
-    ``_MAX_ERROR_DETAIL_CHARS`` (2 KiB) so a hostile payload can't blow up
-    WebSocket frames or downstream storage.
+    downstream UIs.  Consumers MUST treat the resulting ``codex_additional_details``
+    detail field as untrusted — escape it before rendering as HTML/Markdown. This
+    helper caps the length at ``_MAX_ERROR_DETAIL_CHARS`` (2 KiB) so a hostile
+    payload can't blow up WebSocket frames or downstream storage.
     """
     codex_info = error_obj.get("codexErrorInfo") or {}
     if not isinstance(codex_info, dict):
         codex_info = {}
-    error_type = codex_info.get("type") or ""
-    error_code = codex_info.get("code") or ""
+    raw_error_type = codex_info.get("type")
+    error_type = str(raw_error_type) if raw_error_type else None
+    error_code = codex_info.get("code") or None
     http_status = codex_info.get("httpStatus")
-    is_retryable = bool(codex_info.get("retryable", False))
+    # A genuine passthrough of codexErrorInfo.retryable: absent means unknown,
+    # never defaulted to False.
+    is_retryable = codex_info.get("retryable")
     additional = error_obj.get("additionalDetails")
 
-    # Look up remediation
-    remediation = CODEX_ERROR_REMEDIATION.get(str(error_type))
-    if remediation:
-        content, suggested_action = remediation
-    else:
-        raw_message = error_obj.get("message", "")
-        content = (
-            str(raw_message)
-            if raw_message
-            else f"Codex error: {error_type or 'unknown'}"
-        )
-        suggested_action = ""
+    raw_message = error_obj.get("message", "")
+    message = (
+        str(raw_message) if raw_message else f"Codex error: {error_type or 'unknown'}"
+    )
 
-    metadata: dict[str, Any] = {
-        "codex_error_type": error_type or None,
-        "codex_error_code": error_code or None,
-        "codex_http_status": http_status,
-        "codex_is_retryable": is_retryable,
-        "codex_suggested_action": suggested_action or None,
-    }
+    detail: dict[str, Any] = {}
+    if error_code:
+        detail["codex_error_code"] = error_code
+    if http_status is not None:
+        detail["codex_http_status"] = http_status
+    if is_retryable is not None:
+        detail["codex_is_retryable"] = bool(is_retryable)
     if thread_id:
-        metadata["codex_thread_id"] = thread_id
+        detail["codex_thread_id"] = thread_id
     if turn_id:
-        metadata["codex_turn_id"] = turn_id
+        detail["codex_turn_id"] = turn_id
+    if room_id:
+        detail["codex_room_id"] = room_id
     if additional is not None:
         capped = _cap_error_detail(additional)
         if capped is not None:
-            metadata["codex_additional_details"] = capped
+            detail["codex_additional_details"] = capped
 
-    return content, metadata
+    return AgentFailure("codex", message, error_type, detail or None)
 
 
 def _cap_error_detail(value: Any) -> Any:

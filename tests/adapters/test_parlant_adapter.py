@@ -15,6 +15,7 @@ import sys
 import pytest
 
 from band.adapters.parlant import PARLANT_PREAMBLE_TAG, ParlantAdapter
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import PlatformMessage
 
 
@@ -42,6 +43,7 @@ def mock_tools():
     tools.get_openai_tool_schemas = MagicMock(return_value=[])
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
     return tools
 
@@ -792,8 +794,110 @@ class TestErrorHandling:
                     room_id="room-123",
                 )
 
-        # Should have tried to report error
-        mock_tools.send_event.assert_called()
+        # Should have tried to report the failure
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "parlant"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_reports_error_on_session_init_failure(
+        self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
+    ):
+        """A session-creation failure is reported, then fails the turn."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+        )
+        adapter.agent_name = "TestBot"
+
+        mock_app = MagicMock()
+        mock_app.sessions = AsyncMock()
+        mock_app.sessions.create = AsyncMock(side_effect=Exception("db unreachable"))
+        adapter._app = mock_app
+
+        with pytest.raises(Exception, match="db unreachable"):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "parlant"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_send_message_failure_is_not_reported_as_provider_failure(
+        self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
+    ):
+        """A Band-side send_message failure while delivering the reply must
+        propagate as itself, not get misreported as a Parlant provider failure.
+
+        ``deliver_reply`` wraps the ``send_message`` error in
+        ``DeliveryFailedError``; ``on_message``'s dedicated except branch must
+        re-raise the original cause before its generic ``except Exception``
+        (which reports ``send_failure``) ever sees it.
+        """
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            response_timeout=0.2,
+            response_poll=0.01,
+        )
+        adapter.agent_name = "TestBot"
+
+        agent_event = MagicMock()
+        agent_event.kind = "message"
+        agent_event.source = "ai_agent"
+        agent_event.offset = 2
+        agent_event.data = {"message": "Hello there!", "tags": []}
+
+        mock_app = MagicMock()
+        mock_app.sessions = AsyncMock()
+        mock_app.sessions.create = AsyncMock(return_value=MagicMock(id="session-123"))
+        mock_app.sessions.create_customer_message = AsyncMock(
+            return_value=MagicMock(offset=1)
+        )
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
+        mock_app.sessions.find_events = AsyncMock(return_value=[agent_event])
+        adapter._app = mock_app
+
+        mock_tools.send_message.side_effect = ConnectionError("band down")
+
+        mock_moderation = MagicMock()
+        mock_moderation.NONE = "none"
+
+        with patch.dict(
+            sys.modules,
+            {
+                "parlant.core.app_modules.sessions": MagicMock(
+                    Moderation=mock_moderation
+                ),
+                "parlant.core.sessions": MagicMock(
+                    EventSource=MagicMock(CUSTOMER="customer", AI_AGENT="ai_agent"),
+                    EventKind=MagicMock(MESSAGE="message"),
+                ),
+                "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
+            },
+        ):
+            with pytest.raises(ConnectionError, match="band down"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_clears_tools_on_error(
@@ -847,26 +951,30 @@ class TestErrorHandling:
     async def test_handles_uninitialized_app(
         self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
     ):
-        """Should handle case when app is not initialized."""
+        """An uninitialized app reports the failure, then fails the turn."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
         )
         # Don't set _app
 
-        # Should return early without error
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
-        # No calls should be made
+        # No reply attempt, but the failure is reported.
         mock_tools.send_message.assert_not_called()
+        mock_tools.send_failure.assert_awaited_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "parlant"
+        assert "not initialized" in failure.message
 
 
 class TestResponseWaitBudget:

@@ -32,6 +32,7 @@ from tests.adapters.opencode.helpers import (
     event_question,
     event_session_idle,
     event_text_part,
+    events_of_type,
     make_platform_message,
     tools_protocol,
     wait_for,
@@ -626,8 +627,11 @@ async def test_permission_timeout_expiry() -> None:
 
     await wait_for(lambda: len(fake_client.permission_replies) > 0, timeout_s=3.0)
     assert fake_client.permission_replies[0]["response"] == "reject"
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("timed out" in e["content"].lower() for e in error_events)
+    # A human-approval timeout is a Band-side procedural notice, never an
+    # AgentFailure -- it must not carry the shared failure metadata shape.
+    assert "failure" not in error_events[0]["metadata"]
 
     await adapter.on_cleanup("room-1")
 
@@ -682,8 +686,11 @@ async def test_question_timeout_expiry() -> None:
 
     await wait_for(lambda: len(fake_client.question_rejections) > 0, timeout_s=3.0)
     assert fake_client.question_rejections == ["q-timeout"]
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("timed out" in e["content"].lower() for e in error_events)
+    # A human-approval timeout is a Band-side procedural notice, never an
+    # AgentFailure -- it must not carry the shared failure metadata shape.
+    assert "failure" not in error_events[0]["metadata"]
 
     await adapter.on_cleanup("room-1")
 

@@ -21,8 +21,12 @@ from band.adapters.letta import (
     RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import Emit
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.lettakit import (
     default_enforcement,
     make_assistant_message,
@@ -149,6 +153,43 @@ class TestLettaAdapterOnMessagePerRoom:
         assert tools.messages_sent[0]["content"] == "I'll help you!"
 
     @pytest.mark.asyncio
+    async def test_send_message_failure_is_not_reported_as_provider_failure(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """The Letta agent answered fine; the room POST is what failed. That
+        must not surface as a Letta AgentFailure -- deliver_reply's
+        DeliveryFailedError must be recognized and left unreported here."""
+        adapter, mock_client = adapter_with_client
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_assistant_message("I'll help you!")
+        )
+
+        tools = FakeAgentTools()
+
+        async def _raise(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("platform rejected the message")
+
+        tools.send_message = _raise  # type: ignore[method-assign]
+
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_skip_auto_relay_when_send_message_used(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -198,19 +239,54 @@ class TestLettaAdapterOnMessagePerRoom:
         msg = make_platform_message()
         history = LettaSessionState()
 
-        await adapter.on_message(
-            msg,
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
+        with pytest.raises(TimeoutError):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert "timed out" in failures[0]["message"]
+        assert failures[0]["provider"] == "letta"
+        assert failures[0]["code"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_reports_and_propagates(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """A bare exception from the Letta client (not a timeout, not a
+        delivery failure) must still surface via the generic fallback."""
+        adapter, mock_client = adapter_with_client
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+        mock_client.agents.messages.create.side_effect = ConnectionError(
+            "letta connection reset"
         )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert "timed out" in error_events[0]["content"]
+        tools = FakeAgentTools()
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        with pytest.raises(ConnectionError, match="letta connection reset"):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        failure = reported_failures(tools)[0]
+        assert failure["provider"] == "letta"
+        assert failure["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert "letta connection reset" not in failure["message"]
 
     @pytest.mark.asyncio
     async def test_participants_and_contacts_injected(
@@ -282,15 +358,16 @@ class TestLettaAdapterOnMessagePerRoom:
         msg = make_platform_message()
         history = LettaSessionState()
 
-        await adapter.on_message(
-            msg,
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
         assert len(error_events) == 1
@@ -1232,15 +1309,16 @@ class TestAutoRelayDisabled:
         )
 
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            LettaSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         assert len(tools.messages_sent) == 0
         error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
@@ -1273,7 +1351,7 @@ class TestAutoRelayDisabled:
         )
 
         assert len(tools.messages_sent) == 0
-        assert not [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert not reported_failures(tools)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1339,15 +1417,16 @@ class TestColdBootSeeding:
             replay_messages=["[Alice]: The secret word is kumquat."]
         )
         tools = FakeAgentTools()
-        await adapter.on_message(
-            make_platform_message(content="what was the secret word?"),
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TimeoutError):
+            await adapter.on_message(
+                make_platform_message(content="what was the secret word?"),
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
         assert adapter._rooms["room-1"].pending_seed == [
             "[Alice]: The secret word is kumquat."

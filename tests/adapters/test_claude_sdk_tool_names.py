@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
 
-from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.claude_sdk import ClaudeSDKAdapter, TurnResultAlreadyReported
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.core.types import Emit, PlatformMessage
 
@@ -47,6 +47,7 @@ async def test_tool_call_event_uses_bare_name() -> None:
     )
     tools = MagicMock()
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
 
     assistant = AssistantMessage(
         content=[
@@ -78,15 +79,16 @@ async def test_tool_call_event_uses_bare_name() -> None:
 
     with patch("band.adapters.claude_sdk.ClaudeSessionManager", return_value=manager):
         await adapter.on_started(agent_name="Bot", agent_description="d")
-        await adapter.on_message(
-            msg=message,
-            tools=tools,
-            history=ClaudeSDKSessionState(text=""),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                msg=message,
+                tools=tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
 
     tool_calls = [
         call

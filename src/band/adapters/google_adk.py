@@ -15,10 +15,11 @@ import re
 import uuid
 from typing import ClassVar, TYPE_CHECKING, Any, cast
 
+from band_sdk_core import AgentFailure
 from pydantic import ValidationError
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
@@ -474,14 +475,18 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             # Safety: ensure history exists even if not first message
             self._room_history[room_id] = []
 
-        # A fresh runner is created per message because InMemoryRunner
-        # accumulates session history internally and tool schemas may change
-        # between calls.  History is injected as a text transcript instead.
-        runner = self._create_runner(tools)
         # Per-turn usage, summed across the event stream below. Initialized
         # outside the try so the finally can emit whatever accumulated.
         turn_usage = TurnUsage()
+        # None until the try's construction succeeds, so the finally's close()
+        # has nothing to do if runner construction itself is what failed.
+        runner: InMemoryRunner | None = None
         try:
+            # A fresh runner is created per message because InMemoryRunner
+            # accumulates session history internally and tool schemas may change
+            # between calls.  History is injected as a text transcript instead.
+            runner = self._create_runner(tools)
+
             # Always create a new session ID — each runner is fresh, so there
             # is no in-memory state to resume.  The ID is stored for cleanup
             # tracking.  The session must be pre-created in the runner's
@@ -576,9 +581,11 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         "Room %s: ADK agent completed with final response",
                         room_id,
                     )
-        except Exception as e:
+        except Exception:
             logger.exception("Error running ADK agent in room %s", room_id)
-            await self._report_error(tools, str(e))
+            await tools.send_failure(
+                AgentFailure("google_adk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
         finally:
             # Emit before close so a close() failure can't drop the usage, but
@@ -587,7 +594,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 # No-op unless Emit.USAGE is on; best-effort, never raises.
                 await self.emit_usage(tools, turn_usage)
             finally:
-                await runner.close()
+                if runner is not None:
+                    await runner.close()
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(
@@ -724,10 +732,3 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                     )
                 except Exception as e:
                     logger.warning("Failed to send tool_result event: %s", e)
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
-            logger.warning("Failed to send error event: %s", e)

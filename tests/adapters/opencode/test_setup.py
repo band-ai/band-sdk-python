@@ -24,6 +24,7 @@ from tests.adapters.opencode.helpers import (
     event_message_updated,
     event_session_idle,
     event_text_part,
+    events_of_type,
     make_platform_message,
     tools_protocol,
 )
@@ -249,7 +250,7 @@ async def test_bootstrap_creates_session_relays_text_and_persists_task(
     assert fake_client.created_sessions[0]["id"] == "sess-1"
     assert tools.messages_sent[0]["content"] == "OpenCode says hi"
     assert tools.messages_sent[0]["mentions"] == [{"id": "user-1"}]
-    task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
+    task_events = events_of_type(tools, "task")
     assert task_events
     assert task_events[0]["metadata"]["opencode_session_id"] == "sess-1"
     assert (

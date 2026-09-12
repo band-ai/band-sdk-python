@@ -49,9 +49,14 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     Capability,
@@ -127,6 +132,9 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 # already exceed the library's unrelated default. Size the buffer off the
 # same constant instead of a second, driftable number.
 _CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
+
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "claude_sdk"
 
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -611,10 +619,27 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     stored_session_id,
                     resume_exc,
                 )
-                client = await self._session_manager.get_or_create_session(
-                    room_id, resume_session_id=None
-                )
+                try:
+                    client = await self._session_manager.get_or_create_session(
+                        room_id, resume_session_id=None
+                    )
+                except Exception as fresh_exc:
+                    logger.exception(
+                        "Room %s: Fresh session creation also failed: %s",
+                        room_id,
+                        fresh_exc,
+                    )
+                    await tools.send_failure(
+                        AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    raise
             else:
+                logger.exception(
+                    "Room %s: Session creation failed: %s", room_id, resume_exc
+                )
+                await tools.send_failure(
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                )
                 raise
 
         # Add chat_id context (Claude needs this for tool calls) -- the label
@@ -685,6 +710,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             # Process streaming response (MCP tools handle execution)
             await self._process_response(client, room_id, tools)
 
+        except TurnResultAlreadyReported:
+            # _on_turn_complete already reported this failure via
+            # send_failure; propagate without reporting it a second time.
+            raise
+
         except CLIConnectionError as e:
             # CLI process is dead — evict the cached session so the next
             # message creates a fresh one instead of reusing the corpse.
@@ -695,12 +725,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             await self._invalidate_session(room_id)
 
-            await self._report_error(tools, str(e))
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
 
         except Exception as e:
             logger.exception("Error processing message: %s", e)
-            await self._report_error(tools, str(e))
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
 
         logger.debug("Message %s processed successfully", msg.id)
@@ -933,11 +967,22 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # outright) doesn't linger and grow this room's entry unbounded.
         notified = self._notified_declines.pop(room_id, None)
         if sdk_message.is_error:
-            await self._report_error(tools, self._result_error_detail(sdk_message))
+            code = (
+                str(sdk_message.api_error_status)
+                if sdk_message.api_error_status is not None
+                else None
+            )
+            detail = self._result_error_detail(sdk_message)
+            await tools.send_failure(
+                AgentFailure(_PROVIDER, detail, code, sdk_message.errors)
+            )
+            raise TurnResultAlreadyReported(detail)
         elif not replied_this_turn and not self._declined_the_reply(
             sdk_message.permission_denials, notified
         ):
-            await self._report_error(tools, missing_reply_error("Claude SDK"))
+            detail = missing_reply_error("Claude SDK")
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
+            raise TurnResultAlreadyReported(detail)
 
     def _declined_the_reply(
         self, permission_denials: list[Any] | None, notified: set[str] | None
@@ -1126,14 +1171,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
-
-    # --- Copied from BaseFrameworkAgent._report_error ---
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort)."""
-        try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception:
-            logger.debug("Failed to send error event", exc_info=True)
 
     async def cleanup_all(self) -> None:
         """Cleanup all sessions (call on stop)."""

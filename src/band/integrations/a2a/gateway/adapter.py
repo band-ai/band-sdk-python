@@ -9,12 +9,13 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from typing import ClassVar
+from typing import Any, ClassVar
 from uuid import uuid4
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Task, TaskState, TaskStatus
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.client.rest import (
@@ -28,7 +29,7 @@ from band.client.rest import (
 )
 from band.converters.a2a_gateway import GatewayHistoryConverter
 from band.core.content import BLANK_CONTENT_ERROR
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import FAILURE_CODE_TIMEOUT, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.platform.posting import post_event, post_message
@@ -77,6 +78,54 @@ def slugify(name: str) -> str:
     slug = name.lower()
     slug = re.sub(r"[^a-z0-9]+", "-", slug)  # Replace non-alphanumeric with -
     return slug.strip("-")  # Remove leading/trailing dashes
+
+
+_GATEWAY_ERROR_MAX_CHARS = 240
+_BEARER_TOKEN_RE = re.compile(r"Bearer\s+[^\s,;]+", re.IGNORECASE)
+# The value group excludes only "," and ";" (not whitespace) so a
+# scheme-prefixed credential (e.g. "Authorization: ApiKey sk-...") gets
+# redacted in full instead of leaking everything past the first space.
+_CREDENTIAL_KV_RE = re.compile(
+    r"(token|authorization|api[_-]?key)\s*[:=]\s*[^,;]+", re.IGNORECASE
+)
+
+
+def _redact_credentials(text: str) -> str:
+    """Redact bearer tokens/API keys a message may embed."""
+    redacted = _BEARER_TOKEN_RE.sub("Bearer [REDACTED]", text)
+    return _CREDENTIAL_KV_RE.sub(r"\1=[REDACTED]", redacted)
+
+
+def _redact_credentials_deep(value: Any) -> Any:
+    """Recursively redact credentials from a peer's ``AgentFailure.detail``.
+
+    ``detail`` is untrusted, adapter-defined structure (e.g. Codex's own
+    ``codex_additional_details`` echoes upstream error text) that can nest
+    a credential-bearing string at any depth before it reaches an external
+    A2A client.
+    """
+    if isinstance(value, str):
+        return _redact_credentials(value)
+    if isinstance(value, dict):
+        return {key: _redact_credentials_deep(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_credentials_deep(item) for item in value]
+    return value
+
+
+def _sanitize_gateway_error_message(exc: BaseException) -> str:
+    """Redact bearer tokens/API keys before an internal exception message
+    reaches an external A2A client, and cap its length.
+
+    Mirrors the TS SDK's ``sanitizeGatewayErrorMessage``.
+    """
+    trimmed = str(exc).strip()
+    if not trimmed:
+        return "Unknown error"
+    redacted = _redact_credentials(trimmed)
+    if len(redacted) <= _GATEWAY_ERROR_MAX_CHARS:
+        return redacted
+    return f"{redacted[: _GATEWAY_ERROR_MAX_CHARS - 3]}..."
 
 
 class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
@@ -339,14 +388,19 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 request.pending.task.id,
             )
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "A2A request failed: room=%s context=%s task=%s",
                 request.room_id,
                 request.context_id,
                 request.pending.task.id,
             )
-            await request.pending.fail("A2A request failed")
+            failure = AgentFailure(
+                "a2a-gateway",
+                _sanitize_gateway_error_message(exc),
+                type(exc).__name__,
+            )
+            await request.pending.fail("A2A request failed", failure=failure.to_dict())
             raise
         else:
             if completed:
@@ -427,7 +481,12 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 request.pending.task.id,
                 self.config.response_timeout_s,
             )
-            await request.pending.fail("Timed out waiting for a Band response")
+            failure = AgentFailure(
+                "a2a-gateway",
+                "Timed out waiting for a Band response",
+                FAILURE_CODE_TIMEOUT,
+            )
+            await request.pending.fail(failure.message, failure=failure.to_dict())
             return False
         return True
 
@@ -554,7 +613,17 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> None:
         """Translate Band's message category into an A2A task intent."""
         if msg.message_type == "error":
-            await pending.fail(msg.content)
+            # The peer's own adapter already built this AgentFailure (see
+            # to_failure_event) -- relay it rather than re-tagging its
+            # provider as "a2a-gateway", but still redact credentials the
+            # peer's own message may embed before it reaches an external
+            # A2A client, same as this gateway's own exception path.
+            failure = (
+                msg.metadata.get("failure") if isinstance(msg.metadata, dict) else None
+            )
+            if isinstance(failure, dict):
+                failure = _redact_credentials_deep(failure)
+            await pending.fail(_redact_credentials(msg.content), failure=failure)
         elif msg.message_type in ("thought", "tool_call", "tool_result"):
             await pending.report_progress(msg.content)
         else:

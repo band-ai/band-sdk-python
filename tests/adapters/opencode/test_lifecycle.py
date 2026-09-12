@@ -25,6 +25,7 @@ from tests.adapters.opencode.helpers import (
     event_message_updated,
     event_session_idle,
     event_text_part,
+    events_of_type,
     make_platform_message,
     run_single_turn,
     tools_protocol,
@@ -259,7 +260,7 @@ async def test_concurrent_message_rejected(make_adapter, tools) -> None:
     )
 
     # Second message should get rejected with "still processing" error
-    error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+    error_events = events_of_type(tools, "error")
     assert any("still processing" in e["content"].lower() for e in error_events)
     assert len(fake_client.prompt_calls) == 1
 

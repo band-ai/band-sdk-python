@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.helpers import new_text_message
-from a2a.types import Message, Task
+from a2a.types import Message, Task, TaskState
 
 
 @dataclass
@@ -67,12 +68,22 @@ class PendingA2ATask:
             await self._updater.complete(self._message(content))
             self.done.set()
 
-    async def fail(self, reason: str) -> None:
-        """Publish a terminal failure and release the request."""
+    async def fail(self, reason: str, *, failure: dict[str, Any] | None = None) -> None:
+        """Publish a terminal failure and release the request.
+
+        ``failure`` is the wire-shape ``AgentFailure`` dict (see
+        ``to_failure_event``), attached as task status metadata alongside
+        ``reason``'s freeform text so an A2A client can recover structured
+        provider-failure detail.
+        """
         async with self._lock:
             if self.done.is_set():
                 return
-            await self._updater.failed(self._message(reason))
+            await self._updater.update_status(
+                TaskState.TASK_STATE_FAILED,
+                message=self._message(reason),
+                metadata={"failure": failure} if failure else None,
+            )
             self.done.set()
 
     async def cancel(self) -> None:

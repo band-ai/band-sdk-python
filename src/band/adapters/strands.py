@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, cast
 
-import httpx
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel
 
 try:
@@ -31,10 +31,13 @@ except ImportError as error:
         "Install with: uv add band-sdk[strands]"
     ) from error
 
-from band_rest.core.api_error import ApiError
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -525,12 +528,19 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         hooks: BandTurnHooks,
     ) -> None:
         """Run the framework loop while preserving transcript and usage on failure."""
-        agent = self._build_agent(history, tools, hooks)
+        agent: Agent | None = None
         try:
+            agent = self._build_agent(history, tools, hooks)
             await agent.invoke_async(message)
+        except Exception:
+            await tools.send_failure(
+                AgentFailure("strands", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
+            raise
         finally:
-            self._message_history[room_id] = agent.messages
-            await self.emit_usage(tools, self._usage_from_agent(agent))
+            if agent is not None:
+                self._message_history[room_id] = agent.messages
+                await self.emit_usage(tools, self._usage_from_agent(agent))
 
     async def on_message(
         self,
@@ -570,7 +580,12 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             hooks=hooks,
         )
         if not hooks.terminal_fired:
-            await self._report_error(tools, missing_reply_error("Strands"))
+            logger.warning(
+                "Room %s: Strands turn produced nothing for the room", room_id
+            )
+            detail = missing_reply_error("Strands")
+            await tools.send_failure(AgentFailure("strands", detail))
+            raise TurnResultAlreadyReported(detail)
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,
@@ -591,16 +606,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             cache_read="cacheReadInputTokens",
             cache_write="cacheWriteInputTokens",
         )
-
-    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Post a best-effort room-visible adapter error."""
-        try:
-            await tools.send_event(
-                content=f"Error: {error}",
-                message_type=MessageType.ERROR,
-            )
-        except (ApiError, httpx.HTTPError) as report_error:
-            logger.warning("Failed to send error event: %s", report_error)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Discard the transcript when Band removes the adapter from a room."""

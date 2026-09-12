@@ -66,7 +66,10 @@ from pydantic import BaseModel
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from band.adapters.strands import StrandsAdapter  # noqa: E402
-from band.core.protocols import AgentToolsProtocol  # noqa: E402
+from band.core.protocols import (  # noqa: E402
+    AgentToolsProtocol,
+    TurnResultAlreadyReported,
+)
 from band.core.types import Emit, PlatformMessage  # noqa: E402
 from band.testing import (  # noqa: E402
     FakeAgentTools,
@@ -205,7 +208,8 @@ async def test_negative_control_text_only_sends_no_message() -> None:
     adapter = StrandsAdapter(
         model=ScriptedStrandsModel([TextTurn("just a reply, no tools")])
     )
-    await _run(adapter, tools, room_id)
+    with pytest.raises(TurnResultAlreadyReported):
+        await _run(adapter, tools, room_id)
 
     assert tools.messages_sent == [], (
         f"expected no send for a text-only decision, got: {tools.messages_sent}"

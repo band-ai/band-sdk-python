@@ -22,10 +22,15 @@ from a2a.types import (
     TaskStatus,
 )
 
+from band.core.delivery import DeliveryFailedError
+from band.core.protocols import (
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    TurnResultAlreadyReported,
+)
 from band.core.types import PlatformMessage
 from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
 from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 
 
 def make_platform_message(content: str = "Hello") -> PlatformMessage:
@@ -298,10 +303,11 @@ class TestA2AAdapterMessageFlow:
         tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
         task = make_task(artifact_text="Final response")
 
-        with pytest.raises(RuntimeError, match="Band unavailable"):
+        with pytest.raises(DeliveryFailedError) as exc_info:
             await adapter._handle_event(
                 task_event(task), tools, "room-123", "user-456", "Test User"
             )
+        assert "Band unavailable" in str(exc_info.value.cause)
 
         assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
             "TASK_STATE_COMPLETED"
@@ -311,30 +317,50 @@ class TestA2AAdapterMessageFlow:
         assert adapter._task_senders == {}
 
     @pytest.mark.asyncio
+    async def test_finally_block_failure_does_not_replace_try_blocks_exception(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """The terminal task-event emission in ``finally`` must never clobber
+        a ``DeliveryFailedError`` already propagating from the try block --
+        Python's try/finally semantics otherwise let the finally's own
+        exception silently replace it."""
+        tools = FakeAgentTools()
+        tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
+        tools.send_event_error = RuntimeError("task event post also failed")
+        task = make_task(artifact_text="Final response")
+
+        with pytest.raises(DeliveryFailedError) as exc_info:
+            await adapter._handle_event(
+                task_event(task), tools, "room-123", "user-456", "Test User"
+            )
+        assert "Band unavailable" in str(exc_info.value.cause)
+        assert adapter._tasks == {}, "next turn must start a fresh task"
+
+    @pytest.mark.asyncio
     async def test_auth_required_task_is_posted_as_error_event(
         self, adapter: A2AAdapter
     ) -> None:
         tools = FakeAgentTools()
 
-        await adapter._handle_event(
-            task_event(
-                make_task(
-                    TaskState.TASK_STATE_AUTH_REQUIRED,
-                    status_message="Please authenticate",
-                )
-            ),
-            tools,
-            "room-123",
-            "user-456",
-            "Test User",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._handle_event(
+                task_event(
+                    make_task(
+                        TaskState.TASK_STATE_AUTH_REQUIRED,
+                        status_message="Please authenticate",
+                    )
+                ),
+                tools,
+                "room-123",
+                "user-456",
+                "Test User",
+            )
 
-        error_events = [
-            event for event in tools.events_sent if event["message_type"] == "error"
-        ]
-        assert error_events, "an auth-required task must produce an error event"
-        assert error_events[-1]["content"] == "Please authenticate"
-        assert error_events[-1]["metadata"]["a2a_state"] == "TASK_STATE_AUTH_REQUIRED"
+        failures = reported_failures(tools)
+        assert failures, "an auth-required task must produce an error event"
+        assert failures[-1]["message"] == "Please authenticate"
+        assert failures[-1]["provider"] == "a2a"
+        assert failures[-1]["code"] == "TASK_STATE_AUTH_REQUIRED"
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(
@@ -364,25 +390,54 @@ class TestA2AAdapterMessageFlow:
     async def test_remote_error_is_posted_as_error_event(
         self, adapter: A2AAdapter
     ) -> None:
-        """A remote A2A outage must surface in the room, not crash the turn."""
+        """A remote A2A outage must surface in the room and fail the turn."""
         adapter._client = MagicMock()
         adapter._client.send_message = MagicMock(
             side_effect=RuntimeError("remote down")
         )
         tools = FakeAgentTools()
 
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            A2ASessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
+        with pytest.raises(RuntimeError, match="remote down"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                A2ASessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
 
         assert tools.events_sent[-1]["message_type"] == "error"
-        assert "remote down" in tools.events_sent[-1]["content"]
+        assert tools.events_sent[-1]["content"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_on_message_reraises_delivery_failure_without_reporting_it(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """A Band-side post failure must fail the turn for retry, without
+        being reported as an A2A provider failure."""
+        adapter._client = MagicMock()
+
+        async def _events() -> AsyncIterator[StreamResponse]:
+            yield task_event(make_task(artifact_text="Final response"))
+
+        adapter._client.send_message = MagicMock(return_value=_events())
+        tools = FakeAgentTools()
+        tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
+
+        with pytest.raises(RuntimeError, match="Band unavailable"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                A2ASessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+
+        assert not [e for e in tools.events_sent if e["message_type"] == "error"]
 
     @pytest.mark.asyncio
     async def test_failed_task_is_posted_as_error_event(
@@ -390,20 +445,22 @@ class TestA2AAdapterMessageFlow:
     ) -> None:
         tools = FakeAgentTools()
 
-        await adapter._handle_event(
-            task_event(make_task(TaskState.TASK_STATE_FAILED, status_message="boom")),
-            tools,
-            "room-123",
-            "user-456",
-            "Test User",
-        )
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter._handle_event(
+                task_event(
+                    make_task(TaskState.TASK_STATE_FAILED, status_message="boom")
+                ),
+                tools,
+                "room-123",
+                "user-456",
+                "Test User",
+            )
 
-        error_events = [
-            event for event in tools.events_sent if event["message_type"] == "error"
-        ]
-        assert error_events, "a failed task must produce an error event"
-        assert error_events[-1]["content"] == "boom"
-        assert error_events[-1]["metadata"]["a2a_state"] == "TASK_STATE_FAILED"
+        failures = reported_failures(tools)
+        assert failures, "a failed task must produce an error event"
+        assert failures[-1]["message"] == "boom"
+        assert failures[-1]["provider"] == "a2a"
+        assert failures[-1]["code"] == "TASK_STATE_FAILED"
 
     @pytest.mark.asyncio
     async def test_working_status_text_is_narrated_as_thought(
