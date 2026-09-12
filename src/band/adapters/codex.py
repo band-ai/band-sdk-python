@@ -8,7 +8,8 @@ import logging
 import os
 import time as _time
 from collections import OrderedDict
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from typing import ClassVar, Any, Callable, Literal, NamedTuple, Protocol
 
@@ -32,7 +33,6 @@ from band.core.types import (
 from band.integrations.codex import (
     CodexJsonRpcError,
     CodexStdioClient,
-    CodexWebSocketClient,
     RpcEvent,
 )
 from band.integrations.codex.types import (
@@ -244,6 +244,19 @@ class TurnResult:
     saw_send_message_tool: bool = False
 
 
+@dataclass
+class RoomCodexClient:
+    """The process and protocol state owned by one Band room."""
+
+    workspace: str
+    client: CodexClientProtocol | None = None
+    initialized: bool = False
+    selected_model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+
+
 class CodexAdapterConfig(BaseSettings):
     """Runtime configuration for Codex adapter sessions.
 
@@ -279,6 +292,7 @@ class CodexAdapterConfig(BaseSettings):
         extra="forbid",
         env_ignore_empty=True,
         populate_by_name=True,
+        arbitrary_types_allowed=True,
     )
 
     transport: TransportKind = "stdio"
@@ -288,6 +302,7 @@ class CodexAdapterConfig(BaseSettings):
     ) = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
     cwd: str = Field(default_factory=os.getcwd)
+    workspace_for_room: Callable[[str], str] | None = Field(default=None, exclude=True)
     approval_policy: str = "never"
     personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
     sandbox: str | None = None
@@ -417,14 +432,25 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
+        if self.config.workspace_for_room is None:
+            raise ValueError("workspace_for_room is required for Codex room isolation")
+        if self.config.transport != "stdio":
+            raise ValueError("only stdio Codex transport guarantees room process isolation")
+        if client_factory is not None:
+            raise ValueError("custom Codex clients cannot guarantee room process isolation")
         self._client_factory = client_factory
-        self._client: CodexClientProtocol | None = None
-        self._initialized = False
-        self._selected_model: str | None = None
+        self._room_clients: dict[str, RoomCodexClient] = {}
+        self._active_room: ContextVar[str | None] = ContextVar(
+            "codex_active_room", default=None
+        )
+        self._fallback_client: CodexClientProtocol | None = None
+        self._fallback_initialized = False
+        self._fallback_selected_model: str | None = None
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
-        self._task_titles_by_id: OrderedDict[str, str] = OrderedDict()
+        self._fallback_task_titles: OrderedDict[str, str] = OrderedDict()
+        self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
         self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
@@ -445,7 +471,78 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # up to ``approval_wait_timeout_s`` (300s default). Approval resolution
         # commands (/approve, /decline) are handled *outside* this lock in
         # ``on_message`` so they can unblock a waiting turn.
-        self._rpc_lock = asyncio.Lock()
+        self._fallback_rpc_lock = asyncio.Lock()
+
+    def _room_client(self, room_id: str) -> RoomCodexClient:
+        room = self._room_clients.get(room_id)
+        if room is None:
+            workspace = self.config.workspace_for_room(room_id)  # type: ignore[misc]
+            if not isinstance(workspace, str) or not os.path.isabs(workspace):
+                raise ValueError("workspace_for_room must return an absolute path")
+            room = RoomCodexClient(workspace=workspace)
+            self._room_clients[room_id] = room
+        return room
+
+    def _active_client_state(self) -> RoomCodexClient | None:
+        room_id = self._active_room.get()
+        return self._room_clients.get(room_id) if room_id is not None else None
+
+    def _require_active_client_state(self) -> RoomCodexClient:
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex operation requires a room context")
+        return state
+
+    @property
+    def _task_titles_by_id(self) -> OrderedDict[str, str]:
+        room_id = self._active_room.get()
+        if room_id is None:
+            return self._fallback_task_titles
+        return self._room_task_titles.setdefault(room_id, OrderedDict())
+
+    @property
+    def _client(self) -> CodexClientProtocol | None:
+        state = self._active_client_state()
+        return state.client if state is not None else self._fallback_client
+
+    @_client.setter
+    def _client(self, value: CodexClientProtocol | None) -> None:
+        state = self._active_client_state()
+        if state is not None:
+            state.client = value
+        else:
+            self._fallback_client = value
+
+    @property
+    def _initialized(self) -> bool:
+        state = self._active_client_state()
+        return state.initialized if state is not None else self._fallback_initialized
+
+    @_initialized.setter
+    def _initialized(self, value: bool) -> None:
+        state = self._active_client_state()
+        if state is not None:
+            state.initialized = value
+        else:
+            self._fallback_initialized = value
+
+    @property
+    def _selected_model(self) -> str | None:
+        state = self._active_client_state()
+        return state.selected_model if state is not None else self._fallback_selected_model
+
+    @_selected_model.setter
+    def _selected_model(self, value: str | None) -> None:
+        state = self._active_client_state()
+        if state is not None:
+            state.selected_model = value
+        else:
+            self._fallback_selected_model = value
+
+    @property
+    def _rpc_lock(self) -> asyncio.Lock:
+        state = self._active_client_state()
+        return state.rpc_lock if state is not None else self._fallback_rpc_lock
 
     def _build_self_config_tools(self) -> list[CustomToolDef]:
         """Build custom tools that let Codex change its own model/reasoning.
@@ -460,7 +557,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         def _handle_set_model(inp: SetModelInput) -> str:
             if not adapter._rpc_lock.locked():
                 raise RuntimeError("_handle_set_model must run under _rpc_lock")
-            adapter.config.model = inp.model
             adapter._selected_model = inp.model
             return f"Model changed to {inp.model} for subsequent turns."
 
@@ -474,7 +570,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         f"Invalid reasoning effort '{inp.effort}'. "
                         f"Valid: {', '.join(sorted(_REASONING_EFFORTS))}."
                     )
-                adapter.config.reasoning_effort = inp.effort  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
+                adapter._require_active_client_state().reasoning_effort = inp.effort
                 parts.append(f"effort={inp.effort}")
             if inp.summary is not None:
                 if inp.summary not in _REASONING_SUMMARIES:
@@ -482,7 +578,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         f"Invalid reasoning summary '{inp.summary}'. "
                         f"Valid: {', '.join(sorted(_REASONING_SUMMARIES))}."
                     )
-                adapter.config.reasoning_summary = inp.summary  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
+                adapter._require_active_client_state().reasoning_summary = inp.summary
                 parts.append(f"summary={inp.summary}")
             if not parts:
                 return (
@@ -499,8 +595,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
         self._build_system_prompt()
-        async with self._rpc_lock:
-            await self._ensure_client_ready()
         self._log_startup_config(agent_name)
 
     def _log_startup_config(self, agent_name: str) -> None:
@@ -564,6 +658,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
+        self._room_client(room_id)
+        self._active_room.set(room_id)
         command = self._extract_local_command(msg.content)
         if command is not None and command[0] in {
             "approve",
@@ -963,14 +1059,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     # Also drop token-usage entries keyed by the dead thread
                     # ids; otherwise they leak until the last-room teardown
                     # because on_cleanup can no longer resolve their keys.
-                    stale_rooms = list(self._room_threads.keys())
-                    stale_threads = list(self._room_threads.values())
-                    self._room_threads.clear()
-                    self._raw_history_by_room.clear()
-                    for stale_thread in stale_threads:
+                    stale_thread = self._room_threads.pop(room_id, None)
+                    self._raw_history_by_room.pop(room_id, None)
+                    if stale_thread:
                         self._token_usage.pop(stale_thread, None)
-                    for stale_room in stale_rooms:
-                        self._clear_pending_approvals_for_room(stale_room)
+                    self._clear_pending_approvals_for_room(room_id)
                     break
 
                 if event.method == "turn/completed":
@@ -1017,11 +1110,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return result
 
     async def on_cleanup(self, room_id: str) -> None:
-        # NOTE: _rpc_lock is adapter-wide, so cleanup for room B blocks if
-        # room A holds the lock during a pending manual approval (up to
-        # approval_wait_timeout_s).  This is a known limitation of the single-
-        # client architecture — the lock serializes all turn processing and
-        # cleanup across rooms.
+        room = self._room_clients.get(room_id)
+        if room is None:
+            return
+        self._active_room.set(room_id)
         async with self._rpc_lock:
             thread_id = self._room_threads.pop(room_id, None)
             if thread_id:
@@ -1033,9 +1125,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._approval_audit.pop(room_id, None)
             self._session_approved.pop(room_id, None)
             self._sandbox_overrides.pop(room_id, None)
-            if self._room_threads:
-                return
+            self._room_task_titles.pop(room_id, None)
             if self._client is None:
+                self._room_clients.pop(room_id, None)
                 return
             try:
                 close_coro = self._client.close()
@@ -1055,24 +1147,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._client = None
                 self._initialized = False
                 self._selected_model = None
-                self._task_titles_by_id.clear()
-                # Defensive: wipe all pending approvals globally on last-room
-                # teardown.  Per-room cleanup already resolves futures to
-                # "decline" via _clear_pending_approvals_for_room, so this
-                # catches any leaked entries from rooms whose cleanup failed.
-                self._pending_approvals.clear()
-                self._token_usage.clear()
-                self._approval_audit.clear()
-                self._session_approved.clear()
-                self._sandbox_overrides.clear()
+                self._room_clients.pop(room_id, None)
+
+    async def cleanup_all(self) -> None:
+        """Close every room-owned Codex process during agent shutdown."""
+        await asyncio.gather(
+            *(self.on_cleanup(room_id) for room_id in list(self._room_clients))
+        )
 
     async def _ensure_client_ready(self) -> None:
         if self._client is None:
             self._client = self._build_client(self.config)
 
+        client = self._client
+        if client is None:
+            raise RuntimeError("Codex client was not created")
         if not self._initialized:
-            await self._client.connect()
-            await self._client.initialize(
+            await client.connect()
+            await client.initialize(
                 client_name=self.config.client_name,
                 client_title=self.config.client_title,
                 client_version=self.config.client_version,
@@ -1085,12 +1177,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self._client_factory is not None:
             return self._client_factory(config)
 
-        if config.transport == "ws":
-            return CodexWebSocketClient(ws_url=config.codex_ws_url)
-
+        state = self._active_client_state()
+        if state is None:
+            raise RuntimeError("Codex client creation requires a room context")
         return CodexStdioClient(
             command=config.codex_command,
-            cwd=config.cwd,
+            cwd=state.workspace,
             env=config.codex_env,
         )
 
@@ -2622,7 +2714,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                 return True
 
-            self.config.model = model_arg
+            # Model selection belongs to the room's process, never adapter-wide config.
             self._selected_model = model_arg
             await tools.send_message(
                 f"Model override set to `{model_arg}` for subsequent turns.",
@@ -2647,7 +2739,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     mentions=mention,
                 )
                 return True
-            self.config.reasoning_effort = effort_arg  # type: ignore[assignment]  # Literal narrowed by Pydantic validation
+            self._require_active_client_state().reasoning_effort = effort_arg
             await tools.send_message(
                 f"Reasoning effort set to `{effort_arg}` for subsequent turns.",
                 mentions=mention,
@@ -2927,14 +3019,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _apply_turn_overrides(
         self, params: dict[str, Any], *, room_id: str | None = None
     ) -> None:
+        state = self._require_active_client_state()
         params["model"] = self._selected_model
-        params["cwd"] = self.config.cwd
+        params["cwd"] = state.workspace
         params["approvalPolicy"] = self.config.approval_policy
         params["personality"] = self.config.personality
-        if self.config.reasoning_effort is not None:
-            params["effort"] = self.config.reasoning_effort
-        if self.config.reasoning_summary is not None:
-            params["summary"] = self.config.reasoning_summary
+        if state.reasoning_effort or self.config.reasoning_effort:
+            params["effort"] = state.reasoning_effort or self.config.reasoning_effort
+        if state.reasoning_summary or self.config.reasoning_summary:
+            params["summary"] = state.reasoning_summary or self.config.reasoning_summary
         self._apply_turn_sandbox(params, room_id=room_id)
 
     async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:

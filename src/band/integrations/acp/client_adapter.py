@@ -108,6 +108,7 @@ HISTORY_REPLAY_HEADER = (
 # stdio and TCP are the built-in transports; injecting one (e.g. docker exec / ssh,
 # or a fake in tests) is the supported extension point.
 SpawnProcess = Callable[..., object]
+WorkspaceResolver = Callable[[str], str]
 
 
 def _resolve_launcher(command: list[str]) -> list[str]:
@@ -144,6 +145,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         command: str | list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        workspace_for_room: WorkspaceResolver | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         inject_band_tools: bool = True,
@@ -163,10 +165,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             history_converter=ACPClientHistoryConverter(),
             **features,
         )
+        if workspace_for_room is None:
+            raise ValueError("workspace_for_room is required for ACP client isolation")
+        if cwd is not None:
+            raise ValueError("cwd is not supported; use workspace_for_room")
+        if host is not None or port is not None:
+            raise ValueError("TCP ACP transport cannot guarantee room process isolation")
+        if spawn_process is not None:
+            raise ValueError("custom ACP transports cannot guarantee room process isolation")
         self._host, self._port = self._resolve_transport(command, host, port)
         self._command = self._shape_command(command, self._host)
         self._env = env
-        self._cwd = os.path.abspath(cwd or ".")
+        self._workspace_for_room = workspace_for_room
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         self._tool_definitions, self._own_tool_names = self._registered_tools()
@@ -174,7 +184,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._auth_method = auth_method
         self._profile = profile
         self._custom_section = custom_section
-        self._runtime = self._build_runtime(spawn_process)
+        self._runtimes: dict[str, ACPRuntime] = {}
+        self._room_workspaces: dict[str, str] = {}
 
         self._room_to_session: dict[str, str] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
@@ -264,7 +275,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             return tcp_spawn_process(host, port)
         return spawn_agent_process
 
-    def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
+    def _build_runtime(self) -> ACPRuntime:
         return ACPRuntime(
             command=_resolve_launcher(self._command),
             env=self._env,
@@ -273,8 +284,23 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 profile=self._profile,
                 canonicalize_tool_name=self._canonical_tool_name,
             ),
-            spawn_process=self._select_transport(spawn_process, self._host, self._port),
+            spawn_process=spawn_agent_process,
         )
+
+    def _workspace(self, room_id: str) -> str:
+        workspace = self._workspace_for_room(room_id)
+        if not isinstance(workspace, str) or not os.path.isabs(workspace):
+            raise ValueError("workspace_for_room must return an absolute path")
+        return workspace
+
+    async def _runtime_for(self, room_id: str) -> ACPRuntime:
+        async with self._session_lock:
+            runtime = self._runtimes.get(room_id)
+            if runtime is None:
+                runtime = self._build_runtime()
+                self._runtimes[room_id] = runtime
+                self._room_workspaces[room_id] = self._workspace(room_id)
+            return runtime
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
@@ -284,10 +310,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         # the backend must be startable again too.
         async with self._mcp_backend_lock:
             self._stopped = False
-        await self._spawn_process()
-
-    async def _spawn_process(self) -> None:
-        await self._runtime.start(respawn=False)
 
     async def on_message(
         self,
@@ -300,7 +322,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        await self._ensure_connection()
+        runtime = await self._runtime_for(room_id)
+        await self._ensure_connection(runtime)
 
         if self._inject_band_tools:
             async with self._session_lock:
@@ -310,7 +333,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await self._load_persisted_session(room_id, history)
 
         session_id, created = await self._get_or_create_session(room_id)
-        self._runtime.reset_session(session_id)
+        runtime.reset_session(session_id)
 
         # A just-created session holds no remote context (a restored one does),
         # so seed it with the Band room's transcript. On bootstrap the converter
@@ -348,18 +371,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id=session_id,
                 room_id=room_id,
             ) as emitter:
-                self._runtime.set_permission_handler(
+                runtime.set_permission_handler(
                     session_id,
                     self._make_permission_handler(emitter, room_id),
                 )
-                await self._runtime.prompt(
+                await runtime.prompt(
                     session_id=session_id,
                     prompt_text=prompt_text,
                     on_chunk=emitter.emit,
                 )
         except Exception as e:
             logger.exception("ACP agent error: %s", e)
-            await self.stop()
+            await self.on_cleanup(room_id)
             await tools.send_event(
                 content=f"ACP agent error: {e}",
                 message_type="error",
@@ -473,10 +496,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return f"[System Context]\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
-        self,
-        local_server: LocalMCPServer,
+        self, local_server: LocalMCPServer, transport: str
     ) -> LocalMcpServerConfig:
-        if self._runtime._agent_mcp_transport == "sse":
+        if transport == "sse":
             return SseMcpServer(
                 type="sse",
                 name=BAND_MCP_SERVER_NAME,
@@ -535,7 +557,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 self._band_mcp_backend = None
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
-                    kind=self._runtime._agent_mcp_transport,
+                    kind="http",
                     tool_definitions=self._tool_definitions,
                     get_tools=self._room_tools.get,
                     additional_tools=self._custom_tools,
@@ -543,13 +565,16 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 self._band_mcp_backend = backend
             return self._band_mcp_backend
 
-    async def _get_or_start_band_mcp_server(self) -> LocalMcpServerConfig:
+    async def _get_or_start_band_mcp_server(self, room_id: str) -> LocalMcpServerConfig:
         backend = await self._ensure_band_mcp_backend()
         local_server = backend.local_server
         if local_server is None:
             raise RuntimeError("ACP MCP backend did not create a local server")
 
-        return self._build_local_mcp_server_config(local_server)
+        runtime = await self._runtime_for(room_id)
+        return self._build_local_mcp_server_config(
+            local_server, runtime._agent_mcp_transport
+        )
 
     async def _get_or_create_session(self, room_id: str) -> tuple[str, bool]:
         """This room's ACP session id, plus whether it was created just now.
@@ -560,14 +585,14 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if room_id in self._room_to_session:
             return self._room_to_session[room_id], False
 
+        runtime = await self._runtime_for(room_id)
+        mcp_servers = await self._session_mcp_servers(room_id)
         async with self._session_lock:
             if room_id in self._room_to_session:
                 return self._room_to_session[room_id], False
 
-            mcp_servers = await self._session_mcp_servers()
-
-            session_id = await self._runtime.create_session(
-                cwd=self._cwd,
+            session_id = await runtime.create_session(
+                cwd=self._room_workspaces[room_id],
                 mcp_servers=mcp_servers,
             )
             self._room_to_session[room_id] = session_id
@@ -579,11 +604,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             return session_id, True
 
-    async def _session_mcp_servers(self) -> list[object]:
+    async def _session_mcp_servers(self, room_id: str) -> list[object]:
         """The MCP configuration supplied when creating or loading a session."""
         mcp_servers: list[object] = list(self._mcp_servers)
         if self._inject_band_tools:
-            mcp_servers.append(await self._get_or_start_band_mcp_server())
+            mcp_servers.append(await self._get_or_start_band_mcp_server(room_id))
         return mcp_servers
 
     def _claim_session_bootstrap(self, session_id: str) -> bool:
@@ -666,6 +691,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._room_tools.pop(room_id, None)
             if session_id:
                 self._bootstrapped_sessions.discard(session_id)
+            runtime = self._runtimes.pop(room_id, None)
+            self._room_workspaces.pop(room_id, None)
+
+        if runtime is not None:
+            await runtime.stop()
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
@@ -688,6 +718,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._room_to_session.clear()
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
+            runtimes = list(self._runtimes.values())
+            self._runtimes.clear()
+            self._room_workspaces.clear()
         async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
             self._band_mcp_backend = None
@@ -703,7 +736,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # None and start a fresh backend while this one is mid-teardown.
             if backend is not None:
                 await backend.stop()
-        await self._runtime.stop()
+        await asyncio.gather(*(runtime.stop() for runtime in runtimes))
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:
@@ -730,10 +763,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if session_id is None:
             return
 
-        loaded = await self._runtime.load_session(
-            cwd=self._cwd,
+        runtime = await self._runtime_for(room_id)
+        loaded = await runtime.load_session(
+            cwd=self._room_workspaces[room_id],
             session_id=session_id,
-            mcp_servers=await self._session_mcp_servers(),
+            mcp_servers=await self._session_mcp_servers(room_id),
         )
         if not loaded:
             logger.info(
@@ -778,7 +812,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         raw = messages_before(context.get("data") or [], msg.id)
         return build_replay_messages([m for m in raw if m.get("id") != msg.id])
 
-    async def _ensure_connection(self) -> ACPConnectionProtocol:
-        return await self._runtime.ensure_connection(
+    async def _ensure_connection(self, runtime: ACPRuntime) -> ACPConnectionProtocol:
+        return await runtime.ensure_connection(
             can_respawn=bool(self.agent_name),
         )

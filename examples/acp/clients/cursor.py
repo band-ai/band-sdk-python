@@ -98,7 +98,7 @@ async def main() -> None:
     # - Band tools are injected through a local localhost-only MCP server
     adapter = ACPClientAdapter(
         command=[os.path.expanduser("~/.local/bin/agent"), "acp"],
-        cwd=cwd,
+        workspace_for_room=lambda room_id: os.path.join(cwd, room_id),
         env=cursor_env or None,
         inject_band_tools=True,
         auth_method="cursor_login",

@@ -45,6 +45,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import shlex
 
@@ -91,7 +92,7 @@ async def main() -> None:
 
     adapter = ACPClientAdapter(
         command=command,
-        cwd=cwd,
+        workspace_for_room=lambda room_id: os.path.join(cwd, room_id),
         inject_band_tools=inject_band_tools,
         auth_method=auth_method,
         profile=profile,
