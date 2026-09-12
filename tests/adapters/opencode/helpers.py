@@ -141,6 +141,7 @@ def event_tool_part(
     status: str,
     input_data: dict[str, Any],
     output: Any = None,
+    error: str | None = None,
 ) -> RawOpencodeEvent:
     state: dict[str, Any] = {"status": status, "input": input_data}
     if status == "running":
@@ -149,6 +150,9 @@ def event_tool_part(
         state["output"] = "" if output is None else output
         state["title"] = tool
         state["metadata"] = {}
+        state["time"] = {"start": 1, "end": 2}
+    if status == "error":
+        state["error"] = error or "OpenCode tool failed"
         state["time"] = {"start": 1, "end": 2}
 
     return {
