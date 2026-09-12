@@ -45,7 +45,7 @@ from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(
-        cwd=os.getcwd(),
+        workspace_for_room=lambda room_id: os.path.join("/workspaces", room_id),
         model="gpt-5.5",
     ),
 )

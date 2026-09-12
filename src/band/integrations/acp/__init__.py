@@ -33,7 +33,10 @@ Example (ACP Client):
     from band import Agent
     from band.integrations.acp import ACPClientAdapter
 
-    adapter = ACPClientAdapter(command="codex", cwd="/workspace")
+    adapter = ACPClientAdapter(
+        command="codex",
+        workspace_for_room=lambda room_id: f"/workspace/{room_id}",
+    )
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()
 """
