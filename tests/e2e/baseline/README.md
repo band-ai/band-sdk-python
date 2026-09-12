@@ -696,11 +696,10 @@ coarser matrix-leg granularity, not the per-cell one the grid markets.
 
 A subtlety worth calling out for on-call: once `release-gate.yml` has recorded a
 *failure*, GitHub does not automatically re-check it just because a later nightly run
-posts a fresh green `baseline-green` status — a required check's completed run is final
-until something re-triggers it (a new commit, or a manual "re-run failed jobs" on the
-release PR). This is ordinary GitHub required-check behavior, not a gap specific to
-this workflow; if the release PR is stuck red after main has actually gone green,
-re-run the check by hand.
+posts a fresh green `baseline-green` status — a completed check is final until another
+Release Please PR event creates a new gate. A Release Please update emits
+`pull_request:synchronize`, and that new gate reads the newest baseline status from
+`main`; a manual re-run remains available when no release update is needed.
 
 Two reporting jobs (`mark-baseline`, `report-scoped-run`) are gated on `!cancelled()`
 rather than `always()`. They write externally visible state — a commit status, and a
@@ -763,8 +762,8 @@ PR-triggered check: an instant no-op for every ordinary PR, and for the standing
 release-please PR it consults that status and fails the PR's check until the baseline
 is green. This is *not* the same thing as making the whole E2E suite a required PR
 check (explicitly out of scope; PR-level gating is covered by the existing Tier-1
-checks) — only this thin lookup is required on every PR, so the cost stays negligible
-for the 99% of PRs that aren't the release PR.
+checks) — this thin lookup remains optional, so the cost stays negligible for the 99%
+of PRs that aren't the release PR.
 
 It gates on the most recently **tested** commit of the base branch, not the live tip
 (`.github/scripts/check-release-baseline.sh`). A nightly marks exactly one commit —
