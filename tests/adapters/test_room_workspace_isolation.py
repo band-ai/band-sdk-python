@@ -65,10 +65,13 @@ async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
             self.params = params
             return {"thread": {"id": "thread"}}
 
+    def workspace_for_room(room_id: str) -> str:
+        return f"/workspace/{room_id}"
+
     adapter = CodexAdapter(
         CodexAdapterConfig(
             model="gpt-5.5",
-            workspace_for_room=lambda room_id: f"/workspace/{room_id}",
+            workspace_for_room=workspace_for_room,
         )
     )
     tools = cast(AgentToolsProtocol, FakeAgentTools())
@@ -88,6 +91,6 @@ async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
         )
 
     assert [client.params["cwd"] for client in clients if client.params] == [
-        "/workspace/room-a",
-        "/workspace/room-b",
+        resolve_room_workspace("room-a", workspace_for_room),
+        resolve_room_workspace("room-b", workspace_for_room),
     ]

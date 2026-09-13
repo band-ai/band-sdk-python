@@ -31,16 +31,18 @@ Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.fro
 ## Quick Start
 
 ```python
-import asyncio
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(model="gpt-5.5"),
 )
-
-async with Agent.from_config("my_agent", adapter=adapter) as agent:
-    await agent.run_forever()
+agent = Agent.create(
+    adapter=adapter,
+    agent_id="your-agent-uuid",
+    api_key="your-band-api-key",
+)
+assert adapter.config.model == "gpt-5.5"
 ```
 
 ## Where Parameters Go
