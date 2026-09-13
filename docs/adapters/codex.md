@@ -32,16 +32,11 @@ Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.fro
 
 ```python
 import asyncio
-import os
-
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(
-        workspace_for_room=lambda room_id: os.path.join("/workspaces", room_id),
-        model="gpt-5.5",
-    ),
+    config=CodexAdapterConfig(model="gpt-5.5"),
 )
 
 agent = Agent.create(
@@ -112,7 +107,7 @@ Pass these to `CodexAdapterConfig(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `workspace_for_room` | `Callable[[str], str]` | required | Returns the absolute workspace for a room. Every live room must receive a distinct workspace. |
+| `workspace_for_room` | `Callable[[str], str] | None` | `None` | Optional override for a room workspace. By default, the adapter creates `./.band-workspaces/<room-id>`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
 | `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
@@ -211,10 +206,7 @@ from band.core.types import Capability, Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(
-        workspace_for_room=lambda room_id: f"/workspaces/{room_id}",
-        model="gpt-5.5",
-    ),
+    config=CodexAdapterConfig(model="gpt-5.5"),
     capabilities=Capability.CONTACTS | Capability.MEMORY,
     emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
 )
@@ -293,10 +285,7 @@ def get_weather(args: WeatherInput) -> str:
 
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(
-        workspace_for_room=lambda room_id: f"/workspaces/{room_id}",
-        model="gpt-5.5",
-    ),
+    config=CodexAdapterConfig(model="gpt-5.5"),
     additional_tools=[(WeatherInput, get_weather)],
 )
 ```

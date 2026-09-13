@@ -110,12 +110,13 @@ Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 
 ## Client workspace isolation
 
-`ACPClientAdapter` requires `workspace_for_room`, a resolver returning an absolute
-workspace for each Band room. It lazily starts one stdio agent process per room and
+`ACPClientAdapter` creates an isolated `./.band-workspaces/<room-id>` directory for
+each Band room by default. Pass `workspace_for_room` only to select a different
+absolute workspace policy. It lazily starts one stdio agent process per room and
 stops that process when the room is cleaned up. TCP and custom transport injection are
 rejected because they cannot prove that a remote process belongs to only one room.
 The assigned working directory is not an operating-system sandbox; configure the agent's
-sandbox policy separately when that boundary is required. The resolver must assign a
+sandbox policy separately when that boundary is required. A custom resolver must assign a
 different workspace to every live room, and the adapter requires a non-empty stdio command.
 
 ## GitHub Copilot CLI backend

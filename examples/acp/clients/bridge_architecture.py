@@ -45,7 +45,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import os
 import logging
 import shlex
 
@@ -84,7 +83,6 @@ async def main() -> None:
     settings = Settings()
 
     command = shlex.split(settings.acp_agent_command)
-    cwd = settings.acp_agent_cwd
     auth_method = settings.acp_auth_method or None
     inject_band_tools = settings.acp_inject_band_tools
     profile_name = settings.acp_client_profile.strip().lower()
@@ -92,7 +90,6 @@ async def main() -> None:
 
     adapter = ACPClientAdapter(
         command=command,
-        workspace_for_room=lambda room_id: os.path.join(cwd, room_id),
         inject_band_tools=inject_band_tools,
         auth_method=auth_method,
         profile=profile,

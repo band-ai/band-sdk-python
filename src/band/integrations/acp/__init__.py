@@ -35,7 +35,6 @@ Example (ACP Client):
 
     adapter = ACPClientAdapter(
         command="codex",
-        workspace_for_room=lambda room_id: f"/workspace/{room_id}",
     )
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time as _time
 from collections import OrderedDict
 from contextvars import ContextVar
@@ -21,6 +20,7 @@ from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.workspaces import resolve_room_workspace
 from band.core.types import (
     AgentInput,
     Capability,
@@ -432,10 +432,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
-        if self.config.workspace_for_room is None:
-            raise ValueError("workspace_for_room is required for Codex room isolation")
         if self.config.cwd is not None:
-            raise ValueError("cwd is not supported; use workspace_for_room")
+            raise ValueError("cwd is not supported; use workspace_for_room or the default")
         if self.config.transport != "stdio":
             raise ValueError("only stdio Codex transport guarantees room process isolation")
         if client_factory is not None:
@@ -473,10 +471,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
         if room is None:
-            workspace = self.config.workspace_for_room(room_id)  # type: ignore[misc]
-            if not isinstance(workspace, str) or not os.path.isabs(workspace):
-                raise ValueError("workspace_for_room must return an absolute path")
-            workspace = os.path.realpath(workspace)
+            workspace = resolve_room_workspace(room_id, self.config.workspace_for_room)
             owner = self._workspace_rooms.get(workspace)
             if owner is not None and owner != room_id:
                 raise ValueError(

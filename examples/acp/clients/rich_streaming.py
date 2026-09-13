@@ -49,7 +49,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import os
 import logging
 import shlex
 
@@ -90,13 +89,9 @@ async def main() -> None:
     # Command to spawn the remote ACP agent
     acp_command = shlex.split(settings.acp_agent_command)
 
-    # Working directory for ACP sessions
-    acp_cwd = settings.acp_agent_cwd
-
     # Create adapter pointing to remote ACP agent
     adapter = ACPClientAdapter(
         command=acp_command,
-        workspace_for_room=lambda room_id: os.path.join(acp_cwd, room_id),
     )
 
     logger.info("Starting ACP client bridge with rich streaming...")

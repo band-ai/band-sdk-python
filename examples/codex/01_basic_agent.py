@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -63,12 +62,6 @@ class Settings(BaseSettings):
     codex_role: str = ""
 
 
-def workspace_for_room(room_id: str) -> str:
-    workspace = Path(os.getenv("CODEX_WORKSPACE_ROOT", ".band-workspaces")) / room_id
-    workspace.mkdir(parents=True, exist_ok=True)
-    return str(workspace.resolve())
-
-
 async def main() -> None:
     load_dotenv()
     settings = Settings()
@@ -93,7 +86,6 @@ async def main() -> None:
     # docstring) when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            workspace_for_room=workspace_for_room,
             personality="pragmatic",
             custom_section=custom_section,
             include_base_instructions=True,
