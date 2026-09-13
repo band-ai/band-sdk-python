@@ -115,12 +115,8 @@ workspace for each Band room. It lazily starts one stdio agent process per room 
 stops that process when the room is cleaned up. TCP and custom transport injection are
 rejected because they cannot prove that a remote process belongs to only one room.
 The assigned working directory is not an operating-system sandbox; configure the agent's
-sandbox policy separately when that boundary is required.
-- Exactly one of `{command, (host, port)}` is required (validated in `__init__`).
-- Advanced: inject a custom `spawn_process` (e.g. `docker exec -i … copilot --acp`, ssh,
-  or a fake in tests). Tests inject a fake through this seam rather than patching module
-  globals (see `tests/integrations/acp/conftest.py::FakeSpawn` / the `make_acp_transport`
-  fixture).
+sandbox policy separately when that boundary is required. The resolver must assign a
+different workspace to every live room, and the adapter requires a non-empty stdio command.
 
 ## GitHub Copilot CLI backend
 

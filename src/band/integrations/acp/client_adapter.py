@@ -33,7 +33,6 @@ from band.integrations.acp.client_runtime import (
     allow_permission,
     cancel_permission,
     select_allow_option_id,
-    tcp_spawn_process,
 )
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
@@ -173,8 +172,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             raise ValueError("TCP ACP transport cannot guarantee room process isolation")
         if spawn_process is not None:
             raise ValueError("custom ACP transports cannot guarantee room process isolation")
-        self._host, self._port = self._resolve_transport(command, host, port)
-        self._command = self._shape_command(command, self._host)
+        if not command:
+            raise ValueError("ACP stdio transport requires a command")
+        self._command = [command] if isinstance(command, str) else list(command)
         self._env = env
         self._workspace_for_room = workspace_for_room
         self._mcp_servers = list(mcp_servers or [])
@@ -186,6 +186,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._custom_section = custom_section
         self._runtimes: dict[str, ACPRuntime] = {}
         self._room_workspaces: dict[str, str] = {}
+        self._workspace_rooms: dict[str, str] = {}
 
         self._room_to_session: dict[str, str] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
@@ -206,21 +207,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """Rebuild the lazy MCP registration after capability negotiation."""
         super().apply_effective_features(features)
         self._tool_definitions, self._own_tool_names = self._registered_tools()
-
-    @staticmethod
-    def _shape_command(command: str | list[str] | None, host: str | None) -> list[str]:
-        """The subprocess command for stdio, or an empty command for TCP.
-
-        stdio spawns a subprocess from ``command``; TCP dials an
-        already-running ACP server at ``host``/port instead. ``host`` is
-        passed explicitly (not read off ``self``) so this stays checkable
-        independent of ``__init__``'s statement order.
-        """
-        if host is not None:
-            return []
-        # _resolve_transport guarantees command is set when host is None.
-        assert command is not None
-        return [command] if isinstance(command, str) else list(command)
 
     def _registered_tools(self) -> tuple[list[ToolDefinition], frozenset[str]]:
         """The tools this adapter registers on the loopback MCP server.
@@ -260,21 +246,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         )
         return definitions, names
 
-    @staticmethod
-    def _select_transport(
-        spawn_process: SpawnProcess | None, host: str | None, port: int | None
-    ) -> SpawnProcess:
-        """An explicit ``spawn_process`` wins (advanced/custom transports and
-        tests); otherwise acp's subprocess spawner (stdio) or a connect-only
-        seam closed over host/port (TCP; see ``tcp_spawn_process``). ``host``/
-        ``port`` are explicit (not read off ``self``), matching
-        ``_shape_command``."""
-        if spawn_process is not None:
-            return spawn_process
-        if host is not None and port is not None:
-            return tcp_spawn_process(host, port)
-        return spawn_agent_process
-
     def _build_runtime(self) -> ACPRuntime:
         return ACPRuntime(
             command=_resolve_launcher(self._command),
@@ -291,15 +262,22 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         workspace = self._workspace_for_room(room_id)
         if not isinstance(workspace, str) or not os.path.isabs(workspace):
             raise ValueError("workspace_for_room must return an absolute path")
-        return workspace
+        return os.path.realpath(workspace)
 
     async def _runtime_for(self, room_id: str) -> ACPRuntime:
         async with self._session_lock:
             runtime = self._runtimes.get(room_id)
             if runtime is None:
+                workspace = self._workspace(room_id)
+                owner = self._workspace_rooms.get(workspace)
+                if owner is not None and owner != room_id:
+                    raise ValueError(
+                        f"workspace_for_room assigned {workspace!r} to both {owner!r} and {room_id!r}"
+                    )
                 runtime = self._build_runtime()
                 self._runtimes[room_id] = runtime
-                self._room_workspaces[room_id] = self._workspace(room_id)
+                self._room_workspaces[room_id] = workspace
+                self._workspace_rooms[workspace] = room_id
             return runtime
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -434,33 +412,6 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             return cancel_permission()
 
         return handler
-
-    @staticmethod
-    def _resolve_transport(
-        command: str | list[str] | None,
-        host: str | None,
-        port: int | None,
-    ) -> tuple[str | None, int | None]:
-        """Validate exactly one transport is configured; return (host, port) for TCP.
-
-        stdio spawns a subprocess from ``command``; TCP connects to an
-        already-running ACP server at ``host``/``port``. The two are mutually
-        exclusive and one is required.
-        """
-        # An empty command ("" or []) is not a usable stdio transport — treat it as
-        # absent so it fails the "one is required" check below with a clear error,
-        # rather than slipping through to crash at spawn time.
-        has_command = bool(command)
-        has_tcp = host is not None or port is not None
-        if has_command and has_tcp:
-            raise ValueError(
-                "Provide either command (stdio) or host+port (TCP), not both"
-            )
-        if not has_command and not has_tcp:
-            raise ValueError("Provide either command (stdio) or host+port (TCP)")
-        if has_tcp and (host is None or port is None):
-            raise ValueError("TCP transport requires both host and port")
-        return (host, port) if has_tcp else (None, None)
 
     def _build_system_context(self, room_id: str, msg: PlatformMessage) -> str:
         agent_name = self.agent_name or "Agent"
@@ -692,7 +643,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if session_id:
                 self._bootstrapped_sessions.discard(session_id)
             runtime = self._runtimes.pop(room_id, None)
-            self._room_workspaces.pop(room_id, None)
+            workspace = self._room_workspaces.pop(room_id, None)
+            if workspace is not None:
+                self._workspace_rooms.pop(workspace, None)
 
         if runtime is not None:
             await runtime.stop()
@@ -721,6 +674,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             runtimes = list(self._runtimes.values())
             self._runtimes.clear()
             self._room_workspaces.clear()
+            self._workspace_rooms.clear()
         async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
             self._band_mcp_backend = None
