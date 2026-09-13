@@ -39,15 +39,8 @@ adapter = CodexAdapter(
     config=CodexAdapterConfig(model="gpt-5.5"),
 )
 
-agent = Agent.create(
-    adapter=adapter,
-    agent_id="your-agent-uuid",
-    api_key="your-band-api-key",
-    ws_url="wss://app.band.ai/api/v1/socket/websocket",
-    rest_url="https://app.band.ai",
-)
-
-asyncio.run(agent.run())
+async with Agent.from_config("my_agent", adapter=adapter) as agent:
+    await agent.run_forever()
 ```
 
 ## Where Parameters Go

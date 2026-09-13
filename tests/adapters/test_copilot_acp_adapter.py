@@ -29,12 +29,10 @@ class TestCopilotACPAdapterConstruction:
     def test_defaults_to_stdio_copilot_command(self) -> None:
         adapter = CopilotACPAdapter()
         assert adapter._command == list(DEFAULT_COPILOT_COMMAND)
-        assert adapter._host is None
-        assert adapter._port is None
 
     def test_no_config_equivalent_to_default_config(self) -> None:
         a, b = CopilotACPAdapter(), CopilotACPAdapter(CopilotACPAdapterConfig())
-        for attr in ("_command", "_host", "_port", "_env", "_inject_band_tools"):
+        for attr in ("_command", "_env", "_inject_band_tools"):
             assert getattr(a, attr) == getattr(b, attr)
 
     def test_custom_command_is_forwarded(self) -> None:
@@ -48,7 +46,7 @@ class TestCopilotACPAdapterConstruction:
         # collecting client the runtime builds falls back to the no-op profile.
         adapter = CopilotACPAdapter()
         assert adapter._profile is None
-        client = adapter._runtime._client_factory()
+        client = adapter._build_runtime()._client_factory()
         assert isinstance(client._profile, NoopACPClientProfile)
 
     def test_github_token_injected_into_stdio_env(self) -> None:
@@ -109,48 +107,14 @@ class TestCopilotACPAdapterConstruction:
 
 
 class TestCopilotACPAdapterTcpTransport:
-    def test_host_port_selects_tcp_and_empty_command(self) -> None:
-        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(host="10.0.0.5", port=8080))
-        assert adapter._host == "10.0.0.5"
-        assert adapter._port == 8080
-        assert adapter._command == []
-
-    def test_tcp_does_not_inject_env(self) -> None:
-        # Over TCP the already-running server carries its own environment; neither
-        # the token nor a general env is smuggled through (they'd be ignored anyway).
-        adapter = CopilotACPAdapter(
-            CopilotACPAdapterConfig(
-                host="10.0.0.5",
-                port=8080,
-                github_token="ghp_x",
-                env={"COPILOT_GITHUB_TOKEN": "tok"},
-            )
-        )
-        assert adapter._env is None
-
-    def test_tcp_with_auth_warns_it_is_ignored(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # Symmetric with the loud command+TCP error: dropping auth over TCP is
-        # surfaced, not silent, so a caller can't believe auth is configured.
-        with caplog.at_level(logging.WARNING, logger="band.adapters.copilot_acp"):
-            CopilotACPAdapter(
-                CopilotACPAdapterConfig(
-                    host="10.0.0.5", port=8080, github_token="ghp_x"
-                )
-            )
-        assert any("ignored over TCP" in r.message for r in caplog.records)
-
-    def test_tcp_without_auth_does_not_warn(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with caplog.at_level(logging.WARNING, logger="band.adapters.copilot_acp"):
+    def test_tcp_config_is_rejected(self) -> None:
+        with pytest.raises(
+            ValueError,
+            match="TCP ACP transport cannot guarantee room process isolation",
+        ):
             CopilotACPAdapter(CopilotACPAdapterConfig(host="10.0.0.5", port=8080))
-        assert not any("ignored over TCP" in r.message for r in caplog.records)
 
     def test_custom_command_with_tcp_is_rejected(self) -> None:
-        # A non-default command AND host/port is a misconfiguration; fail loudly
-        # rather than silently dropping the command.
         with pytest.raises(ValueError, match="not both"):
             CopilotACPAdapter(
                 CopilotACPAdapterConfig(
@@ -158,7 +122,18 @@ class TestCopilotACPAdapterTcpTransport:
                 )
             )
 
-    def test_default_command_with_tcp_is_allowed(self) -> None:
-        # The default command is not "set" for exclusivity purposes — TCP is fine.
-        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(host="10.0.0.5", port=8080))
-        assert adapter._host == "10.0.0.5"
+    def test_tcp_with_auth_warns_before_rejection(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # CopilotACPAdapter warns about ignored auth before the base adapter rejects TCP.
+        with caplog.at_level(logging.WARNING, logger="band.adapters.copilot_acp"):
+            with pytest.raises(
+                ValueError,
+                match="TCP ACP transport cannot guarantee room process isolation",
+            ):
+                CopilotACPAdapter(
+                    CopilotACPAdapterConfig(
+                        host="10.0.0.5", port=8080, github_token="ghp_x"
+                    )
+                )
+        assert any("ignored over TCP" in r.message for r in caplog.records)
