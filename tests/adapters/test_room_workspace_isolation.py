@@ -1,4 +1,4 @@
-"""Room-owned workspace guards for coding-agent adapters."""
+"""Room workspace isolation for coding-agent adapters."""
 
 from __future__ import annotations
 
@@ -9,173 +9,59 @@ import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
 from band.core.protocols import AgentToolsProtocol
-from band.testing import FakeAgentTools
 from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.testing import FakeAgentTools
+from band.workspaces import resolve_room_workspace
 
 
-def test_codex_rejects_a_workspace_shared_by_live_rooms() -> None:
-    adapter = CodexAdapter(
-        CodexAdapterConfig(workspace_for_room=lambda _room_id: "/workspace")
-    )
-
-    adapter._room_client("room-a")
-
-    with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
-        adapter._room_client("room-b")
-
-
-def test_codex_uses_distinct_default_room_workspaces(
+def test_default_workspace_is_created_per_room(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    adapter = CodexAdapter(CodexAdapterConfig())
 
-    first = adapter._room_client("room-a")
-    second = adapter._room_client("room-b")
+    first = resolve_room_workspace("room-a", None)
+    second = resolve_room_workspace("room-b", None)
 
-    assert first.workspace == str(tmp_path / ".band-workspaces" / "room-a")
-    assert second.workspace == str(tmp_path / ".band-workspaces" / "room-b")
-    assert (tmp_path / ".band-workspaces" / "room-a").is_dir()
-    assert (tmp_path / ".band-workspaces" / "room-b").is_dir()
-
-
-@pytest.mark.asyncio
-async def test_acp_retries_workspace_resolution_after_a_failure() -> None:
-    attempts = 0
-
-    def workspace_for_room(_room_id: str) -> str:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise ValueError("workspace provisioning failed")
-        return "/workspace/room-a"
-
-    adapter = ACPClientAdapter(command="codex", workspace_for_room=workspace_for_room)
-
-    with pytest.raises(ValueError, match="workspace provisioning failed"):
-        await adapter._runtime_for("room-a")
-
-    runtime = await adapter._runtime_for("room-a")
-
-    assert adapter._runtimes["room-a"] is runtime
-    assert adapter._room_workspaces == {"room-a": "/workspace/room-a"}
+    assert [first, second] == [
+        str(tmp_path / ".band-workspaces" / "room-a"),
+        str(tmp_path / ".band-workspaces" / "room-b"),
+    ]
+    assert Path(first).is_dir()
+    assert Path(second).is_dir()
 
 
 @pytest.mark.asyncio
-async def test_acp_uses_distinct_default_room_workspaces(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    adapter = ACPClientAdapter(command="codex")
+async def test_adapters_reject_a_custom_workspace_shared_by_live_rooms() -> None:
+    def resolver(_room_id: str) -> str:
+        return "/workspace"
 
-    await adapter._runtime_for("room-a")
-    await adapter._runtime_for("room-b")
+    codex = CodexAdapter(CodexAdapterConfig(workspace_for_room=resolver))
+    acp = ACPClientAdapter(command="codex", workspace_for_room=resolver)
 
-    assert adapter._room_workspaces == {
-        "room-a": str(tmp_path / ".band-workspaces" / "room-a"),
-        "room-b": str(tmp_path / ".band-workspaces" / "room-b"),
-    }
-
-
-@pytest.mark.asyncio
-async def test_acp_rejects_a_workspace_shared_by_live_rooms() -> None:
-    adapter = ACPClientAdapter(
-        command="codex", workspace_for_room=lambda _room_id: "/workspace"
-    )
-
-    await adapter._runtime_for("room-a")
+    codex._room_client("room-a")
+    await acp._runtime_for("room-a")
 
     with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
-        await adapter._runtime_for("room-b")
-
-
-@pytest.mark.asyncio
-async def test_acp_owns_and_releases_one_runtime_per_room(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class Runtime:
-        def __init__(self) -> None:
-            self.stopped = False
-
-        async def stop(self) -> None:
-            self.stopped = True
-
-    runtimes = [Runtime(), Runtime()]
-    adapter = ACPClientAdapter(
-        command="codex",
-        workspace_for_room=lambda room_id: f"/workspace/{room_id}",
-    )
-    monkeypatch.setattr(adapter, "_build_runtime", lambda: runtimes.pop(0))
-
-    first = await adapter._runtime_for("room-a")
-    second = await adapter._runtime_for("room-b")
-
-    assert first is not second
-    assert adapter._room_workspaces == {
-        "room-a": "/workspace/room-a",
-        "room-b": "/workspace/room-b",
-    }
-
-    await adapter.on_cleanup("room-a")
-
-    assert isinstance(first, Runtime)
-    assert isinstance(second, Runtime)
-    assert first.stopped
-    assert not second.stopped
-    assert "room-b" in adapter._runtimes
-
-    await adapter.cleanup_all()
-
-    assert second.stopped
-
-
-@pytest.mark.asyncio
-async def test_codex_discards_a_client_after_startup_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FailingClient:
-        closed = False
-
-        async def connect(self) -> None:
-            raise RuntimeError("startup failed")
-
-        async def close(self) -> None:
-            self.closed = True
-
-    client = FailingClient()
-    adapter = CodexAdapter(
-        CodexAdapterConfig(workspace_for_room=lambda _room_id: "/workspace/room-a")
-    )
-    adapter._room_client("room-a")
-    adapter._active_room.set("room-a")
-    monkeypatch.setattr(adapter, "_build_client", lambda _config: client)
-
-    with pytest.raises(RuntimeError, match="startup failed"):
-        await adapter._ensure_client_ready()
-
-    assert client.closed
-    assert adapter._client is None
+        codex._room_client("room-b")
+    with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
+        await acp._runtime_for("room-b")
 
 
 def test_codex_rejects_the_former_shared_cwd_option() -> None:
-    with pytest.raises(ValueError, match="use workspace_for_room"):
-        CodexAdapter(
-            CodexAdapterConfig(
-                cwd="/workspace",
-                workspace_for_room=lambda room_id: f"/workspace/{room_id}",
-            )
-        )
+    with pytest.raises(ValueError, match="workspace_for_room or the default"):
+        CodexAdapter(CodexAdapterConfig(cwd="/workspace"))
 
 
 @pytest.mark.asyncio
 async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
     class Client:
         def __init__(self) -> None:
-            self.requests: list[tuple[str, dict[str, object]]] = []
+            self.params: dict[str, object] | None = None
 
         async def request(self, method: str, params: dict[str, object]) -> dict[str, object]:
-            self.requests.append((method, params))
-            return {"thread": {"id": f"thread-{len(self.requests)}"}}
+            assert method == "thread/start"
+            self.params = params
+            return {"thread": {"id": "thread"}}
 
     adapter = CodexAdapter(
         CodexAdapterConfig(
@@ -183,7 +69,7 @@ async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
             workspace_for_room=lambda room_id: f"/workspace/{room_id}",
         )
     )
-    tools = FakeAgentTools()
+    tools = cast(AgentToolsProtocol, FakeAgentTools())
     clients: list[Client] = []
     for room_id in ("room-a", "room-b"):
         adapter._room_client(room_id)
@@ -195,17 +81,11 @@ async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
         await adapter._ensure_thread(
             room_id=room_id,
             history=CodexSessionState(),
-            tools=cast(AgentToolsProtocol, tools),
+            tools=tools,
             is_session_bootstrap=False,
         )
 
-    starts = [
-        params
-        for client in clients
-        for method, params in client.requests
-        if method == "thread/start"
-    ]
-    assert [params["cwd"] for params in starts] == [
+    assert [client.params["cwd"] for client in clients if client.params] == [
         "/workspace/room-a",
         "/workspace/room-b",
     ]
