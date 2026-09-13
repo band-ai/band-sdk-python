@@ -54,6 +54,44 @@ async def test_acp_rejects_a_workspace_shared_by_live_rooms() -> None:
 
 
 @pytest.mark.asyncio
+async def test_acp_owns_and_releases_one_runtime_per_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Runtime:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    runtimes = [Runtime(), Runtime()]
+    adapter = ACPClientAdapter(
+        command="codex",
+        workspace_for_room=lambda room_id: f"/workspace/{room_id}",
+    )
+    monkeypatch.setattr(adapter, "_build_runtime", lambda: runtimes.pop(0))
+
+    first = await adapter._runtime_for("room-a")
+    second = await adapter._runtime_for("room-b")
+
+    assert first is not second
+    assert adapter._room_workspaces == {
+        "room-a": "/workspace/room-a",
+        "room-b": "/workspace/room-b",
+    }
+
+    await adapter.on_cleanup("room-a")
+
+    assert first.stopped
+    assert not second.stopped
+    assert "room-b" in adapter._runtimes
+
+    await adapter.cleanup_all()
+
+    assert second.stopped
+
+
+@pytest.mark.asyncio
 async def test_codex_discards_a_client_after_startup_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -79,3 +117,13 @@ async def test_codex_discards_a_client_after_startup_failure(
 
     assert client.closed
     assert adapter._client is None
+
+
+def test_codex_rejects_the_former_shared_cwd_option() -> None:
+    with pytest.raises(ValueError, match="use workspace_for_room"):
+        CodexAdapter(
+            CodexAdapterConfig(
+                cwd="/workspace",
+                workspace_for_room=lambda room_id: f"/workspace/{room_id}",
+            )
+        )
