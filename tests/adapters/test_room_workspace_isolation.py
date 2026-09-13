@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
+from band.core.protocols import AgentToolsProtocol
+from band.testing import FakeAgentTools
 from band.integrations.acp.client_adapter import ACPClientAdapter
 
 
@@ -82,6 +86,8 @@ async def test_acp_owns_and_releases_one_runtime_per_room(
 
     await adapter.on_cleanup("room-a")
 
+    assert isinstance(first, Runtime)
+    assert isinstance(second, Runtime)
     assert first.stopped
     assert not second.stopped
     assert "room-b" in adapter._runtimes
@@ -127,3 +133,47 @@ def test_codex_rejects_the_former_shared_cwd_option() -> None:
                 workspace_for_room=lambda room_id: f"/workspace/{room_id}",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.requests: list[tuple[str, dict[str, object]]] = []
+
+        async def request(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            self.requests.append((method, params))
+            return {"thread": {"id": f"thread-{len(self.requests)}"}}
+
+    adapter = CodexAdapter(
+        CodexAdapterConfig(
+            model="gpt-5.5",
+            workspace_for_room=lambda room_id: f"/workspace/{room_id}",
+        )
+    )
+    tools = FakeAgentTools()
+    clients: list[Client] = []
+    for room_id in ("room-a", "room-b"):
+        adapter._room_client(room_id)
+        adapter._active_room.set(room_id)
+        client = Client()
+        adapter._client = client  # type: ignore[assignment]
+        adapter._selected_model = "gpt-5.5"
+        clients.append(client)
+        await adapter._ensure_thread(
+            room_id=room_id,
+            history=CodexSessionState(),
+            tools=cast(AgentToolsProtocol, tools),
+            is_session_bootstrap=False,
+        )
+
+    starts = [
+        params
+        for client in clients
+        for method, params in client.requests
+        if method == "thread/start"
+    ]
+    assert [params["cwd"] for params in starts] == [
+        "/workspace/room-a",
+        "/workspace/room-b",
+    ]
