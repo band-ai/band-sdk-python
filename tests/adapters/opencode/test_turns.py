@@ -131,6 +131,7 @@ async def test_reports_tool_events_when_enabled() -> None:
     assert len(tool_calls) == 1
     assert len(tool_results) == 1
     assert json.loads(tool_calls[0]["content"])["name"] == "bash"
+    assert json.loads(tool_results[0]["content"])["name"] == "bash"
     assert json.loads(tool_results[0]["content"])["output"] == "ok"
 
 
@@ -231,6 +232,45 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting(
     tool_results = [e for e in tools.events_sent if e["message_type"] == "tool_result"]
     assert len(tool_results) == 1
     assert json.loads(tool_results[0]["content"])["output"] == 0
+
+
+async def test_reports_is_error_on_a_failed_tool_result(make_adapter, tools) -> None:
+    """A tool part that ends in ``error`` must set ``is_error`` on the reported
+    tool_result -- consumers gate on that flag, not on inspecting ``output``."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_tool_part(
+                    "sess-1",
+                    "msg-8",
+                    tool="bash",
+                    call_id="call-3",
+                    status="error",
+                    input_data={"command": "false"},
+                    error="command failed",
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = make_adapter(fake_client, emit=Emit.TOOL_CALLS)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    tool_results = [e for e in tools.events_sent if e["message_type"] == "tool_result"]
+    assert len(tool_results) == 1
+    content = json.loads(tool_results[0]["content"])
+    assert content["is_error"] is True
+    assert content["output"] == {"error": "command failed"}
 
 
 async def test_does_not_echo_user_text_parts_as_assistant_output(
@@ -497,7 +537,13 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
         for e in tools.events_sent
         if e["message_type"] == "tool_call"
     ]
+    tool_results = [
+        json.loads(e["content"])
+        for e in tools.events_sent
+        if e["message_type"] == "tool_result"
+    ]
     assert [c["name"] for c in tool_calls] == ["band_store_memory"]
+    assert [r["name"] for r in tool_results] == ["band_store_memory"]
 
 
 async def test_manual_relay_releases_turn_when_mentionless_send_rejected(

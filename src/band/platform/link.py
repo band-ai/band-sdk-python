@@ -17,16 +17,9 @@ from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from band.core.types import PlatformConnection
 from band.platform.message_lifecycle import MessageLifecycle
+from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage
-from band_sdk_core import (
-    AgentTopicKind,
-    LeaveOutcome,
-    RoomSubscribeResult,
-    SessionState,
-    SubscriptionTracker,
-    chat_room_topic,
-    room_participants_topic,
-)
+from band_sdk_core import AgentTopicKind, SessionState
 
 from band.platform.event import (
     MessageEvent,
@@ -113,13 +106,11 @@ class BandLink:
         # concurrent connect() sees it even mid-handshake (see connect()).
         self._connecting = False
 
-        # Subscription tracking (band_sdk_core.SubscriptionTracker) plus local
-        # bookkeeping for claims whose real-world outcome is ambiguous (a
-        # cancelled join, a failed rollback, a non-clean leave) — drained only
-        # at the next reconnect boundary, see _drain_reconciliation.
-        self._subscriptions = SubscriptionTracker()
-        self._rooms_needing_reconciliation: set[str] = set()
-        self._agent_topics_needing_reconciliation: set[str] = set()
+        # Room/agent-topic subscription tracking and reconnect reconciliation --
+        # lives in its own class since it needs the live WebSocketClient, unlike
+        # MessageLifecycle. `current_ws` is a getter, never a cached value, so
+        # BandLink stays the single owner of `_ws` across reconnects.
+        self._subscriptions_manager = SubscriptionManager(current_ws=lambda: self._ws)
 
         # Event queue for async iteration
         self._event_queue: asyncio.Queue[PlatformEvent] = asyncio.Queue(maxsize=1000)
@@ -223,9 +214,7 @@ class BandLink:
         await self._ws.__aexit__(None, None, None)
         self._ws = None
         self._is_connected = False
-        self._subscriptions.end_session()
-        self._rooms_needing_reconciliation.clear()
-        self._agent_topics_needing_reconciliation.clear()
+        self._subscriptions_manager.end_session()
         logger.info("Disconnected from platform")
 
     async def run_forever(self) -> None:
@@ -245,318 +234,59 @@ class BandLink:
 
     # --- Subscription management ---
 
-    def _blocked_by_reconciliation(
-        self, key: str, pending: set[str], *, noun: str
-    ) -> bool:
-        """Whether ``key`` is blocked from a fresh subscribe until the next
-        reconnect drains ``pending`` — the single check both subscribe_room
-        and _subscribe_agent_topic gate on (see design doc for why this, not
-        core's own status, is the authoritative block condition)."""
-        if key not in pending:
-            return False
-        logger.warning(
-            "%s %s needs reconciliation, blocking subscribe until next reconnect",
-            noun,
-            key,
-        )
-        return True
-
-    def _is_current_session(self, ws: WebSocketClient) -> bool:
-        """False once ``ws``'s connection has been torn down or replaced --
-        its own pending entries are either already cleared or will never
-        drain, so acting through it further would leak into a session that
-        never touched this room/topic."""
-        return self._ws is ws
-
-    def _mark_needing_reconciliation(
-        self, key: str, pending: set[str], ws: WebSocketClient
-    ) -> None:
-        """Block ``key`` from resubscribe until reconciled, within ``ws``'s
-        session only."""
-        if self._is_current_session(ws):
-            pending.add(key)
-
-    async def _leave_channel(
-        self,
-        leave: Callable[[], Awaitable[None]],
-        *,
-        description: str,
-        level: int = logging.WARNING,
-    ) -> bool:
-        """Attempt one best-effort channel leave: log and swallow any
-        failure, report whether it actually succeeded. Shared by every leave
-        attempt in this module (rollback, unsubscribe, reconciliation drain)
-        so "did we manage to leave this?" has one implementation."""
-        try:
-            await leave()
-            return True
-        except Exception as e:
-            logger.log(level, "Error %s: %s", description, e)
-            return False
-
     async def subscribe_agent_rooms(self, agent_id: str) -> None:
         """Subscribe to agent room events (room_added/removed)."""
         if not self._ws:
             raise RuntimeError("Not connected")
-        ws = self._ws
-
-        await self._subscribe_agent_topic(
-            AgentTopicKind.Rooms.topic(agent_id),
-            lambda: ws.join_agent_rooms_channel(
-                agent_id,
-                on_room_added=self._on_room_added,
-                on_room_removed=self._on_room_removed,
-            ),
-            ws,
+        await self._subscriptions_manager.subscribe_agent_rooms(
+            self._ws,
+            agent_id,
+            on_room_added=self._on_room_added,
+            on_room_removed=self._on_room_removed,
         )
 
     async def subscribe_room(self, room_id: str) -> None:
-        """Subscribe to room messages and participants.
-
-        Blocked (a no-op, logged) while ``room_id`` is in
-        ``_rooms_needing_reconciliation`` — a prior cancelled/ambiguous
-        attempt's outcome is unresolved and must not be retried on the same
-        socket. Stays blocked until the next reconnect drains it (see
-        ``_drain_reconciliation``); see the design doc for why.
-        """
+        """Subscribe to room messages and participants."""
         if not self._ws:
             raise RuntimeError("Not connected")
-        ws = self._ws
-
-        if self._blocked_by_reconciliation(
-            room_id, self._rooms_needing_reconciliation, noun="Room"
-        ):
-            return
-
-        ticket = self._subscriptions.begin_room_subscribe(room_id=room_id)
-        if ticket is None:
-            return
-
-        settled = False
-        try:
-            try:
-                # Subscribe to messages
-                await ws.join_chat_room_channel(
-                    room_id,
-                    on_message_created=lambda msg: self._on_message_created(
-                        room_id, msg
-                    ),
-                )
-            except Exception as e:
-                logger.warning("Failed to join chat_room:%s: %s", room_id, e)
-                self._subscriptions.record_chat_room_join_failed(
-                    room_id=room_id, ticket=ticket
-                )
-                settled = True
-                return
-
-            try:
-                # Subscribe to participant updates
-                await ws.join_room_participants_channel(
-                    room_id,
-                    on_participant_added=lambda p: self._on_participant_added(
-                        room_id, p
-                    ),
-                    on_participant_removed=lambda p: self._on_participant_removed(
-                        room_id, p
-                    ),
-                    on_room_deleted=lambda p: self._on_room_deleted(room_id, p),
-                )
-            except Exception as e:
-                logger.warning("Failed to join room_participants:%s: %s", room_id, e)
-                # Clean up the chat_room channel we already joined. Logged at
-                # DEBUG here (not WARNING) so a rollback failure produces one
-                # WARNING below, not two for the same event — the exception
-                # detail is still available for diagnosis.
-                chat_room_left = await self._leave_channel(
-                    lambda: ws.leave_chat_room_channel(room_id),
-                    description=f"rolling back chat_room:{room_id}",
-                    level=logging.DEBUG,
-                )
-                result = self._subscriptions.record_room_participants_join_failed(
-                    room_id=room_id, ticket=ticket, chat_room_left=chat_room_left
-                )
-                settled = True
-                if result is RoomSubscribeResult.RollbackFailed:
-                    logger.warning(
-                        "Rollback failed for room %s after participants-join "
-                        "failure; needs reconciliation on next reconnect",
-                        room_id,
-                    )
-                    self._mark_needing_reconciliation(
-                        room_id, self._rooms_needing_reconciliation, ws
-                    )
-                return
-
-            self._subscriptions.record_both_room_topics_joined(
-                room_id=room_id, ticket=ticket
-            )
-            settled = True
-            logger.debug("Subscribed to room %s", room_id)
-        finally:
-            # Cancellation (or any other unexpected escape) leaves the ticket
-            # unresolved: force it into the one outcome that can express
-            # ambiguity to core (see design doc). Only block local resubscribe
-            # if this ticket was still current when it applied -- a stale
-            # ticket (already resolved another way) must not mark reconciliation.
-            if not settled:
-                result = self._subscriptions.record_room_participants_join_failed(
-                    room_id=room_id, ticket=ticket, chat_room_left=False
-                )
-                if result is RoomSubscribeResult.RollbackFailed:
-                    self._mark_needing_reconciliation(
-                        room_id, self._rooms_needing_reconciliation, ws
-                    )
-
-    async def subscribe_agent_contacts(self, agent_id: str) -> None:
-        """
-        Subscribe to agent contact events.
-
-        Events: contact_request_received, contact_request_updated,
-                contact_added, contact_removed
-        """
-        if not self._ws:
-            raise RuntimeError("Not connected")
-        ws = self._ws
-
-        await self._subscribe_agent_topic(
-            AgentTopicKind.Contacts.topic(agent_id),
-            lambda: ws.join_agent_contacts_channel(
-                agent_id,
-                on_contact_request_received=self._on_contact_request_received,
-                on_contact_request_updated=self._on_contact_request_updated,
-                on_contact_added=self._on_contact_added,
-                on_contact_removed=self._on_contact_removed,
-            ),
-            ws,
+        await self._subscriptions_manager.subscribe_room(
+            self._ws,
+            room_id,
+            on_message_created=lambda msg: self._on_message_created(room_id, msg),
+            on_participant_added=lambda p: self._on_participant_added(room_id, p),
+            on_participant_removed=lambda p: self._on_participant_removed(room_id, p),
+            on_room_deleted=lambda p: self._on_room_deleted(room_id, p),
         )
 
-    async def _subscribe_agent_topic(
-        self, topic: str, join: Callable[[], Awaitable[None]], ws: WebSocketClient
-    ) -> None:
-        """Shared join/track/rollback shape for the single-topic agent
-        channels (``agent_rooms``, ``agent_contacts``) — mirrors
-        ``subscribe_room``'s two-topic version but with one join, no
-        rollback phase.
-        """
-        if self._blocked_by_reconciliation(
-            topic, self._agent_topics_needing_reconciliation, noun="Agent topic"
-        ):
-            return
-
-        ticket = self._subscriptions.begin_agent_topic_join(topic=topic)
-        if ticket is None:
-            return
-
-        settled = False
-        try:
-            await join()
-            self._subscriptions.record_agent_topic_join(
-                topic=topic, ticket=ticket, joined=True
-            )
-            settled = True
-            logger.debug("Joined agent topic %s", topic)
-        except Exception as e:
-            logger.warning("Failed to join agent topic %s: %s", topic, e)
-            self._subscriptions.record_agent_topic_join(
-                topic=topic, ticket=ticket, joined=False
-            )
-            settled = True
-        finally:
-            # An unresolved ticket means the real transport outcome is
-            # unknown (e.g. cancelled after PHX's own join call started) --
-            # record_agent_topic_join_ambiguous resolves core straight to
-            # NeedsReconciliation instead of Absent.
-            if not settled:
-                if self._subscriptions.record_agent_topic_join_ambiguous(
-                    topic=topic, ticket=ticket
-                ):
-                    self._mark_needing_reconciliation(
-                        topic, self._agent_topics_needing_reconciliation, ws
-                    )
+    async def subscribe_agent_contacts(self, agent_id: str) -> None:
+        """Subscribe to agent contact events."""
+        if not self._ws:
+            raise RuntimeError("Not connected")
+        await self._subscriptions_manager.subscribe_agent_contacts(
+            self._ws,
+            agent_id,
+            on_contact_request_received=self._on_contact_request_received,
+            on_contact_request_updated=self._on_contact_request_updated,
+            on_contact_added=self._on_contact_added,
+            on_contact_removed=self._on_contact_removed,
+        )
 
     async def unsubscribe_room(self, room_id: str) -> None:
         if not self._ws:
             return
-        ws = self._ws
-
-        ticket = self._subscriptions.unsubscribe_room(room_id=room_id)
-        if ticket is None:
-            return
-
-        outcome = LeaveOutcome.Unknown
-        try:
-            chat_room_left = await self._leave_channel(
-                lambda: ws.leave_chat_room_channel(room_id),
-                description=f"unsubscribing from chat_room:{room_id}",
-            )
-            participants_left = await self._leave_channel(
-                lambda: ws.leave_room_participants_channel(room_id),
-                description=f"unsubscribing from room_participants:{room_id}",
-            )
-
-            outcome = (
-                LeaveOutcome.Left
-                if (chat_room_left and participants_left)
-                else LeaveOutcome.Failed
-            )
-            logger.debug("Unsubscribed from room %s (outcome=%s)", room_id, outcome)
-        finally:
-            # A cancellation leaves `outcome` at its Unknown default — either
-            # way this resolves the ticket exactly once.
-            self._subscriptions.mark_room_leave_complete(
-                room_id=room_id, ticket=ticket, outcome=outcome
-            )
-            if outcome is not LeaveOutcome.Left:
-                self._mark_needing_reconciliation(
-                    room_id, self._rooms_needing_reconciliation, ws
-                )
+        await self._subscriptions_manager.unsubscribe_room(self._ws, room_id)
 
     async def unsubscribe_agent_contacts(self) -> None:
-        """Unsubscribe from agent contacts channel.
-
-        A true no-op when the topic was never joined — the tracker's
-        ``leave_agent_topic`` returns ``None`` in that case rather than
-        issuing a leave the transport would just reject.
-        """
+        """Unsubscribe from agent contacts channel."""
         if not self._ws:
             return
-        ws = self._ws
-
-        await self._leave_agent_topic(
-            AgentTopicKind.Contacts.topic(self.agent_id),
-            lambda: ws.leave_agent_contacts_channel(self.agent_id),
-            ws,
+        await self._subscriptions_manager.unsubscribe_agent_contacts(
+            self._ws, self.agent_id
         )
-
-    async def _leave_agent_topic(
-        self, topic: str, leave: Callable[[], Awaitable[None]], ws: WebSocketClient
-    ) -> None:
-        """Shared leave/track shape for the single-topic agent channels."""
-        ticket = self._subscriptions.leave_agent_topic(topic=topic)
-        if ticket is None:
-            return
-
-        outcome = LeaveOutcome.Unknown
-        try:
-            left = await self._leave_channel(
-                leave, description=f"leaving agent topic {topic}"
-            )
-            outcome = LeaveOutcome.Left if left else LeaveOutcome.Failed
-            if left:
-                logger.debug("Left agent topic %s", topic)
-        finally:
-            self._subscriptions.mark_agent_topic_leave_complete(
-                topic=topic, ticket=ticket, outcome=outcome
-            )
-            if outcome is not LeaveOutcome.Left:
-                self._mark_needing_reconciliation(
-                    topic, self._agent_topics_needing_reconciliation, ws
-                )
 
     def is_room_subscribed(self, room_id: str) -> bool:
         """Whether ``room_id`` is currently fully subscribed (both topics)."""
-        return self._subscriptions.is_room_subscribed(room_id=room_id)
+        return self._subscriptions_manager.is_room_subscribed(room_id)
 
     def _connected_ws(self) -> WebSocketClient:
         """The active WebSocket client -- only ever called from the client's
@@ -565,66 +295,6 @@ class BandLink:
         if self._ws is None:
             raise RuntimeError("Not connected")
         return self._ws
-
-    def _detect_room_rejoin_failures(
-        self, ws: WebSocketClient, joined: frozenset[str]
-    ) -> None:
-        """PHXChannelsClient has no per-topic rejoin callback, so this
-        compares its settled post-rejoin registry against the tracker's
-        belief instead -- safe with no race, since PHX's own rejoin pass
-        for every topic completes before this hook fires.
-
-        Only catches an explicit rejoin rejection: a topic hit by a
-        transient failure stays in PHX's own registry ("will retry on next
-        reconnect"), so it still reads as joined here and is caught later
-        if it ever fails for real.
-
-        Reports each candidate's own generation ticket, so a room that was
-        unsubscribed and re-subscribed between the failure and this check
-        is left alone: the tracker rejects the stale ticket as a no-op.
-
-        ``joined`` is a single ``ws.joined_topics()`` snapshot shared across
-        this whole reconnect pass by ``_on_reconnected`` -- never taken here
-        directly, so all detection in the pass sees the same registry state.
-        """
-        candidates = self._subscriptions.room_rejoin_candidates()
-        if not candidates:
-            return
-        dropped = [
-            (room_id, ticket)
-            for room_id, ticket in candidates
-            if not (
-                chat_room_topic(room_id) in joined
-                and room_participants_topic(room_id) in joined
-            )
-        ]
-        for room_id, ticket in dropped:
-            if self._subscriptions.mark_room_rejoin_failed(
-                room_id=room_id, ticket=ticket
-            ):
-                self._mark_needing_reconciliation(
-                    room_id, self._rooms_needing_reconciliation, ws
-                )
-
-    def _detect_agent_topic_rejoin_failures(
-        self, ws: WebSocketClient, joined: frozenset[str]
-    ) -> None:
-        """Same rejoin-failure detection as ``_detect_room_rejoin_failures``,
-        for the single-topic agent channels. ``joined`` is the same shared
-        snapshot ``_detect_room_rejoin_failures`` receives."""
-        candidates = self._subscriptions.agent_topic_rejoin_candidates()
-        if not candidates:
-            return
-        dropped = [
-            (topic, ticket) for topic, ticket in candidates if topic not in joined
-        ]
-        for topic, ticket in dropped:
-            if self._subscriptions.mark_agent_topic_rejoin_failed(
-                topic=topic, ticket=ticket
-            ):
-                self._mark_needing_reconciliation(
-                    topic, self._agent_topics_needing_reconciliation, ws
-                )
 
     async def _recover_agent_control(
         self, ws: WebSocketClient, joined: frozenset[str]
@@ -663,12 +333,11 @@ class BandLink:
         that ambiguity is safely resolvable (see design doc).
         """
         logger.info("WebSocket reconnected — reconciling room state")
-        self._subscriptions.on_reconnected()
+        self._subscriptions_manager.mark_reconnected()
         ws = self._connected_ws()
         joined = ws.joined_topics()
         await self._recover_agent_control(ws, joined)
-        self._detect_room_rejoin_failures(ws, joined)
-        self._detect_agent_topic_rejoin_failures(ws, joined)
+        self._subscriptions_manager.detect_rejoin_failures(ws, joined)
         await self._drain_reconciliation()
         self._queue_event(ReconnectedEvent())
 
@@ -676,54 +345,7 @@ class BandLink:
         """Force a clean transport + tracker state for every room/topic left
         ambiguous since the last reconnect, then release the local block.
         """
-        ws = self._connected_ws()
-
-        await self._drain_room_reconciliation(ws)
-        await self._drain_agent_topic_reconciliation(ws)
-
-    async def _drain_room_reconciliation(self, ws: WebSocketClient) -> None:
-        """Stops as soon as ``ws``'s session ends mid-await -- never a
-        correctness issue (every leave here is already best-effort), just
-        pointless work through a client this session no longer owns."""
-        for room_id in list(self._rooms_needing_reconciliation):
-            if not self._is_current_session(ws):
-                return
-            await self._leave_channel(
-                lambda: ws.leave_chat_room_channel(room_id),
-                description=f"best-effort reconciliation leave of chat_room:{room_id}",
-                level=logging.DEBUG,
-            )
-            await self._leave_channel(
-                lambda: ws.leave_room_participants_channel(room_id),
-                description=(
-                    f"best-effort reconciliation leave of room_participants:{room_id}"
-                ),
-                level=logging.DEBUG,
-            )
-            self._subscriptions.acknowledge_room_reconciled(room_id=room_id)
-            self._rooms_needing_reconciliation.discard(room_id)
-
-    async def _drain_agent_topic_reconciliation(self, ws: WebSocketClient) -> None:
-        """Same stale-session handling as ``_drain_room_reconciliation``."""
-        for topic in list(self._agent_topics_needing_reconciliation):
-            if not self._is_current_session(ws):
-                return
-            kind, _, agent_id = topic.partition(":")
-            topic_kind = AgentTopicKind.from_wire_name(kind)
-            if topic_kind is None:
-                raise RuntimeError(f"Unrecognized agent topic kind: {topic!r}")
-            leave = (
-                ws.leave_agent_rooms_channel
-                if topic_kind == AgentTopicKind.Rooms
-                else ws.leave_agent_contacts_channel
-            )
-            await self._leave_channel(
-                lambda: leave(agent_id),
-                description=f"best-effort reconciliation leave of {topic}",
-                level=logging.DEBUG,
-            )
-            self._subscriptions.acknowledge_agent_topic_reconciled(topic=topic)
-            self._agent_topics_needing_reconciliation.discard(topic)
+        await self._subscriptions_manager.drain_reconciliation(self._connected_ws())
 
     async def _on_supersede(self, payload: "SupersedePayload") -> None:
         """Handle an agent_control supersede event before the platform closes

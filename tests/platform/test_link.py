@@ -41,71 +41,11 @@ from band.platform.link import BandLink
 from band_sdk_core import AgentTopicStatus, DeadReason, SessionState, chat_room_topic
 
 from tests.conftest import make_message_event
-from tests.platform.conftest import cancelled_mid_await
-
-
-class AllTopicsJoined:
-    """A container reporting every topic as present -- the default 'nothing
-    failed to rejoin' fixture behavior for ``WebSocketClient.joined_topics``,
-    which returns a real snapshot BandLink checks membership against."""
-
-    def __contains__(self, topic: object) -> bool:
-        return True
-
-
-class AllTopicsExcept:
-    """Reports every topic present except the given ones -- simulates a
-    room/topic that PHX's own rejoin pass did not re-establish."""
-
-    def __init__(self, missing: set[str]) -> None:
-        self._missing = missing
-
-    def __contains__(self, topic: object) -> bool:
-        return topic not in self._missing
-
-
-@pytest.fixture
-def mock_ws_client():
-    """Autospecced WebSocketClient for testing BandLink.
-
-    ``spec=WebSocketClient`` (via ``create_autospec``) so a rename/removal of
-    a real method surfaces as a test failure here, instead of the mock
-    silently auto-fabricating whatever attribute BandLink happens to call.
-    """
-    ws = create_autospec(WebSocketClient, instance=True)
-
-    # Async context manager support
-    ws.__aenter__.return_value = ws
-    ws.__aexit__.return_value = None
-
-    # Documented "nothing failed to rejoin" default -- an unconfigured
-    # autospec call would otherwise return a bare (truthy) MagicMock, and
-    # `topic in <MagicMock>` raises TypeError rather than reading as
-    # "topic present" -- _detect_room_rejoin_failures/
-    # _detect_agent_topic_rejoin_failures need a real container.
-    ws.joined_topics.return_value = AllTopicsJoined()
-
-    ws.last_disconnect_reason = None
-
-    def record_terminal_disconnect(reason):
-        ws.last_disconnect_reason = reason
-
-    ws.record_terminal_disconnect.side_effect = record_terminal_disconnect
-
-    # Documented "every real-world supersede is terminal" default (the
-    # platform hardcodes retryable=False today) -- an unconfigured autospec
-    # call would otherwise return a bare MagicMock whose `.state` is not
-    # SessionState.Dead, silently skipping record_terminal_disconnect in
-    # _on_supersede and breaking every existing supersede test using this
-    # fixture.
-    ws.handle_supersede.return_value = MagicMock(
-        state=SessionState.Dead,
-        dead_reason=DeadReason.Classified,
-        stale_reason=None,
-        retry_after_s=None,
-    )
-
-    return ws
+from tests.platform.conftest import (
+    AllTopicsExcept,
+    AllTopicsJoined,
+    cancelled_mid_await,
+)
 
 
 class TestBandLinkConstruction:
@@ -655,8 +595,12 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
-        link._rooms_needing_reconciliation.update({"room-1", "room-2"})
-        link._agent_topics_needing_reconciliation.add("agent_rooms:agent-123")
+        link._subscriptions_manager._rooms_needing_reconciliation.update(
+            {"room-1", "room-2"}
+        )
+        link._subscriptions_manager._agent_topics_needing_reconciliation.add(
+            "agent_rooms:agent-123"
+        )
 
         def swap_ws_mid_leave(room_id: str) -> None:
             link._ws = other_ws
@@ -670,13 +614,15 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         # reached once the staleness check caught the swap.
         assert mock_ws_client.leave_chat_room_channel.call_count == 1
         assert mock_ws_client.leave_room_participants_channel.call_count == 1
-        assert len(link._rooms_needing_reconciliation) == 1
+        assert len(link._subscriptions_manager._rooms_needing_reconciliation) == 1
 
         # The agent-topic drain runs next and finds a stale `ws` right away —
         # it never touches the topic at all.
         mock_ws_client.leave_agent_rooms_channel.assert_not_called()
         other_ws.leave_agent_rooms_channel.assert_not_called()
-        assert link._agent_topics_needing_reconciliation == {"agent_rooms:agent-123"}
+        assert link._subscriptions_manager._agent_topics_needing_reconciliation == {
+            "agent_rooms:agent-123"
+        }
 
     @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_room_blocked_after_failed_rollback_until_reconnect(
@@ -791,7 +737,10 @@ class TestBandLinkSubscriptionRaceAndReconciliation:
         mock_ws_client.joined_topics.return_value = AllTopicsExcept({topic})
         await link._on_reconnected()
         mock_ws_client.leave_agent_rooms_channel.assert_called_once_with("agent-123")
-        assert link._subscriptions.agent_topic_status(topic) == AgentTopicStatus.Absent
+        assert (
+            link._subscriptions_manager._subscriptions.agent_topic_status(topic)
+            == AgentTopicStatus.Absent
+        )
 
         mock_ws_client.joined_topics.return_value = AllTopicsJoined()
         mock_ws_client.join_agent_rooms_channel.reset_mock()

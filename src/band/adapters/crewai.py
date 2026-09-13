@@ -405,7 +405,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             # "already handled" / "act on this now" markers, matches what
             # CrewAI actually does with the input either way.
             prompt = "\n\n".join(sections)
-            result = await self._crewai_agent.kickoff_async(prompt)
+            result = await self._kickoff_with_empty_response_retry(
+                self._crewai_agent, prompt, reply_tracker, room_id
+            )
 
         except Exception as e:
             # An empty response is benign only once some tool ran this turn --
@@ -460,6 +462,48 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         if room_id in self._message_history:
             del self._message_history[room_id]
             logger.debug("Room %s: Cleaned up CrewAI session", room_id)
+
+    async def _kickoff_with_empty_response_retry(
+        self,
+        agent: "CrewAIAgent",
+        prompt: str,
+        reply_tracker: ReplyTracker,
+        room_id: str,
+    ) -> Any:
+        """Retry a first-call empty completion once before giving up.
+
+        CrewAI raises the identical ValueError whether the model correctly has
+        nothing left to say (fine once a tool has run -- handled by the
+        caller) or the turn's very first call came back empty. The second case
+        has run no tool yet, so there is nothing to duplicate: one immediate
+        retry absorbs a single-call fluke instead of failing the whole
+        delivery and leaving CrewAI to improvise on a cold redelivery.
+        """
+        try:
+            return await agent.kickoff_async(prompt)
+        except Exception as e:
+            if not (_is_empty_llm_response(e) and not reply_tracker.any_tool_ran):
+                raise
+            logger.info(
+                "Room %s: CrewAI's first LLM call came back empty before "
+                "any tool ran; retrying",
+                room_id,
+            )
+            try:
+                return await agent.kickoff_async(prompt)
+            except Exception as retry_exc:
+                if _is_empty_llm_response(retry_exc):
+                    logger.warning(
+                        "Room %s: CrewAI's retry also came back empty; giving up",
+                        room_id,
+                    )
+                else:
+                    logger.warning(
+                        "Room %s: CrewAI's retry failed with a different error: %s",
+                        room_id,
+                        retry_exc,
+                    )
+                raise
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
         """Send error event (best effort)."""
