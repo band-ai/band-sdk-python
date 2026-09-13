@@ -58,7 +58,9 @@ async def test_codex_starts_each_thread_in_its_room_workspace() -> None:
         def __init__(self) -> None:
             self.params: dict[str, object] | None = None
 
-        async def request(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        async def request(
+            self, method: str, params: dict[str, object]
+        ) -> dict[str, object]:
             assert method == "thread/start"
             self.params = params
             return {"thread": {"id": "thread"}}

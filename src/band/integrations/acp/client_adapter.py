@@ -28,6 +28,7 @@ from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
+    MCPTransportKind,
     PermissionHandler,
     allow_permission,
     cancel_permission,
@@ -39,11 +40,12 @@ from band.integrations.acp.client_types import (
 )
 from band.integrations.mcp.backends import (
     BandMCPBackend,
+    BandMCPBackendKind,
     create_band_mcp_backend,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ACPToolCall
-from band.workspaces import resolve_room_workspace
+from band.workspaces import claim_room_workspace, resolve_room_workspace
 from band.runtime.prompts import render_system_prompt
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
@@ -60,6 +62,7 @@ from band.runtime.tools import (
 logger = logging.getLogger(__name__)
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+DEFAULT_BAND_MCP_BACKEND_KIND: BandMCPBackendKind = "http"
 
 # Prefixes the change-triggered roster/contacts updates injected into a
 # prompt, so the model reads them as platform state, not as the requester
@@ -165,11 +168,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             **features,
         )
         if cwd is not None:
-            raise ValueError("cwd is not supported; use workspace_for_room or the default")
+            raise ValueError(
+                "cwd is not supported; use workspace_for_room or the default"
+            )
         if host is not None or port is not None:
-            raise ValueError("TCP ACP transport cannot guarantee room process isolation")
+            raise ValueError(
+                "TCP ACP transport cannot guarantee room process isolation"
+            )
         if spawn_process is not None:
-            raise ValueError("custom ACP transports cannot guarantee room process isolation")
+            raise ValueError(
+                "custom ACP transports cannot guarantee room process isolation"
+            )
         if not command:
             raise ValueError("ACP stdio transport requires a command")
         self._command = [command] if isinstance(command, str) else list(command)
@@ -264,15 +273,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             runtime = self._runtimes.get(room_id)
             if runtime is None:
                 workspace = self._workspace(room_id)
-                owner = self._workspace_rooms.get(workspace)
-                if owner is not None and owner != room_id:
-                    raise ValueError(
-                        f"workspace_for_room assigned {workspace!r} to both {owner!r} and {room_id!r}"
-                    )
+                claim_room_workspace(room_id, workspace, self._workspace_rooms)
                 runtime = self._build_runtime()
                 self._runtimes[room_id] = runtime
                 self._room_workspaces[room_id] = workspace
-                self._workspace_rooms[workspace] = room_id
             return runtime
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -442,7 +446,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return f"[System Context]\n{system_prompt}\n{room_context}"
 
     def _build_local_mcp_server_config(
-        self, local_server: LocalMCPServer, transport: str
+        self, local_server: LocalMCPServer, transport: MCPTransportKind
     ) -> LocalMcpServerConfig:
         if transport == "sse":
             return SseMcpServer(
@@ -503,7 +507,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 self._band_mcp_backend = None
             if self._band_mcp_backend is None:
                 backend = await create_band_mcp_backend(
-                    kind="http",
+                    kind=DEFAULT_BAND_MCP_BACKEND_KIND,
                     tool_definitions=self._tool_definitions,
                     get_tools=self._room_tools.get,
                     additional_tools=self._custom_tools,
@@ -647,6 +651,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
+    @staticmethod
+    async def _stop_runtimes(runtimes: list[ACPRuntime]) -> None:
+        await asyncio.gather(*(runtime.stop() for runtime in runtimes))
+
     async def cleanup_all(self, *, final: bool = True) -> None:
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
@@ -685,7 +693,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # None and start a fresh backend while this one is mid-teardown.
             if backend is not None:
                 await backend.stop()
-        await asyncio.gather(*(runtime.stop() for runtime in runtimes))
+        await self._stop_runtimes(runtimes)
         logger.info("ACP client adapter stopped")
 
     async def stop(self) -> None:

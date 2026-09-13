@@ -21,7 +21,23 @@ def resolve_room_workspace(
             raise ValueError("workspace_for_room must return an absolute path")
         return os.path.realpath(workspace)
 
-    return create_room_workspace_resolver(Path.cwd() / _DEFAULT_WORKSPACE_DIRECTORY)(room_id)
+    return create_room_workspace_resolver(Path.cwd() / _DEFAULT_WORKSPACE_DIRECTORY)(
+        room_id
+    )
+
+
+def claim_room_workspace(
+    room_id: str,
+    workspace: str,
+    workspace_rooms: dict[str, str],
+) -> None:
+    """Record one room as the live owner of a resolved workspace path."""
+    owner = workspace_rooms.get(workspace)
+    if owner is not None and owner != room_id:
+        raise ValueError(
+            f"workspace_for_room assigned {workspace!r} to both {owner!r} and {room_id!r}"
+        )
+    workspace_rooms[workspace] = room_id
 
 
 def create_room_workspace_resolver(root: str | Path) -> WorkspaceResolver:

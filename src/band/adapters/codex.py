@@ -20,7 +20,7 @@ from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.workspaces import resolve_room_workspace
+from band.workspaces import claim_room_workspace, resolve_room_workspace
 from band.core.types import (
     AgentInput,
     Capability,
@@ -433,11 +433,17 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
         if self.config.cwd is not None:
-            raise ValueError("cwd is not supported; use workspace_for_room or the default")
+            raise ValueError(
+                "cwd is not supported; use workspace_for_room or the default"
+            )
         if self.config.transport != "stdio":
-            raise ValueError("only stdio Codex transport guarantees room process isolation")
+            raise ValueError(
+                "only stdio Codex transport guarantees room process isolation"
+            )
         if client_factory is not None:
-            raise ValueError("custom Codex clients cannot guarantee room process isolation")
+            raise ValueError(
+                "custom Codex clients cannot guarantee room process isolation"
+            )
         self._room_clients: dict[str, RoomCodexClient] = {}
         self._workspace_rooms: dict[str, str] = {}
         self._active_room: ContextVar[str | None] = ContextVar(
@@ -472,14 +478,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         room = self._room_clients.get(room_id)
         if room is None:
             workspace = resolve_room_workspace(room_id, self.config.workspace_for_room)
-            owner = self._workspace_rooms.get(workspace)
-            if owner is not None and owner != room_id:
-                raise ValueError(
-                    f"workspace_for_room assigned {workspace!r} to both {owner!r} and {room_id!r}"
-                )
+            claim_room_workspace(room_id, workspace, self._workspace_rooms)
             room = RoomCodexClient(workspace=workspace)
             self._room_clients[room_id] = room
-            self._workspace_rooms[workspace] = room_id
         return room
 
     def _active_client_state(self) -> RoomCodexClient | None:
@@ -1186,7 +1187,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 try:
                     await client.close()
                 except Exception:
-                    logger.debug("Failed to close unsuccessfully initialized Codex client", exc_info=True)
+                    logger.debug(
+                        "Failed to close unsuccessfully initialized Codex client",
+                        exc_info=True,
+                    )
             raise
 
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
