@@ -438,18 +438,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise ValueError("only stdio Codex transport guarantees room process isolation")
         if client_factory is not None:
             raise ValueError("custom Codex clients cannot guarantee room process isolation")
-        self._client_factory = client_factory
         self._room_clients: dict[str, RoomCodexClient] = {}
+        self._workspace_rooms: dict[str, str] = {}
         self._active_room: ContextVar[str | None] = ContextVar(
             "codex_active_room", default=None
         )
-        self._fallback_client: CodexClientProtocol | None = None
-        self._fallback_initialized = False
-        self._fallback_selected_model: str | None = None
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
-        self._fallback_task_titles: OrderedDict[str, str] = OrderedDict()
         self._room_task_titles: dict[str, OrderedDict[str, str]] = {}
         self._max_task_titles: int = _MAX_TASK_TITLES
         self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
@@ -471,7 +467,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # up to ``approval_wait_timeout_s`` (300s default). Approval resolution
         # commands (/approve, /decline) are handled *outside* this lock in
         # ``on_message`` so they can unblock a waiting turn.
-        self._fallback_rpc_lock = asyncio.Lock()
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
@@ -479,8 +474,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             workspace = self.config.workspace_for_room(room_id)  # type: ignore[misc]
             if not isinstance(workspace, str) or not os.path.isabs(workspace):
                 raise ValueError("workspace_for_room must return an absolute path")
+            workspace = os.path.realpath(workspace)
+            owner = self._workspace_rooms.get(workspace)
+            if owner is not None and owner != room_id:
+                raise ValueError(
+                    f"workspace_for_room assigned {workspace!r} to both {owner!r} and {room_id!r}"
+                )
             room = RoomCodexClient(workspace=workspace)
             self._room_clients[room_id] = room
+            self._workspace_rooms[workspace] = room_id
         return room
 
     def _active_client_state(self) -> RoomCodexClient | None:
@@ -497,52 +499,57 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _task_titles_by_id(self) -> OrderedDict[str, str]:
         room_id = self._active_room.get()
         if room_id is None:
-            return self._fallback_task_titles
+            raise RuntimeError("Codex task state requires a room context")
         return self._room_task_titles.setdefault(room_id, OrderedDict())
 
     @property
     def _client(self) -> CodexClientProtocol | None:
         state = self._active_client_state()
-        return state.client if state is not None else self._fallback_client
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.client
 
     @_client.setter
     def _client(self, value: CodexClientProtocol | None) -> None:
         state = self._active_client_state()
-        if state is not None:
-            state.client = value
-        else:
-            self._fallback_client = value
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        state.client = value
 
     @property
     def _initialized(self) -> bool:
         state = self._active_client_state()
-        return state.initialized if state is not None else self._fallback_initialized
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.initialized
 
     @_initialized.setter
     def _initialized(self, value: bool) -> None:
         state = self._active_client_state()
-        if state is not None:
-            state.initialized = value
-        else:
-            self._fallback_initialized = value
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        state.initialized = value
 
     @property
     def _selected_model(self) -> str | None:
         state = self._active_client_state()
-        return state.selected_model if state is not None else self._fallback_selected_model
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.selected_model
 
     @_selected_model.setter
     def _selected_model(self, value: str | None) -> None:
         state = self._active_client_state()
-        if state is not None:
-            state.selected_model = value
-        else:
-            self._fallback_selected_model = value
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        state.selected_model = value
 
     @property
     def _rpc_lock(self) -> asyncio.Lock:
         state = self._active_client_state()
-        return state.rpc_lock if state is not None else self._fallback_rpc_lock
+        if state is None:
+            raise RuntimeError("Codex client requires a room context")
+        return state.rpc_lock
 
     def _build_self_config_tools(self) -> list[CustomToolDef]:
         """Build custom tools that let Codex change its own model/reasoning.
@@ -622,7 +629,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             "diffs=%s, token_usage=%s, structured_errors=%s",
             agent_name,
             self.config.transport,
-            self._selected_model or self.config.model or "auto",
+            self.config.model or "auto",
             self.config.sandbox or "default",
             self.config.approval_mode,
             Emit.TOOL_CALLS in self.features.emit,
@@ -1128,6 +1135,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._room_task_titles.pop(room_id, None)
             if self._client is None:
                 self._room_clients.pop(room_id, None)
+                self._workspace_rooms.pop(room.workspace, None)
                 return
             try:
                 close_coro = self._client.close()
@@ -1148,6 +1156,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._initialized = False
                 self._selected_model = None
                 self._room_clients.pop(room_id, None)
+                self._workspace_rooms.pop(room.workspace, None)
 
     async def cleanup_all(self) -> None:
         """Close every room-owned Codex process during agent shutdown."""
@@ -1162,7 +1171,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         client = self._client
         if client is None:
             raise RuntimeError("Codex client was not created")
-        if not self._initialized:
+        if self._initialized:
+            return
+        try:
             await client.connect()
             await client.initialize(
                 client_name=self.config.client_name,
@@ -1172,11 +1183,16 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             self._selected_model = await self._select_model()
             self._initialized = True
+        except Exception:
+            if self._client is client:
+                self._client = None
+                try:
+                    await client.close()
+                except Exception:
+                    logger.debug("Failed to close unsuccessfully initialized Codex client", exc_info=True)
+            raise
 
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
-        if self._client_factory is not None:
-            return self._client_factory(config)
-
         state = self._active_client_state()
         if state is None:
             raise RuntimeError("Codex client creation requires a room context")
