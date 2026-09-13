@@ -655,9 +655,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     async def cleanup_all(self, *, final: bool = True) -> None:
         """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
 
-        The ACP subprocess / TCP connection and the local Band MCP server are started
-        adapter-wide in ``on_started`` (not per room), so releasing them belongs here,
-        not in per-room ``on_cleanup``. Idempotent — safe to call again from ``stop()``.
+        Room-owned ACP subprocesses are released by ``on_cleanup``; this method
+        releases every remaining runtime and the shared local Band MCP server.
+        Idempotent — safe to call again from ``stop()``.
 
         ``final`` distinguishes real process shutdown (the default: no future turn
         can arrive, so a still-parked one must fail rather than start resources

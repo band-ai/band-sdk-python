@@ -211,7 +211,10 @@ from band.core.types import Capability, Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(model="gpt-5.5"),
+    config=CodexAdapterConfig(
+        workspace_for_room=lambda room_id: f"/workspaces/{room_id}",
+        model="gpt-5.5",
+    ),
     capabilities=Capability.CONTACTS | Capability.MEMORY,
     emit=Emit.TOOL_CALLS | Emit.THOUGHTS | Emit.TASK_EVENTS,
 )
@@ -290,7 +293,10 @@ def get_weather(args: WeatherInput) -> str:
 
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(model="gpt-5.5"),
+    config=CodexAdapterConfig(
+        workspace_for_room=lambda room_id: f"/workspaces/{room_id}",
+        model="gpt-5.5",
+    ),
     additional_tools=[(WeatherInput, get_weather)],
 )
 ```

@@ -301,7 +301,7 @@ class CodexAdapterConfig(BaseSettings):
         Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
     ) = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
-    cwd: str = Field(default_factory=os.getcwd)
+    cwd: str | None = None
     workspace_for_room: Callable[[str], str] | None = Field(default=None, exclude=True)
     approval_policy: str = "never"
     personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
@@ -434,6 +434,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._custom_tools.extend(self._build_self_config_tools())
         if self.config.workspace_for_room is None:
             raise ValueError("workspace_for_room is required for Codex room isolation")
+        if self.config.cwd is not None:
+            raise ValueError("cwd is not supported; use workspace_for_room")
         if self.config.transport != "stdio":
             raise ValueError("only stdio Codex transport guarantees room process isolation")
         if client_factory is not None:
@@ -1283,7 +1285,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         dynamic_tools = self._build_dynamic_tools(tools)
         start_params: dict[str, Any] = {
             "model": self._selected_model,
-            "cwd": self.config.cwd,
+            "cwd": self._room_client(room_id).workspace,
             "approvalPolicy": self.config.approval_policy,
             "personality": self.config.personality,
             "dynamicTools": dynamic_tools,

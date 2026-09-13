@@ -45,6 +45,12 @@ def build_persona() -> str:
     return f"{persona}\n\n{CONVERSATION_DISCIPLINE}"
 
 
+def workspace_for_room(room_id: str) -> str:
+    workspace = Path(".band-workspaces") / room_id
+    workspace.mkdir(parents=True, exist_ok=True)
+    return str(workspace.resolve())
+
+
 def expose_llm_key() -> None:
     """Copy the sbx-injected placeholder into the var the codex CLI reads.
 
@@ -82,7 +88,10 @@ async def main() -> None:
     config = DevConfig()
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            model=config.model, approval_policy="never", custom_section=build_persona()
+            workspace_for_room=workspace_for_room,
+            model=config.model,
+            approval_policy="never",
+            custom_section=build_persona(),
         ),
         # Emit tool_call/tool_result and reasoning to the room, keeping the default
         # per-turn task markers but excluding usage events. Codex's Band tools

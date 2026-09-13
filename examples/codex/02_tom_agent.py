@@ -29,6 +29,7 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -54,12 +55,19 @@ configure_logging(
 logger = logging.getLogger(__name__)
 
 
+def workspace_for_room(room_id: str) -> str:
+    workspace = Path(os.getenv("CODEX_WORKSPACE_ROOT", ".band-workspaces")) / room_id
+    workspace.mkdir(parents=True, exist_ok=True)
+    return str(workspace.resolve())
+
+
 async def main() -> None:
     load_dotenv()
 
-    # cwd/model self-source from CODEX_CWD/CODEX_MODEL when omitted here.
+    # model self-sources from CODEX_MODEL when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
+            workspace_for_room=workspace_for_room,
             transport="stdio",
             personality="none",
             custom_section=generate_tom_prompt("Tom"),
