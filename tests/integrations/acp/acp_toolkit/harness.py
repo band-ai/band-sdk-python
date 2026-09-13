@@ -17,8 +17,9 @@ from acp import connect_to_agent
 from acp.agent.connection import AgentSideConnection
 
 from band.core.types import PlatformMessage
-from band.integrations.acp.client_adapter import ACPClientAdapter
-from band.integrations.acp.client_types import ACPClientSessionState
+from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
+from band.integrations.acp.client_runtime import ACPRuntime
+from band.integrations.acp.client_types import ACPClientSessionState, BandACPClient
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
 
@@ -104,7 +105,7 @@ def make_acp_connection(*, http: bool = True, sse: bool = False) -> AsyncMock:
 class FakeSpawn:
     """A fake ``spawn_process`` seam: records calls (spy) and yields a scripted conn.
 
-    Drop-in for the injectable ``spawn_process`` on ``ACPClientAdapter``/``ACPRuntime``
+    Drop-in for the injectable ``spawn_process`` on ``ACPRuntime``
     so tests exercise the real transport seam by dependency injection instead of
     patching module globals. The instance *is* the callable and returns an async
     context manager, matching the runtime's contract:
@@ -129,6 +130,26 @@ class FakeSpawn:
     @property
     def last_kwargs(self) -> dict[str, Any]:
         return self.calls[-1][1]
+
+
+def inject_acp_spawn(
+    adapter: ACPClientAdapter, spawn: FakeSpawn | Callable[..., Any]
+) -> None:
+    """Patch ``adapter._build_runtime`` so each room runtime uses ``spawn``."""
+
+    def _build_runtime() -> ACPRuntime:
+        return ACPRuntime(
+            command=_resolve_launcher(adapter._command),
+            env=adapter._env,
+            auth_method=adapter._auth_method,
+            client_factory=lambda: BandACPClient(
+                profile=adapter._profile,
+                canonicalize_tool_name=adapter._canonical_tool_name,
+            ),
+            spawn_process=spawn,
+        )
+
+    adapter._build_runtime = _build_runtime  # type: ignore[method-assign]
 
 
 @dataclass
@@ -267,10 +288,10 @@ async def acp_adapter(
     """
     adapter = ACPClientAdapter(
         command="fake-agent",  # ignored — the injected transport pairs us with agent
-        spawn_process=_pair_in_process(agent),
         inject_band_tools=inject_band_tools,
         **adapter_kwargs,
     )
+    inject_acp_spawn(adapter, _pair_in_process(agent))
     await adapter.on_started("Fake Agent", "in-process fake")
     try:
         yield AcpSession(adapter, agent)

@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    # cwd/model self-source from CODEX_CWD/CODEX_MODEL when omitted here.
+    # model self-sources from CODEX_MODEL when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport="stdio",

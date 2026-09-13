@@ -1,6 +1,6 @@
 # Codex Adapter
 
-[OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Band Codex adapter connects a Codex process to Band rooms over stdio or WebSocket so it can take part in conversations as a coding collaborator.
+[OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Band Codex adapter connects one room-owned Codex process to each Band room over stdio.
 
 Use this adapter when you want an OpenAI-powered coding agent with configurable sandboxing, approval commands, command/file-change telemetry, reasoning visibility, and task lifecycle events. Use the [Claude SDK adapter](claude_sdk.md) for Claude Code based coding agents, the [Anthropic adapter](anthropic.md) for direct Claude API chat/tool agents, or the [LangGraph adapter](langgraph.md) for custom graph workflows.
 
@@ -26,47 +26,31 @@ You need two credentials or auth contexts:
 - A Band platform API key for `Agent.create(api_key=...)`.
 - Codex authentication for the Codex process. Use `codex login`, or set `OPENAI_API_KEY` if that is how your Codex environment is configured.
 
-For `transport="ws"`, start the Codex app server separately:
-
-```bash
-codex app-server --listen ws://127.0.0.1:8765
-```
-
 Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
 
 ## Quick Start
 
 ```python
-import asyncio
-import os
-
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(
-        cwd=os.getcwd(),
-        model="gpt-5.5",
-    ),
+    config=CodexAdapterConfig(model="gpt-5.5"),
 )
-
 agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-uuid",
     api_key="your-band-api-key",
-    ws_url="wss://app.band.ai/api/v1/socket/websocket",
-    rest_url="https://app.band.ai",
 )
-
-asyncio.run(agent.run())
+assert adapter.config.model == "gpt-5.5"
 ```
 
 ## Where Parameters Go
 
 Codex has three setup layers:
 
-- `CodexAdapterConfig(...)` configures the Codex runtime: transport, model, working directory, sandbox, approval behavior, prompts, context injection, and streaming/telemetry detail.
-- `CodexAdapter(...)` wraps that runtime config for Band and adds adapter-level settings: feature flags, custom tools, history conversion, and advanced client injection.
+- `CodexAdapterConfig(...)` configures the Codex runtime: a room workspace resolver, model, sandbox, approval behavior, prompts, context injection, and streaming/telemetry detail.
+- `CodexAdapter(...)` wraps that runtime config for Band and adds adapter-level settings: feature flags, custom tools, and history conversion.
 - `Agent.create(...)` connects the configured adapter to Band. Use it for the Band agent identity, Band API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
 
 Codex authentication is handled by `codex login`, `OPENAI_API_KEY`, or the Codex process environment. `Agent.create(api_key=...)` is only the Band platform key.
@@ -104,7 +88,10 @@ from band.core.types import Emit
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(cwd="/repo", sandbox="workspace-write"),
+    config=CodexAdapterConfig(
+        workspace_for_room=lambda room_id: f"/workspaces/{room_id}",
+        sandbox="workspace-write",
+    ),
     emit=Emit.TOOL_CALLS | Emit.TASK_EVENTS,
 )
 ```
@@ -115,12 +102,11 @@ Pass these to `CodexAdapterConfig(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `transport` | `"stdio" \| "ws"` | `"stdio"` | How the adapter connects to Codex. Use `"stdio"` to spawn a process, or `"ws"` to connect to `codex app-server`. |
+| `workspace_for_room` | `Callable[[str], str] | None` | `None` | Optional override for a room workspace. By default, the adapter creates `./.band-workspaces/<room-id>`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
 | `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
-| `cwd` | `str \| None` | `None` | Working directory for Codex sessions. |
 | `turn_timeout_s` | `float` | `180.0` | Maximum seconds to wait for one Codex turn. |
 
 ### Safety, Sandbox, and Approvals
@@ -170,7 +156,6 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `codex_command` | `tuple[str, ...] \| None` | `None` | Custom command used to launch Codex for stdio transport. |
 | `codex_env` | `dict[str, str] \| None` | `None` | Extra environment variables for the Codex process. |
-| `codex_ws_url` | `str` | `"ws://127.0.0.1:8765"` | WebSocket URL for `transport="ws"`. |
 | `experimental_api` | `bool` | `True` | Use experimental Codex API features. |
 | `enable_self_config_tools` | `bool` | `False` | Expose tools that let Codex change its own model and reasoning settings. Use only in trusted rooms. |
 | `additional_dynamic_tools` | `list[dict]` | `[]` | Extra dynamic tool schemas registered with the Codex client. |
@@ -187,7 +172,6 @@ Pass these directly to `CodexAdapter(...)`:
 | `capabilities` | `Capability \| Iterable[Capability] \| None` | none | Optional Band tool categories exposed to the model. Opt-in: omitted, defaults to empty. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
 | `history_converter` | `CodexHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default history/thread-metadata converter. |
-| `client_factory` | callable | `None` | Test/advanced injection point for a custom Codex client. |
 
 ## Feature flags: Capabilities and Emit
 
