@@ -72,6 +72,7 @@ from .logging_config import (
 
 # Platform layer
 from .platform import BandLink, PlatformEvent
+from .workspaces import create_room_workspace_resolver
 
 # Runtime layer
 from .runtime import (
@@ -157,6 +158,7 @@ __all__ = [
     "chatty_logger_levels",
     "configure_logging",
     "configure_logging_from_env",
+    "create_room_workspace_resolver",
     "format_history_for_llm",
     # Runtime - Formatters
     "format_message_for_llm",

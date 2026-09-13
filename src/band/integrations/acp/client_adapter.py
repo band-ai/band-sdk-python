@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 from collections.abc import Callable
 from typing import Any, ClassVar
@@ -56,6 +55,7 @@ from band.runtime.tools import (
     canonicalize_mcp_tool_name,
     iter_tool_definitions,
 )
+from band.workspaces import resolve_room_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -164,10 +164,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             history_converter=ACPClientHistoryConverter(),
             **features,
         )
-        if workspace_for_room is None:
-            raise ValueError("workspace_for_room is required for ACP client isolation")
         if cwd is not None:
-            raise ValueError("cwd is not supported; use workspace_for_room")
+            raise ValueError("cwd is not supported; use workspace_for_room or the default")
         if host is not None or port is not None:
             raise ValueError("TCP ACP transport cannot guarantee room process isolation")
         if spawn_process is not None:
@@ -259,10 +257,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         )
 
     def _workspace(self, room_id: str) -> str:
-        workspace = self._workspace_for_room(room_id)
-        if not isinstance(workspace, str) or not os.path.isabs(workspace):
-            raise ValueError("workspace_for_room must return an absolute path")
-        return os.path.realpath(workspace)
+        return resolve_room_workspace(room_id, self._workspace_for_room)
 
     async def _runtime_for(self, room_id: str) -> ACPRuntime:
         async with self._session_lock:

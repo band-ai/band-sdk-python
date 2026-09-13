@@ -468,6 +468,9 @@ async def run_codex_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Codex app-server adapter."""
+    from band import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
+        create_room_workspace_resolver,
+    )
     from band.adapters import (  # noqa: PLC0415 -- only load the adapters extra when this example is the one selected to run
         CodexAdapter,
     )
@@ -475,19 +478,10 @@ async def run_codex_agent(
         CodexAdapterConfig,
     )
 
-    workspace_root = Path(codex_cwd).resolve()
-
-    def workspace_for_room(room_id: str) -> str:
-        workspace = (workspace_root / room_id).resolve()
-        if workspace_root not in workspace.parents:
-            raise ValueError("room id cannot escape the Codex workspace root")
-        workspace.mkdir(parents=True, exist_ok=True)
-        return str(workspace)
-
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
-            workspace_for_room=workspace_for_room,
+            workspace_for_room=create_room_workspace_resolver(codex_cwd),
             model=codex_model,
             personality=codex_personality,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             approval_policy=codex_approval_policy,

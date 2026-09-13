@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -21,6 +22,21 @@ def test_codex_rejects_a_workspace_shared_by_live_rooms() -> None:
 
     with pytest.raises(ValueError, match="both 'room-a' and 'room-b'"):
         adapter._room_client("room-b")
+
+
+def test_codex_uses_distinct_default_room_workspaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    adapter = CodexAdapter(CodexAdapterConfig())
+
+    first = adapter._room_client("room-a")
+    second = adapter._room_client("room-b")
+
+    assert first.workspace == str(tmp_path / ".band-workspaces" / "room-a")
+    assert second.workspace == str(tmp_path / ".band-workspaces" / "room-b")
+    assert (tmp_path / ".band-workspaces" / "room-a").is_dir()
+    assert (tmp_path / ".band-workspaces" / "room-b").is_dir()
 
 
 @pytest.mark.asyncio
@@ -43,6 +59,22 @@ async def test_acp_retries_workspace_resolution_after_a_failure() -> None:
 
     assert adapter._runtimes["room-a"] is runtime
     assert adapter._room_workspaces == {"room-a": "/workspace/room-a"}
+
+
+@pytest.mark.asyncio
+async def test_acp_uses_distinct_default_room_workspaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    adapter = ACPClientAdapter(command="codex")
+
+    await adapter._runtime_for("room-a")
+    await adapter._runtime_for("room-b")
+
+    assert adapter._room_workspaces == {
+        "room-a": str(tmp_path / ".band-workspaces" / "room-a"),
+        "room-b": str(tmp_path / ".band-workspaces" / "room-b"),
+    }
 
 
 @pytest.mark.asyncio
