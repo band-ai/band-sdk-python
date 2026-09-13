@@ -109,6 +109,7 @@ class CursorACPClientProfile:
 
         return []
 
+
 CURSOR_PROFILE_NAME = "cursor"
 
 
