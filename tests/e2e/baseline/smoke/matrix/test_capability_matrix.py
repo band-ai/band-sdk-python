@@ -43,7 +43,7 @@ from tests.e2e.baseline.scorecard import env_gated_skip
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
-from tests.e2e.baseline.toolkit.observations import ContactTool, FileTool
+from tests.e2e.baseline.toolkit.observations import ContactTool, FileTool, MemoryTool
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
@@ -187,6 +187,9 @@ async def test_memory_survives_adapter_rehydration(
                 scope=MemoryListScope.AGENT,
                 content_query=marker,
             )
+            results = await capture.tool_results(
+                sender_id=identity.id, include_memory=True
+            )
 
     # Assert the *effect* of the rehydrated recall, not how an adapter narrated it:
     # the marker coming back in the reply is what proves the fresh run reached the
@@ -199,6 +202,10 @@ async def test_memory_survives_adapter_rehydration(
     mem.calls.assert_list_called()
     mem.calls.assert_get_called()
     mem.stored.assert_stored(content=marker)
+    # The checks above prove the tools fired and a matching record exists in the
+    # store independently -- neither proves band_get_memory's own tool_result
+    # actually carried it back during this turn. Assert that directly.
+    results.assert_succeeded(MemoryTool.GET.value, output_contains=marker)
 
 
 @per_adapter(supports={Capability.CONTACTS}, **CONTACTS_AGENT)

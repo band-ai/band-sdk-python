@@ -132,6 +132,28 @@ def test_release_gate_checks_out_before_running_repo_scripts() -> None:
     assert checkout < invokes_script
 
 
+def test_release_gate_refreshes_from_the_latest_nightly_when_release_please_updates() -> (
+    None
+):
+    """A Release Please update must re-read main's newest baseline verdict.
+
+    The nightly only publishes ``baseline-green``. Its result reaches the release
+    PR when Release Please's next synchronize event creates this gate again.
+    """
+    workflow = yaml.load(
+        _RELEASE_GATE_WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
+    pull_request = workflow["on"]["pull_request"]
+    job = _jobs(_RELEASE_GATE_WORKFLOW)["release-baseline-gate"]
+    gate_step = job["steps"][
+        _step_index(job, "Check the release-please PR's baseline-green status")
+    ]
+
+    assert "synchronize" in pull_request["types"]
+    assert "export BASE_REF=main" in gate_step["run"]
+    assert ".github/scripts/check-release-baseline.sh" in gate_step["run"]
+
+
 def test_mark_baseline_only_certifies_the_default_branch() -> None:
     """A full-matrix ``workflow_dispatch`` from a feature branch must not certify it.
 

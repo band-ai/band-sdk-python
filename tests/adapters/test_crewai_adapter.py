@@ -765,6 +765,52 @@ class TestErrorHandling:
         failure = mock_tools.send_failure.call_args.args[0]
         assert failure.provider == "crewai"
         assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        # First call plus the one retry -- proves the retry actually happens
+        # before the final raise, not a bare pass-through of the first failure.
+        assert mock_crewai_agent.kickoff_async.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_first_call_recovers_on_retry(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A turn's first LLM call coming back empty is retried once before
+        giving up -- a successful retry must complete the turn normally.
+
+        Nothing ran before the empty completion, so there is no side effect
+        for the retry to duplicate; the retry either behaves exactly like the
+        first attempt would have or, as here, recovers and replies.
+        """
+        module = importlib.import_module("band.adapters.crewai")
+        mock_result = MagicMock()
+        mock_result.raw = "Hello! I'm here to help."
+
+        async def _kickoff(_prompt):
+            if mock_crewai_agent.kickoff_async.call_count == 1:
+                raise ValueError(EMPTY_LLM_RESPONSE_ERROR)
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.replied = True
+            return mock_result
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_failure.assert_not_awaited()
+        # First call plus the one retry that recovered it.
+        assert mock_crewai_agent.kickoff_async.call_count == 2
 
     @pytest.mark.asyncio
     async def test_no_missing_reply_error_after_clean_tool_only_return(
