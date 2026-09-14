@@ -132,6 +132,16 @@ _CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
 
+# Chat-facing approval prompt/resolution text (mirrors
+# band.adapters.opencode.approvals's constant style) -- named so callers
+# (e.g. E2E smokes) can anchor on the exact wording instead of re-typing it.
+APPROVAL_REQUESTED_TEMPLATE = (
+    "Approval requested ({summary}). Token: `{token}`.\n"
+    "Reply `/approve {token}` or `/decline {token}`.\n"
+    "Use `/approvals` to list pending approvals."
+)
+APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
+
 # Commands recognised as local (not forwarded to Claude)
 _APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
 _LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
@@ -180,12 +190,23 @@ async def _pre_tool_use_continue_hook(
     _tool_name: str | None,
     _context: HookContext,
 ) -> HookJSONOutput:
-    """PreToolUse hook that delegates every tool to ``can_use_tool``.
+    """PreToolUse hook that forces every native tool call to ``can_use_tool``.
 
-    Returning ``{"continue_": True}`` tells the SDK to skip its built-in
-    permission resolution and call the ``can_use_tool`` callback instead.
+    ``hookSpecificOutput.permissionDecision: "ask"`` is what actually routes a
+    tool call to the ``can_use_tool`` callback (verified against
+    ``claude_agent_sdk.types.ToolPermissionContext.decision_reason``'s own
+    docstring). A bare ``continue_: True`` carries no permission decision, so
+    the CLI falls back to its own ``permission_mode``-driven default instead
+    of ever consulting ``can_use_tool`` -- silently skipping chat-based manual
+    approval for native tools (Bash/Write/Edit) under the adapter's default
+    ``permission_mode="acceptEdits"``.
     """
-    return {"continue_": True}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+        }
+    }
 
 
 @dataclass
@@ -399,6 +420,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # as results arrive and the room's map is dropped in on_cleanup.
         self._pending_tool_names: dict[str, dict[str, str]] = {}
 
+        # A turn runs as a detached task so a manual approval mid-turn can
+        # release on_message early (see _run_turn) -- Band's runtime processes
+        # one room-message cycle at a time, so on_message must return before
+        # the room can be dispatched the reply that resolves the approval.
+        # {room_id: the current turn's release future}
+        self._turn_release: dict[str, asyncio.Future[None]] = {}
+        # {room_id: the current turn's background task}, so on_message can
+        # refuse to start a second concurrent turn on the same client.
+        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
+
     # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
@@ -591,6 +622,19 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     )
                     return
 
+        # A prior turn's background task (see _run_turn) may still be running
+        # this room's ClaudeSDKClient -- most commonly while it's parked on a
+        # manual approval. A second concurrent client.query() on the same
+        # session is unsafe, so refuse rather than race it (mirrors
+        # OpencodeAdapter's own "still processing" guard).
+        running_turn = self._turn_tasks.get(room_id)
+        if running_turn is not None and not running_turn.done():
+            await tools.send_message(
+                "Still processing the previous request in this room.",
+                mentions=[msg.sender_id] if msg.sender_id else None,
+            )
+            return
+
         # Determine session_id for resume: prefer history (persisted) then
         # in-memory cache.  Only used on bootstrap/reconnect.
         stored_session_id: str | None = None
@@ -678,32 +722,98 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             len(messages_to_send),
         )
 
+        # Run the turn as a detached task and only await its *release* --
+        # not its completion. A manual approval mid-turn resolves the release
+        # early (see _resolve_manual_approval / _release_turn) so on_message
+        # can return and Band's strictly-sequential per-room message loop can
+        # dispatch the reply that will eventually resolve the approval. When
+        # nothing needs a human, the turn finishes before release fires and
+        # this is equivalent to the previous synchronous await.
+        release_future: asyncio.Future[None] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._turn_release[room_id] = release_future
+        turn_task = asyncio.create_task(
+            self._run_turn(client, room_id, tools, full_message, msg.id, release_future)
+        )
+        self._turn_tasks[room_id] = turn_task
+        turn_task.add_done_callback(self._log_turn_task_exception)
         try:
-            # Send query to Claude
-            await client.query(full_message)
+            await release_future
+        finally:
+            if self._turn_release.get(room_id) is release_future:
+                del self._turn_release[room_id]
+        if turn_task.done():
+            # The turn finished before release fired (the common, no-approval
+            # case) -- await it so a failure still propagates through
+            # on_message exactly as it did before this turn ran detached.
+            await turn_task
 
-            # Process streaming response (MCP tools handle execution)
-            await self._process_response(client, room_id, tools)
+    async def _run_turn(
+        self,
+        client: ClaudeSDKClient,
+        room_id: str,
+        tools: AgentToolsProtocol,
+        full_message: str,
+        msg_id: str,
+        release_future: asyncio.Future[None],
+    ) -> None:
+        """Run one turn to completion; always releases ``release_future``."""
+        try:
+            try:
+                # Send query to Claude
+                await client.query(full_message)
 
-        except CLIConnectionError as e:
-            # CLI process is dead — evict the cached session so the next
-            # message creates a fresh one instead of reusing the corpse.
-            logger.error(
-                "Room %s: CLI process terminated: %s — invalidating session",
-                room_id,
-                e,
-            )
-            await self._invalidate_session(room_id)
+                # Process streaming response (MCP tools handle execution)
+                await self._process_response(client, room_id, tools)
 
-            await self._report_error(tools, str(e))
-            raise
+            except CLIConnectionError as e:
+                # CLI process is dead — evict the cached session so the next
+                # message creates a fresh one instead of reusing the corpse.
+                logger.error(
+                    "Room %s: CLI process terminated: %s — invalidating session",
+                    room_id,
+                    e,
+                )
+                await self._invalidate_session(room_id)
 
-        except Exception as e:
-            logger.exception("Error processing message: %s", e)
-            await self._report_error(tools, str(e))
-            raise
+                await self._report_error(tools, str(e))
+                raise
 
-        logger.debug("Message %s processed successfully", msg.id)
+            except Exception as e:
+                logger.exception("Error processing message: %s", e)
+                await self._report_error(tools, str(e))
+                raise
+
+            logger.debug("Message %s processed successfully", msg_id)
+        finally:
+            self._release_turn(room_id, release_future)
+
+    def _release_turn(
+        self, room_id: str, release_future: asyncio.Future[None] | None = None
+    ) -> None:
+        """Resolve the current turn's release future, if still pending.
+
+        Idempotent: a turn with several gated tool calls only needs the
+        first manual approval to release on_message, and the turn's own
+        completion (see _run_turn's finally) must release it too when
+        nothing ever blocked on a human.
+        """
+        current_release = self._turn_release.get(room_id)
+        if current_release is None or current_release.done():
+            return
+        if release_future is None or current_release is release_future:
+            current_release.set_result(None)
+
+    def _log_turn_task_exception(self, task: asyncio.Task[None]) -> None:
+        """Retrieve a turn task's exception so asyncio doesn't log it as
+        "never retrieved" -- _run_turn already reported it to the room. Only
+        matters for a turn that fails *after* on_message already returned
+        (post-approval-release); on_message's own ``await turn_task`` still
+        re-raises normally for a turn that fails before release.
+        """
+        if not task.cancelled():
+            task.exception()
 
     async def _invalidate_session(self, room_id: str) -> None:
         """Evict the cached session and client so the next message for this
@@ -1125,6 +1235,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._room_last_sender.pop(room_id, None)
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
+        self._turn_release.pop(room_id, None)
+        turn_task = self._turn_tasks.pop(room_id, None)
+        if turn_task is not None:
+            turn_task.cancel()
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     # --- Copied from BaseFrameworkAgent._report_error ---
@@ -1152,6 +1266,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._room_last_sender.clear()
         self._notified_declines.clear()
         self._pending_tool_names.clear()
+        for turn_task in self._turn_tasks.values():
+            turn_task.cancel()
+        self._turn_release.clear()
+        self._turn_tasks.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow
@@ -1328,9 +1446,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if tools:
             try:
                 await tools.send_message(
-                    f"Approval requested ({summary}). Token: `{token}`.\n"
-                    f"Reply `/approve {token}` or `/decline {token}`.\n"
-                    "Use `/approvals` to list pending approvals.",
+                    APPROVAL_REQUESTED_TEMPLATE.format(summary=summary, token=token),
                     mentions=mention,
                 )
             except Exception:
@@ -1345,6 +1461,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 return PermissionResultDeny(
                     message="Could not deliver approval prompt, tool use declined"
                 )
+
+        # The request has been posted (or there was nowhere to post it) --
+        # either way, on_message must return now so Band's room loop can
+        # dispatch the reply that will resolve this wait.
+        self._release_turn(room_id)
 
         # Wait for decision or timeout
         try:
@@ -1477,7 +1598,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         decision: ApprovalDecision = "accept" if command == "approve" else "decline"
         notified = await self._send_best_effort(
             tools,
-            f"Approval `{token}` resolved as **{decision}**.",
+            APPROVAL_RESOLVED_TEMPLATE.format(token=token, decision=decision),
             mention,
             room_id=room_id,
             failure_note=f"Failed to send approval resolution notice for token {token}",

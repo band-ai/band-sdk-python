@@ -697,6 +697,42 @@ class TestOnCleanup:
 
         assert "room-123" not in adapter._room_tools
 
+    @pytest.mark.asyncio
+    async def test_old_turn_cannot_release_a_rejoined_turn(self, mock_tools):
+        """A turn surviving cleanup must not release a later turn in the same room."""
+        adapter = ClaudeSDKAdapter()
+        old_release = asyncio.get_running_loop().create_future()
+        adapter._turn_release["room-123"] = old_release
+        response_started = asyncio.Event()
+        release_response = asyncio.Event()
+
+        async def wait_for_response(*_args):
+            response_started.set()
+            await release_response.wait()
+
+        client = MagicMock()
+        client.query = AsyncMock()
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            old_turn = asyncio.create_task(
+                adapter._run_turn(
+                    client,
+                    "room-123",
+                    mock_tools,
+                    "old message",
+                    "old-message-id",
+                    old_release,
+                )
+            )
+            await response_started.wait()
+            adapter._turn_release.pop("room-123")
+            rejoined_release = asyncio.get_running_loop().create_future()
+            adapter._turn_release["room-123"] = rejoined_release
+
+            release_response.set()
+            await old_turn
+
+        assert not rejoined_release.done()
+
 
 class TestCleanupAll:
     """Tests for cleanup_all() method."""
@@ -2489,9 +2525,14 @@ class TestPreToolUseHook:
     """Tests for the PreToolUse hook that enables can_use_tool delegation."""
 
     @pytest.mark.asyncio
-    async def test_hook_returns_continue_true(self):
+    async def test_hook_forces_permission_decision_ask(self):
         result = await _pre_tool_use_continue_hook(None, None, None)
-        assert result == {"continue_": True}
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+            }
+        }
 
 
 class TestApprovalCleanup:
