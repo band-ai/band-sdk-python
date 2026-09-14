@@ -32,6 +32,10 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Single source of truth: crates/py/scripts/coverage_python_consumer.py's
+      # REPORT_DIR, relative to band-sdk-core's checkout root.
+      REPORT_DIR: target/python-consumer-coverage/report
     steps:
       - name: Checkout band-sdk-python
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -39,7 +43,10 @@ jobs:
           path: band-sdk-python
 
       - name: Configure git to use HTTPS for GitHub
-        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+        # Path is relative to $GITHUB_WORKSPACE, not this workflow file --
+        # band-sdk-python is checked out under path: band-sdk-python above,
+        # not at the workspace root.
+        uses: ./band-sdk-python/.github/actions/git-https-auth
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -61,6 +68,24 @@ jobs:
         working-directory: band-sdk-python
         run: |
           version=$(uv run python -c "import importlib.metadata; print(importlib.metadata.version('band-sdk-core'))")
+
+          # A failed command substitution inside an assignment does not trip
+          # bash's `set -e`, so the pre-release guard below runs as its own
+          # statement -- a non-zero exit there aborts the step for real,
+          # instead of silently continuing with an empty $version.
+          uv run python -c "
+          import sys
+          from packaging.version import Version
+
+          if Version('$version').is_prerelease:
+              sys.exit(
+                  'band-sdk-core==$version is a pre-release: band-sdk-core-core-v$version '
+                  'is never tagged (dev pre-releases publish to PyPI but are never committed '
+                  'or tagged in git), so this gate cannot check it out. Pin a stable release '
+                  'to run this gate.'
+              )
+          "
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Generate GitHub App Token (scoped to band-sdk-core)
@@ -93,7 +118,7 @@ jobs:
         if: always()
         working-directory: band-sdk-core
         run: |
-          summary=target/python-consumer-coverage/report/summary.txt
+          summary="$REPORT_DIR/summary.txt"
           if [ -f "$summary" ]; then
             {
               echo "## band-sdk-core-core coverage from band-sdk-python's tests"
@@ -101,6 +126,8 @@ jobs:
               cat "$summary"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No coverage summary produced -- see the coverage step's log above." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload coverage report
@@ -109,7 +136,7 @@ jobs:
         with:
           name: python-core-coverage
           path: |
-            band-sdk-core/target/python-consumer-coverage/report/python-consumer.lcov
-            band-sdk-core/target/python-consumer-coverage/report/html/
-            band-sdk-core/target/python-consumer-coverage/report/summary.txt
+            band-sdk-core/${{ env.REPORT_DIR }}/python-consumer.lcov
+            band-sdk-core/${{ env.REPORT_DIR }}/html/
+            band-sdk-core/${{ env.REPORT_DIR }}/summary.txt
           if-no-files-found: warn
