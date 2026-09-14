@@ -2489,9 +2489,14 @@ class TestPreToolUseHook:
     """Tests for the PreToolUse hook that enables can_use_tool delegation."""
 
     @pytest.mark.asyncio
-    async def test_hook_returns_continue_true(self):
+    async def test_hook_forces_permission_decision_ask(self):
         result = await _pre_tool_use_continue_hook(None, None, None)
-        assert result == {"continue_": True}
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+            }
+        }
 
 
 class TestApprovalCleanup:

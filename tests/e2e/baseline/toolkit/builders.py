@@ -76,9 +76,15 @@ def _build_claude_sdk(
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import ClaudeSDKAdapter  # noqa: PLC0415 -- isolates the claude_sdk extra from the other frameworks this file builds
 
+    # Claude Code gets real Bash/filesystem tools; an unset cwd falls back to
+    # the process cwd (this repo's own checkout). Mirrors _build_copilot_acp's
+    # per-cell disposable sandbox.
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-claude-sdk-")
+
     return ClaudeSDKAdapter(
         model=s.llm_models.anthropic_model,
         custom_section=prompt,
+        cwd=sandbox,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
