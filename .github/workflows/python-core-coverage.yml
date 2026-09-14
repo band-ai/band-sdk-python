@@ -63,12 +63,22 @@ jobs:
           version=$(uv run python -c "import importlib.metadata; print(importlib.metadata.version('band-sdk-core'))")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Generate GitHub App Token (scoped to band-sdk-core)
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: band-ai
+          repositories: band-sdk-core
+
       - name: Checkout band-sdk-core at the pinned version
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: band-ai/band-sdk-core
           ref: band-sdk-core-core-v${{ steps.pin.outputs.version }}
           path: band-sdk-core
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install just and cargo-llvm-cov
         uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
