@@ -1406,6 +1406,39 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
+    async def test_session_bookkeeping_failure_leaves_connection_up(self) -> None:
+        """A failed session task event must not turn a completed prompt into an ACP failure."""
+        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter._runtime._conn = AsyncMock()
+        mock_session = MagicMock()
+        mock_session.session_id = "sess-1"
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._client = BandACPClient()
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        adapter._runtime._ctx = mock_ctx
+
+        adapter._runtime._conn.prompt = AsyncMock()
+        tools = FakeAgentTools()
+        tools.send_event_error = RuntimeError("platform rejected the task event")
+        msg = make_platform_message("Hello", room_id="room-1")
+
+        await adapter.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert adapter._runtime._conn is not None
+        assert adapter._runtime._ctx is not None
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_turn_timeout_reports_failure_and_clears_connection(self) -> None:
         """A silent/stuck agent must become an observable failure instead of
         hanging the turn indefinitely, and the presumed-wedged connection is

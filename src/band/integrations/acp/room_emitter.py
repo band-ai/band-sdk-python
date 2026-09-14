@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from band.core.delivery import deliver_reply
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import AgentToolsProtocol, send_event_safe
 from band.integrations.acp.types import (
     ACPToolCall,
     ACPToolResult,
@@ -175,12 +175,14 @@ class RoomTurnEmitter:
         if not turn_replied_in_room(self._chunks):
             for text in self._pending_text:
                 await deliver_reply(self._tools, text, mentions=self._mentions)
-        await self._tools.send_event(
+        await send_event_safe(
+            self._tools,
             content="ACP client session",
             message_type="task",
             metadata={
                 "acp_client_session_id": self._session_id,
                 "acp_client_room_id": self._room_id,
             },
+            log_label="ACP client session",
         )
         return False
