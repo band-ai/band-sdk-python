@@ -19,6 +19,7 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
   merge_group:
+  workflow_dispatch:
 
 permissions:
   contents: read
