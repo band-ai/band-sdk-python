@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import weakref
 from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
@@ -79,15 +80,16 @@ def _build_claude_sdk(
     # Claude Code gets real Bash/filesystem tools; an unset cwd falls back to
     # the process cwd (this repo's own checkout). Mirrors _build_copilot_acp's
     # per-cell disposable sandbox.
-    sandbox = tempfile.mkdtemp(prefix="band-e2e-claude-sdk-")
-
-    return ClaudeSDKAdapter(
+    sandbox = tempfile.TemporaryDirectory(prefix="band-e2e-claude-sdk-")
+    adapter = ClaudeSDKAdapter(
         model=s.llm_models.anthropic_model,
         custom_section=prompt,
-        cwd=sandbox,
+        cwd=sandbox.name,
         additional_tools=_custom_tool_defs(tools),
         **feature_kwargs(features),
     )
+    weakref.finalize(adapter, sandbox.cleanup)
+    return adapter
 
 
 @adapter(

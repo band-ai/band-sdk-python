@@ -787,9 +787,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
             logger.debug("Message %s processed successfully", msg_id)
         finally:
-            self._release_turn(room_id)
+            self._release_turn(room_id, release_future)
 
-    def _release_turn(self, room_id: str) -> None:
+    def _release_turn(
+        self, room_id: str, release_future: asyncio.Future[None] | None = None
+    ) -> None:
         """Resolve the current turn's release future, if still pending.
 
         Idempotent: a turn with several gated tool calls only needs the
@@ -797,9 +799,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         completion (see _run_turn's finally) must release it too when
         nothing ever blocked on a human.
         """
-        release_future = self._turn_release.get(room_id)
-        if release_future is not None and not release_future.done():
-            release_future.set_result(None)
+        current_release = self._turn_release.get(room_id)
+        if current_release is None or current_release.done():
+            return
+        if release_future is None or current_release is release_future:
+            current_release.set_result(None)
 
     def _log_turn_task_exception(self, task: asyncio.Task[None]) -> None:
         """Retrieve a turn task's exception so asyncio doesn't log it as
@@ -1232,7 +1236,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
         self._turn_release.pop(room_id, None)
-        self._turn_tasks.pop(room_id, None)
+        turn_task = self._turn_tasks.pop(room_id, None)
+        if turn_task is not None:
+            turn_task.cancel()
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     # --- Copied from BaseFrameworkAgent._report_error ---
@@ -1260,6 +1266,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._room_last_sender.clear()
         self._notified_declines.clear()
         self._pending_tool_names.clear()
+        for turn_task in self._turn_tasks.values():
+            turn_task.cancel()
+        self._turn_release.clear()
+        self._turn_tasks.clear()
 
     # ------------------------------------------------------------------
     # Chat-based approval flow

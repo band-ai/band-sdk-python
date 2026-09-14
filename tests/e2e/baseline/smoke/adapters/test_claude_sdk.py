@@ -91,44 +91,46 @@ async def test_manual_bash_approval_resolved_from_a_mentioned_reply(
     the reply and resolving the approval is the relay's actual guarantee (same
     rationale as ``test_opencode.py``'s manual-approval smoke).
     """
-    sandbox = tempfile.mkdtemp(prefix="band-e2e-claude-sdk-manual-approval-")
-    adapter = ClaudeSDKAdapter(
-        model=baseline_settings.llm_models.anthropic_model,
-        custom_section="Keep responses short. Use your Bash tool when asked.",
-        cwd=sandbox,
-        approval_mode="manual",
-    )
-
-    async with running_provisioned_agent(
-        adapter, resource_manager, label="claude-sdk-manual-approval"
-    ) as agent:
-        room_id = await resource_manager.provision_room(
-            title="e2e-claude-sdk-manual-approval", participants=[agent.id]
+    with tempfile.TemporaryDirectory(
+        prefix="band-e2e-claude-sdk-manual-approval-"
+    ) as sandbox:
+        adapter = ClaudeSDKAdapter(
+            model=baseline_settings.llm_models.anthropic_model,
+            custom_section="Keep responses short. Use your Bash tool when asked.",
+            cwd=sandbox,
+            approval_mode="manual",
         )
-        async with reply_capture(room_id) as capture:
-            # Turn 1: compel a Bash tool use -> gated by can_use_tool -> approval prompt.
-            await user_ops.send_message(
-                room_id,
-                "Use your Bash tool to run exactly `echo ok`. You must execute "
-                "it with the tool, not answer from memory.",
-                mention_id=agent.id,
-                mention_name=agent.name,
-            )
-            asked = await capture.wait_until(
-                lambda msgs: _requested_token(msgs) is not None,
-                deadline_s=BUDGET.deadline_s,
-            )
-            token = _requested_token(asked)
-            assert token is not None  # the predicate guarantees one
 
-            # Turn 2: the mentioned `/approve <token>` reply must be RECOGNIZED.
-            await user_ops.send_message(
-                room_id,
-                f"/approve {token}",
-                mention_id=agent.id,
-                mention_name=agent.name,
+        async with running_provisioned_agent(
+            adapter, resource_manager, label="claude-sdk-manual-approval"
+        ) as agent:
+            room_id = await resource_manager.provision_room(
+                title="e2e-claude-sdk-manual-approval", participants=[agent.id]
             )
-            await capture.wait_until(
-                lambda msgs: _resolved(msgs, token),
-                deadline_s=BUDGET.deadline_s,
-            )
+            async with reply_capture(room_id) as capture:
+                # Turn 1: compel a Bash tool use -> gated by can_use_tool -> approval prompt.
+                await user_ops.send_message(
+                    room_id,
+                    "Use your Bash tool to run exactly `echo ok`. You must execute "
+                    "it with the tool, not answer from memory.",
+                    mention_id=agent.id,
+                    mention_name=agent.name,
+                )
+                asked = await capture.wait_until(
+                    lambda msgs: _requested_token(msgs) is not None,
+                    deadline_s=BUDGET.deadline_s,
+                )
+                token = _requested_token(asked)
+                assert token is not None  # the predicate guarantees one
+
+                # Turn 2: the mentioned `/approve <token>` reply must be RECOGNIZED.
+                await user_ops.send_message(
+                    room_id,
+                    f"/approve {token}",
+                    mention_id=agent.id,
+                    mention_name=agent.name,
+                )
+                await capture.wait_until(
+                    lambda msgs: _resolved(msgs, token),
+                    deadline_s=BUDGET.deadline_s,
+                )
