@@ -77,13 +77,9 @@ async def main() -> None:
     # Command to spawn the remote ACP agent
     acp_command = shlex.split(settings.acp_agent_command)
 
-    # Working directory for ACP sessions
-    acp_cwd = settings.acp_agent_cwd
-
     # Create adapter pointing to remote ACP agent
     adapter = ACPClientAdapter(
         command=acp_command,
-        cwd=acp_cwd,
     )
 
     logger.info(

@@ -13,17 +13,14 @@ Runs a Band agent backed by Codex app-server.
 Prerequisites:
 1. OAuth login:
    codex login
-2. For stdio mode (default), no extra process is needed.
-3. For ws mode, start app-server separately:
-   codex app-server --listen ws://127.0.0.1:8765
+2. The adapter starts one local stdio process for each Band room.
 
 Run:
     uv run examples/codex/01_basic_agent.py
 
 Optional env overrides:
     AGENT_KEY=darter
-    CODEX_TRANSPORT=stdio|ws
-    CODEX_WS_URL=ws://127.0.0.1:8765
+    CODEX_WORKSPACE_ROOT=.band-workspaces
     CODEX_ROLE=coding|planner|reviewer
     CODEX_MODEL=gpt-5.5
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
@@ -84,7 +81,7 @@ async def main() -> None:
                 "Role '%s' specified but no prompt file at %s", codex_role, prompt_file
             )
 
-    # transport/codex_ws_url/model/cwd/approval_policy/approval_mode/
+    # model/approval_policy/approval_mode/
     # emit_turn_task_markers all self-source from CODEX_* env vars (see module
     # docstring) when omitted here.
     adapter = CodexAdapter(

@@ -12,7 +12,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
 
 **Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
-**Client**: Band room message -> `ACPClientAdapter` -> stdio subprocess **or** TCP connection (Codex, Claude Code, Cursor, GitHub Copilot, etc.)
+**Client**: Band room message -> `ACPClientAdapter` -> its room-owned stdio subprocess (Codex, Claude Code, Cursor, GitHub Copilot, etc.)
 
 ## Key Files
 
@@ -20,7 +20,7 @@ Two-layer pattern (mirrors A2A Gateway):
 |------|---------|
 | `src/band/integrations/acp/server.py` | `ACPServer` — handles ACP JSON-RPC methods, does not subclass `acp.Agent`; `run_acp_server` — runs it with `use_unstable_protocol` (required for `session/fork`, `session/resume`, `session/close`) |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
-| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a room-owned ACP agent over stdio |
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
@@ -108,21 +108,16 @@ acp = ["agent-client-protocol"]
 
 Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 
-## Client transports (stdio / TCP)
+## Client workspace isolation
 
-`ACPClientAdapter` selects a transport at construction; both flow through `ACPRuntime`'s
-injectable `spawn_process` seam, so the runtime and downstream code are transport-agnostic.
-
-- **stdio** (default): pass `command=[...]` to spawn the agent as a subprocess
-  (`acp.spawn_agent_process`).
-- **TCP**: pass `host=` + `port=` to connect to an already-running ACP server
-  (`tcp_spawn_process` → `asyncio.open_connection` → `acp.connect_to_agent`). Use for an
-  ACP agent in a remote/containerized environment.
-- Exactly one of `{command, (host, port)}` is required (validated in `__init__`).
-- Advanced: inject a custom `spawn_process` (e.g. `docker exec -i … copilot --acp`, ssh,
-  or a fake in tests). Tests inject a fake through this seam rather than patching module
-  globals (see `tests/integrations/acp/conftest.py::FakeSpawn` / the `make_acp_transport`
-  fixture).
+`ACPClientAdapter` creates an isolated `./.band-workspaces/<room-id>` directory for
+each Band room by default. Pass `workspace_for_room` only to select a different
+absolute workspace policy. It lazily starts one stdio agent process per room and
+stops that process when the room is cleaned up. TCP and custom transport injection are
+rejected because they cannot prove that a remote process belongs to only one room.
+The assigned working directory is not an operating-system sandbox; configure the agent's
+sandbox policy separately when that boundary is required. A custom resolver must assign a
+different workspace to every live room, and the adapter requires a non-empty stdio command.
 
 ## GitHub Copilot CLI backend
 

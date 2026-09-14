@@ -82,7 +82,9 @@ async def main() -> None:
     config = DevConfig()
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            model=config.model, approval_policy="never", custom_section=build_persona()
+            model=config.model,
+            approval_policy="never",
+            custom_section=build_persona(),
         ),
         # Emit tool_call/tool_result and reasoning to the room, keeping the default
         # per-turn task markers but excluding usage events. Codex's Band tools
