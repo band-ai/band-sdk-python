@@ -258,6 +258,36 @@ class TestErrorReporting:
         assert failure.code == "UNAVAILABLE"
         assert failure.detail == "overloaded"
 
+    @pytest.mark.asyncio
+    async def test_non_string_server_error_status_is_stringified(
+        self, sample_message, mock_tools
+    ):
+        """A malformed error body's non-string ``status`` field must not
+        crash failure reporting -- band_sdk_core's AgentFailure requires
+        code: str | None, but ServerError.status is an unconstrained
+        Optional[str] at runtime (parsed straight off the response JSON)."""
+        adapter = GeminiAdapter(provider_key="test-key")
+        await adapter.on_started("TestBot", "Test bot")
+        error = ServerError(503, {"status": 503, "message": "backend overloaded"}, None)
+
+        with patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)):
+            with pytest.raises(ServerError):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "gemini"
+        assert failure.code == "503"
+        assert failure.detail == "backend overloaded"
+
 
 class TestRetries:
     @pytest.mark.asyncio

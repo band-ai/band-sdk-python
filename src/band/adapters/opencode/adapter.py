@@ -68,6 +68,9 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "opencode"
+
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
 Use the band_ prefixed tools (e.g. band_send_message) for Band platform actions when available.
@@ -500,7 +503,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             logger.exception("OpenCode request failed for room %s", room_id)
             await tools.send_failure(
                 AgentFailure(
-                    "opencode",
+                    _PROVIDER,
                     self._format_http_error(exc),
                     str(exc.response.status_code),
                 )
@@ -509,7 +512,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         except Exception:
             logger.exception("Unexpected OpenCode adapter failure in room %s", room_id)
             await tools.send_failure(
-                AgentFailure("opencode", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
 
@@ -940,7 +943,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             if room_state.tools:
                 await room_state.tools.send_failure(
                     AgentFailure(
-                        "opencode",
+                        _PROVIDER,
                         "OpenCode timed out before completing the turn.",
                         FAILURE_CODE_TIMEOUT,
                     )
@@ -1138,7 +1141,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
             elif room_state.last_error_message:
                 await room_state.tools.send_failure(
-                    AgentFailure("opencode", room_state.last_error_message)
+                    AgentFailure(_PROVIDER, room_state.last_error_message)
                 )
             elif not replied:
                 await room_state.tools.send_message(

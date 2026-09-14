@@ -54,6 +54,9 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "gemini"
+
 
 def _image_function_response_parts(
     result: dict[str, Any],
@@ -79,8 +82,9 @@ def _to_agent_failure(e: Exception) -> AgentFailure:
     exception's text alone does not.
     """
     if isinstance(e, ServerError):
-        return AgentFailure("gemini", str(e), e.status, e.message)
-    return AgentFailure("gemini", GENERIC_PROVIDER_FAILURE_MESSAGE)
+        status = e.status if e.status is None else str(e.status)
+        return AgentFailure(_PROVIDER, str(e), status, e.message)
+    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -256,7 +260,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         f"Exceeded max tool rounds ({self.max_tool_rounds}) "
                         f"in room {room_id}"
                     )
-                    await tools.send_failure(AgentFailure("gemini", message))
+                    await tools.send_failure(AgentFailure(_PROVIDER, message))
                     raise RuntimeError(message)
 
                 try:

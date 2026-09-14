@@ -42,6 +42,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "parlant"
+
 
 # Parlant preamble message tag - used to identify acknowledgment messages before tool execution
 PARLANT_PREAMBLE_TAG = "__preamble__"
@@ -384,7 +387,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if not self._app:
             message = "Parlant Application not initialized"
             logger.error(message)
-            await tools.send_failure(AgentFailure("parlant", message))
+            await tools.send_failure(AgentFailure(_PROVIDER, message))
             raise RuntimeError(message)
 
         app = self._app
@@ -396,7 +399,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         except Exception as e:
             logger.error("Failed to get/create session for room %s: %s", room_id, e)
             await tools.send_failure(
-                AgentFailure("parlant", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
         session_id_str = str(session_id)
@@ -458,7 +461,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         except Exception as e:
             logger.error("Error processing message: %s", e, exc_info=True)
             await tools.send_failure(
-                AgentFailure("parlant", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
         finally:

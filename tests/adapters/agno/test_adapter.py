@@ -29,6 +29,7 @@ from band.adapters.agno import (
     _bind_room_tools,
     _make_band_entrypoint,
 )
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage
 from band.testing import FakeAgentTools, reported_failures
 
@@ -891,10 +892,7 @@ class TestRunFailureReporting:
 
         failures = reported_failures(tools)
         assert len(failures) == 1
-        assert (
-            failures[0]["message"]
-            == "Internal error while processing message; see agent logs."
-        )
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
         # The exception text (which can carry secrets) must not leak to the room.
         assert "secret-token" not in failures[0]["message"]
         assert failures[0]["provider"] == "agno"

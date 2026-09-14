@@ -77,6 +77,9 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "pydantic_ai"
+
 
 OUTPUT_RETRIES_EXHAUSTED = "exceeded maximum output retries"
 """pydantic-ai's wording when a run burns its output-retry budget.
@@ -1066,8 +1069,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 return
+            logger.exception("Room %s: Pydantic AI turn failed", room_id)
             await tools.send_failure(
-                AgentFailure("pydantic_ai", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
         finally:
@@ -1092,7 +1096,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 "Room %s: Pydantic AI turn produced nothing for the room", room_id
             )
             detail = missing_reply_error("Pydantic AI")
-            await tools.send_failure(AgentFailure("pydantic_ai", detail))
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
             raise TurnResultAlreadyReported(detail)
 
         logger.debug(

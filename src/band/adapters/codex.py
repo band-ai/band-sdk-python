@@ -595,6 +595,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 return
 
         async with self._rpc_lock:
+            thread_id: str | None = None
+            turn_id: str | None = None
             try:
                 await self._ensure_client_ready()
                 if self._client is None:
@@ -753,6 +755,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
             except Exception:
+                logger.exception(
+                    "Unexpected error in Codex on_message (thread=%s, turn=%s)",
+                    thread_id,
+                    turn_id,
+                )
                 await tools.send_failure(
                     AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
@@ -2203,7 +2210,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     log_label="approval request task event",
                     log_level=logging.DEBUG,
                 )
-            await tools.send_message(approval_msg, mentions=mention)
+            try:
+                await tools.send_message(approval_msg, mentions=mention)
+            except Exception:
+                # The room was never notified, so waiting out the full
+                # approval_wait_timeout_s would misreport a Band delivery
+                # hiccup as a genuine human-decision timeout. Report it now,
+                # rather than letting it silently decline with no signal at
+                # all, same as every other failure path in this file.
+                logger.exception(
+                    "Failed to notify room %s about pending approval %s",
+                    room_id,
+                    token,
+                )
+                await tools.send_failure(
+                    AgentFailure(
+                        CODEX_PROVIDER,
+                        "Failed to notify the room about a pending approval "
+                        "request; defaulting to decline.",
+                    )
+                )
+                return "decline"
             decision_raw = await asyncio.wait_for(
                 pending.future,
                 timeout=self.config.approval_wait_timeout_s,

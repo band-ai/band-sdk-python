@@ -676,6 +676,13 @@ class TestCodexAdapter:
         assert payload["decision"] == "decline"
         assert "room-1" not in adapter._pending_approvals
 
+        # The Band-delivery hiccup that caused this auto-decline must itself
+        # be reported -- otherwise it's indistinguishable from a genuine
+        # human decision, with no signal at all that anything went wrong.
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+
     @pytest.mark.asyncio
     async def test_cleanup_closes_client_when_last_room_removed(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])

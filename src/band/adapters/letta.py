@@ -425,16 +425,13 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             "Room %s: Sending message to Letta agent %s", room_id, room_ctx.agent_id
         )
         try:
-            final_text_parts = await asyncio.wait_for(
-                self._send_message(
-                    agent_id=room_ctx.agent_id,
-                    content=content,
-                    tools=tools,
-                    room_ctx=room_ctx,
-                    room_id=room_id,
-                    reply_to_sender_id=msg.sender_id,
-                ),
-                timeout=self.config.turn_timeout_s,
+            final_text_parts = await self._send_message(
+                agent_id=room_ctx.agent_id,
+                content=content,
+                tools=tools,
+                room_ctx=room_ctx,
+                room_id=room_id,
+                reply_to_sender_id=msg.sender_id,
             )
         except DeliveryFailedError as e:
             reraise_delivery_cause(e)
@@ -494,21 +491,13 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         turn_usage = TurnUsage()
 
         try:
-            # Use Conversations API in shared mode, direct agent API in per_room mode
-            if self.config.mode == "shared" and room_ctx.conversation_id:
-                conversation_stream = await self._client.conversations.messages.create(
-                    conversation_id=room_ctx.conversation_id,
-                    messages=messages,
-                )
-                response_messages = [resp_msg async for resp_msg in conversation_stream]
-            else:
-                response = await self._client.agents.messages.create(
-                    agent_id=agent_id,
-                    messages=messages,
-                )
-                response_messages = list(response.messages)
-                turn_usage = self._usage_from_response(response)
-
+            # turn_timeout_s bounds only the round-trip to Letta -- response
+            # processing (including deliver_reply, below) runs unbounded so a
+            # slow Band-side delivery is never mislabeled as a Letta timeout.
+            response_messages, turn_usage = await asyncio.wait_for(
+                self._call_provider(agent_id, messages, room_ctx),
+                timeout=self.config.turn_timeout_s,
+            )
             return await self._process_response_messages(
                 response_messages,
                 tools,
@@ -518,6 +507,28 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.
             await self.emit_usage(tools, turn_usage)
+
+    async def _call_provider(
+        self,
+        agent_id: str,
+        messages: list[dict[str, str]],
+        room_ctx: RoomContext,
+    ) -> tuple[list[Any], TurnUsage]:
+        """Round-trip to the Letta API -- no response processing or delivery."""
+        # Use Conversations API in shared mode, direct agent API in per_room mode
+        if self.config.mode == "shared" and room_ctx.conversation_id:
+            conversation_stream = await self._client.conversations.messages.create(
+                conversation_id=room_ctx.conversation_id,
+                messages=messages,
+            )
+            response_messages = [resp_msg async for resp_msg in conversation_stream]
+            return response_messages, TurnUsage()
+
+        response = await self._client.agents.messages.create(
+            agent_id=agent_id,
+            messages=messages,
+        )
+        return list(response.messages), self._usage_from_response(response)
 
     async def _process_response_messages(
         self,

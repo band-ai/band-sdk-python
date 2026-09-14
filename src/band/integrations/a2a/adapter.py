@@ -47,6 +47,9 @@ from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "a2a"
+
 # httpx's read timeout resets on every chunk received, so this bounds the gap
 # between SSE events, not the turn as a whole. Generous enough for the
 # multi-second silences of a live LLM call or tool loop; still finite, so a
@@ -189,7 +192,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         except Exception as e:
             logger.exception("A2A agent error: %s", e)
             await tools.send_failure(
-                AgentFailure("a2a", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
 
@@ -299,7 +302,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             logger.warning(
                 "Task %s: peer A2A task ended in state %s", task.id, state_str
             )
-            await tools.send_failure(AgentFailure("a2a", error_text, state_str))
+            await tools.send_failure(AgentFailure(_PROVIDER, error_text, state_str))
             raise TurnResultAlreadyReported(error_text)
 
     def _finalize_task(self, room_id: str, task_id: str) -> None:

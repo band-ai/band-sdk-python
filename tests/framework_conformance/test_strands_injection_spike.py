@@ -76,6 +76,7 @@ from band.testing import (  # noqa: E402
     ScriptedStrandsModel,
     TextTurn,
     ToolTurn,
+    reported_failures,
 )
 
 _SEND_CONTENT = "Injected reply: PINEAPPLE"
@@ -216,6 +217,9 @@ async def test_negative_control_text_only_sends_no_message() -> None:
     )
     assert tools.tool_calls == []
     # The plain-text answer was silently dropped — the adapter must surface it.
-    errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-    assert len(errors) == 1, f"expected one error event, got: {tools.events_sent}"
-    assert "band_send_message" in errors[0]["content"]
+    failures = reported_failures(tools)
+    assert len(failures) == 1, (
+        f"expected one reported failure, got: {tools.events_sent}"
+    )
+    assert failures[0]["provider"] == "strands"
+    assert "band_send_message" in failures[0]["message"]

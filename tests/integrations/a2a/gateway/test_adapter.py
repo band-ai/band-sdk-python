@@ -367,6 +367,22 @@ class TestGatewayExecution:
         assert "sk-live-abcdef123456" not in redacted
         assert redacted == "Authorization=[REDACTED]"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "password=hunter2",
+            "client_secret=abc123XYZ",
+            "AWS_SECRET_ACCESS_KEY=AKIAABCDEFGHIJKLMNOP",
+        ],
+    )
+    def test_redact_credentials_covers_non_token_keywords(self, text: str) -> None:
+        """token/authorization/api_key aren't the only credential-shaped
+        keywords a peer's error text can embed -- password, secret (and its
+        client_secret compound), and access_key must be redacted too."""
+        redacted = _redact_credentials(text)
+        secret_value = text.split("=", 1)[1]
+        assert secret_value not in redacted
+
     @pytest.mark.asyncio
     async def test_establish_request_raises_when_peer_missing(self) -> None:
         adapter = A2AGatewayAdapter(rest_client=MagicMock())
@@ -652,6 +668,42 @@ class TestGatewayResponses:
         assert event.status.state == TaskState.TASK_STATE_FAILED
         assert "sk-live-secret" not in event.metadata["failure"]["message"]
         assert "sk-live-secret" not in event.status.message.parts[0].text
+
+    @pytest.mark.asyncio
+    async def test_relayed_peer_failure_redacts_nested_credentials_in_detail(
+        self,
+    ) -> None:
+        """A peer's AgentFailure.detail can nest a credential-bearing string
+        inside a dict/list (e.g. Codex's own codex_additional_details) --
+        _redact_credentials_deep must recurse into it, not just the flat
+        message string."""
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+        queue = EventQueueLegacy()
+        pending = make_pending(queue)
+        peer_failure = {
+            "provider": "codex",
+            "code": "Unauthorized",
+            "message": "upstream rejected the request",
+            "detail": {
+                "codex_additional_details": {
+                    "raw": ["upstream said: token=sk-live-nested-secret"],
+                },
+            },
+        }
+
+        await adapter._publish_band_response(
+            pending,
+            make_platform_message(
+                "upstream rejected the request",
+                message_type="error",
+                metadata={"failure": peer_failure},
+            ),
+        )
+        event = await queue.dequeue_event()
+
+        assert event.status.state == TaskState.TASK_STATE_FAILED
+        detail = event.metadata["failure"]["detail"]
+        assert "sk-live-nested-secret" not in str(detail)
 
     @pytest.mark.asyncio
     async def test_plain_error_message_without_failure_metadata_still_fails(

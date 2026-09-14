@@ -95,6 +95,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "copilot_sdk"
+
 
 @dataclass(frozen=True)
 class CopilotSDKAdapterConfig:
@@ -417,7 +420,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             except Exception:
                 logger.exception("Room %s: Copilot session setup failed", room_id)
                 await tools.send_failure(
-                    AgentFailure("copilot_sdk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
             prompt = self._compose_prompt(
@@ -445,7 +448,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 # drop the session; the next message resumes it fresh by id.
                 await self._session_manager.evict_session(room_id)
                 await tools.send_failure(
-                    AgentFailure("copilot_sdk", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
             finally:
@@ -461,9 +464,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             # with no room output means the model genuinely said nothing.
             if final_text is None and not turn.replied_in_room:
                 logger.warning("Room %s: Copilot turn produced no reply", room_id)
-                await tools.send_failure(
-                    AgentFailure("copilot_sdk", "no assistant reply")
-                )
+                await tools.send_failure(AgentFailure(_PROVIDER, "no assistant reply"))
                 raise RuntimeError("Copilot turn produced no reply")
 
             # The turn may already have replied into the room; sending its

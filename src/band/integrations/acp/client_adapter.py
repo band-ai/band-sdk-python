@@ -67,6 +67,9 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "acp"
+
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 
 # Prefixes the change-triggered roster/contacts updates injected into a
@@ -140,8 +143,8 @@ def _to_agent_failure(exc: Exception) -> AgentFailure:
     message alone.
     """
     if isinstance(exc, RequestError):
-        return AgentFailure("acp", str(exc), str(exc.code), exc.data)
-    return AgentFailure("acp", GENERIC_PROVIDER_FAILURE_MESSAGE)
+        return AgentFailure(_PROVIDER, str(exc), str(exc.code), exc.data)
+    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
 
 
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
@@ -395,20 +398,19 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 room_id,
                 session_id,
             )
-            await asyncio.gather(
-                self.stop(),
-                tools.send_failure(
-                    AgentFailure(
-                        "acp",
-                        f"ACP agent response timed out after {self._turn_timeout_s}s",
-                        FAILURE_CODE_TIMEOUT,
-                    )
-                ),
+            await self.stop()
+            await tools.send_failure(
+                AgentFailure(
+                    _PROVIDER,
+                    f"ACP agent response timed out after {self._turn_timeout_s}s",
+                    FAILURE_CODE_TIMEOUT,
+                )
             )
             raise
         except Exception as e:
             logger.exception("ACP agent error: %s", e)
-            await asyncio.gather(self.stop(), tools.send_failure(_to_agent_failure(e)))
+            await self.stop()
+            await tools.send_failure(_to_agent_failure(e))
             raise
 
     def _make_permission_handler(

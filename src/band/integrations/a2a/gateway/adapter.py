@@ -41,6 +41,9 @@ from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "a2a-gateway"
+
 
 @dataclass
 class GatewayRequest:
@@ -86,7 +89,9 @@ _BEARER_TOKEN_RE = re.compile(r"Bearer\s+[^\s,;]+", re.IGNORECASE)
 # scheme-prefixed credential (e.g. "Authorization: ApiKey sk-...") gets
 # redacted in full instead of leaking everything past the first space.
 _CREDENTIAL_KV_RE = re.compile(
-    r"(token|authorization|api[_-]?key)\s*[:=]\s*[^,;]+", re.IGNORECASE
+    r"(token|authorization|api[_-]?key|access[_-]?key|secret|password)"
+    r"\s*[:=]\s*[^,;]+",
+    re.IGNORECASE,
 )
 
 
@@ -396,7 +401,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 request.pending.task.id,
             )
             failure = AgentFailure(
-                "a2a-gateway",
+                _PROVIDER,
                 _sanitize_gateway_error_message(exc),
                 type(exc).__name__,
             )
@@ -482,7 +487,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 self.config.response_timeout_s,
             )
             failure = AgentFailure(
-                "a2a-gateway",
+                _PROVIDER,
                 "Timed out waiting for a Band response",
                 FAILURE_CODE_TIMEOUT,
             )

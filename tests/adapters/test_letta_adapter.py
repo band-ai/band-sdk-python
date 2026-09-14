@@ -257,6 +257,49 @@ class TestLettaAdapterOnMessagePerRoom:
         assert failures[0]["code"] == "timeout"
 
     @pytest.mark.asyncio
+    async def test_slow_delivery_is_not_misreported_as_provider_timeout(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        """turn_timeout_s bounds only the Letta round-trip. A room POST that
+        is merely slow (not the Letta call) must not be misreported as a
+        Letta provider timeout -- it must be given time to complete."""
+        adapter, mock_client = adapter_with_client
+        adapter.config.turn_timeout_s = 0.05
+
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        # The Letta call itself responds instantly, well inside turn_timeout_s.
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_assistant_message("I'll help you!")
+        )
+
+        tools = FakeAgentTools()
+        real_send_message = tools.send_message
+
+        async def _slow_send_message(*args: Any, **kwargs: Any) -> Any:
+            # Longer than turn_timeout_s: only the provider call may race it.
+            await asyncio.sleep(0.15)
+            return await real_send_message(*args, **kwargs)
+
+        tools.send_message = _slow_send_message  # type: ignore[method-assign]
+
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        await adapter.on_message(
+            msg,
+            tools,
+            history,
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert len(tools.messages_sent) == 1
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_generic_exception_reports_and_propagates(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
@@ -369,9 +412,10 @@ class TestLettaAdapterOnMessagePerRoom:
                 room_id="room-1",
             )
 
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert "not initialized" in error_events[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert "not initialized" in failures[0]["message"]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1321,9 +1365,10 @@ class TestAutoRelayDisabled:
             )
 
         assert len(tools.messages_sent) == 0
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(error_events) == 1
-        assert "band_send_message" in error_events[0]["content"]
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "letta"
+        assert "band_send_message" in failures[0]["message"]
 
     @pytest.mark.asyncio
     async def test_disabled_relay_quiet_when_send_tool_used(self) -> None:

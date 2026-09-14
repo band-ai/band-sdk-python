@@ -76,6 +76,9 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "strands"
+
 
 def _format_tool_output(value: object) -> str:
     """Return a stable text representation accepted by Strands tool results."""
@@ -533,8 +536,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             agent = self._build_agent(history, tools, hooks)
             await agent.invoke_async(message)
         except Exception:
+            logger.exception("Room %s: Strands turn failed", room_id)
             await tools.send_failure(
-                AgentFailure("strands", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
             raise
         finally:
@@ -584,7 +588,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
                 "Room %s: Strands turn produced nothing for the room", room_id
             )
             detail = missing_reply_error("Strands")
-            await tools.send_failure(AgentFailure("strands", detail))
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
             raise TurnResultAlreadyReported(detail)
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",

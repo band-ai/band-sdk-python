@@ -408,8 +408,9 @@ class TestA2AAdapterMessageFlow:
                 room_id="room-123",
             )
 
-        assert tools.events_sent[-1]["message_type"] == "error"
-        assert tools.events_sent[-1]["content"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        failures = reported_failures(tools)
+        assert failures[-1]["provider"] == "a2a"
+        assert failures[-1]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_on_message_reraises_delivery_failure_without_reporting_it(
@@ -437,7 +438,7 @@ class TestA2AAdapterMessageFlow:
                 room_id="room-123",
             )
 
-        assert not [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert not reported_failures(tools)
 
     @pytest.mark.asyncio
     async def test_failed_task_is_posted_as_error_event(

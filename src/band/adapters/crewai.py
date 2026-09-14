@@ -41,6 +41,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# AgentFailure.provider tag for every failure this adapter reports.
+_PROVIDER = "crewai"
+
 
 # Context variable for thread-safe room context access.
 # Set automatically when processing messages, accessed by tools.
@@ -301,7 +304,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
         if not self._crewai_agent:
             message = "CrewAI agent not initialized - ensure on_started() was called"
-            await tools.send_failure(AgentFailure("crewai", message))
+            await tools.send_failure(AgentFailure(_PROVIDER, message))
             raise RuntimeError(message)
 
         # Set context variable for tool access (thread-safe room context).
@@ -420,7 +423,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             if not (_is_empty_llm_response(e) and reply_tracker.any_tool_ran):
                 logger.error("Error processing message: %s", e, exc_info=True)
                 await tools.send_failure(
-                    AgentFailure("crewai", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
             # Keep the exception text: it is the only record that CrewAI raised,
@@ -448,7 +451,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                     f"max_iter={self.max_iter}."
                 ),
             )
-            await tools.send_failure(AgentFailure("crewai", detail))
+            await tools.send_failure(AgentFailure(_PROVIDER, detail))
             if not reply_tracker.any_tool_ran:
                 # Some tool activity (even read-only) means the turn did what it
                 # was asked and correctly had nothing left to say -- report but
