@@ -36,6 +36,8 @@ jobs:
       # Single source of truth: crates/py/scripts/coverage_python_consumer.py's
       # REPORT_DIR, relative to band-sdk-core's checkout root.
       REPORT_DIR: target/python-consumer-coverage/report
+      # Single source of truth for band-sdk-core's git tag naming scheme.
+      CORE_TAG_PREFIX: band-sdk-core-core-v
     steps:
       - name: Checkout band-sdk-python
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -72,14 +74,19 @@ jobs:
           # A failed command substitution inside an assignment does not trip
           # bash's `set -e`, so the pre-release guard below runs as its own
           # statement -- a non-zero exit there aborts the step for real,
-          # instead of silently continuing with an empty $version.
-          uv run python -c "
+          # instead of silently continuing with an empty $version. $version
+          # is passed via the environment, not spliced into the script text,
+          # so it can never break out of the embedded Python literal.
+          VERSION="$version" uv run python -c "
+          import os
           import sys
           from packaging.version import Version
 
-          if Version('$version').is_prerelease:
+          version = os.environ['VERSION']
+          prefix = os.environ['CORE_TAG_PREFIX']
+          if Version(version).is_prerelease:
               sys.exit(
-                  'band-sdk-core==$version is a pre-release: band-sdk-core-core-v$version '
+                  f'band-sdk-core=={version} is a pre-release: {prefix}{version} '
                   'is never tagged (dev pre-releases publish to PyPI but are never committed '
                   'or tagged in git), so this gate cannot check it out. Pin a stable release '
                   'to run this gate.'
@@ -101,7 +108,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: band-ai/band-sdk-core
-          ref: band-sdk-core-core-v${{ steps.pin.outputs.version }}
+          ref: ${{ env.CORE_TAG_PREFIX }}${{ steps.pin.outputs.version }}
           path: band-sdk-core
           token: ${{ steps.app-token.outputs.token }}
 
@@ -116,9 +123,13 @@ jobs:
 
       - name: Write coverage summary
         if: always()
-        working-directory: band-sdk-core
+        # No working-directory: band-sdk-core/ may not exist yet (the
+        # pin step's pre-release guard, or any earlier failure, can skip
+        # its checkout) -- a nonexistent step cwd fails the step outright
+        # before this script runs, before the else branch below ever gets
+        # a chance to report that gracefully.
         run: |
-          summary="$REPORT_DIR/summary.txt"
+          summary="band-sdk-core/$REPORT_DIR/summary.txt"
           if [ -f "$summary" ]; then
             {
               echo "## band-sdk-core-core coverage from band-sdk-python's tests"
