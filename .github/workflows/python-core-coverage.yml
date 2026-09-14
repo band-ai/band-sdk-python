@@ -1,0 +1,104 @@
+name: Python Core Coverage
+
+# Coverage floor for band-sdk-core-core computed from THIS repo's real test
+# suite -- band-sdk-core owns the instrumented build + gate (see its
+# `coverage-python-consumer` just recipe); this workflow only resolves the
+# pinned version, checks that tag out as a sibling, and runs it.
+#
+# No explicit Rust-toolchain setup step: band-sdk-core/rust-toolchain.toml
+# is picked up natively by rustup's own directory-walk resolution the first
+# time a `cargo`/`rustup` command runs with that checkout as its cwd, so
+# there is nothing to duplicate here.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-core-coverage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout band-sdk-python
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: band-sdk-python
+
+      - name: Configure git to use HTTPS for GitHub
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "band-sdk-python/**/pyproject.toml"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Install band-sdk-python dependencies
+        working-directory: band-sdk-python
+        run: uv sync --all-packages --locked --extra dev
+
+      - name: Resolve pinned band-sdk-core version
+        id: pin
+        working-directory: band-sdk-python
+        run: |
+          version=$(uv run python -c "import importlib.metadata; print(importlib.metadata.version('band-sdk-core'))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout band-sdk-core at the pinned version
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: band-ai/band-sdk-core
+          ref: band-sdk-core-core-v${{ steps.pin.outputs.version }}
+          path: band-sdk-core
+
+      - name: Install just and cargo-llvm-cov
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+        with:
+          tool: just,cargo-llvm-cov
+
+      - name: Run band-sdk-python's tests against instrumented band-sdk-core-core
+        working-directory: band-sdk-core
+        run: just coverage-python-consumer ../band-sdk-python
+
+      - name: Write coverage summary
+        if: always()
+        working-directory: band-sdk-core
+        run: |
+          summary=target/python-consumer-coverage/report/summary.txt
+          if [ -f "$summary" ]; then
+            {
+              echo "## band-sdk-core-core coverage from band-sdk-python's tests"
+              echo '```'
+              cat "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-core-coverage
+          path: |
+            band-sdk-core/target/python-consumer-coverage/report/python-consumer.lcov
+            band-sdk-core/target/python-consumer-coverage/report/html/
+            band-sdk-core/target/python-consumer-coverage/report/summary.txt
+          if-no-files-found: warn
