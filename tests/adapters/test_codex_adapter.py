@@ -683,6 +683,17 @@ class TestCodexAdapter:
         assert len(failures) == 1
         assert failures[0]["provider"] == "codex"
 
+        # The human sender was never actually notified, so the audit trail
+        # must not credit/blame them for this decision -- it was forced by
+        # the delivery failure, same as every other forced-decline path.
+        audit_events = [
+            e
+            for e in tools.events_sent
+            if e["metadata"].get("codex_event_type") == "approval_resolution"
+        ]
+        assert len(audit_events) == 1
+        assert audit_events[0]["metadata"]["codex_decided_by"] == "system_fallback"
+
     @pytest.mark.asyncio
     async def test_cleanup_closes_client_when_last_room_removed(self) -> None:
         fake_client = FakeCodexClient(events=[_turn_completed()])

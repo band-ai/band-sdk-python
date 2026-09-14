@@ -437,20 +437,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             reraise_delivery_cause(e)
         except TurnResultAlreadyReported:
             raise
-        except asyncio.TimeoutError:
-            logger.error(
-                "Room %s: Letta turn timed out after %ss",
-                room_id,
-                self.config.turn_timeout_s,
-            )
-            await tools.send_failure(
-                AgentFailure(
-                    _PROVIDER,
-                    f"Letta agent response timed out after {self.config.turn_timeout_s}s",
-                    FAILURE_CODE_TIMEOUT,
-                )
-            )
-            raise
         except Exception as e:
             logger.exception("Room %s: Error during Letta turn: %s", room_id, e)
             await tools.send_failure(
@@ -491,13 +477,37 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         turn_usage = TurnUsage()
 
         try:
-            # turn_timeout_s bounds only the round-trip to Letta -- response
-            # processing (including deliver_reply, below) runs unbounded so a
-            # slow Band-side delivery is never mislabeled as a Letta timeout.
-            response_messages, turn_usage = await asyncio.wait_for(
-                self._call_provider(agent_id, messages, room_ctx),
-                timeout=self.config.turn_timeout_s,
-            )
+            try:
+                # turn_timeout_s bounds only the round-trip to Letta -- response
+                # processing (including deliver_reply, below) runs unbounded so a
+                # slow Band-side delivery is never mislabeled as a Letta timeout.
+                response_messages, turn_usage = await asyncio.wait_for(
+                    self._call_provider(agent_id, messages, room_ctx),
+                    timeout=self.config.turn_timeout_s,
+                )
+            except asyncio.TimeoutError:
+                # Caught and reported here, at the exact call this timeout
+                # bounds -- a TimeoutError surfacing from anywhere else in
+                # this method (e.g. tool-event reporting below) is a
+                # genuine unrelated failure, not a Letta provider timeout,
+                # and must reach _run_turn's generic exception handler
+                # instead of being conflated with this one.
+                logger.error(
+                    "Room %s: Letta turn timed out after %ss",
+                    room_id,
+                    self.config.turn_timeout_s,
+                )
+                await tools.send_failure(
+                    AgentFailure(
+                        _PROVIDER,
+                        f"Letta agent response timed out after {self.config.turn_timeout_s}s",
+                        FAILURE_CODE_TIMEOUT,
+                    )
+                )
+                raise TurnResultAlreadyReported(
+                    "Letta provider call timed out"
+                ) from None
+
             return await self._process_response_messages(
                 response_messages,
                 tools,

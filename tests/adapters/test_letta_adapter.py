@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -239,7 +240,7 @@ class TestLettaAdapterOnMessagePerRoom:
         msg = make_platform_message()
         history = LettaSessionState()
 
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TurnResultAlreadyReported):
             await adapter.on_message(
                 msg,
                 tools,
@@ -298,6 +299,52 @@ class TestLettaAdapterOnMessagePerRoom:
 
         assert len(tools.messages_sent) == 1
         assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
+    async def test_send_event_timeout_is_not_misreported_as_provider_timeout(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A TimeoutError from tool-event reporting (send_event) -- not the
+        Letta round-trip itself -- must fall through to the generic failure
+        path, never be mislabeled as a Letta provider timeout. (send_failure
+        itself best-effort-swallows the same broken channel here, same as
+        production, so the room never receives a failure event either way --
+        what this guards is which branch is taken/logged.)"""
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.tool_ids = []
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        # The Letta round-trip itself returns instantly -- well inside
+        # turn_timeout_s -- so any TimeoutError must come from elsewhere.
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message("band_lookup_peers", "{}"),
+            make_tool_return_message("band_lookup_peers", '{"peers": []}'),
+        )
+
+        tools = FakeAgentTools()
+        tools.send_event_error = TimeoutError("event POST hiccup")
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        with caplog.at_level(logging.ERROR, logger="band.adapters.letta"):
+            with pytest.raises(TimeoutError):
+                await adapter.on_message(
+                    msg,
+                    tools,
+                    history,
+                    None,
+                    None,
+                    is_session_bootstrap=False,
+                    room_id="room-1",
+                )
+
+        assert not any("timed out" in r.message for r in caplog.records)
+        assert any("Error during Letta turn" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_generic_exception_reports_and_propagates(
@@ -1462,7 +1509,7 @@ class TestColdBootSeeding:
             replay_messages=["[Alice]: The secret word is kumquat."]
         )
         tools = FakeAgentTools()
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TurnResultAlreadyReported):
             await adapter.on_message(
                 make_platform_message(content="what was the secret word?"),
                 tools,

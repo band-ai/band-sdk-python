@@ -2217,7 +2217,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 # approval_wait_timeout_s would misreport a Band delivery
                 # hiccup as a genuine human-decision timeout. Report it now,
                 # rather than letting it silently decline with no signal at
-                # all, same as every other failure path in this file.
+                # all, same as every other failure path in this file. Re-raise
+                # (rather than returning "decline" here) so the caller's own
+                # except-block attributes this to "system_fallback" instead
+                # of crediting/blaming the human sender for a decision they
+                # were never actually notified about.
                 logger.exception(
                     "Failed to notify room %s about pending approval %s",
                     room_id,
@@ -2230,7 +2234,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "request; defaulting to decline.",
                     )
                 )
-                return "decline"
+                raise
             decision_raw = await asyncio.wait_for(
                 pending.future,
                 timeout=self.config.approval_wait_timeout_s,
