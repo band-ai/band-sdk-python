@@ -10,6 +10,7 @@ from .rpc_base import (
 from .stdio_client import CodexStdioClient
 from .types import (
     CODEX_APPROVAL_METHODS,
+    CODEX_PROVIDER,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
@@ -23,6 +24,7 @@ from .websocket_client import CodexWebSocketClient
 
 __all__ = [
     "CODEX_APPROVAL_METHODS",
+    "CODEX_PROVIDER",
     "ApprovalAuditEntry",
     "CodexApprovalMethod",
     "CodexItemType",

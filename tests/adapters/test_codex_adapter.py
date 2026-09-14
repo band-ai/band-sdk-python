@@ -1478,6 +1478,42 @@ class TestCodexAdapter:
         assert "old-thread-id" not in adapter._token_usage
 
     @pytest.mark.asyncio
+    async def test_transport_closed_after_error_does_not_double_report(self) -> None:
+        """An "error" notification immediately followed by transport/closed for
+        the same incident must report the failure once, not twice -- matching
+        the turn/completed branch's existing failure_reported guard."""
+        events = [
+            _event_notification(
+                "error",
+                {"error": {"message": "Something went wrong"}, "willRetry": False},
+            ),
+            _event_notification(
+                "transport/closed",
+                {"reason": "Codex process exited unexpectedly"},
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Codex Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        assert len(reported_failures(tools)) == 1
+
+    @pytest.mark.asyncio
     async def test_turn_timeout_sends_interrupt_and_clean_error(self) -> None:
         """When recv_event times out, the adapter sends turn/interrupt, reports
         the failure, and fails the turn so the platform retries -- same as
@@ -5145,8 +5181,10 @@ class TestReviewFixes:
         assert not (key and key in {"commandExecution:npm"})
 
     @pytest.mark.asyncio
-    async def test_unexpected_recv_error_still_emits_turn_outcome(self) -> None:
-        """When recv_event raises a non-timeout exception, _emit_turn_outcome is still called."""
+    async def test_unexpected_recv_error_reports_and_fails_turn(self) -> None:
+        """When recv_event raises a non-timeout exception, the adapter reports
+        an AgentFailure and fails the turn instead of silently degrading to a
+        plain chat reply with no structured signal at all."""
 
         class BrokenClient(FakeCodexClient):
             async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
@@ -5162,17 +5200,17 @@ class TestReviewFixes:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        # Should have sent an error message to the user instead of crashing
-        assert any("couldn't complete" in m["content"] for m in tools.messages_sent)
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        assert len(reported_failures(tools)) == 1
 
 
 # ===========================================================================

@@ -61,6 +61,8 @@ class CodexApprovalMethod(StrEnum):
 
 CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApprovalMethod)
 
+CODEX_PROVIDER = "codex"
+
 
 @dataclass
 class CodexSessionState:
@@ -135,7 +137,7 @@ def build_agent_failure(
         if capped is not None:
             detail["codex_additional_details"] = capped
 
-    return AgentFailure("codex", message, error_type, detail or None)
+    return AgentFailure(CODEX_PROVIDER, message, error_type, detail or None)
 
 
 def _cap_error_detail(value: Any) -> Any:

@@ -49,6 +49,7 @@ from band.integrations.codex import (
 )
 from band.integrations.codex.types import (
     CODEX_APPROVAL_METHODS,
+    CODEX_PROVIDER,
     ApprovalAuditEntry,
     CodexApprovalMethod,
     CodexItemType,
@@ -721,10 +722,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         thread_id,
                         turn_id,
                     )
-                    result = TurnResult(
-                        turn_status="failed",
-                        turn_error="Internal error during turn processing",
+                    await tools.send_failure(
+                        AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
+                    raise TurnResultAlreadyReported(
+                        "Internal error during turn processing"
+                    ) from None
 
                 _turn_duration_s = _time.perf_counter() - _turn_start
                 await self._emit_turn_outcome(
@@ -747,11 +750,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 # A structured RPC error from the app-server (e.g. "model not
                 # available") is safe, curated text -- unlike an arbitrary
                 # caught exception, it's worth showing verbatim.
-                await tools.send_failure(AgentFailure("codex", str(e)))
+                await tools.send_failure(AgentFailure(CODEX_PROVIDER, str(e)))
                 raise
             except Exception:
                 await tools.send_failure(
-                    AgentFailure("codex", GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
 
@@ -998,9 +1001,15 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         self._token_usage.pop(stale_thread, None)
                     for stale_room in stale_rooms:
                         self._clear_pending_approvals_for_room(stale_room)
-                    await tools.send_failure(
-                        AgentFailure("codex", result.turn_error, "transport_closed")
-                    )
+                    # Skipped when an earlier "error" notification in this same
+                    # turn already reported one, so one incident isn't posted
+                    # twice -- but the turn still fails either way.
+                    if not failure_reported:
+                        await tools.send_failure(
+                            AgentFailure(
+                                CODEX_PROVIDER, result.turn_error, "transport_closed"
+                            )
+                        )
                     raise TurnResultAlreadyReported(result.turn_error)
 
                 if event.method == "turn/completed":
@@ -1048,7 +1057,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
             await tools.send_failure(
                 AgentFailure(
-                    "codex",
+                    CODEX_PROVIDER,
                     f"Codex turn timed out after {self.config.turn_timeout_s}s",
                     FAILURE_CODE_TIMEOUT,
                 )
