@@ -148,7 +148,10 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
     assert workflow["on"]["schedule"] == [{"cron": "33 4 * * 1"}]
 
     report = workflow["jobs"]["report-weekly"]
-    assert report["if"] == "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+    assert (
+        report["if"]
+        == "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+    )
     assert report["permissions"] == {"contents": "write"}
     report_steps = report["steps"]
     mention_step = next(
@@ -163,7 +166,10 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
     )
     assert mention_step["id"] == "mentions"
     assert mention_step["if"] == "github.event_name == 'schedule'"
-    assert digest_step["env"]["RECIPIENTS"] == "${{ github.event_name == 'schedule' && steps.mentions.outputs.mentions || format('@{0}', github.triggering_actor) }}"
+    assert (
+        digest_step["env"]["RECIPIENTS"]
+        == "${{ github.event_name == 'schedule' && steps.mentions.outputs.mentions || format('@{0}', github.triggering_actor) }}"
+    )
 
 
 def test_weekly_digest_identifies_low_and_completely_uncovered_files(
@@ -181,14 +187,30 @@ def test_weekly_digest_identifies_low_and_completely_uncovered_files(
         "\n".join(
             [
                 "SF:/work/crates/core/src/covered.rs",
+                "FNF:2",
+                "FNH:2",
+                "DA:1,1",
+                "DA:2,1",
                 "LF:10",
                 "LH:10",
                 "end_of_record",
                 "SF:/work/crates/core/src/low.rs",
+                "FNF:2",
+                "FNH:1",
+                "DA:10,1",
+                "DA:11,1",
+                "DA:12,0",
+                "DA:13,0",
                 "LF:10",
                 "LH:2",
                 "end_of_record",
                 "SF:/work/crates/core/src/none.rs",
+                "FNF:1",
+                "FNH:0",
+                "DA:20,0",
+                "DA:21,0",
+                "DA:22,0",
+                "DA:23,0",
                 "LF:4",
                 "LH:0",
                 "end_of_record",
@@ -204,7 +226,9 @@ def test_weekly_digest_identifies_low_and_completely_uncovered_files(
         result="success",
     )
 
-    assert "50.00% lines" in digest
-    assert "`crates/core/src/none.rs` | 0.00% | 4/4" in digest
-    assert "`crates/core/src/low.rs` | 20.00% | 8/10" in digest
+    assert "Weekly Core coverage report" in digest
+    assert "| Lines | 12/24 | 12 | 50.00% |" in digest
+    assert "| Functions | 3/5 | 2 | 60.00% |" in digest
+    assert "`crates/core/src/none.rs` | 0/4 (0.00%) | 20-23" in digest
+    assert "`crates/core/src/low.rs` | 2/10 (20.00%) | 12-13" in digest
     assert "covered.rs" not in digest

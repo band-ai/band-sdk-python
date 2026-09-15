@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LOW_COVERAGE_PERCENT = 80.0
+MAX_MISSED_LINE_RANGES = 8
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,9 @@ class FileCoverage:
     path: str
     found: int
     hit: int
+    functions_found: int
+    functions_hit: int
+    missed_lines: tuple[int, ...]
 
     @property
     def percent(self) -> float:
@@ -31,10 +35,32 @@ def display_path(path: str) -> str:
     return path[path.index(marker) + 1 :] if marker in path else Path(path).name
 
 
+def format_line_ranges(numbers: tuple[int, ...]) -> str:
+    ranges: list[str] = []
+    start = previous = None
+    for number in numbers:
+        if start is None:
+            start = previous = number
+        elif number == previous + 1:
+            previous = number
+        else:
+            ranges.append(str(start) if start == previous else f"{start}-{previous}")
+            start = previous = number
+    if start is not None:
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    shown = ", ".join(ranges[:MAX_MISSED_LINE_RANGES])
+    return (
+        shown
+        if len(ranges) <= MAX_MISSED_LINE_RANGES
+        else f"{shown}, … ({len(numbers)} missed)"
+    )
+
+
 def parse_lcov(path: Path) -> list[FileCoverage]:
     records: list[FileCoverage] = []
     source: str | None = None
-    found = hit = 0
+    found = hit = functions_found = functions_hit = 0
+    missed_lines: list[int] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("SF:"):
             source = line[3:]
@@ -42,25 +68,42 @@ def parse_lcov(path: Path) -> list[FileCoverage]:
             found = int(line[3:])
         elif line.startswith("LH:"):
             hit = int(line[3:])
+        elif line.startswith("FNF:"):
+            functions_found = int(line[4:])
+        elif line.startswith("FNH:"):
+            functions_hit = int(line[4:])
+        elif line.startswith("DA:"):
+            line_number, count = line[3:].split(",", maxsplit=1)
+            if count == "0":
+                missed_lines.append(int(line_number))
         elif line == "end_of_record" and source is not None:
-            records.append(FileCoverage(display_path(source), found, hit))
+            records.append(
+                FileCoverage(
+                    display_path(source),
+                    found,
+                    hit,
+                    functions_found,
+                    functions_hit,
+                    tuple(missed_lines),
+                )
+            )
             source = None
-            found = hit = 0
+            found = hit = functions_found = functions_hit = 0
+            missed_lines = []
     return records
 
 
 def render_digest(
     *, lcov_path: Path, label: str, recipients: str, run_url: str, result: str
 ) -> str:
-    status = "PASS" if result == "success" else result.upper()
-    header = f"## Weekly Core coverage: {status}"
+    header = "## Weekly Core coverage report"
     if not lcov_path.is_file():
         return "\n".join(
             [
                 header,
                 recipients,
                 "",
-                "No LCOV report was produced. See the failed run for details.",
+                f"The coverage run {result}. No LCOV report was produced; see the run for details.",
                 "",
                 f"[Open run]({run_url})",
             ]
@@ -69,7 +112,8 @@ def render_digest(
     files = parse_lcov(lcov_path)
     found = sum(item.found for item in files)
     hit = sum(item.hit for item in files)
-    percent = 100 * hit / found if found else 0.0
+    functions_found = sum(item.functions_found for item in files)
+    functions_hit = sum(item.functions_hit for item in files)
     gaps = sorted(
         (item for item in files if item.percent < LOW_COVERAGE_PERCENT),
         key=lambda item: (item.percent, -item.found, item.path),
@@ -78,20 +122,25 @@ def render_digest(
         header,
         recipients,
         "",
-        f"**{label}: {percent:.2f}% lines** ({hit}/{found}). Low coverage is below {LOW_COVERAGE_PERCENT:.0f}%.",
+        f"**{label}**",
+        "",
+        "| Measure | Covered | Missed | Coverage |",
+        "| --- | ---: | ---: | ---: |",
+        f"| Lines | {hit}/{found} | {found - hit} | {100 * hit / found if found else 0.0:.2f}% |",
+        f"| Functions | {functions_hit}/{functions_found} | {functions_found - functions_hit} | {100 * functions_hit / functions_found if functions_found else 0.0:.2f}% |",
         "",
     ]
     if gaps:
         lines.extend(
             [
-                "### Low or uncovered files",
+                f"### Source files below {LOW_COVERAGE_PERCENT:.0f}% line coverage",
                 "",
-                "| File | Lines | Missed |",
-                "| --- | ---: | ---: |",
+                "| File | Lines | Missed line ranges |",
+                "| --- | ---: | --- |",
             ]
         )
         lines.extend(
-            f"| `{item.path}` | {item.percent:.2f}% | {item.missed}/{item.found} |"
+            f"| `{item.path}` | {item.hit}/{item.found} ({item.percent:.2f}%) | {format_line_ranges(item.missed_lines)} |"
             for item in gaps
         )
     else:
