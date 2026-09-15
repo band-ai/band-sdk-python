@@ -1763,16 +1763,13 @@ class ExecutionContext:
                         kind = self._take_interrupt_kind()
                         if kind is not None:
                             return await self._abort_cycle(kind, msg_id)
-                        logger.warning(
-                            "ExecutionContext %s: cycle for message %s %s",
-                            self.room_id,
-                            msg_id,
-                            message,
-                        )
                         # Replace whatever bare TimeoutError arrived
                         # (asyncio.timeout's own conversion carries no
                         # message) with one mark_failed can show the user,
-                        # instead of a bare "TimeoutError" label.
+                        # instead of a bare "TimeoutError" label. The
+                        # caller's own except-Exception catch-all already
+                        # logs this (with traceback) -- logging it again
+                        # here would double-report every genuine trip.
                         raise TimeoutError(message) from exc
             else:
                 await self._active_cycle_task
