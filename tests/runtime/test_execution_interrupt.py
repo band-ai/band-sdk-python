@@ -44,6 +44,29 @@ def mock_link():
     return link
 
 
+async def _assert_fresh_cycle_still_propagates_shutdown_cancel(
+    ctx: ExecutionContext, msg_id: str
+) -> None:
+    """A cycle genuinely cancelled by shutdown (no new interrupt()) must
+    propagate CancelledError, not get misclassified as an interrupt/stop via
+    a leaked ``_interrupt_kind`` from whatever ran on ``ctx`` before it."""
+    started = asyncio.Event()
+
+    async def block(ctx, event):
+        started.set()
+        await asyncio.Event().wait()
+
+    ctx._on_execute = block
+    shutdown = asyncio.create_task(
+        ctx._run_cycle(make_message_event(msg_id=msg_id), msg_id)
+    )
+    await started.wait()
+    shutdown.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await shutdown
+
+
 def _backlog_message(msg_id: str = "msg-bk") -> PlatformMessage:
     return PlatformMessage(
         id=msg_id,
@@ -169,21 +192,7 @@ class TestShutdownVsInterrupt:
         assert await first is True
         assert ctx._interrupt_kind is None
 
-        second_started = asyncio.Event()
-
-        async def block(ctx, event):
-            second_started.set()
-            await asyncio.Event().wait()
-
-        ctx._on_execute = block
-        shutdown = asyncio.create_task(
-            ctx._run_cycle(make_message_event(msg_id="shutdown"), "shutdown")
-        )
-        await second_started.wait()
-        shutdown.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await shutdown
+        await _assert_fresh_cycle_still_propagates_shutdown_cancel(ctx, "shutdown")
 
     async def test_shutdown_cancels_cycle_without_marking(self, mock_link):
         """stop() (shutdown) cancels an in-flight cycle, does NOT mark it
@@ -627,6 +636,11 @@ class TestPendingAckCancellationGap:
 # Short enough to fire immediately against a handler that blocks; not tied to
 # any real-world budget, just "small" for these deterministic tests.
 _WATCHDOG_TEST_DEADLINE = 0.05
+# Long enough that a handler blocking on it never finishes naturally within a test.
+_NEVER_RETURNS_SECONDS = 60
+# Large enough that the watchdog never fires; only used where the deadline
+# itself must not be the thing under test.
+_AMPLE_CYCLE_BUDGET_SECONDS = 5.0
 
 
 class TestCycleWatchdog:
@@ -636,7 +650,7 @@ class TestCycleWatchdog:
     async def test_cycle_exceeding_max_cycle_seconds_is_cancelled_and_marked_failed(
         self, mock_link
     ):
-        handler = BlockingHandler(block_seconds=60)
+        handler = BlockingHandler(block_seconds=_NEVER_RETURNS_SECONDS)
         ctx = ExecutionContext(
             "room-123",
             mock_link,
@@ -692,7 +706,7 @@ class TestCycleWatchdog:
             mock_link,
             raises_own_timeout,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=5.0),
+            config=SessionConfig(max_cycle_seconds=_AMPLE_CYCLE_BUDGET_SECONDS),
         )
 
         result = await ctx._process_event(make_message_event(msg_id="own-timeout"))
@@ -742,7 +756,7 @@ class TestCycleWatchdog:
         user's own interrupt as a timeout failure -- and must not leave a
         stale ``_interrupt_kind`` for a later, unrelated cycle's genuine
         shutdown cancellation to misread either way."""
-        handler = BlockingHandler(block_seconds=60)
+        handler = BlockingHandler(block_seconds=_NEVER_RETURNS_SECONDS)
         ctx = ExecutionContext(
             "room-123",
             mock_link,
@@ -764,24 +778,7 @@ class TestCycleWatchdog:
         mock_link.mark_processed.assert_awaited_once_with("room-123", "race-1")
         mock_link.mark_failed.assert_not_awaited()
 
-        # A second, fresh cycle genuinely cancelled by shutdown (no new
-        # interrupt()) must propagate CancelledError, not get misclassified as
-        # an interrupt/stop via the leaked kind.
-        second_started = asyncio.Event()
-
-        async def block(ctx, event):
-            second_started.set()
-            await asyncio.Event().wait()
-
-        ctx._on_execute = block
-        shutdown = asyncio.create_task(
-            ctx._run_cycle(make_message_event(msg_id="race-2"), "race-2")
-        )
-        await second_started.wait()
-        shutdown.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            await shutdown
+        await _assert_fresh_cycle_still_propagates_shutdown_cancel(ctx, "race-2")
 
     async def test_child_completing_at_the_deadline_boundary_is_not_misreported(
         self, mock_link, caplog
@@ -800,7 +797,7 @@ class TestCycleWatchdog:
             mock_link,
             handler,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=5.0),
+            config=SessionConfig(max_cycle_seconds=_AMPLE_CYCLE_BUDGET_SECONDS),
         )
 
         class _FakeExpiredDeadline:
