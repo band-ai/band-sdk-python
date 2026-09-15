@@ -77,7 +77,6 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "pydantic_ai"
 
 

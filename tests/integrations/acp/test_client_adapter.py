@@ -1439,48 +1439,76 @@ class TestACPClientAdapterDeadConnectionRecovery:
         assert not reported_failures(tools)
 
     @pytest.mark.asyncio
-    async def test_turn_timeout_reports_failure_and_clears_connection(self) -> None:
-        """A silent/stuck agent must become an observable failure instead of
-        hanging the turn indefinitely, and the presumed-wedged connection is
-        torn down so the next turn respawns it."""
+    async def test_turn_timeout_preserves_other_room_connection(self) -> None:
+        """A timed-out room must not interrupt another room's prompt."""
         adapter = ACPClientAdapter(
-            command="codex", inject_band_tools=False, turn_timeout_s=0.01
+            command="codex", inject_band_tools=False, turn_timeout_s=1
         )
         adapter._runtime._conn = AsyncMock()
-        mock_session = MagicMock()
-        mock_session.session_id = "sess-1"
-        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        session_b = MagicMock(session_id="sess-b")
+        session_a = MagicMock(session_id="sess-a")
+        adapter._runtime._conn.new_session = AsyncMock(
+            side_effect=[session_b, session_a]
+        )
         adapter._runtime._client = BandACPClient()
 
         mock_ctx = MagicMock()
         mock_ctx.__aexit__ = AsyncMock(return_value=None)
         adapter._runtime._ctx = mock_ctx
 
-        async def hang(**kwargs: object) -> None:
-            await asyncio.sleep(10)
+        b_started = asyncio.Event()
+        release_b = asyncio.Event()
 
-        adapter._runtime._conn.prompt = AsyncMock(side_effect=hang)
+        async def prompt(*, session_id: str, **kwargs: object) -> None:
+            if session_id == "sess-b":
+                b_started.set()
+                await release_b.wait()
+            else:
+                await asyncio.sleep(10)
 
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello", room_id="room-1")
+        adapter._runtime._conn.prompt = AsyncMock(side_effect=prompt)
 
-        with pytest.raises(TimeoutError):
-            await adapter.on_message(
-                msg,
-                tools,
+        tools_b = FakeAgentTools()
+        b_turn = asyncio.create_task(
+            adapter.on_message(
+                make_platform_message("Hello", room_id="room-b"),
+                tools_b,
                 ACPClientSessionState(),
                 None,
                 None,
                 is_session_bootstrap=False,
-                room_id="room-1",
+                room_id="room-b",
+            )
+        )
+        await b_started.wait()
+        adapter._turn_timeout_s = 0.01
+
+        tools_a = FakeAgentTools()
+
+        with pytest.raises(TimeoutError):
+            await adapter.on_message(
+                make_platform_message("Hello", room_id="room-a"),
+                tools_a,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-a",
             )
 
-        assert adapter._runtime._conn is None
-        assert adapter._runtime._ctx is None
-        failures = reported_failures(tools)
+        assert not b_turn.done()
+        assert adapter._runtime._conn is not None
+        assert adapter._runtime._ctx is not None
+        assert "room-a" not in adapter._room_to_session
+        assert adapter._room_to_session["room-b"] == "sess-b"
+        adapter._runtime._conn.cancel.assert_awaited_once_with("sess-a")
+        failures = reported_failures(tools_a)
         assert len(failures) == 1
         assert failures[0]["provider"] == "acp"
         assert failures[0]["code"] == "timeout"
+
+        release_b.set()
+        await b_turn
 
 
 class TestACPClientAdapterInjectToolsConfig:

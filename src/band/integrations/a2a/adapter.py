@@ -32,6 +32,7 @@ from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
     TurnResultAlreadyReported,
+    send_event_safe,
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
@@ -47,7 +48,6 @@ from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
 logger = logging.getLogger(__name__)
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "a2a"
 
 # httpx's read timeout resets on every chunk received, so this bounds the gap
@@ -282,7 +282,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         if state == TaskState.TASK_STATE_WORKING:
             status_text = self._get_status_text(task)
             if status_text:
-                await tools.send_event(content=status_text, message_type="thought")
+                await send_event_safe(tools, status_text, "thought")
             return
 
         if state == TaskState.TASK_STATE_INPUT_REQUIRED:

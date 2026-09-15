@@ -67,7 +67,6 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "acp"
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
@@ -398,7 +397,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 room_id,
                 session_id,
             )
-            await self.stop()
+            try:
+                await self._runtime.cancel_turn(session_id)
+            except ConnectionError:
+                await self.stop()
+            except Exception:
+                logger.exception("ACP turn cancellation failed (room=%s)", room_id)
+                await self.on_cleanup(room_id)
+            else:
+                await self.on_cleanup(room_id)
             await tools.send_failure(
                 AgentFailure(
                     _PROVIDER,
@@ -409,7 +416,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             raise
         except Exception as e:
             logger.exception("ACP agent error: %s", e)
-            await self.stop()
+            if isinstance(e, RequestError):
+                await self.on_cleanup(room_id)
+            else:
+                await self.stop()
             await tools.send_failure(_to_agent_failure(e))
             raise
 

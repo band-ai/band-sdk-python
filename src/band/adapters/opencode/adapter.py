@@ -68,7 +68,6 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "opencode"
 
 _OPENCODE_SYSTEM_NOTE = """\

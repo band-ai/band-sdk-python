@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "parlant"
 
 

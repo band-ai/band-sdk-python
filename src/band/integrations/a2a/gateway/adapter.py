@@ -41,7 +41,6 @@ from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "a2a-gateway"
 
 

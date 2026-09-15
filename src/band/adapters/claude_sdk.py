@@ -133,7 +133,6 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 # same constant instead of a second, driftable number.
 _CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 
-# AgentFailure.provider tag for every failure this adapter reports.
 _PROVIDER = "claude_sdk"
 
 # Approval flow types (mirrors Codex adapter patterns)

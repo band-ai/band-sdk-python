@@ -486,6 +486,37 @@ class TestA2AAdapterMessageFlow:
         assert tools.events_sent[-1]["content"] == "Checking sources"
 
     @pytest.mark.asyncio
+    async def test_working_status_delivery_failure_is_not_a_provider_failure(
+        self, adapter: A2AAdapter
+    ) -> None:
+        """A failed progress post must not blame a healthy A2A peer."""
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(
+                task_event(
+                    make_task(
+                        TaskState.TASK_STATE_WORKING,
+                        status_message="Checking sources",
+                    )
+                )
+            )
+        )
+        tools = FakeAgentTools()
+        tools.send_event_error = RuntimeError("Band unavailable")
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_second_turn_carries_the_stored_context(
         self, adapter: A2AAdapter
     ) -> None:
