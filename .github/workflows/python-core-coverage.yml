@@ -150,7 +150,7 @@ jobs:
   report-weekly:
     name: report weekly coverage
     needs: coverage
-    if: "!cancelled() && github.event_name == 'schedule'"
+    if: "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -176,9 +176,10 @@ jobs:
 
       - name: Read integrations mentions list
         id: mentions
+        if: github.event_name == 'schedule'
         run: .github/scripts/read-integrations-mentions.sh
 
       - name: Post the weekly coverage digest
         env:
-          RECIPIENTS: ${{ steps.mentions.outputs.mentions }}
+          RECIPIENTS: ${{ github.event_name == 'schedule' && steps.mentions.outputs.mentions || format('@{0}', github.triggering_actor) }}
         run: python .github/scripts/post-core-coverage-digest.py

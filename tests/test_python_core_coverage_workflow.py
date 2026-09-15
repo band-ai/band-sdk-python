@@ -148,7 +148,7 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
     assert workflow["on"]["schedule"] == [{"cron": "33 4 * * 1"}]
 
     report = workflow["jobs"]["report-weekly"]
-    assert report["if"] == "!cancelled() && github.event_name == 'schedule'"
+    assert report["if"] == "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
     assert report["permissions"] == {"contents": "write"}
     report_steps = report["steps"]
     mention_step = next(
@@ -162,7 +162,8 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
         if step["name"] == "Post the weekly coverage digest"
     )
     assert mention_step["id"] == "mentions"
-    assert digest_step["env"]["RECIPIENTS"] == "${{ steps.mentions.outputs.mentions }}"
+    assert mention_step["if"] == "github.event_name == 'schedule'"
+    assert digest_step["env"]["RECIPIENTS"] == "${{ github.event_name == 'schedule' && steps.mentions.outputs.mentions || format('@{0}', github.triggering_actor) }}"
 
 
 def test_weekly_digest_identifies_low_and_completely_uncovered_files(
