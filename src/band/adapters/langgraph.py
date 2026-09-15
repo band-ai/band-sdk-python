@@ -8,11 +8,12 @@ import logging
 from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
+from band_sdk_core import AgentFailure
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 from typing_extensions import Unpack
 
-from band.core.protocols import AgentToolsProtocol
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     Capability,
@@ -284,62 +285,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         """Handle message with LangGraph."""
         logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
 
-        # Get LangChain tools
-        lc_tools = (
-            langchain_tools.agent_tools_to_langchain(
-                tools,
-                features=self.features,
-            )
-            + self.additional_tools
-        )
-
-        # Build or get graph
-        if self.graph_factory:
-            graph = self.graph_factory(lc_tools)
-        else:
-            graph = self._static_graph
-
-        if not graph:
-            raise RuntimeError("No graph available")
-
-        checkpointer = getattr(graph, "checkpointer", None) or self._simple_checkpointer
-        if checkpointer is not None:
-            self._room_checkpointers[room_id] = checkpointer
-
-        # Build messages
-        messages: list[Any] = []
-
-        # Session bootstrap: prepend the rendered system prompt and hydrate
-        # platform history exactly once per room. After that, the LangGraph
-        # checkpointer carries the system message and prior turns forward and
-        # we just append the new user turn.
-        should_mark_bootstrapped = False
-        if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
-            checkpointer_already_has_messages = (
-                checkpointer is not None
-                and await self._checkpointer_has_messages(checkpointer, room_id)
-            )
-            if not checkpointer_already_has_messages:
-                if self._inject_system_prompt and self._system_prompt:
-                    messages.append(("system", self._system_prompt))
-                if history:
-                    messages.extend(history)  # Already converted by history_converter
-            should_mark_bootstrapped = True
-
-        # Inject metadata updates as user messages with [System]: prefix.
-        # Many LLM providers (including Anthropic) require a single system
-        # message at the start; additional system messages scattered through
-        # the conversation cause errors and kill provider cache savings.
-        if participants_msg:
-            messages.append(("user", f"[System]: {participants_msg}"))
-
-        if contacts_msg:
-            messages.append(("user", f"[System]: {contacts_msg}"))
-
-        messages.append(("user", msg.format_for_llm()))
-
-        graph_input = {"messages": messages}
-
         # Usage is reported per model call on the stream; a turn may make several
         # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
         # emitted on every exit via the finally. Gated outside the loop: the
@@ -348,6 +293,66 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
         try:
+            # Get LangChain tools
+            lc_tools = (
+                langchain_tools.agent_tools_to_langchain(
+                    tools,
+                    features=self.features,
+                )
+                + self.additional_tools
+            )
+
+            # Build or get graph
+            if self.graph_factory:
+                graph = self.graph_factory(lc_tools)
+            else:
+                graph = self._static_graph
+
+            if not graph:
+                raise RuntimeError("No graph available")
+
+            checkpointer = (
+                getattr(graph, "checkpointer", None) or self._simple_checkpointer
+            )
+            if checkpointer is not None:
+                self._room_checkpointers[room_id] = checkpointer
+
+            # Build messages
+            messages: list[Any] = []
+
+            # Session bootstrap: prepend the rendered system prompt and hydrate
+            # platform history exactly once per room. After that, the LangGraph
+            # checkpointer carries the system message and prior turns forward and
+            # we just append the new user turn.
+            should_mark_bootstrapped = False
+            if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
+                checkpointer_already_has_messages = (
+                    checkpointer is not None
+                    and await self._checkpointer_has_messages(checkpointer, room_id)
+                )
+                if not checkpointer_already_has_messages:
+                    if self._inject_system_prompt and self._system_prompt:
+                        messages.append(("system", self._system_prompt))
+                    if history:
+                        messages.extend(
+                            history
+                        )  # Already converted by history_converter
+                should_mark_bootstrapped = True
+
+            # Inject metadata updates as user messages with [System]: prefix.
+            # Many LLM providers (including Anthropic) require a single system
+            # message at the start; additional system messages scattered through
+            # the conversation cause errors and kill provider cache savings.
+            if participants_msg:
+                messages.append(("user", f"[System]: {participants_msg}"))
+
+            if contacts_msg:
+                messages.append(("user", f"[System]: {contacts_msg}"))
+
+            messages.append(("user", msg.format_for_llm()))
+
+            graph_input = {"messages": messages}
+
             async for event in graph.astream_events(
                 graph_input,
                 config={
@@ -376,17 +381,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         except Exception:
             logger.exception("Error processing message %s", msg.id)
-            try:
-                # Keep the user-facing payload generic; the full traceback is
-                # in the agent log via logger.exception above. Tool/error
-                # internals can include DB strings, paths, and tokens that
-                # should not surface in chat.
-                await tools.send_event(
-                    content="Internal error while processing message; see agent logs.",
-                    message_type="error",
-                )
-            except Exception:
-                logger.exception("Failed to report error event for message %s", msg.id)
+            # Keep the user-facing payload generic; the full traceback is in
+            # the agent log via logger.exception above. Tool/error internals
+            # can include DB strings, paths, and tokens that should not
+            # surface in chat -- code/detail stay unset, never populated from
+            # the caught exception.
+            await tools.send_failure(
+                AgentFailure("langgraph", GENERIC_PROVIDER_FAILURE_MESSAGE)
+            )
             raise
         finally:
             # No-op unless Emit.USAGE is on; best-effort, never raises.

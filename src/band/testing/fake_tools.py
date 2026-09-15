@@ -8,6 +8,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+import band_sdk_core
+
 from band.client.rest import (
     AgentContact,
     AgentMemory,
@@ -34,8 +36,9 @@ from band.client.rest import (
 )
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
+from band.core.protocols import to_failure_event
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
-from band.core.types import Capability
+from band.core.types import Capability, MessageType
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -101,6 +104,9 @@ class FakeAgentTools:
         self._hub_room_id = hub_room_id
         self.messages_sent: list[dict[str, Any]] = []
         self.events_sent: list[dict[str, Any]] = []
+        # Set to simulate a send_event REST rejection (e.g. proving
+        # send_failure swallows it while send_event itself still raises).
+        self.send_event_error: Exception | None = None
         self._participants: list[dict[str, Any]] = participants or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
         # Seeds are validated and canonicalized at seed time (not list time),
@@ -198,6 +204,8 @@ class FakeAgentTools:
         Same fidelity rationale as ``send_message``: the real send returns
         ``None`` without a request rather than letting the platform 422.
         """
+        if self.send_event_error is not None:
+            raise self.send_event_error
         if not has_visible_content(content):
             return None
         event = {
@@ -208,6 +216,16 @@ class FakeAgentTools:
         }
         self.events_sent.append(event)
         return event
+
+    async def send_failure(
+        self, failure: band_sdk_core.AgentFailure
+    ) -> dict[str, Any] | None:
+        """Same best-effort delegation as ``AgentTools.send_failure``."""
+        content, metadata = to_failure_event(failure)
+        try:
+            return await self.send_event(content, MessageType.ERROR, metadata)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     async def add_participant(
         self, identifier: str, role: str = "member"
@@ -711,3 +729,22 @@ class FakeAgentTools:
         assert not self.messages_sent, (
             f"Expected no messages, but {len(self.messages_sent)} were sent"
         )
+
+
+def events_of_type(tools: FakeAgentTools, message_type: str) -> list[dict[str, Any]]:
+    """Events of ``message_type`` captured on ``tools.events_sent``."""
+    return [e for e in tools.events_sent if e["message_type"] == message_type]
+
+
+def reported_failures(tools: FakeAgentTools) -> list[dict[str, Any]]:
+    """Every ``AgentFailure`` reported via ``send_failure``, as its wire dict.
+
+    Ignores an "error" event with no ``failure`` metadata -- a pre-existing,
+    not-yet-migrated ``send_event(..., "error")`` call site posts one without
+    the ``send_failure`` shape, and that isn't what this helper reports on.
+    """
+    return [
+        e["metadata"]["failure"]
+        for e in events_of_type(tools, MessageType.ERROR)
+        if "failure" in e["metadata"]
+    ]

@@ -214,6 +214,23 @@ class AcpSession:
     def __init__(self, adapter: ACPClientAdapter, agent: FakeACPAgent) -> None:
         self.adapter = adapter
         self.agent = agent
+        self._last_tools: TranscriptTools | None = None
+
+    @property
+    def last_reply(self) -> Reply:
+        """What the most recent ``send`` posted, even if it raised.
+
+        A genuine provider failure now fails the turn (raises out of
+        ``on_message``) instead of returning normally, so a test covering
+        that path can't get the posted error event from ``send``'s return
+        value — it reads this instead.
+        """
+        assert self._last_tools is not None, "send() has not been called yet"
+        return Reply(
+            messages=self._last_tools.messages_sent,
+            events=self._last_tools.events_sent,
+            transcript=self._last_tools.transcript,
+        )
 
     async def send(
         self,
@@ -238,6 +255,7 @@ class AcpSession:
         tools = TranscriptTools()
         if room_context is not None:
             tools.set_room_context(room_context)
+        self._last_tools = tools
         await self.adapter.on_message(
             _message(content, room),
             tools,

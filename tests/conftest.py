@@ -15,8 +15,13 @@ return SDK-native types for pattern matching compatibility.
 
 from __future__ import annotations
 
-import asyncio
 import os
+
+# Must be set before crewai is first imported: its event bus installs a
+# global OpenTelemetry provider and a live exporter thread at import time.
+os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
+
+import asyncio
 from datetime import datetime, timezone
 from functools import cache
 from itertools import count

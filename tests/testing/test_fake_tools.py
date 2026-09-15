@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from band_sdk_core import AgentFailure
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, reported_failures
 from tests.content import BLANK_CONTENT_CASES
 
 
@@ -234,6 +235,85 @@ class TestSendEvent:
 
         assert result is None
         assert tools.events_sent == []
+
+
+class TestSendFailure:
+    """Tests for send_failure's best-effort delegation to send_event."""
+
+    async def test_posts_an_error_event_carrying_the_failure(self):
+        tools = FakeAgentTools()
+
+        result = await tools.send_failure(AgentFailure("codex", "boom", "timeout"))
+
+        assert len(tools.events_sent) == 1
+        assert tools.events_sent[0]["message_type"] == "error"
+        assert tools.events_sent[0]["metadata"]["failure"] == {
+            "provider": "codex",
+            "code": "timeout",
+            "message": "boom",
+            "detail": None,
+        }
+        assert result["message_type"] == "error"
+
+    async def test_blank_message_falls_back_to_a_generic_one(self):
+        tools = FakeAgentTools()
+
+        await tools.send_failure(AgentFailure("acp", ""))
+
+        assert tools.events_sent[0]["content"] == "acp failed without an error message."
+
+    async def test_swallows_a_send_event_failure_instead_of_raising(self):
+        """send_failure must resolve even when the underlying report fails --
+        raising here would replace the provider failure being reported with
+        an unrelated one."""
+        tools = FakeAgentTools()
+        tools.send_event_error = RuntimeError("platform rejected the event")
+
+        result = await tools.send_failure(AgentFailure("codex", "boom"))
+
+        assert result == {"ok": False, "error": "platform rejected the event"}
+        assert tools.events_sent == []
+
+    async def test_send_event_itself_still_raises_on_the_same_failure(self):
+        """The other half of the best-effort contract: send_event's raising
+        callers (e.g. OpenCode's session-persistence retry) must be
+        unaffected by send_failure's swallowing."""
+        tools = FakeAgentTools()
+        tools.send_event_error = RuntimeError("platform rejected the event")
+
+        with pytest.raises(RuntimeError, match="platform rejected the event"):
+            await tools.send_event("task update", "task")
+
+
+class TestReportedFailures:
+    """reported_failures() is the shared projection every migrated adapter's
+    test suite uses to assert on a reported AgentFailure -- a regression here
+    would silently weaken failure assertions across the whole test suite."""
+
+    async def test_returns_each_reported_failure_in_order(self):
+        tools = FakeAgentTools()
+
+        await tools.send_failure(AgentFailure("codex", "first"))
+        await tools.send_failure(AgentFailure("letta", "second"))
+
+        failures = reported_failures(tools)
+
+        assert [f["message"] for f in failures] == ["first", "second"]
+        assert [f["provider"] for f in failures] == ["codex", "letta"]
+
+    async def test_ignores_a_plain_error_event_with_no_failure_metadata(self):
+        """A pre-migration send_event(..., "error") call carries no
+        ``failure`` metadata -- it must not be mistaken for a reported
+        AgentFailure."""
+        tools = FakeAgentTools()
+
+        await tools.send_event("legacy error text", "error")
+        await tools.send_failure(AgentFailure("codex", "structured failure"))
+
+        failures = reported_failures(tools)
+
+        assert len(failures) == 1
+        assert failures[0]["message"] == "structured failure"
 
 
 class TestParticipantOperations:

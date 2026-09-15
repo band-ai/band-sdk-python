@@ -14,11 +14,14 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from anthropic import APIStatusError
 from anthropic.types import TextBlock, ToolUseBlock
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import (
     USAGE_EVENT_TYPE,
     USAGE_METADATA_KEY,
@@ -67,6 +70,7 @@ def mock_tools():
     tools.get_tool_schemas = MagicMock(return_value=[])
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
     return tools
 
@@ -698,6 +702,13 @@ class TestToolExecution:
         assert "Tool failed!" in results[0]["content"]
 
 
+def make_api_status_error(status_code: int, body: dict) -> APIStatusError:
+    """A real anthropic.APIStatusError, built the way the SDK itself would."""
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(status_code, request=request, json=body)
+    return APIStatusError(body["error"]["message"], response=response, body=body)
+
+
 class TestErrorHandling:
     """Tests for error handling."""
 
@@ -722,7 +733,41 @@ class TestErrorHandling:
                 )
 
             # Should have tried to report error
-            mock_tools.send_event.assert_called()
+            mock_tools.send_failure.assert_called_once()
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "anthropic"
+            assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+            assert failure.code is None
+            assert failure.detail is None
+
+    @pytest.mark.asyncio
+    async def test_preserves_api_status_error_as_code_and_detail(
+        self, sample_message, mock_tools
+    ):
+        """An APIStatusError's status_code/body are real provider data --
+        preserve them rather than falling back to the generic shape."""
+        adapter = AnthropicAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        body = {"error": {"type": "overloaded_error", "message": "Overloaded"}}
+
+        with patch.object(adapter, "_call_anthropic") as mock_call:
+            mock_call.side_effect = make_api_status_error(529, body)
+
+            with pytest.raises(APIStatusError):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "anthropic"
+            assert failure.code == "529"
+            assert failure.detail == body
 
 
 class EchoInput(BaseModel):

@@ -11,12 +11,19 @@ from typing import Any, ClassVar
 from uuid import uuid4
 
 from acp import spawn_agent_process
+from acp.exceptions import RequestError
 from acp.schema import HttpMcpServer, SseMcpServer
+from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.protocols import AgentToolsProtocol
+from band.core.delivery import DeliveryFailedError, reraise_delivery_cause
+from band.core.protocols import (
+    FAILURE_CODE_TIMEOUT,
+    GENERIC_PROVIDER_FAILURE_MESSAGE,
+    AgentToolsProtocol,
+)
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
@@ -59,6 +66,8 @@ from band.runtime.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER = "acp"
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 
@@ -125,6 +134,18 @@ def _resolve_launcher(command: list[str]) -> list[str]:
     return [resolved, *command[1:]] if resolved else list(command)
 
 
+def _to_agent_failure(exc: Exception) -> AgentFailure:
+    """Parse a turn-ending exception into the shared provider-failure shape.
+
+    ``RequestError`` is raised for a JSON-RPC error the remote agent
+    returned; its numeric ``code``/``data`` carry more than the generic
+    message alone.
+    """
+    if isinstance(exc, RequestError):
+        return AgentFailure(_PROVIDER, str(exc), str(exc.code), exc.data)
+    return AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+
+
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     """Adapter that forwards Band messages to a remote ACP agent.
 
@@ -157,6 +178,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         port: int | None = None,
         custom_section: str = "",
         spawn_process: SpawnProcess | None = None,
+        turn_timeout_s: float = 300.0,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
@@ -174,6 +196,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._auth_method = auth_method
         self._profile = profile
         self._custom_section = custom_section
+        self._turn_timeout_s = turn_timeout_s
         self._runtime = self._build_runtime(spawn_process)
 
         self._room_to_session: dict[str, str] = {}
@@ -352,19 +375,53 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     session_id,
                     self._make_permission_handler(emitter, room_id),
                 )
-                await self._runtime.prompt(
-                    session_id=session_id,
-                    prompt_text=prompt_text,
-                    on_chunk=emitter.emit,
+                await asyncio.wait_for(
+                    self._runtime.prompt(
+                        session_id=session_id,
+                        prompt_text=prompt_text,
+                        on_chunk=emitter.emit,
+                    ),
+                    timeout=self._turn_timeout_s,
                 )
+        except DeliveryFailedError as e:
+            # The turn's reply is what failed to post -- Band-side delivery,
+            # never an ACP provider failure, so the connection stays up.
+            reraise_delivery_cause(e)
+        except asyncio.TimeoutError:
+            # A silent/stuck agent must become an observable failure instead
+            # of hanging the turn indefinitely -- the connection is presumed
+            # wedged, so it's torn down for the next turn to respawn.
+            logger.error(
+                "ACP turn timed out after %ss (room=%s, session=%s)",
+                self._turn_timeout_s,
+                room_id,
+                session_id,
+            )
+            try:
+                await self._runtime.cancel_turn(session_id)
+            except ConnectionError:
+                await self.stop()
+            except Exception:
+                logger.exception("ACP turn cancellation failed (room=%s)", room_id)
+                await self.on_cleanup(room_id)
+            else:
+                await self.on_cleanup(room_id)
+            await tools.send_failure(
+                AgentFailure(
+                    _PROVIDER,
+                    f"ACP agent response timed out after {self._turn_timeout_s}s",
+                    FAILURE_CODE_TIMEOUT,
+                )
+            )
+            raise
         except Exception as e:
             logger.exception("ACP agent error: %s", e)
-            await self.stop()
-            await tools.send_event(
-                content=f"ACP agent error: {e}",
-                message_type="error",
-                metadata={"acp_error": str(e)},
-            )
+            if isinstance(e, RequestError):
+                await self.on_cleanup(room_id)
+            else:
+                await self.stop()
+            await tools.send_failure(_to_agent_failure(e))
+            raise
 
     def _make_permission_handler(
         self,
