@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any
 
@@ -140,3 +141,69 @@ def test_write_coverage_summary_falls_back_when_missing() -> None:
     run_text = _step(load_workflow(), "Write coverage summary")["run"]
     assert "No coverage summary produced" in run_text
     assert '>> "$GITHUB_STEP_SUMMARY"' in run_text
+
+
+def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> None:
+    workflow = load_workflow()
+    assert workflow["on"]["schedule"] == [{"cron": "33 4 * * 1"}]
+
+    report = workflow["jobs"]["report-weekly"]
+    assert report["if"] == "always() && github.event_name == 'schedule'"
+    assert report["permissions"] == {"contents": "write"}
+    report_steps = report["steps"]
+    mention_step = next(
+        step
+        for step in report_steps
+        if step["name"] == "Read integrations mentions list"
+    )
+    digest_step = next(
+        step
+        for step in report_steps
+        if step["name"] == "Post the weekly coverage digest"
+    )
+    assert mention_step["id"] == "mentions"
+    assert digest_step["env"]["RECIPIENTS"] == "${{ steps.mentions.outputs.mentions }}"
+
+
+def test_weekly_digest_identifies_low_and_completely_uncovered_files(
+    tmp_path: Path,
+) -> None:
+    script_path = REPO_ROOT / ".github/scripts/post-core-coverage-digest.py"
+    spec = spec_from_file_location("post_core_coverage_digest", script_path)
+    assert spec is not None and spec.loader is not None
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    lcov = tmp_path / "coverage.lcov"
+    lcov.write_text(
+        "\n".join(
+            [
+                "SF:/work/crates/core/src/covered.rs",
+                "LF:10",
+                "LH:10",
+                "end_of_record",
+                "SF:/work/crates/core/src/low.rs",
+                "LF:10",
+                "LH:2",
+                "end_of_record",
+                "SF:/work/crates/core/src/none.rs",
+                "LF:4",
+                "LH:0",
+                "end_of_record",
+            ]
+        )
+    )
+
+    digest = module.render_digest(
+        lcov_path=lcov,
+        label="Core",
+        recipients="@bandzalkin",
+        run_url="https://example.test/run",
+        result="success",
+    )
+
+    assert "50.00% lines" in digest
+    assert "`crates/core/src/none.rs` | 0.00% | 4/4" in digest
+    assert "`crates/core/src/low.rs` | 20.00% | 8/10" in digest
+    assert "covered.rs" not in digest
