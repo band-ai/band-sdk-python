@@ -1715,24 +1715,45 @@ class ExecutionContext:
                     # cancellation, so only it flips expired() to True.
                     if cycle_deadline is None or not cycle_deadline.expired():
                         raise
-                    logger.warning(
-                        "ExecutionContext %s: cycle for message %s exceeded "
-                        "max_cycle_seconds=%s; cancelled",
-                        self.room_id,
-                        msg_id,
-                        self.config.max_cycle_seconds,
-                    )
-                    # A concurrent interrupt()/stop() may have raced this same
-                    # deadline on the same task -- clear it here too (mirroring
-                    # the CancelledError branch below) so it can't leak into a
-                    # later, unrelated cycle's genuine shutdown cancellation.
-                    self._interrupt_kind = None
-                    # Replace whatever bare TimeoutError arrived (asyncio.timeout's
-                    # own conversion carries no message) with one mark_failed can
-                    # show the user, instead of a bare "TimeoutError" label.
-                    raise TimeoutError(
-                        f"cycle exceeded max_cycle_seconds={self.config.max_cycle_seconds}"
-                    ) from exc
+                    if self._active_cycle_task.cancelling() == 0:
+                        # asyncio.timeout cancels the *outer* task, not the
+                        # child directly; if the child had already completed
+                        # in the same event-loop tick, that cancel is a no-op
+                        # on it (cancelling() stays 0) but CPython's Task can
+                        # still fabricate a CancelledError for the outer
+                        # task's own resumption, discarding a real result.
+                        # The child itself was never actually cancelled, so
+                        # its outcome is real -- recover it instead of
+                        # reporting a cycle that genuinely finished in time
+                        # as a watchdog failure.
+                        self._active_cycle_task.result()
+                    else:
+                        message = (
+                            f"cycle exceeded max_cycle_seconds="
+                            f"{self.config.max_cycle_seconds}"
+                        )
+                        # A concurrent interrupt()/stop() takes priority over
+                        # the watchdog's own (coincidental) expiry: it also
+                        # cancels this same task, so it can race in here
+                        # instead of the CancelledError branch below. Honor
+                        # its documented contract (mirrors that branch) rather
+                        # than reporting the user's own stop/interrupt as a
+                        # timeout failure.
+                        kind = self._interrupt_kind
+                        self._interrupt_kind = None
+                        if kind is not None:
+                            return await self._abort_cycle(kind, msg_id)
+                        logger.warning(
+                            "ExecutionContext %s: cycle for message %s %s",
+                            self.room_id,
+                            msg_id,
+                            message,
+                        )
+                        # Replace whatever bare TimeoutError arrived
+                        # (asyncio.timeout's own conversion carries no
+                        # message) with one mark_failed can show the user,
+                        # instead of a bare "TimeoutError" label.
+                        raise TimeoutError(message) from exc
             else:
                 await self._active_cycle_task
             # A handler may suppress CancelledError and return normally. In

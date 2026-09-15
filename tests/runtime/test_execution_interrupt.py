@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Coroutine
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -623,6 +623,11 @@ class TestPendingAckCancellationGap:
         assert not ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
 
 
+# Short enough to fire immediately against a handler that blocks; not tied to
+# any real-world budget, just "small" for these deterministic tests.
+_WATCHDOG_TEST_DEADLINE = 0.05
+
+
 class TestCycleWatchdog:
     """``max_cycle_seconds`` cancels a cycle from *inside* ExecutionContext when
     a handler never returns, unlike interrupt/stop which are external signals."""
@@ -636,7 +641,7 @@ class TestCycleWatchdog:
             mock_link,
             handler,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=0.05),
+            config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
         result = await ctx._process_event(make_message_event(msg_id="watchdog-1"))
@@ -715,7 +720,7 @@ class TestCycleWatchdog:
             mock_link,
             swallows_cancellation,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=0.05),
+            config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
         result = await ctx._process_event(make_message_event(msg_id="swallowed"))
@@ -727,19 +732,22 @@ class TestCycleWatchdog:
         assert (room_id, msg_id) == ("room-123", "swallowed")
         assert "max_cycle_seconds" in label
 
-    async def test_watchdog_expiry_does_not_leak_interrupt_kind_into_shutdown(
+    async def test_watchdog_expiry_honors_a_racing_interrupt_and_does_not_leak_it(
         self, mock_link
     ):
         """A concurrent interrupt()/stop() racing the watchdog's own deadline on
-        the same task must not leave a stale ``_interrupt_kind`` for a later,
-        unrelated cycle's genuine shutdown cancellation to misread."""
+        the same task takes priority over the watchdog's own (coincidental)
+        expiry -- honoring its documented contract instead of reporting the
+        user's own interrupt as a timeout failure -- and must not leave a
+        stale ``_interrupt_kind`` for a later, unrelated cycle's genuine
+        shutdown cancellation to misread either way."""
         handler = BlockingHandler(block_seconds=60)
         ctx = ExecutionContext(
             "room-123",
             mock_link,
             handler,
             agent_id="agent-123",
-            config=SessionConfig(max_cycle_seconds=0.05),
+            config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
         )
 
         # Simulate the race deterministically rather than chasing real timing:
@@ -751,6 +759,9 @@ class TestCycleWatchdog:
 
         assert result is True
         assert ctx._interrupt_kind is None  # cleared, not leaked to the next cycle
+        # The interrupt won, not the watchdog: consumed/acked, not failed.
+        mock_link.mark_processed.assert_awaited_once_with("room-123", "race-1")
+        mock_link.mark_failed.assert_not_awaited()
 
         # A second, fresh cycle genuinely cancelled by shutdown (no new
         # interrupt()) must propagate CancelledError, not get misclassified as
@@ -770,3 +781,40 @@ class TestCycleWatchdog:
 
         with pytest.raises(asyncio.CancelledError):
             await shutdown
+
+    async def test_child_completing_at_the_deadline_boundary_is_not_misreported(
+        self, mock_link
+    ):
+        """CPython's Task/Timeout interaction can fire the deadline's cancel on
+        the *outer* task after the child has already completed successfully in
+        the same event-loop tick, fabricating a CancelledError for the outer
+        task's own resumption and discarding the child's real result --
+        without the child itself ever actually being cancel-requested (its
+        ``cancelling()`` count stays 0). The watchdog must recover the child's
+        real outcome in that case rather than reporting a cycle that
+        genuinely finished in time as a failure."""
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            handler,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=5.0),
+        )
+
+        class _FakeExpiredDeadline:
+            def expired(self) -> bool:
+                return True
+
+        @contextlib.asynccontextmanager
+        async def fake_timeout(_seconds: float) -> AsyncIterator[_FakeExpiredDeadline]:
+            # Stands in for the exact race: expired() reports True even though
+            # nothing was ever actually cancelled.
+            yield _FakeExpiredDeadline()
+
+        with patch("band.runtime.execution.asyncio.timeout", fake_timeout):
+            result = await ctx._process_event(make_message_event(msg_id="boundary"))
+
+        assert result is True
+        mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
+        mock_link.mark_failed.assert_not_awaited()
