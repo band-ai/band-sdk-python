@@ -119,6 +119,16 @@ class SessionConfig:
     # cancel the reasoning. None = unbounded. NOT a hang-killer.
     max_working_state_seconds: float | None = None
 
+    # Upper bound on one reasoning cycle (the handler invoked by _run_cycle).
+    # Unlike max_working_state_seconds, exceeding this DOES cancel the cycle —
+    # it is the hang-killer: a handler stuck awaiting an external call (e.g. a
+    # wedged adapter subprocess) would otherwise leave the message in
+    # 'processing' forever. On expiry the cycle is cancelled and TimeoutError
+    # propagates through the normal handler-exception path (mark_failed +
+    # retry), the same as any other handler error. None = unbounded (default —
+    # matches prior behavior for callers that never opt in).
+    max_cycle_seconds: float | None = None
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
@@ -160,6 +170,12 @@ class SessionConfig:
                     "max_working_state_seconds must be > 0 when set (got %s)"
                     % self.max_working_state_seconds
                 )
+
+        if self.max_cycle_seconds is not None and self.max_cycle_seconds <= 0:
+            raise ValueError(
+                "max_cycle_seconds must be > 0 when set (got %s)"
+                % self.max_cycle_seconds
+            )
 
 
 @dataclass

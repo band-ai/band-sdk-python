@@ -621,3 +621,51 @@ class TestPendingAckCancellationGap:
         assert handler.invocations == 1
         assert ctx.claims.is_completed("room-123", "bk-cancel-ack")
         assert not ctx.claims.is_ack_pending("room-123", "bk-cancel-ack")
+
+
+class TestCycleWatchdog:
+    """``max_cycle_seconds`` is the hang-killer: unlike interrupt/stop (an
+    external control signal), it cancels a cycle from *inside* ExecutionContext
+    when a handler never returns -- e.g. a wedged adapter subprocess that would
+    otherwise leave a message in 'processing' forever."""
+
+    async def test_cycle_exceeding_max_cycle_seconds_is_cancelled_and_marked_failed(
+        self, mock_link
+    ):
+        handler = BlockingHandler(block_seconds=60)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            handler,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=0.05),
+        )
+
+        result = await ctx._process_event(make_message_event(msg_id="watchdog-1"))
+
+        assert result is True  # loop continues; the watchdog is a handled error
+        assert handler.cancelled.is_set()  # the stuck cycle was actually cancelled
+        mock_link.mark_processed.assert_not_awaited()
+        mock_link.mark_failed.assert_awaited_once()
+        assert mock_link.mark_failed.await_args.args[:2] == ("room-123", "watchdog-1")
+
+        # Loop stays alive: a fresh message still processes normally afterward.
+        handler2 = BlockingHandler(block=False)
+        ctx._on_execute = handler2
+        result2 = await ctx._process_event(make_message_event(msg_id="watchdog-2"))
+        assert result2 is True
+        assert handler2.completed == ["watchdog-2"]
+
+    async def test_unset_max_cycle_seconds_never_cancels_a_slow_handler(
+        self, mock_link
+    ):
+        """Default (unbounded) behavior is unchanged: no watchdog fires."""
+        handler = BlockingHandler(block_seconds=0.05)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        result = await ctx._process_event(make_message_event(msg_id="no-watchdog"))
+
+        assert result is True
+        assert not handler.cancelled.is_set()
+        mock_link.mark_processed.assert_awaited_once_with("room-123", "no-watchdog")
+        mock_link.mark_failed.assert_not_awaited()

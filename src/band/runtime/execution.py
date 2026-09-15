@@ -1688,7 +1688,26 @@ class ExecutionContext:
 
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
-            await self._active_cycle_task
+            if self.config.max_cycle_seconds is not None:
+                try:
+                    await asyncio.wait_for(
+                        self._active_cycle_task, timeout=self.config.max_cycle_seconds
+                    )
+                except TimeoutError:
+                    # wait_for already cancelled and awaited the task, converting
+                    # its CancelledError into this TimeoutError -- the except
+                    # CancelledError branch below is for control signals only
+                    # and is never reached for a watchdog expiry.
+                    logger.warning(
+                        "ExecutionContext %s: cycle for message %s exceeded "
+                        "max_cycle_seconds=%s; cancelled",
+                        self.room_id,
+                        msg_id,
+                        self.config.max_cycle_seconds,
+                    )
+                    raise
+            else:
+                await self._active_cycle_task
             # A handler may suppress CancelledError and return normally. In
             # that case the control signal was consumed by this cycle and must
             # not misclassify a later shutdown cancellation as an interrupt.
