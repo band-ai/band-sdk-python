@@ -1,0 +1,185 @@
+name: Python Core Coverage
+
+# Coverage floor for band-sdk-core-core computed from THIS repo's real test
+# suite -- band-sdk-core owns the instrumented build + gate (see its
+# `coverage-python-consumer` just recipe); this workflow only resolves the
+# pinned version, checks that tag out as a sibling, and runs it.
+#
+# No explicit Rust-toolchain setup step: band-sdk-core/rust-toolchain.toml
+# is picked up natively by rustup's own directory-walk resolution the first
+# time a `cargo`/`rustup` command runs with that checkout as its cwd, so
+# there is nothing to duplicate here.
+
+on:
+  # Weekly consumer coverage report. This is separate from the PR gate so it
+  # observes main's current coverage without adding PR notifications.
+  schedule:
+    - cron: "33 20 * * 0" # Sunday night: 23:33 Israel summer time, 22:33 winter time
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-core-coverage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Single source of truth: crates/py/scripts/coverage_python_consumer.py's
+      # REPORT_DIR, relative to band-sdk-core's checkout root.
+      REPORT_DIR: target/python-consumer-coverage/report
+      # Single source of truth for band-sdk-core's git tag naming scheme.
+      CORE_TAG_PREFIX: band-sdk-core-core-v
+    steps:
+      - name: Checkout band-sdk-python
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: band-sdk-python
+
+      - name: Configure git to use HTTPS for GitHub
+        # Path is relative to $GITHUB_WORKSPACE, not this workflow file --
+        # band-sdk-python is checked out under path: band-sdk-python above,
+        # not at the workspace root.
+        uses: ./band-sdk-python/.github/actions/git-https-auth
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "band-sdk-python/**/pyproject.toml"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+
+      - name: Install band-sdk-python dependencies
+        working-directory: band-sdk-python
+        run: uv sync --all-packages --locked --extra dev
+
+      - name: Resolve pinned band-sdk-core version
+        id: pin
+        working-directory: band-sdk-python
+        run: |
+          version=$(uv run python -c "import importlib.metadata; print(importlib.metadata.version('band-sdk-core'))")
+
+          # A failed command substitution inside an assignment does not trip
+          # bash's `set -e`, so the pre-release guard below runs as its own
+          # statement -- a non-zero exit there aborts the step for real,
+          # instead of silently continuing with an empty $version. $version
+          # is passed via the environment, not spliced into the script text,
+          # so it can never break out of the embedded Python literal.
+          VERSION="$version" uv run python -c "
+          import os
+          import sys
+          from packaging.version import Version
+
+          version = os.environ['VERSION']
+          prefix = os.environ['CORE_TAG_PREFIX']
+          if Version(version).is_prerelease:
+              sys.exit(
+                  f'band-sdk-core=={version} is a pre-release: {prefix}{version} '
+                  'is never tagged (dev pre-releases publish to PyPI but are never committed '
+                  'or tagged in git), so this gate cannot check it out. Pin a stable release '
+                  'to run this gate.'
+              )
+          "
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout band-sdk-core at the pinned version
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: band-ai/band-sdk-core
+          ref: ${{ env.CORE_TAG_PREFIX }}${{ steps.pin.outputs.version }}
+          path: band-sdk-core
+          token: ${{ secrets.CORE_SDK_READ_KEY }}
+
+      - name: Install just and cargo-llvm-cov
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+        with:
+          tool: just,cargo-llvm-cov
+
+      - name: Run band-sdk-python's tests against instrumented band-sdk-core-core
+        working-directory: band-sdk-core
+        run: just coverage-python-consumer ../band-sdk-python
+
+      - name: Write coverage summary
+        if: always()
+        # No working-directory: band-sdk-core/ may not exist yet (the
+        # pin step's pre-release guard, or any earlier failure, can skip
+        # its checkout) -- a nonexistent step cwd fails the step outright
+        # before this script runs, before the else branch below ever gets
+        # a chance to report that gracefully.
+        run: |
+          summary="band-sdk-core/$REPORT_DIR/summary.txt"
+          if [ -f "$summary" ]; then
+            {
+              echo "## band-sdk-core-core coverage from band-sdk-python's tests"
+              echo '```'
+              cat "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No coverage summary produced -- see the coverage step's log above." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-core-coverage
+          path: |
+            band-sdk-core/${{ env.REPORT_DIR }}/python-consumer.lcov
+            band-sdk-core/${{ env.REPORT_DIR }}/html/
+            band-sdk-core/${{ env.REPORT_DIR }}/summary.txt
+          if-no-files-found: warn
+
+  report-weekly:
+    name: report weekly coverage
+    needs: coverage
+    if: "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      WORKFLOW_RESULT: ${{ needs.coverage.result }}
+      REPORT_LABEL: band-sdk-core Python bindings
+      LCOV_PATH: artifacts/python-consumer.lcov
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download coverage report
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-core-coverage
+          path: artifacts
+          if-no-files-found: warn
+
+      - name: Read integrations mentions list
+        id: mentions
+        if: github.event_name == 'schedule'
+        run: .github/scripts/read-integrations-mentions.sh
+
+      - name: Post the weekly coverage digest
+        env:
+          RECIPIENTS: ${{ github.event_name == 'schedule' && steps.mentions.outputs.mentions || format('@{0}', github.triggering_actor) }}
+        run: python .github/scripts/post-core-coverage-digest.py

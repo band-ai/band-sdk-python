@@ -23,7 +23,7 @@ classifiers = [
 
 dependencies = [
     "band-client-rest==0.0.27",
-    "band-sdk-core==2.2.0",
+    "band-sdk-core==2.5.0",
     "phoenix-channels-python-client>=0.2.4",
     "python-dotenv>=1.2.2",
     "pydantic>=2.0",
@@ -189,6 +189,7 @@ dev = [
     "pytest-rerunfailures>=14.0.0",
     "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
+    "packaging>=23.0",  # PEP 440 pre-release detection for the CI coverage-gate version guard
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
     "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
