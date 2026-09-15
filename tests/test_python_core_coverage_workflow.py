@@ -84,6 +84,16 @@ def test_checkout_ref_matches_pin_step_output() -> None:
     )
 
 
+def test_core_checkout_uses_the_scoped_read_secret() -> None:
+    workflow = load_workflow()
+    steps = workflow["jobs"]["coverage"]["steps"]
+    checkout = _step(workflow, "Checkout band-sdk-core at the pinned version")
+    names = [step.get("name") for step in steps]
+
+    assert checkout["with"]["token"] == "${{ secrets.CORE_SDK_READ_KEY }}"
+    assert "Generate GitHub App Token (scoped to band-sdk-core)" not in names
+
+
 def test_prerelease_guard_runs_before_the_cross_repo_checkout() -> None:
     steps = load_workflow()["jobs"]["coverage"]["steps"]
     names = [step.get("name") for step in steps]
