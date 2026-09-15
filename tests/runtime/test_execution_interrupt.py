@@ -624,10 +624,8 @@ class TestPendingAckCancellationGap:
 
 
 class TestCycleWatchdog:
-    """``max_cycle_seconds`` is the hang-killer: unlike interrupt/stop (an
-    external control signal), it cancels a cycle from *inside* ExecutionContext
-    when a handler never returns -- e.g. a wedged adapter subprocess that would
-    otherwise leave a message in 'processing' forever."""
+    """``max_cycle_seconds`` cancels a cycle from *inside* ExecutionContext when
+    a handler never returns, unlike interrupt/stop which are external signals."""
 
     async def test_cycle_exceeding_max_cycle_seconds_is_cancelled_and_marked_failed(
         self, mock_link
@@ -647,7 +645,11 @@ class TestCycleWatchdog:
         assert handler.cancelled.is_set()  # the stuck cycle was actually cancelled
         mock_link.mark_processed.assert_not_awaited()
         mock_link.mark_failed.assert_awaited_once()
-        assert mock_link.mark_failed.await_args.args[:2] == ("room-123", "watchdog-1")
+        room_id, msg_id, label = mock_link.mark_failed.await_args.args
+        assert (room_id, msg_id) == ("room-123", "watchdog-1")
+        assert (
+            "max_cycle_seconds" in label
+        )  # a diagnosable reason, not just "TimeoutError"
 
         # Loop stays alive: a fresh message still processes normally afterward.
         handler2 = BlockingHandler(block=False)
@@ -669,3 +671,102 @@ class TestCycleWatchdog:
         assert not handler.cancelled.is_set()
         mock_link.mark_processed.assert_awaited_once_with("room-123", "no-watchdog")
         mock_link.mark_failed.assert_not_awaited()
+
+    async def test_handlers_own_timeout_error_is_not_mistaken_for_the_watchdog(
+        self, mock_link
+    ):
+        """A handler's own bare TimeoutError, raised well inside the budget, must
+        propagate as a normal handler failure -- not the watchdog's warning."""
+
+        async def raises_own_timeout(ctx, event):
+            raise TimeoutError("downstream call timed out")
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            raises_own_timeout,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=5.0),
+        )
+
+        result = await ctx._process_event(make_message_event(msg_id="own-timeout"))
+
+        assert result is True
+        mock_link.mark_failed.assert_awaited_once()
+        room_id, msg_id, label = mock_link.mark_failed.await_args.args
+        assert (room_id, msg_id) == ("room-123", "own-timeout")
+        assert label == "downstream call timed out"  # the handler's own message,
+        # not the watchdog's -- nothing here actually exceeded the 5s budget.
+
+    async def test_watchdog_cancellation_is_not_defeated_by_a_swallowed_cancel(
+        self, mock_link
+    ):
+        """A handler that catches CancelledError and returns normally must still
+        be reported as a watchdog failure, not a silent success."""
+
+        async def swallows_cancellation(ctx, event):
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                return "handled it myself"
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            swallows_cancellation,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=0.05),
+        )
+
+        result = await ctx._process_event(make_message_event(msg_id="swallowed"))
+
+        assert result is True  # loop continues; the watchdog is a handled error
+        mock_link.mark_processed.assert_not_awaited()
+        mock_link.mark_failed.assert_awaited_once()
+        room_id, msg_id, label = mock_link.mark_failed.await_args.args
+        assert (room_id, msg_id) == ("room-123", "swallowed")
+        assert "max_cycle_seconds" in label
+
+    async def test_watchdog_expiry_does_not_leak_interrupt_kind_into_shutdown(
+        self, mock_link
+    ):
+        """A concurrent interrupt()/stop() racing the watchdog's own deadline on
+        the same task must not leave a stale ``_interrupt_kind`` for a later,
+        unrelated cycle's genuine shutdown cancellation to misread."""
+        handler = BlockingHandler(block_seconds=60)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            handler,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=0.05),
+        )
+
+        # Simulate the race deterministically rather than chasing real timing:
+        # an interrupt() landed on this same task right as the watchdog also
+        # independently expired.
+        ctx._interrupt_kind = ControlMode.INTERRUPT
+
+        result = await ctx._process_event(make_message_event(msg_id="race-1"))
+
+        assert result is True
+        assert ctx._interrupt_kind is None  # cleared, not leaked to the next cycle
+
+        # A second, fresh cycle genuinely cancelled by shutdown (no new
+        # interrupt()) must propagate CancelledError, not get misclassified as
+        # an interrupt/stop via the leaked kind.
+        second_started = asyncio.Event()
+
+        async def block(ctx, event):
+            second_started.set()
+            await asyncio.Event().wait()
+
+        ctx._on_execute = block
+        shutdown = asyncio.create_task(
+            ctx._run_cycle(make_message_event(msg_id="race-2"), "race-2")
+        )
+        await second_started.wait()
+        shutdown.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown

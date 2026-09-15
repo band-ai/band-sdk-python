@@ -1689,15 +1689,32 @@ class ExecutionContext:
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
             if self.config.max_cycle_seconds is not None:
+                # Bound outside the try: __aenter__ raising before this binds
+                # would otherwise leave it unset for the except clause below.
+                cycle_deadline: asyncio.Timeout | None = None
                 try:
-                    await asyncio.wait_for(
-                        self._active_cycle_task, timeout=self.config.max_cycle_seconds
-                    )
-                except TimeoutError:
-                    # wait_for already cancelled and awaited the task, converting
-                    # its CancelledError into this TimeoutError -- the except
-                    # CancelledError branch below is for control signals only
-                    # and is never reached for a watchdog expiry.
+                    async with asyncio.timeout(
+                        self.config.max_cycle_seconds
+                    ) as cycle_deadline:
+                        await self._active_cycle_task
+                        # A handler may catch the cancellation this deadline
+                        # triggers and return normally instead of re-raising
+                        # (same handler behavior the CancelledError branch
+                        # below already accounts for) -- expired() is the only
+                        # reliable way to tell the deadline passed regardless
+                        # of what the handler did with it. The bare raise here
+                        # is just a trigger; the except below gives it a
+                        # diagnosable message.
+                        if cycle_deadline.expired():
+                            raise TimeoutError
+                except TimeoutError as exc:
+                    # expired() also disambiguates a handler's own bare
+                    # TimeoutError (unrelated to this deadline, well inside
+                    # budget) from this deadline actually firing -- both raise
+                    # the same exception type, but only the timeout arms
+                    # cancellation, so only it flips expired() to True.
+                    if cycle_deadline is None or not cycle_deadline.expired():
+                        raise
                     logger.warning(
                         "ExecutionContext %s: cycle for message %s exceeded "
                         "max_cycle_seconds=%s; cancelled",
@@ -1705,7 +1722,17 @@ class ExecutionContext:
                         msg_id,
                         self.config.max_cycle_seconds,
                     )
-                    raise
+                    # A concurrent interrupt()/stop() may have raced this same
+                    # deadline on the same task -- clear it here too (mirroring
+                    # the CancelledError branch below) so it can't leak into a
+                    # later, unrelated cycle's genuine shutdown cancellation.
+                    self._interrupt_kind = None
+                    # Replace whatever bare TimeoutError arrived (asyncio.timeout's
+                    # own conversion carries no message) with one mark_failed can
+                    # show the user, instead of a bare "TimeoutError" label.
+                    raise TimeoutError(
+                        f"cycle exceeded max_cycle_seconds={self.config.max_cycle_seconds}"
+                    ) from exc
             else:
                 await self._active_cycle_task
             # A handler may suppress CancelledError and return normally. In
