@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator, Coroutine
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -783,7 +784,7 @@ class TestCycleWatchdog:
             await shutdown
 
     async def test_child_completing_at_the_deadline_boundary_is_not_misreported(
-        self, mock_link
+        self, mock_link, caplog
     ):
         """CPython's Task/Timeout interaction can fire the deadline's cancel on
         the *outer* task after the child has already completed successfully in
@@ -813,8 +814,17 @@ class TestCycleWatchdog:
             yield _FakeExpiredDeadline()
 
         with patch("band.runtime.execution.asyncio.timeout", fake_timeout):
-            result = await ctx._process_event(make_message_event(msg_id="boundary"))
+            with caplog.at_level(logging.DEBUG, logger="band.runtime.execution"):
+                result = await ctx._process_event(make_message_event(msg_id="boundary"))
 
         assert result is True
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")
         mock_link.mark_failed.assert_not_awaited()
+        # The outcome above is also what a normal, un-raced completion looks
+        # like -- assert the recovery branch itself actually ran (not just a
+        # fall-through that never hit it), or a regression that silently
+        # removes the recovery logic would still pass this test.
+        assert any(
+            "deadline boundary; recovering its real result" in r.message
+            for r in caplog.records
+        )

@@ -1656,6 +1656,14 @@ class ExecutionContext:
         finally:
             await self._working_reporter.stop()
 
+    def _take_interrupt_kind(self) -> ControlMode | None:
+        """Read-and-clear ``_interrupt_kind`` atomically (no ``await`` between
+        the read and the clear), so a consumed signal never leaks into a
+        later, unrelated cycle."""
+        kind = self._interrupt_kind
+        self._interrupt_kind = None
+        return kind
+
     async def _run_cycle(self, event: PlatformEvent, msg_id: str | None) -> bool:
         """Run the execution handler as a cancellable child task.
 
@@ -1675,6 +1683,11 @@ class ExecutionContext:
             bypasses the callers' ``except Exception`` and reaches the loop's
             ``except asyncio.CancelledError``; we only swallow it for an
             interrupt/stop, never for shutdown.
+            TimeoutError: when ``max_cycle_seconds`` is set and the cycle
+            genuinely exceeded it (not a handler's own coincidental
+            ``TimeoutError``, and not a racing interrupt/stop — both handled
+            separately). Propagates to the normal handler-error path
+            (``mark_failed`` + retry), same as any other handler exception.
         """
         # Honor a signal that landed in the claim->cycle window (interrupt()/
         # stop_room() with no cycle task to cancel yet). Reading/clearing the
@@ -1726,6 +1739,14 @@ class ExecutionContext:
                         # its outcome is real -- recover it instead of
                         # reporting a cycle that genuinely finished in time
                         # as a watchdog failure.
+                        logger.debug(
+                            "ExecutionContext %s: cycle for message %s "
+                            "completed right at the max_cycle_seconds=%s "
+                            "deadline boundary; recovering its real result",
+                            self.room_id,
+                            msg_id,
+                            self.config.max_cycle_seconds,
+                        )
                         self._active_cycle_task.result()
                     else:
                         message = (
@@ -1739,8 +1760,7 @@ class ExecutionContext:
                         # its documented contract (mirrors that branch) rather
                         # than reporting the user's own stop/interrupt as a
                         # timeout failure.
-                        kind = self._interrupt_kind
-                        self._interrupt_kind = None
+                        kind = self._take_interrupt_kind()
                         if kind is not None:
                             return await self._abort_cycle(kind, msg_id)
                         logger.warning(
@@ -1762,12 +1782,10 @@ class ExecutionContext:
             self._interrupt_kind = None
             return True
         except asyncio.CancelledError:
-            # Read-and-clear is atomic here (no await between the two lines).
             # If two control signals raced before this ran, last-writer-wins on
             # _interrupt_kind — benign, since re-cancelling a cancelling task is
             # a no-op and both signals wanted the cycle dead.
-            kind = self._interrupt_kind
-            self._interrupt_kind = None
+            kind = self._take_interrupt_kind()
             if kind is None:
                 # Shutdown cancel of the loop task propagating through the child
                 # await — let it propagate so the loop exits.
