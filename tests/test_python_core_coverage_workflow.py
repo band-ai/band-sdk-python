@@ -145,7 +145,7 @@ def test_write_coverage_summary_falls_back_when_missing() -> None:
 
 def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> None:
     workflow = load_workflow()
-    assert workflow["on"]["schedule"] == [{"cron": "33 4 * * 1"}]
+    assert workflow["on"]["schedule"] == [{"cron": "33 20 * * 0"}]
 
     report = workflow["jobs"]["report-weekly"]
     assert (

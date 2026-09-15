@@ -14,7 +14,7 @@ on:
   # Weekly consumer coverage report. This is separate from the PR gate so it
   # observes main's current coverage without adding PR notifications.
   schedule:
-    - cron: "33 4 * * 1" # Mondays 04:33 UTC
+    - cron: "33 20 * * 0" # Sunday night: 23:33 Israel summer time, 22:33 winter time
   pull_request:
     branches: [main]
     paths:
