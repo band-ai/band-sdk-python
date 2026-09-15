@@ -230,6 +230,12 @@ def test_weekly_digest_identifies_low_and_completely_uncovered_files(
     assert "| Lines | 🟠 **50.00%** · 12/24 covered · 12 missing |" in digest
     assert "| Functions | 🟠 **60.00%** · 3/5 covered · 2 missing |" in digest
     assert "| Files at target | 🔴 **1/3** at or above 80% |" in digest
-    assert "`crates/core/src/none.rs` | 🔴 **0.00%** · 4 lines missing<br>Lines `20-23`" in digest
-    assert "`crates/core/src/low.rs` | 🔴 **20.00%** · 8 lines missing<br>Lines `12-13`" in digest
+    assert (
+        "`crates/core/src/none.rs` | 🔴 **0.00%** · 4 lines missing<br>Lines `20-23`"
+        in digest
+    )
+    assert (
+        "`crates/core/src/low.rs` | 🔴 **20.00%** · 8 lines missing<br>Lines `12-13`"
+        in digest
+    )
     assert "covered.rs" not in digest
