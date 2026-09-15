@@ -163,11 +163,16 @@ def render_digest(
         )
         if len(gaps) > MAX_LOW_COVERAGE_FILES:
             lines.extend(
-                ["", f"_Plus {len(gaps) - MAX_LOW_COVERAGE_FILES} more low-coverage files in the artifact._"]
+                [
+                    "",
+                    f"_Plus {len(gaps) - MAX_LOW_COVERAGE_FILES} more low-coverage files in the artifact._",
+                ]
             )
     else:
         lines.append("✅ Every measured source file meets the coverage target.")
-    lines.extend(["", f"[View the run and full coverage artifact →]({run_url}#artifacts)"])
+    lines.extend(
+        ["", f"[View the run and full coverage artifact →]({run_url}#artifacts)"]
+    )
     return "\n".join(lines)
 
 
