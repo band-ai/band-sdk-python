@@ -11,6 +11,10 @@ name: Python Core Coverage
 # there is nothing to duplicate here.
 
 on:
+  # Weekly consumer coverage report. This is separate from the PR gate so it
+  # observes main's current coverage without adding PR notifications.
+  schedule:
+    - cron: "33 4 * * 1" # Mondays 04:33 UTC
   pull_request:
     branches: [main]
     paths:
@@ -142,3 +146,39 @@ jobs:
             band-sdk-core/${{ env.REPORT_DIR }}/html/
             band-sdk-core/${{ env.REPORT_DIR }}/summary.txt
           if-no-files-found: warn
+
+  report-weekly:
+    name: report weekly coverage
+    needs: coverage
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      WORKFLOW_RESULT: ${{ needs.coverage.result }}
+      REPORT_LABEL: band-sdk-core Python bindings
+      LCOV_PATH: artifacts/python-consumer.lcov
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download coverage report
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-core-coverage
+          path: artifacts
+          if-no-files-found: warn
+
+      - name: Read integrations mentions list
+        id: mentions
+        run: .github/scripts/read-integrations-mentions.sh
+
+      - name: Post the weekly coverage digest
+        env:
+          RECIPIENTS: ${{ steps.mentions.outputs.mentions }}
+        run: python .github/scripts/post-core-coverage-digest.py
