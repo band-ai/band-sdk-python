@@ -10,6 +10,7 @@ from pathlib import Path
 
 LOW_COVERAGE_PERCENT = 80.0
 MAX_MISSED_LINE_RANGES = 8
+MAX_LOW_COVERAGE_FILES = 8
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,14 @@ def format_line_ranges(numbers: tuple[int, ...]) -> str:
     )
 
 
+def coverage_marker(percent: float) -> str:
+    if percent >= LOW_COVERAGE_PERCENT:
+        return "🟢"
+    if percent >= 50:
+        return "🟠"
+    return "🔴"
+
+
 def parse_lcov(path: Path) -> list[FileCoverage]:
     records: list[FileCoverage] = []
     source: str | None = None
@@ -96,14 +105,16 @@ def parse_lcov(path: Path) -> list[FileCoverage]:
 def render_digest(
     *, lcov_path: Path, label: str, recipients: str, run_url: str, result: str
 ) -> str:
-    header = "## Weekly Core coverage report"
+    header = "## 📊 Weekly Core coverage"
     if not lcov_path.is_file():
         return "\n".join(
             [
                 header,
                 recipients,
                 "",
-                f"The coverage run {result}. No LCOV report was produced; see the run for details.",
+                f"⚠️ **Coverage unavailable** · workflow `{result}`",
+                "",
+                "No LCOV report was produced. Open the run for the failure details.",
                 "",
                 f"[Open run]({run_url})",
             ]
@@ -118,34 +129,45 @@ def render_digest(
         (item for item in files if item.percent < LOW_COVERAGE_PERCENT),
         key=lambda item: (item.percent, -item.found, item.path),
     )
+    line_percent = 100 * hit / found if found else 0.0
+    function_percent = 100 * functions_hit / functions_found if functions_found else 0.0
+    healthy_files = len(files) - len(gaps)
     lines = [
         header,
+        "",
         recipients,
         "",
         f"**{label}**",
         "",
-        "| Measure | Covered | Missed | Coverage |",
-        "| --- | ---: | ---: | ---: |",
-        f"| Lines | {hit}/{found} | {found - hit} | {100 * hit / found if found else 0.0:.2f}% |",
-        f"| Functions | {functions_hit}/{functions_found} | {functions_found - functions_hit} | {100 * functions_hit / functions_found if functions_found else 0.0:.2f}% |",
+        "### Coverage snapshot",
+        "",
+        "| Signal | Result |",
+        "| --- | --- |",
+        f"| Lines | {coverage_marker(line_percent)} **{line_percent:.2f}%** · {hit}/{found} covered · {found - hit} missing |",
+        f"| Functions | {coverage_marker(function_percent)} **{function_percent:.2f}%** · {functions_hit}/{functions_found} covered · {functions_found - functions_hit} missing |",
+        f"| Files at target | {coverage_marker(100 * healthy_files / len(files) if files else 0)} **{healthy_files}/{len(files)}** at or above {LOW_COVERAGE_PERCENT:.0f}% |",
         "",
     ]
     if gaps:
         lines.extend(
             [
-                f"### Source files below {LOW_COVERAGE_PERCENT:.0f}% line coverage",
+                "### 🎯 Where to focus",
                 "",
-                "| File | Lines | Missed line ranges |",
-                "| --- | ---: | --- |",
+                "| Source file | Coverage gap |",
+                "| --- | --- |",
             ]
         )
         lines.extend(
-            f"| `{item.path}` | {item.hit}/{item.found} ({item.percent:.2f}%) | {format_line_ranges(item.missed_lines)} |"
-            for item in gaps
+            f"| `{item.path}` | {coverage_marker(item.percent)} **{item.percent:.2f}%** · {item.missed} lines missing<br>Lines `{format_line_ranges(item.missed_lines)}` |"
+            for item in gaps[:MAX_LOW_COVERAGE_FILES]
         )
+        if len(gaps) > MAX_LOW_COVERAGE_FILES:
+            lines.extend(
+                ["", f"_Plus {len(gaps) - MAX_LOW_COVERAGE_FILES} more low-coverage files in the artifact._"]
+            )
     else:
-        lines.append("All measured files meet the coverage floor.")
-    lines.extend(["", f"[Open run and coverage artifact]({run_url}#artifacts)"])
+        lines.append("✅ Every measured source file meets the coverage target.")
+    lines.extend(["", f"[View the run and full coverage artifact →]({run_url}#artifacts)"])
     return "\n".join(lines)
 
 
