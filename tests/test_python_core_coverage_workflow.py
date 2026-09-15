@@ -148,7 +148,7 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
     assert workflow["on"]["schedule"] == [{"cron": "33 4 * * 1"}]
 
     report = workflow["jobs"]["report-weekly"]
-    assert report["if"] == "always() && github.event_name == 'schedule'"
+    assert report["if"] == "!cancelled() && github.event_name == 'schedule'"
     assert report["permissions"] == {"contents": "write"}
     report_steps = report["steps"]
     mention_step = next(

@@ -150,7 +150,7 @@ jobs:
   report-weekly:
     name: report weekly coverage
     needs: coverage
-    if: always() && github.event_name == 'schedule'
+    if: "!cancelled() && github.event_name == 'schedule'"
     runs-on: ubuntu-latest
     permissions:
       contents: write
