@@ -86,6 +86,13 @@ class AgentConfig:
 PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
 
 
+def _require_positive_when_set(name: str, value: float | None) -> None:
+    """Shared guard for the optional-timeout fields below: unset (None) means
+    unbounded and is always valid; a set value must be strictly positive."""
+    if value is not None and value <= 0:
+        raise ValueError("%s must be > 0 when set (got %s)" % (name, value))
+
+
 @dataclass
 class SessionConfig:
     """Configuration for execution context."""
@@ -118,6 +125,16 @@ class SessionConfig:
     # cycle. When exceeded we stop refreshing (platform TTL clears it); we never
     # cancel the reasoning. None = unbounded. NOT a hang-killer.
     max_working_state_seconds: float | None = None
+
+    # Upper bound on one reasoning cycle (the handler invoked by _run_cycle).
+    # Unlike max_working_state_seconds, exceeding this DOES cancel the cycle —
+    # it is the hang-killer: a handler stuck awaiting an external call (e.g. a
+    # wedged adapter subprocess) would otherwise leave the message in
+    # 'processing' forever. On expiry the cycle is cancelled and TimeoutError
+    # propagates through the normal handler-exception path (mark_failed +
+    # retry), the same as any other handler error. None = unbounded (default —
+    # matches prior behavior for callers that never opt in).
+    max_cycle_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
@@ -152,14 +169,11 @@ class SessionConfig:
                         self.working_keep_alive_seconds,
                     )
                 )
-            if (
-                self.max_working_state_seconds is not None
-                and self.max_working_state_seconds <= 0
-            ):
-                raise ValueError(
-                    "max_working_state_seconds must be > 0 when set (got %s)"
-                    % self.max_working_state_seconds
-                )
+            _require_positive_when_set(
+                "max_working_state_seconds", self.max_working_state_seconds
+            )
+
+        _require_positive_when_set("max_cycle_seconds", self.max_cycle_seconds)
 
 
 @dataclass
