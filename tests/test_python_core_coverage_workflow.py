@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -36,8 +38,12 @@ def _run_pin_guard(version: str) -> subprocess.CompletedProcess[str]:
     run_text = _step(workflow, "Resolve pinned band-sdk-core version")["run"]
     core_tag_prefix = workflow["jobs"]["coverage"]["env"]["CORE_TAG_PREFIX"]
     script = f'version="{version}"\n{_pin_guard_script(run_text)}'
+    bash = "bash"
+    if sys.platform == "win32":
+        bash = str(Path(os.environ["ProgramFiles"]) / "Git" / "bin" / "bash.exe")
+
     return subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
         capture_output=True,
         text=True,
         env={**os.environ, "CORE_TAG_PREFIX": core_tag_prefix},
