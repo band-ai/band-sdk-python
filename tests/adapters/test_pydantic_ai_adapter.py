@@ -910,17 +910,36 @@ class TestBuiltinToolExecution:
         deps.send_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_validation_alias_argument_is_not_rejected_as_unknown(self):
+    @pytest.mark.parametrize(
+        ("tool", "method_name", "expected_kwargs"),
+        [
+            (
+                BandTool.ADD_PARTICIPANT,
+                "add_participant",
+                {"identifier": "alice", "role": "member"},
+            ),
+            (
+                BandTool.REMOVE_PARTICIPANT,
+                "remove_participant",
+                {"identifier": "alice"},
+            ),
+        ],
+        ids=["add_participant", "remove_participant"],
+    )
+    async def test_validation_alias_argument_is_not_rejected_as_unknown(
+        self, tool, method_name, expected_kwargs
+    ):
         """A field's ``validation_alias`` secondary name is a real accepted
         argument, not an unrecognized one, even though it's absent from the
         model's advertised JSON schema (which only lists the primary alias)."""
         deps = MagicMock()
-        deps.add_participant = AsyncMock(return_value={"id": "user-1"})
+        method = AsyncMock(return_value={"id": "user-1"})
+        setattr(deps, method_name, method)
         adapter = await _started_adapter()
 
-        await _call_tool(adapter, deps, BandTool.ADD_PARTICIPANT, {"name": "alice"})
+        await _call_tool(adapter, deps, tool, {"name": "alice"})
 
-        deps.add_participant.assert_called_once_with(identifier="alice", role="member")
+        method.assert_called_once_with(**expected_kwargs)
 
     @pytest.mark.asyncio
     async def test_coercible_arguments_reach_the_dependency_normalized(self):

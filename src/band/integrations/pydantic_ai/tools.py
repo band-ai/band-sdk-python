@@ -39,6 +39,8 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+_BoundToolMethod = Callable[..., Coroutine[Any, Any, Any]]
+
 
 def build_band_pydantic_ai_tools(
     features: AdapterFeatures,
@@ -95,13 +97,30 @@ def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
     argument names against ``model_json_schema()``'s ``properties`` -- lets
     the one ``model_validate()`` call in ``validate_tool_arguments`` do the
     rejecting itself, so it correctly honors a field's ``validation_alias``
-    secondary names the JSON schema never lists. Used for validation only
-    (see ``_build_tool``) -- never for the schema advertised to the model.
+    secondary names the JSON schema never lists.
+
+    Validation only (see ``_build_tool``) -- ``additionalProperties: false``
+    on a schema *advertised* to the model reaches some providers unstripped
+    (e.g. Gemini) and breaks tool calls there, so ``model_json_schema`` is
+    disabled here rather than merely documented as off-limits: it already
+    got wired into ``json_schema=`` by mistake once in this file's history.
     """
+
+    def _no_advertisement(*_args: Any, **_kwargs: Any) -> Any:
+        raise TypeError(
+            f"{schema.__name__}: this strict schema is for validation only "
+            "-- advertise schema.model_json_schema() (the plain schema) to "
+            "the model instead"
+        )
+
     return type(
         schema.__name__,
         (schema,),
-        {"model_config": ConfigDict(extra="forbid"), "__doc__": schema.__doc__},
+        {
+            "model_config": ConfigDict(extra="forbid"),
+            "__doc__": schema.__doc__,
+            "model_json_schema": classmethod(_no_advertisement),
+        },
     )
 
 
@@ -145,7 +164,7 @@ def _arguments_validator(
 
 def _resolve_method(
     deps: AgentToolsProtocol, definition: ToolDefinition
-) -> Callable[..., Coroutine[Any, Any, Any]]:
+) -> _BoundToolMethod:
     """``definition.method_name`` bound on ``deps``, or an actionable error.
 
     A stale or typo'd registry entry should surface as this message, not a
@@ -159,12 +178,12 @@ def _resolve_method(
         )
         logger.error("%s -- registry/protocol drift", message)
         raise RuntimeError(message)
-    return cast(Callable[..., Coroutine[Any, Any, Any]], method)
+    return cast(_BoundToolMethod, method)
 
 
 def _dispatcher(
     definition: ToolDefinition, schema: type[BaseModel]
-) -> Callable[..., Coroutine[Any, Any, Any]]:
+) -> _BoundToolMethod:
     """The generic tool body: validate, call the bound method, normalize."""
 
     async def dispatch(ctx: RunContext[AgentToolsProtocol], **arguments: Any) -> Any:
