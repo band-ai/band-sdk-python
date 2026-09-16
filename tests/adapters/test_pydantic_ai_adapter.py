@@ -1020,12 +1020,19 @@ class TestBuiltinToolResults:
         assert _tool_returns(result) == [{"name": "report.txt", "text": "hello world"}]
 
     @pytest.mark.asyncio
-    async def test_contact_request_failure_also_reaches_the_room(self):
+    @pytest.mark.parametrize(
+        "room_event_error",
+        [None, RuntimeError("room offline")],
+        ids=["room_notified", "room_event_also_fails"],
+    )
+    async def test_contact_request_failure_reaches_the_room(self, room_event_error):
         """A contact request the agent failed to answer is invisible in the room
-        otherwise — it looks exactly like one that never arrived."""
+        otherwise — it looks exactly like one that never arrived. Reporting it
+        is best-effort, so a failed room event must not change the tool's own
+        error output."""
         deps = MagicMock()
         deps.respond_contact_request = AsyncMock(side_effect=RuntimeError("nope"))
-        deps.send_event = AsyncMock(return_value={"status": "sent"})
+        deps.send_event = AsyncMock(side_effect=room_event_error)
         adapter = await _started_adapter(capabilities=Capability.CONTACTS)
 
         result = await _call_tool(
@@ -1038,23 +1045,6 @@ class TestBuiltinToolResults:
         (content,) = _tool_returns(result)
         assert "nope" in content
         deps.send_event.assert_called_once_with(content, "error")
-
-    @pytest.mark.asyncio
-    async def test_contact_request_failure_survives_a_failed_room_event(self):
-        deps = MagicMock()
-        deps.respond_contact_request = AsyncMock(side_effect=RuntimeError("nope"))
-        deps.send_event = AsyncMock(side_effect=RuntimeError("room offline"))
-        adapter = await _started_adapter(capabilities=Capability.CONTACTS)
-
-        result = await _call_tool(
-            adapter,
-            deps,
-            BandTool.RESPOND_CONTACT_REQUEST,
-            {"action": "approve", "handle": "@ann"},
-        )
-
-        (content,) = _tool_returns(result)
-        assert "nope" in content
 
 
 class TestOnMessage:
