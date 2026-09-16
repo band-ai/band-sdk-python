@@ -64,16 +64,24 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     JSON schema rather than a function for it to introspect — which is what
     lets one generic dispatcher stand in for a hand-written function per tool.
     """
-    schema = _strict_schema(platform_args_schema(definition.name))
+    schema = platform_args_schema(definition.name)
+    strict_schema = _strict_schema(schema)
     return Tool.from_schema(
-        _dispatcher(definition, schema),
+        _dispatcher(definition, strict_schema),
         # str(): ``ToolDefinition.name`` carries a ``BandTool`` member, and it
         # becomes a registry key pydantic-ai and its callers compare as a name.
         name=str(definition.name),
         description=get_tool_description(definition.name).strip(),
+        # The plain schema, not the strict one: ``additionalProperties`` on an
+        # advertised tool schema reaches some providers (e.g. Gemini, via
+        # pydantic-ai's own ``GoogleJsonSchemaTransformer``, which doesn't
+        # strip it) unsanitized and breaks tool calls there -- the same
+        # keyword ``adapters/gemini.py`` already has to strip for that
+        # adapter. Strictness only needs to affect validation, not the text
+        # shown to the model.
         json_schema=schema.model_json_schema(),
         takes_ctx=True,
-        args_validator=_arguments_validator(definition, schema),
+        args_validator=_arguments_validator(definition, strict_schema),
     )
 
 
@@ -87,7 +95,8 @@ def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
     argument names against ``model_json_schema()``'s ``properties`` -- lets
     the one ``model_validate()`` call in ``validate_tool_arguments`` do the
     rejecting itself, so it correctly honors a field's ``validation_alias``
-    secondary names the JSON schema never lists.
+    secondary names the JSON schema never lists. Used for validation only
+    (see ``_build_tool``) -- never for the schema advertised to the model.
     """
     return type(
         schema.__name__,
