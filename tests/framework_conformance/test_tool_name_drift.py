@@ -218,9 +218,9 @@ class TestPydanticAIToolDrift:
                 AdapterFeatures(capabilities=ALL_CAPABILITIES)
             )
         }
-        assert not ALL_TOOL_NAMES - built, (
-            "PydanticAI integration is missing tools for: "
-            f"{sorted(ALL_TOOL_NAMES - built)}."
+        missing = ALL_TOOL_NAMES - built
+        assert not missing, (
+            f"PydanticAI integration is missing tools for: {sorted(missing)}."
         )
 
 
