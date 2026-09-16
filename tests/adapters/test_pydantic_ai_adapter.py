@@ -891,6 +891,24 @@ class TestBuiltinToolExecution:
         deps.send_message.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_unknown_arguments_retry_without_dispatching(self):
+        """The schema-driven tool boundary keeps native tools' extra rejection."""
+        deps = MagicMock()
+        deps.send_message = AsyncMock(return_value={"status": "sent"})
+        adapter = await _started_adapter()
+
+        result = await _call_tool(
+            adapter,
+            deps,
+            BandTool.SEND_MESSAGE,
+            {"content": "hi", "mentions": [], "unexpected": "value"},
+        )
+
+        (retry,) = _parts(result, RetryPromptPart)
+        assert "unexpected" in str(retry.content)
+        deps.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_coercible_arguments_reach_the_dependency_normalized(self):
         deps = MagicMock()
         deps.list_tasks = AsyncMock(return_value={"tasks": []})

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 from pydantic_ai import ModelRetry, RunContext, Tool
@@ -84,9 +84,30 @@ def _validated_kwargs(
 ) -> dict[str, Any]:
     """``arguments`` as normalized kwargs, or a retry prompt for the model."""
     try:
+        _reject_unknown_arguments(definition, schema, arguments)
         return validate_tool_arguments(definition.name, schema, arguments)
     except ValueError as error:
         raise ModelRetry(str(error)) from error
+
+
+def _reject_unknown_arguments(
+    definition: ToolDefinition,
+    schema: type[BaseModel],
+    arguments: dict[str, Any],
+) -> None:
+    """Reject names outside the JSON schema advertised to the model.
+
+    ``Tool.from_schema`` does not enforce its JSON schema, and the master
+    models intentionally ignore extras for non-tool callers. Native pydantic-ai
+    functions reject extras, so the adapter keeps that tool-call boundary.
+    """
+    accepted = schema.model_json_schema().get("properties", {})
+    unexpected = sorted(set(arguments) - accepted.keys())
+    if unexpected:
+        raise ValueError(
+            f"Invalid arguments for {definition.name}: unexpected arguments: "
+            f"{', '.join(unexpected)}"
+        )
 
 
 def _arguments_validator(
@@ -127,7 +148,7 @@ def _resolve_method(
             f"{definition.name}: method '{definition.method_name}' not found "
             f"on {type(deps).__name__}"
         )
-    return method
+    return cast(Callable[..., Coroutine[Any, Any, Any]], method)
 
 
 def _dispatcher(
