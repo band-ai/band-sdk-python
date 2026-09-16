@@ -950,6 +950,18 @@ class TestBuiltinToolExecution:
             mentions=["Alice", "Bob"],
         )
 
+    @pytest.mark.asyncio
+    async def test_missing_backend_method_raises_an_actionable_error(self):
+        """A stale/typo'd registry method name is a registry bug -- it should
+        surface with the tool and method name, not a bare AttributeError."""
+        deps = MagicMock(spec=[])
+        adapter = await _started_adapter()
+
+        with pytest.raises(RuntimeError, match="send_message"):
+            await _call_tool(
+                adapter, deps, BandTool.SEND_MESSAGE, {"content": "hi", "mentions": []}
+            )
+
 
 class TestBuiltinToolResults:
     """What a finished built-in tool call hands back to the model."""
@@ -1069,6 +1081,33 @@ class TestBuiltinToolResults:
         (content,) = _tool_returns(result)
         assert "nope" in content
         deps.send_event.assert_called_once_with(content, "error")
+
+    @pytest.mark.asyncio
+    async def test_contact_request_success_does_not_report_a_normalization_failure(
+        self,
+    ):
+        """A response that succeeded must not be reported to the room as
+        failed just because shaping its result afterward blew up."""
+        deps = MagicMock()
+        approved = MagicMock()
+        approved.model_dump.side_effect = TypeError("boom during serialization")
+        deps.respond_contact_request = AsyncMock(return_value=approved)
+        deps.send_event = AsyncMock(return_value={"status": "sent"})
+        adapter = await _started_adapter(capabilities=Capability.CONTACTS)
+
+        result = await _call_tool(
+            adapter,
+            deps,
+            BandTool.RESPOND_CONTACT_REQUEST,
+            {"action": "approve", "handle": "@ann"},
+        )
+
+        deps.respond_contact_request.assert_called_once_with(
+            action="approve", handle="@ann"
+        )
+        (content,) = _tool_returns(result)
+        assert "boom during serialization" in content
+        deps.send_event.assert_not_called()
 
 
 class TestOnMessage:

@@ -23,7 +23,7 @@ from pydantic_ai.messages import BinaryContent
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import AdapterFeatures
+from band.core.types import AdapterFeatures, MessageType
 from band.runtime.tools import (
     BandTool,
     ToolDefinition,
@@ -117,6 +117,12 @@ def _resolve_method(
     """
     method = getattr(deps, definition.method_name, None)
     if method is None or not callable(method):
+        logger.error(
+            "%s: method '%s' not found on %s -- registry/protocol drift",
+            definition.name,
+            definition.method_name,
+            type(deps).__name__,
+        )
         raise RuntimeError(
             f"{definition.name}: method '{definition.method_name}' not found "
             f"on {type(deps).__name__}"
@@ -136,26 +142,48 @@ def _dispatcher(
         method = _resolve_method(ctx.deps, definition)
         try:
             result = await method(**kwargs)
+        except Exception as error:
+            return await _dispatch_failed(ctx, definition, error, notify_room=True)
+        try:
             # Normalization (e.g. band_read_room_file's image decode) can also
-            # fail on malformed data, so it shares the method call's error
-            # handling rather than crashing the run uncaught.
+            # fail on malformed data, so it gets the same graceful-error
+            # treatment as a method-call failure rather than crashing the run
+            # uncaught -- but it is kept in its own except, notify_room=False:
+            # the method call already succeeded, so this is not a failure to
+            # answer the request and must not be reported to the room as one.
             return _normalized_result(definition, result)
         except Exception as error:
-            logger.error(
-                "%s failed (tool_call_id=%s): %s",
-                definition.name,
-                ctx.tool_call_id,
-                error,
-                exc_info=True,
-            )
-            # The "Error " prefix is load-bearing: band_tool_errored reads it to
-            # tell a failed Band tool from productive work.
-            message = f"Error executing {definition.name}: {error}"
-            if definition.name == BandTool.RESPOND_CONTACT_REQUEST:
-                await _send_contact_request_error_event(ctx.deps, message)
-            return message
+            return await _dispatch_failed(ctx, definition, error, notify_room=False)
 
     return dispatch
+
+
+async def _dispatch_failed(
+    ctx: RunContext[AgentToolsProtocol],
+    definition: ToolDefinition,
+    error: Exception,
+    *,
+    notify_room: bool,
+) -> str:
+    """Log and format a dispatch failure; optionally also report it to the room.
+
+    Shared by the method-call and normalization failure paths so each keeps
+    one place to log and format from, while only a genuine method-call
+    failure (``notify_room=True``) can trigger the contact-request room event.
+    """
+    logger.error(
+        "%s failed (tool_call_id=%s): %s",
+        definition.name,
+        ctx.tool_call_id,
+        error,
+        exc_info=True,
+    )
+    # The "Error " prefix is load-bearing: band_tool_errored reads it to
+    # tell a failed Band tool from productive work.
+    message = f"Error executing {definition.name}: {error}"
+    if notify_room and definition.name == BandTool.RESPOND_CONTACT_REQUEST:
+        await _send_contact_request_error_event(ctx.deps, message)
+    return message
 
 
 def _normalized_result(definition: ToolDefinition, result: Any) -> Any:
@@ -184,7 +212,7 @@ async def _send_contact_request_error_event(
     see it. Best effort: a turn must not fail over its own error reporting.
     """
     try:
-        await deps.send_event(message, "error")
+        await deps.send_event(message, MessageType.ERROR)
     except Exception as error:
         logger.warning("Failed to report the contact-request failure: %s", error)
 
