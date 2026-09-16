@@ -19,6 +19,7 @@ for individual names.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -69,6 +70,17 @@ def _extract_tool_names(source: str) -> set[str]:
     return {
         name for name in ALL_TOOL_NAMES if re.search(re.escape(name) + r"\b", source)
     }
+
+
+def _assert_derives_from_registry(file_path: Path, integration_label: str) -> None:
+    """Fail unless ``file_path`` derives its tools from the central registry
+    instead of hand-rolling per-tool wrappers."""
+    source = file_path.read_text()
+    assert "iter_tool_definitions" in source, (
+        f"{integration_label} integration should derive its tool objects "
+        "from iter_tool_definitions() in band.runtime.tools instead of "
+        "hand-rolling per-tool wrappers."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +174,7 @@ class TestLangGraphToolDrift:
     _FILE = SRC_ROOT / "integrations" / "langgraph" / "langchain_tools.py"
 
     def test_derives_tools_from_central_registry(self):
-        source = self._FILE.read_text()
-        assert "iter_tool_definitions" in source, (
-            "LangGraph integration should derive its StructuredTool wrappers "
-            "from iter_tool_definitions() in band.runtime.tools instead of "
-            "hand-rolling per-tool wrappers."
-        )
+        _assert_derives_from_registry(self._FILE, "LangGraph")
 
 
 class TestCrewAIToolDrift:
@@ -198,12 +205,7 @@ class TestPydanticAIToolDrift:
     _FILE = SRC_ROOT / "integrations" / "pydantic_ai" / "tools.py"
 
     def test_derives_tools_from_central_registry(self):
-        source = self._FILE.read_text()
-        assert "iter_tool_definitions" in source, (
-            "PydanticAI integration should derive its Tool objects from "
-            "iter_tool_definitions() in band.runtime.tools instead of "
-            "hand-rolling per-tool wrappers."
-        )
+        _assert_derives_from_registry(self._FILE, "PydanticAI")
 
     @pytest.mark.skipif(
         not _HAS_PYDANTIC_AI, reason="pydantic-ai not installed in this lane"

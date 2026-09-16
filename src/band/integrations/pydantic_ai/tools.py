@@ -29,6 +29,7 @@ from band.runtime.tools import (
     ToolDefinition,
     decode_image_block,
     get_band_tool_category,
+    get_tool_description,
     is_image_passthrough_result,
     iter_tool_definitions,
     platform_args_schema,
@@ -69,7 +70,7 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
         # str(): ``ToolDefinition.name`` carries a ``BandTool`` member, and it
         # becomes a registry key pydantic-ai and its callers compare as a name.
         name=str(definition.name),
-        description=(schema.__doc__ or "").strip(),
+        description=get_tool_description(definition.name).strip(),
         json_schema=schema.model_json_schema(),
         takes_ctx=True,
         args_validator=_arguments_validator(definition, schema),
@@ -106,6 +107,23 @@ def _arguments_validator(
     return validate
 
 
+def _resolve_method(
+    deps: AgentToolsProtocol, definition: ToolDefinition
+) -> Callable[..., Coroutine[Any, Any, Any]]:
+    """``definition.method_name`` bound on ``deps``, or an actionable error.
+
+    A stale or typo'd registry entry should surface as this message, not a
+    bare ``AttributeError`` from whichever tool call happens to hit it first.
+    """
+    method = getattr(deps, definition.method_name, None)
+    if method is None or not callable(method):
+        raise RuntimeError(
+            f"{definition.name}: method '{definition.method_name}' not found "
+            f"on {type(deps).__name__}"
+        )
+    return method
+
+
 def _dispatcher(
     definition: ToolDefinition, schema: type[BaseModel]
 ) -> Callable[..., Coroutine[Any, Any, Any]]:
@@ -115,18 +133,27 @@ def _dispatcher(
         kwargs = _validated_kwargs(definition, schema, arguments)
         # Resolved outside the try: a missing method is a registry bug, not
         # something to hand the model as a tool error it could act on.
-        method = getattr(ctx.deps, definition.method_name)
+        method = _resolve_method(ctx.deps, definition)
         try:
             result = await method(**kwargs)
+            # Normalization (e.g. band_read_room_file's image decode) can also
+            # fail on malformed data, so it shares the method call's error
+            # handling rather than crashing the run uncaught.
+            return _normalized_result(definition, result)
         except Exception as error:
-            logger.error("%s failed: %s", definition.name, error)
+            logger.error(
+                "%s failed (tool_call_id=%s): %s",
+                definition.name,
+                ctx.tool_call_id,
+                error,
+                exc_info=True,
+            )
             # The "Error " prefix is load-bearing: band_tool_errored reads it to
             # tell a failed Band tool from productive work.
             message = f"Error executing {definition.name}: {error}"
             if definition.name == BandTool.RESPOND_CONTACT_REQUEST:
                 await _send_contact_request_error_event(ctx.deps, message)
             return message
-        return _normalized_result(definition, result)
 
     return dispatch
 

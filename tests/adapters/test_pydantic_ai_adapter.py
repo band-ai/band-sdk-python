@@ -1006,6 +1006,30 @@ class TestBuiltinToolResults:
         assert binary.media_type == "image/png"
 
     @pytest.mark.asyncio
+    async def test_malformed_image_block_becomes_an_llm_readable_error(self):
+        """A block that fails to decode is a tool error, not a crashed run."""
+        deps = MagicMock()
+        deps.read_room_file = AsyncMock(
+            return_value={
+                "content": [
+                    {
+                        "type": "image",
+                        "data": "not-valid-base64!!",
+                        "mimeType": "image/png",
+                    }
+                ]
+            }
+        )
+        adapter = await _started_adapter(capabilities=Capability.FILES)
+
+        result = await _call_tool(
+            adapter, deps, BandTool.READ_ROOM_FILE, {"file_id": "file-1"}
+        )
+
+        (content,) = _tool_returns(result)
+        assert band_tool_errored(BandTool.READ_ROOM_FILE, content)
+
+    @pytest.mark.asyncio
     async def test_non_image_file_result_passes_through(self):
         deps = MagicMock()
         deps.read_room_file = AsyncMock(
