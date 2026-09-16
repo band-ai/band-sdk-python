@@ -7,6 +7,7 @@ This file contains PydanticAI-specific behavior: agent creation, tool registrati
 stream event handling, execution reporting, and custom tools.
 """
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
@@ -38,6 +39,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -56,10 +58,28 @@ from band.adapters.pydantic_ai import (
     _is_replayable_history_message,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import Capability, Emit, PlatformMessage, TurnUsage
+from band.core.types import (
+    ALL_CAPABILITIES,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.runtime.custom_tools import get_custom_tool_name
 from tests.adapters.usage_events import sent_usage_payloads
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import (
+    ALL_TOOL_NAMES,
+    CHAT_TOOL_NAMES,
+    CONTACT_TOOL_NAMES,
+    FILE_TOOL_NAMES,
+    MEMORY_TOOL_NAMES,
+    TASK_TOOL_NAMES,
+    BandTool,
+    ToolCategory,
+    band_tool_errored,
+    get_tool_description,
+    platform_args_schema,
+)
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
 
@@ -676,12 +696,67 @@ class TestOnStarted:
             assert tool in tool_names, f"Tool {tool} not found"
 
 
+def _scripted_tool_calls(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
+    """A model that makes ``calls``, one per turn, then answers in plain text.
+
+    A rejected call brings the model straight back here with nothing left
+    pending, so it is attempted exactly once — which is what makes "never
+    dispatched" observable rather than merely slow.
+    """
+    pending = list(calls)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if pending:
+            name, args = pending.pop(0)
+            return ModelResponse(parts=[ToolCallPart(name, args)])
+        return ModelResponse(parts=[TextPart("done")])
+
+    return FunctionModel(respond)
+
+
+async def _started_adapter(**features: Any) -> PydanticAIAdapter:
+    """A started adapter, i.e. one whose agent is really built."""
+    adapter = PydanticAIAdapter(model="test", **features)
+    await adapter.on_started(agent_name="Probe", agent_description="probe")
+    return adapter
+
+
+def _registered_names(adapter: PydanticAIAdapter) -> set[str]:
+    return set(adapter._agent._function_toolset.tools)
+
+
+async def _call_tool(
+    adapter: PydanticAIAdapter, deps: Any, name: str, args: dict[str, Any]
+) -> Any:
+    """Drive one built-in tool call through pydantic-ai's own execution path.
+
+    Not the tool function directly: validation, argument splatting and the
+    retry conversion are pydantic-ai's, and calling the function by hand would
+    skip every one of them.
+    """
+    with adapter._agent.override(model=_scripted_tool_calls((name, args))):
+        return await adapter._agent.run("go", deps=deps)
+
+
+def _parts(result: Any, part_type: type) -> list[Any]:
+    return [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, part_type)
+    ]
+
+
+def _tool_returns(result: Any) -> list[Any]:
+    return [part.content for part in _parts(result, ToolReturnPart)]
+
+
 class TestAdvertisedToolSchemas:
     """Per-argument text fidelity is asserted in test_tool_text_drift.
 
-    What is pydantic-ai-specific, and checked here, is the split: griffe
-    consumes the rendered ``Args:`` section into the argument schema, so the
-    tool's own blurb must come back as the plain master docstring.
+    What is pydantic-ai-specific, and checked here, is that the master model's
+    own description and JSON schema are what reaches the framework — nothing
+    is re-derived from a hand-written function signature any more.
     """
 
     @pytest.mark.asyncio
@@ -694,158 +769,292 @@ class TestAdvertisedToolSchemas:
         assert blurbs, "no tools registered, so nothing was actually checked"
         assert blurbs == {name: get_tool_description(name).strip() for name in blurbs}
 
+    @pytest.mark.asyncio
+    async def test_advertised_schema_is_the_master_schema(self):
+        schemas = {
+            name: schema.json_schema
+            for name, schema in (await pydantic_ai_probe_tools()).items()
+        }
 
-class TestFileTools:
-    """band_list_room_files/band_read_room_file/band_send_room_file, the
-    hand-written wrappers gated behind Capability.FILES.
-
-    Drives each tool function directly (grabbed off the real, started agent's
-    function toolset) rather than through a full mocked agent run, since the
-    behavior under test is each wrapper's own argument plumbing to
-    AgentToolsProtocol -- not pydantic-ai's tool-calling loop.
-    """
-
-    @pytest.fixture
-    def file_tools(self):
-        """Mock AgentToolsProtocol with the three room-file methods."""
-        tools = MagicMock()
-        tools.list_room_files = AsyncMock(
-            return_value={"data": [{"id": "file-1", "name": "report.txt"}]}
-        )
-        tools.read_room_file = AsyncMock(
-            return_value={"name": "report.txt", "text": "hello world"}
-        )
-        tools.send_room_file = AsyncMock(
-            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
-        )
-        return tools
-
-    async def _tool_functions(self) -> dict[str, Any]:
-        adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
-        await adapter.on_started(agent_name="Probe", agent_description="probe")
-        return {
-            name: tool.function
-            for name, tool in adapter._agent._function_toolset.tools.items()
+        assert schemas, "no tools registered, so nothing was actually checked"
+        assert schemas == {
+            name: platform_args_schema(name).model_json_schema() for name in schemas
         }
 
     @pytest.mark.asyncio
-    async def test_agent_has_file_tools_registered_only_with_capability(self):
-        without_files = PydanticAIAdapter(model="test")
-        await without_files.on_started(agent_name="Probe", agent_description="probe")
-        names = set(without_files._agent._function_toolset.tools)
+    async def test_task_schemas_avoid_single_value_const(self):
+        """Task tools are the ones with a single-value ``Literal``.
 
-        assert "band_list_room_files" not in names
-        assert "band_read_room_file" not in names
-        assert "band_send_room_file" not in names
+        Pydantic renders that as ``const``, which some providers' restricted
+        JSON-Schema subsets reject; ``platform_args_schema`` normalizes it to a
+        one-member ``enum``, and this is the proof the sanitized schema — not a
+        raw ``model_json_schema()`` — is what gets advertised.
+        """
+        adapter = await _started_adapter(capabilities=Capability.TASKS)
+        tools = adapter._agent._function_toolset.tools
 
-        with_files = await self._tool_functions()
+        for name in TASK_TOOL_NAMES:
+            assert "const" not in json.dumps(tools[name].function_schema.json_schema)
 
-        assert "band_list_room_files" in with_files
-        assert "band_read_room_file" in with_files
-        assert "band_send_room_file" in with_files
+        include = tools[BandTool.GET_TASK].function_schema.json_schema["properties"][
+            "include"
+        ]
+        assert {"enum": ["history"], "type": "string"} in include["anyOf"]
+
+
+class TestBuiltinToolRegistration:
+    """Exactly which built-in tools a set of features puts on the agent.
+
+    Expectations are the registry's own name sets, so a newly added tool is
+    covered by whichever bucket it was declared in rather than by a literal
+    list someone has to remember to extend.
+    """
 
     @pytest.mark.asyncio
-    async def test_list_room_files_forwards_cursor(self, file_tools):
-        functions = await self._tool_functions()
+    async def test_default_features_register_only_chat_tools(self):
+        adapter = await _started_adapter()
 
-        result = await functions["band_list_room_files"](
-            SimpleNamespace(deps=file_tools), cursor="cursor-1"
+        assert _registered_names(adapter) == CHAT_TOOL_NAMES
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("capabilities", "expected"),
+        [
+            (Capability.CONTACTS, CHAT_TOOL_NAMES | CONTACT_TOOL_NAMES),
+            (Capability.MEMORY, CHAT_TOOL_NAMES | MEMORY_TOOL_NAMES),
+            (Capability.FILES, CHAT_TOOL_NAMES | FILE_TOOL_NAMES),
+            (Capability.TASKS, CHAT_TOOL_NAMES | TASK_TOOL_NAMES),
+            (ALL_CAPABILITIES, ALL_TOOL_NAMES),
+        ],
+        ids=["contacts", "memory", "files", "tasks", "all"],
+    )
+    async def test_capability_selects_exact_tool_set(self, capabilities, expected):
+        adapter = await _started_adapter(capabilities=capabilities)
+
+        assert _registered_names(adapter) == expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("feature_filter", "expected"),
+        [
+            ({"include_tools": [BandTool.SEND_MESSAGE]}, {BandTool.SEND_MESSAGE}),
+            (
+                {"exclude_tools": [BandTool.SEND_EVENT]},
+                ALL_TOOL_NAMES - {BandTool.SEND_EVENT},
+            ),
+            ({"include_categories": [ToolCategory.TASKS]}, TASK_TOOL_NAMES),
+        ],
+        ids=["include_tools", "exclude_tools", "include_categories"],
+    )
+    async def test_feature_filters_narrow_the_capability_set(
+        self, feature_filter, expected
+    ):
+        adapter = await _started_adapter(
+            capabilities=ALL_CAPABILITIES, **feature_filter
         )
 
-        file_tools.list_room_files.assert_called_once_with("cursor-1")
-        assert result == {"data": [{"id": "file-1", "name": "report.txt"}]}
+        assert _registered_names(adapter) == expected
 
     @pytest.mark.asyncio
-    async def test_list_room_files_handles_exception(self, file_tools):
-        file_tools.list_room_files.side_effect = Exception("backend unavailable")
-        functions = await self._tool_functions()
+    async def test_filters_cannot_reintroduce_a_gated_tool(self):
+        """A filter narrows what the capabilities allow; it never widens it."""
+        adapter = await _started_adapter(include_tools=[BandTool.STORE_MEMORY])
 
-        result = await functions["band_list_room_files"](
-            SimpleNamespace(deps=file_tools), cursor=None
+        assert _registered_names(adapter) == set()
+
+
+class TestBuiltinToolExecution:
+    """Argument handling through pydantic-ai's real tool-calling loop.
+
+    ``Tool.from_schema`` advertises the master schema but installs a
+    pass-through validator, so none of this is guaranteed by pydantic-ai
+    itself — every check here is on the integration's own validate/normalize
+    step.
+    """
+
+    @pytest.mark.asyncio
+    async def test_invalid_arguments_retry_without_dispatching(self):
+        deps = MagicMock()
+        deps.send_message = AsyncMock(return_value={"status": "sent"})
+        adapter = await _started_adapter()
+
+        result = await _call_tool(
+            adapter,
+            deps,
+            BandTool.SEND_MESSAGE,
+            {"content": "hi", "mentions": "alice"},
         )
 
-        assert "Error listing room files" in result
-        assert "backend unavailable" in result
+        (retry,) = _parts(result, RetryPromptPart)
+        assert "Invalid arguments for band_send_message" in str(retry.content)
+        assert "mentions" in str(retry.content)
+        deps.send_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_read_room_file_forwards_file_id(self, file_tools):
-        functions = await self._tool_functions()
+    async def test_coercible_arguments_reach_the_dependency_normalized(self):
+        deps = MagicMock()
+        deps.list_tasks = AsyncMock(return_value={"tasks": []})
+        adapter = await _started_adapter(capabilities=Capability.TASKS)
 
-        result = await functions["band_read_room_file"](
-            SimpleNamespace(deps=file_tools), file_id="file-1"
+        await _call_tool(adapter, deps, BandTool.LIST_TASKS, {"limit": "5"})
+
+        # limit coerced to int; the two omitted optionals are not passed at all
+        # rather than handed over as None.
+        deps.list_tasks.assert_called_once_with(limit=5)
+
+    @pytest.mark.asyncio
+    async def test_explicit_nulls_are_dropped_before_dispatch(self):
+        deps = MagicMock()
+        deps.send_event = AsyncMock(return_value={"status": "sent"})
+        adapter = await _started_adapter()
+
+        await _call_tool(
+            adapter,
+            deps,
+            BandTool.SEND_EVENT,
+            {"content": "thinking", "message_type": "thought", "metadata": None},
         )
 
-        file_tools.read_room_file.assert_called_once_with("file-1")
-        assert result == {"name": "report.txt", "text": "hello world"}
+        deps.send_event.assert_called_once_with(
+            content="thinking", message_type="thought"
+        )
 
     @pytest.mark.asyncio
-    async def test_read_room_file_image_result_becomes_binary_content(self, file_tools):
-        file_tools.read_room_file = AsyncMock(
+    async def test_dependency_is_called_with_master_field_names(self):
+        """The master model's field names are the dependency's keyword names.
+
+        Keyword dispatch is what removes a whole class of bug the hand-written
+        wrappers had: ``send_room_file`` takes (content, filename, caption,
+        mentions) while the model lists them in another order.
+        """
+        deps = MagicMock()
+        deps.send_room_file = AsyncMock(return_value={"message_id": "msg-1"})
+        adapter = await _started_adapter(capabilities=Capability.FILES)
+
+        await _call_tool(
+            adapter,
+            deps,
+            BandTool.SEND_ROOM_FILE,
+            {
+                "content": "file body",
+                "filename": "notes.txt",
+                "caption": "here's a file",
+                "mentions": ["Alice", "Bob"],
+            },
+        )
+
+        deps.send_room_file.assert_called_once_with(
+            content="file body",
+            filename="notes.txt",
+            caption="here's a file",
+            mentions=["Alice", "Bob"],
+        )
+
+
+class TestBuiltinToolResults:
+    """What a finished built-in tool call hands back to the model."""
+
+    @pytest.mark.asyncio
+    async def test_pydantic_results_are_serialized(self):
+        class Peer(BaseModel):
+            id: str
+            handle: str
+
+        deps = MagicMock()
+        deps.lookup_peers = AsyncMock(return_value=Peer(id="p-1", handle="@ann"))
+        adapter = await _started_adapter()
+
+        result = await _call_tool(adapter, deps, BandTool.LOOKUP_PEERS, {})
+
+        assert _tool_returns(result) == [{"id": "p-1", "handle": "@ann"}]
+
+    @pytest.mark.asyncio
+    async def test_backend_failure_becomes_an_llm_readable_error(self):
+        deps = MagicMock()
+        deps.send_message = AsyncMock(side_effect=RuntimeError("backend down"))
+        adapter = await _started_adapter()
+
+        result = await _call_tool(
+            adapter, deps, BandTool.SEND_MESSAGE, {"content": "hi", "mentions": []}
+        )
+
+        (content,) = _tool_returns(result)
+        assert "backend down" in content
+        # The wording is a contract with band_tool_errored, which the adapter
+        # reads to tell a failed Band tool from productive work.
+        assert band_tool_errored(BandTool.SEND_MESSAGE, content)
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_becomes_binary_content(self):
+        deps = MagicMock()
+        deps.read_room_file = AsyncMock(
             return_value={
                 "content": [
                     {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
                 ]
             }
         )
-        functions = await self._tool_functions()
+        adapter = await _started_adapter(capabilities=Capability.FILES)
 
-        result = await functions["band_read_room_file"](
-            SimpleNamespace(deps=file_tools), file_id="file-1"
+        result = await _call_tool(
+            adapter, deps, BandTool.READ_ROOM_FILE, {"file_id": "file-1"}
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], BinaryContent)
-        assert result[0].data == b"fake"
-        assert result[0].media_type == "image/png"
+        ((binary,),) = _tool_returns(result)
+        assert isinstance(binary, BinaryContent)
+        assert binary.data == b"fake"
+        assert binary.media_type == "image/png"
 
     @pytest.mark.asyncio
-    async def test_read_room_file_handles_exception(self, file_tools):
-        file_tools.read_room_file.side_effect = Exception("not found")
-        functions = await self._tool_functions()
+    async def test_non_image_file_result_passes_through(self):
+        deps = MagicMock()
+        deps.read_room_file = AsyncMock(
+            return_value={"name": "report.txt", "text": "hello world"}
+        )
+        adapter = await _started_adapter(capabilities=Capability.FILES)
 
-        result = await functions["band_read_room_file"](
-            SimpleNamespace(deps=file_tools), file_id="missing"
+        result = await _call_tool(
+            adapter, deps, BandTool.READ_ROOM_FILE, {"file_id": "file-1"}
         )
 
-        assert "Error reading room file" in result
-        assert "not found" in result
+        assert _tool_returns(result) == [{"name": "report.txt", "text": "hello world"}]
 
     @pytest.mark.asyncio
-    async def test_send_room_file_forwards_args_in_protocol_order(self, file_tools):
-        """Regression pin: the wrapper's own signature order (content, filename,
-        mentions, caption) differs from the positional order AgentToolsProtocol
-        wants (content, filename, caption, mentions) -- assert the call site
-        reorders correctly rather than passing mentions where caption goes."""
-        functions = await self._tool_functions()
+    async def test_contact_request_failure_also_reaches_the_room(self):
+        """A contact request the agent failed to answer is invisible in the room
+        otherwise — it looks exactly like one that never arrived."""
+        deps = MagicMock()
+        deps.respond_contact_request = AsyncMock(side_effect=RuntimeError("nope"))
+        deps.send_event = AsyncMock(return_value={"status": "sent"})
+        adapter = await _started_adapter(capabilities=Capability.CONTACTS)
 
-        result = await functions["band_send_room_file"](
-            SimpleNamespace(deps=file_tools),
-            content="file body",
-            filename="notes.txt",
-            mentions=["Alice", "Bob"],
-            caption="here's a file",
+        result = await _call_tool(
+            adapter,
+            deps,
+            BandTool.RESPOND_CONTACT_REQUEST,
+            {"action": "approve", "handle": "@ann"},
         )
 
-        file_tools.send_room_file.assert_called_once_with(
-            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
-        )
-        assert result == {"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        (content,) = _tool_returns(result)
+        assert "nope" in content
+        deps.send_event.assert_called_once_with(content, "error")
 
     @pytest.mark.asyncio
-    async def test_send_room_file_handles_exception(self, file_tools):
-        file_tools.send_room_file.side_effect = Exception("upload failed")
-        functions = await self._tool_functions()
+    async def test_contact_request_failure_survives_a_failed_room_event(self):
+        deps = MagicMock()
+        deps.respond_contact_request = AsyncMock(side_effect=RuntimeError("nope"))
+        deps.send_event = AsyncMock(side_effect=RuntimeError("room offline"))
+        adapter = await _started_adapter(capabilities=Capability.CONTACTS)
 
-        result = await functions["band_send_room_file"](
-            SimpleNamespace(deps=file_tools),
-            content="body",
-            filename="notes.txt",
-            mentions=["Alice"],
+        result = await _call_tool(
+            adapter,
+            deps,
+            BandTool.RESPOND_CONTACT_REQUEST,
+            {"action": "approve", "handle": "@ann"},
         )
 
-        assert "Error sending room file 'notes.txt'" in result
-        assert "upload failed" in result
+        (content,) = _tool_returns(result)
+        assert "nope" in content
 
 
 class TestOnMessage:

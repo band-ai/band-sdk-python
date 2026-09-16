@@ -22,7 +22,7 @@ import re
 
 import pytest
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from band.core.types import ALL_CAPABILITIES
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -38,6 +38,13 @@ from band.integrations.crewai.tools import PLATFORM_TOOLS
 
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
+
+try:
+    from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
+
+    _HAS_PYDANTIC_AI = True
+except ImportError:  # pydantic-ai extra, absent from the dev-crewai/dev-parlant lanes
+    _HAS_PYDANTIC_AI = False
 
 from tests.paths import SRC_ROOT
 
@@ -181,24 +188,37 @@ class TestCrewAIToolDrift:
 
 
 class TestPydanticAIToolDrift:
-    """PydanticAI adapter (adapters/pydantic_ai.py)."""
+    """PydanticAI built-in tools (integrations/pydantic_ai/tools.py).
 
-    _FILE = SRC_ROOT / "adapters" / "pydantic_ai.py"
+    Registry-driven like the LangGraph integration, so the drift check is that
+    the registry is still the source — plus the live proof that every tool in
+    it really gets built.
+    """
 
-    def test_all_tools_registered(self):
-        """Every non-file tool in TOOL_MODELS has a PydanticAI tool function.
+    _FILE = SRC_ROOT / "integrations" / "pydantic_ai" / "tools.py"
 
-        File tools are excluded: each Band tool is its own
-        ``@platform_tool``-decorated function here, so exposing
-        ``Capability.FILES`` needs a real new function per tool, not just a
-        capability declaration -- not yet done.
-        """
+    def test_derives_tools_from_central_registry(self):
         source = self._FILE.read_text()
-        found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - FILE_TOOL_NAMES - found
-        assert not missing, (
-            f"PydanticAI adapter is missing tool functions for: {sorted(missing)}. "
-            f"Add tool registrations in _register_tools()."
+        assert "iter_tool_definitions" in source, (
+            "PydanticAI integration should derive its Tool objects from "
+            "iter_tool_definitions() in band.runtime.tools instead of "
+            "hand-rolling per-tool wrappers."
+        )
+
+    @pytest.mark.skipif(
+        not _HAS_PYDANTIC_AI, reason="pydantic-ai not installed in this lane"
+    )
+    def test_all_tools_registered(self):
+        """Every tool in TOOL_MODELS is built for a fully-capable adapter."""
+        built = {
+            tool.name
+            for tool in build_band_pydantic_ai_tools(
+                AdapterFeatures(capabilities=ALL_CAPABILITIES)
+            )
+        }
+        assert not ALL_TOOL_NAMES - built, (
+            "PydanticAI integration is missing tools for: "
+            f"{sorted(ALL_TOOL_NAMES - built)}."
         )
 
 

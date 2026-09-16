@@ -24,7 +24,7 @@ from band.adapters.claude_sdk import (
 # ``sys.modules`` instead — see ``tests/test_module_isolation.py``.
 from band.adapters.crewai import CrewAIAdapter
 from band.adapters.crewai_flow import CrewAIFlowAdapter
-from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.adapters.copilot_sdk import (
     _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK,
@@ -140,10 +140,7 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     """
     from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
 
-    adapter = PydanticAIAdapter(
-        model="test",
-        capabilities=Capability.CONTACTS | Capability.MEMORY | Capability.FILES,
-    )
+    adapter = PydanticAIAdapter(model="test", capabilities=ALL_CAPABILITIES)
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
         name: tool.function_schema
