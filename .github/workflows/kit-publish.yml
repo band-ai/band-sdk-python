@@ -116,7 +116,7 @@ jobs:
       # quarantine gate below still vets them).
       - name: Install uv (relock)
         if: ${{ inputs.relock }}
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Re-lock the self-version in the build context
         if: ${{ inputs.relock }}
@@ -252,7 +252,7 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
