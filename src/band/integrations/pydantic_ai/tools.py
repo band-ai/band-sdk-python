@@ -17,7 +17,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pydantic_ai import ModelRetry, RunContext, Tool
 from pydantic_ai.messages import BinaryContent
 
@@ -64,7 +64,7 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     JSON schema rather than a function for it to introspect — which is what
     lets one generic dispatcher stand in for a hand-written function per tool.
     """
-    schema = platform_args_schema(definition.name)
+    schema = _strict_schema(platform_args_schema(definition.name))
     return Tool.from_schema(
         _dispatcher(definition, schema),
         # str(): ``ToolDefinition.name`` carries a ``BandTool`` member, and it
@@ -77,37 +77,43 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     )
 
 
+def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
+    """``schema``, rejecting arguments outside its accepted field names.
+
+    ``Tool.from_schema`` does not enforce its JSON schema, and the master
+    models intentionally ignore extras for non-tool callers, so without this
+    an unrecognized argument would silently be dropped and the call would
+    still dispatch. Rejecting via ``model_config`` -- rather than diffing the
+    argument names against ``model_json_schema()``'s ``properties`` -- lets
+    the one ``model_validate()`` call in ``validate_tool_arguments`` do the
+    rejecting itself, so it correctly honors a field's ``validation_alias``
+    secondary names the JSON schema never lists.
+    """
+    return type(
+        schema.__name__,
+        (schema,),
+        {"model_config": ConfigDict(extra="forbid"), "__doc__": schema.__doc__},
+    )
+
+
 def _validated_kwargs(
     definition: ToolDefinition,
     schema: type[BaseModel],
     arguments: dict[str, Any],
+    *,
+    tool_call_id: str | None,
 ) -> dict[str, Any]:
     """``arguments`` as normalized kwargs, or a retry prompt for the model."""
     try:
-        _reject_unknown_arguments(definition, schema, arguments)
         return validate_tool_arguments(definition.name, schema, arguments)
     except ValueError as error:
-        raise ModelRetry(str(error)) from error
-
-
-def _reject_unknown_arguments(
-    definition: ToolDefinition,
-    schema: type[BaseModel],
-    arguments: dict[str, Any],
-) -> None:
-    """Reject names outside the JSON schema advertised to the model.
-
-    ``Tool.from_schema`` does not enforce its JSON schema, and the master
-    models intentionally ignore extras for non-tool callers. Native pydantic-ai
-    functions reject extras, so the adapter keeps that tool-call boundary.
-    """
-    accepted = schema.model_json_schema().get("properties", {})
-    unexpected = sorted(set(arguments) - accepted.keys())
-    if unexpected:
-        raise ValueError(
-            f"Invalid arguments for {definition.name}: unexpected arguments: "
-            f"{', '.join(unexpected)}"
+        logger.warning(
+            "%s: argument validation failed (tool_call_id=%s): %s",
+            definition.name,
+            tool_call_id,
+            error,
         )
+        raise ModelRetry(str(error)) from error
 
 
 def _arguments_validator(
@@ -122,8 +128,8 @@ def _arguments_validator(
     model's raw arguments — this hook can only reject, never normalize.
     """
 
-    def validate(_ctx: RunContext[AgentToolsProtocol], **arguments: Any) -> None:
-        _validated_kwargs(definition, schema, arguments)
+    def validate(ctx: RunContext[AgentToolsProtocol], **arguments: Any) -> None:
+        _validated_kwargs(definition, schema, arguments, tool_call_id=ctx.tool_call_id)
 
     return validate
 
@@ -138,16 +144,12 @@ def _resolve_method(
     """
     method = getattr(deps, definition.method_name, None)
     if method is None or not callable(method):
-        logger.error(
-            "%s: method '%s' not found on %s -- registry/protocol drift",
-            definition.name,
-            definition.method_name,
-            type(deps).__name__,
-        )
-        raise RuntimeError(
+        message = (
             f"{definition.name}: method '{definition.method_name}' not found "
             f"on {type(deps).__name__}"
         )
+        logger.error("%s -- registry/protocol drift", message)
+        raise RuntimeError(message)
     return cast(Callable[..., Coroutine[Any, Any, Any]], method)
 
 
@@ -157,7 +159,9 @@ def _dispatcher(
     """The generic tool body: validate, call the bound method, normalize."""
 
     async def dispatch(ctx: RunContext[AgentToolsProtocol], **arguments: Any) -> Any:
-        kwargs = _validated_kwargs(definition, schema, arguments)
+        kwargs = _validated_kwargs(
+            definition, schema, arguments, tool_call_id=ctx.tool_call_id
+        )
         # Resolved outside the try: a missing method is a registry bug, not
         # something to hand the model as a tool error it could act on.
         method = _resolve_method(ctx.deps, definition)

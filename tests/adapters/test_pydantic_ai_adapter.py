@@ -62,9 +62,11 @@ from band.core.types import (
     ALL_CAPABILITIES,
     Capability,
     Emit,
+    MessageType,
     PlatformMessage,
     TurnUsage,
 )
+from band.integrations.pydantic_ai.tools import _strict_schema
 from band.runtime.custom_tools import get_custom_tool_name
 from tests.adapters.usage_events import sent_usage_payloads
 from band.runtime.tools import (
@@ -778,7 +780,8 @@ class TestAdvertisedToolSchemas:
 
         assert schemas, "no tools registered, so nothing was actually checked"
         assert schemas == {
-            name: platform_args_schema(name).model_json_schema() for name in schemas
+            name: _strict_schema(platform_args_schema(name)).model_json_schema()
+            for name in schemas
         }
 
     @pytest.mark.asyncio
@@ -907,6 +910,19 @@ class TestBuiltinToolExecution:
         (retry,) = _parts(result, RetryPromptPart)
         assert "unexpected" in str(retry.content)
         deps.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_validation_alias_argument_is_not_rejected_as_unknown(self):
+        """A field's ``validation_alias`` secondary name is a real accepted
+        argument, not an unrecognized one, even though it's absent from the
+        model's advertised JSON schema (which only lists the primary alias)."""
+        deps = MagicMock()
+        deps.add_participant = AsyncMock(return_value={"id": "user-1"})
+        adapter = await _started_adapter()
+
+        await _call_tool(adapter, deps, BandTool.ADD_PARTICIPANT, {"name": "alice"})
+
+        deps.add_participant.assert_called_once_with(identifier="alice", role="member")
 
     @pytest.mark.asyncio
     async def test_coercible_arguments_reach_the_dependency_normalized(self):
@@ -1098,7 +1114,7 @@ class TestBuiltinToolResults:
 
         (content,) = _tool_returns(result)
         assert "nope" in content
-        deps.send_event.assert_called_once_with(content, "error")
+        deps.send_event.assert_called_once_with(content, MessageType.ERROR)
 
     @pytest.mark.asyncio
     async def test_contact_request_success_does_not_report_a_normalization_failure(

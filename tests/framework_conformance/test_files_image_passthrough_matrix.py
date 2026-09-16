@@ -316,7 +316,8 @@ async def _probe_pydantic_ai() -> bool:
     read_room_file = adapter._agent._function_toolset.tools[BandTool.READ_ROOM_FILE]
 
     result = await read_room_file.function(
-        SimpleNamespace(deps=_StubReadRoomFileTools()), file_id="file-1"
+        SimpleNamespace(deps=_StubReadRoomFileTools(), tool_call_id="probe"),
+        file_id="file-1",
     )
 
     if not isinstance(result, list) or len(result) != 1:
