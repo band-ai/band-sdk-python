@@ -66,7 +66,6 @@ from band.core.types import (
     PlatformMessage,
     TurnUsage,
 )
-from band.integrations.pydantic_ai.tools import _strict_schema
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -780,8 +779,7 @@ class TestAdvertisedToolSchemas:
 
         assert schemas, "no tools registered, so nothing was actually checked"
         assert schemas == {
-            name: _strict_schema(platform_args_schema(name)).model_json_schema()
-            for name in schemas
+            name: platform_args_schema(name).model_json_schema() for name in schemas
         }
 
     @pytest.mark.asyncio
