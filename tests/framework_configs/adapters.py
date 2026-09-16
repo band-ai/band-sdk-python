@@ -147,10 +147,7 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
         PydanticAIAdapter,
     )
 
-    adapter = PydanticAIAdapter(
-        model="test",
-        capabilities=Capability.CONTACTS | Capability.MEMORY | Capability.FILES,
-    )
+    adapter = PydanticAIAdapter(model="test", capabilities=ALL_CAPABILITIES)
     await adapter.on_started(agent_name="Probe", agent_description="probe")
     return {
         name: tool.function_schema
