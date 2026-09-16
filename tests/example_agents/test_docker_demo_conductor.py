@@ -7,6 +7,7 @@ these tests pin down.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 
 from band_rest.types import ChatMessage
@@ -189,8 +190,6 @@ def test_conductor_caps_do_not_drift_from_breaker_defaults() -> None:
     # BreakerConfig defaults, so the two can never silently drift (300 vs 600 again).
     # `interactive` is intentionally different (conductor defaults to interactive,
     # the breaker to headless-safe), so normalize just that one mode flag.
-    import dataclasses
-
     settings = conductor.ConductorSettings()
     normalized = dataclasses.replace(settings.breaker_config(), interactive=False)
     assert normalized == conductor.BreakerConfig(), (

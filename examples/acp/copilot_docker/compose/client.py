@@ -24,6 +24,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
@@ -67,8 +68,10 @@ class Settings(BaseSettings):
 
 
 async def main() -> None:
+    load_dotenv()
     settings = Settings()
-    agent_id, api_key = load_agent_config("copilot_acp_agent")
+
+    _, api_key = load_agent_config("copilot_acp_agent")
     if settings.band_agent_key != api_key:
         raise ValueError(
             "BAND_AGENT_KEY must match copilot_acp_agent in agent_config.yaml"
@@ -87,17 +90,8 @@ async def main() -> None:
                 "headers": [],
             }
         ],
-        rest_url=settings.band_rest_url,
     )
     adapter = CopilotACPAdapter(config)
-
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=settings.band_ws_url,
-        rest_url=settings.band_rest_url,
-    )
 
     logger.info(
         "Connecting to Copilot ACP server at %s:%s over TCP...",
@@ -105,7 +99,11 @@ async def main() -> None:
         settings.copilot_acp_port,
     )
     logger.info("Copilot will call Band tools at %s", settings.band_mcp_sse_url)
-    await agent.run()
+    async with Agent.from_config(
+        "copilot_acp_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

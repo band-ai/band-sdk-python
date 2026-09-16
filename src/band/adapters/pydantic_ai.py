@@ -9,9 +9,8 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import warnings
 from collections.abc import Callable
-from typing import Any, ClassVar, get_origin, get_type_hints
+from typing import Any, ClassVar, Literal, cast, get_origin, get_type_hints
 
 import httpx
 from pydantic_ai import (
@@ -26,6 +25,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -36,14 +36,15 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 
 from band_rest.core.api_error import ApiError
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -61,9 +62,13 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     band_tool_errored,
-    get_tool_description,
+    decode_image_block,
+    image_block_placeholder,
+    is_mcp_content_result,
     is_terminal_success,
     missing_reply_error,
+    platform_tool,
+    redact_tool_call_args,
     serialize_tool_result,
 )
 
@@ -215,9 +220,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -225,12 +230,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         model: str,
         system_prompt: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
         history_converter: PydanticAIHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         instrument: bool | InstrumentationSettings | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """
         Initialize the Pydantic AI adapter.
@@ -242,8 +245,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 ``openai-chat:`` for Chat Completions.
             system_prompt: Optional custom system prompt (overrides default)
             custom_section: Optional custom section added to default system prompt
-            enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
-            enable_memory_tools: Deprecated. Use features=AdapterFeatures(capabilities={Capability.MEMORY}).
             history_converter: Optional custom history converter
             additional_tools: Optional list of PydanticAI-compatible tool functions
                 and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
@@ -252,7 +253,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 and is registered via agent.tool() alongside platform tools. A
                 context-free callable (no leading ``RunContext``) goes to
                 agent.tool_plain() instead — pydantic-ai rejects it on the other path.
-            features: Shared adapter feature settings (capabilities, emit, tool filters).
             instrument: OpenTelemetry instrumentation for the pydantic-ai agent.
                 ``None`` (default) inherits whatever ``Agent.instrument_all()`` the
                 host set, ``False`` opts this agent out of it, ``True`` enables
@@ -260,36 +260,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 them (for example a specific ``tracer_provider``). Band never creates
                 a provider or exporter — the host owns the telemetry pipeline; see
                 ``examples/opentelemetry/``.
+            **features: emit, capabilities, include_tools, exclude_tools,
+                include_categories -- see FeatureKwargs.
         """
-        # --- Deprecation shim: boolean → features migration ---
-        _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags "
-                "(enable_execution_reporting / enable_memory_tools) and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        if _has_legacy_booleans:
-            warnings.warn(
-                "enable_execution_reporting and enable_memory_tools are deprecated. "
-                "Use features=AdapterFeatures(emit={Emit.EXECUTION}, "
-                "capabilities={Capability.MEMORY}) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            features = AdapterFeatures(
-                emit=frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset(),
-                capabilities=frozenset({Capability.MEMORY})
-                if enable_memory_tools
-                else frozenset(),
-            )
-
         super().__init__(
             history_converter=history_converter or PydanticAIHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -384,6 +360,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Register platform tools dynamically from centralized definitions
         # All tools catch exceptions and return error strings so LLM can see failures
 
+        @platform_tool
         async def band_send_message(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
@@ -394,9 +371,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error sending message: {e}"
 
-        band_send_message.__doc__ = get_tool_description("band_send_message")
         agent.tool(band_send_message)
 
+        @platform_tool
         async def band_send_event(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
@@ -408,9 +385,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error sending event: {e}"
 
-        band_send_event.__doc__ = get_tool_description("band_send_event")
         agent.tool(band_send_event)
 
+        @platform_tool
         async def band_add_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
@@ -421,9 +398,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error adding participant '{identifier}': {e}"
 
-        band_add_participant.__doc__ = get_tool_description("band_add_participant")
         agent.tool(band_add_participant)
 
+        @platform_tool
         async def band_remove_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
@@ -433,11 +410,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error removing participant '{identifier}': {e}"
 
-        band_remove_participant.__doc__ = get_tool_description(
-            "band_remove_participant"
-        )
         agent.tool(band_remove_participant)
 
+        @platform_tool
         async def band_lookup_peers(
             ctx: RunContext[AgentToolsProtocol],
             page: int = 1,
@@ -450,9 +425,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error looking up peers: {e}"
 
-        band_lookup_peers.__doc__ = get_tool_description("band_lookup_peers")
         agent.tool(band_lookup_peers)
 
+        @platform_tool
         async def band_get_participants(
             ctx: RunContext[AgentToolsProtocol],
         ) -> list[dict[str, Any]] | str:
@@ -461,9 +436,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error getting participants: {e}"
 
-        band_get_participants.__doc__ = get_tool_description("band_get_participants")
         agent.tool(band_get_participants)
 
+        @platform_tool
         async def band_create_chatroom(
             ctx: RunContext[AgentToolsProtocol],
             task_id: str | None = None,
@@ -473,12 +448,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
-        band_create_chatroom.__doc__ = get_tool_description("band_create_chatroom")
         agent.tool(band_create_chatroom)
 
         # Contact management tools (opt-in via Capability.CONTACTS)
         if Capability.CONTACTS in self.features.capabilities:
 
+            @platform_tool
             async def band_list_contacts(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
@@ -491,9 +466,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
-            band_list_contacts.__doc__ = get_tool_description("band_list_contacts")
             agent.tool(band_list_contacts)
 
+            @platform_tool
             async def band_add_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str,
@@ -504,9 +479,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error adding contact '{handle}': {e}"
 
-            band_add_contact.__doc__ = get_tool_description("band_add_contact")
             agent.tool(band_add_contact)
 
+            @platform_tool
             async def band_remove_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str | None = None,
@@ -517,9 +492,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error removing contact: {e}"
 
-            band_remove_contact.__doc__ = get_tool_description("band_remove_contact")
             agent.tool(band_remove_contact)
 
+            @platform_tool
             async def band_list_contact_requests(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
@@ -535,11 +510,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contact requests: {e}"
 
-            band_list_contact_requests.__doc__ = get_tool_description(
-                "band_list_contact_requests"
-            )
             agent.tool(band_list_contact_requests)
 
+            @platform_tool
             async def band_respond_contact_request(
                 ctx: RunContext[AgentToolsProtocol],
                 action: str,
@@ -568,14 +541,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         pass  # Don't fail if error reporting fails
                     return error_msg
 
-            band_respond_contact_request.__doc__ = get_tool_description(
-                "band_respond_contact_request"
-            )
             agent.tool(band_respond_contact_request)
 
         # Memory management tools (enterprise only - opt-in)
         if Capability.MEMORY in self.features.capabilities:
 
+            @platform_tool
             async def band_list_memories(
                 ctx: RunContext[AgentToolsProtocol],
                 subject_id: str | None = None,
@@ -602,9 +573,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing memories: {e}"
 
-            band_list_memories.__doc__ = get_tool_description("band_list_memories")
             agent.tool(band_list_memories)
 
+            @platform_tool
             async def band_store_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 content: str,
@@ -632,9 +603,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error storing memory: {e}"
 
-            band_store_memory.__doc__ = get_tool_description("band_store_memory")
             agent.tool(band_store_memory)
 
+            @platform_tool
             async def band_get_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -644,9 +615,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error getting memory: {e}"
 
-            band_get_memory.__doc__ = get_tool_description("band_get_memory")
             agent.tool(band_get_memory)
 
+            @platform_tool
             async def band_supersede_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -658,11 +629,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error superseding memory: {e}"
 
-            band_supersede_memory.__doc__ = get_tool_description(
-                "band_supersede_memory"
-            )
             agent.tool(band_supersede_memory)
 
+            @platform_tool
             async def band_archive_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
@@ -674,8 +643,198 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 
-            band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
             agent.tool(band_archive_memory)
+
+        # Task board tools (opt-in via Capability.TASKS)
+        if Capability.TASKS in self.features.capabilities:
+
+            @platform_tool
+            async def band_list_tasks(
+                ctx: RunContext[AgentToolsProtocol],
+                state: TaskListState | None = None,
+                cursor: str | None = None,
+                limit: int | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.list_tasks(
+                            state=state, cursor=cursor, limit=limit
+                        )
+                    )
+                except Exception as e:
+                    return f"Error listing tasks: {e}"
+
+            agent.tool(band_list_tasks)
+
+            @platform_tool
+            async def band_create_task(
+                ctx: RunContext[AgentToolsProtocol],
+                subject: str,
+                detail: str | None = None,
+                supersedes_id: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.create_task(
+                            subject, detail=detail, supersedes_id=supersedes_id
+                        )
+                    )
+                except Exception as e:
+                    return f"Error creating task '{subject}': {e}"
+
+            agent.tool(band_create_task)
+
+            @platform_tool
+            async def band_get_task(
+                ctx: RunContext[AgentToolsProtocol],
+                id: str,
+                # str, not Literal["history"] | None: pydantic-ai's own schema
+                # builder emits an unsanitized JSON-Schema `const` for a
+                # single-value Literal (unlike the master model/MCP paths,
+                # which run sanitize_tool_schema()), which providers with a
+                # restricted JSON-Schema subset (e.g. Gemini) reject.
+                include: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.get_task(
+                            id, include=cast(Literal["history"] | None, include)
+                        )
+                    )
+                except Exception as e:
+                    return f"Error getting task '{id}': {e}"
+
+            agent.tool(band_get_task)
+
+            @platform_tool
+            async def band_update_task(
+                ctx: RunContext[AgentToolsProtocol],
+                id: str,
+                status: TaskAssignmentStatus | None = None,
+                active_form: str | None = None,
+                comment: str | None = None,
+                subject: str | None = None,
+                detail: str | None = None,
+                state: TaskLifecycleState | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.update_task(
+                            id,
+                            status=status,
+                            active_form=active_form,
+                            comment=comment,
+                            subject=subject,
+                            detail=detail,
+                            state=state,
+                        )
+                    )
+                except Exception as e:
+                    return f"Error updating task '{id}': {e}"
+
+            agent.tool(band_update_task)
+
+            @platform_tool
+            async def band_get_task_history(
+                ctx: RunContext[AgentToolsProtocol],
+                id: str,
+                cursor: str | None = None,
+                limit: int | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.get_task_history(id, cursor=cursor, limit=limit)
+                    )
+                except Exception as e:
+                    return f"Error getting task history for '{id}': {e}"
+
+            agent.tool(band_get_task_history)
+
+            @platform_tool
+            async def band_get_board(
+                ctx: RunContext[AgentToolsProtocol],
+                # See band_get_task's `include` for why this is str, not Literal.
+                include: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.get_board(
+                            include=cast(Literal["history"] | None, include)
+                        )
+                    )
+                except Exception as e:
+                    return f"Error getting board: {e}"
+
+            agent.tool(band_get_board)
+
+            @platform_tool
+            async def band_set_board(
+                ctx: RunContext[AgentToolsProtocol],
+                goal_title: str | None = None,
+                goal_summary: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return serialize_tool_result(
+                        await ctx.deps.set_board(
+                            goal_title=goal_title, goal_summary=goal_summary
+                        )
+                    )
+                except Exception as e:
+                    return f"Error setting board: {e}"
+
+            agent.tool(band_set_board)
+
+        # Room-file tools (opt-in via Capability.FILES)
+        if Capability.FILES in self.features.capabilities:
+
+            @platform_tool
+            async def band_list_room_files(
+                ctx: RunContext[AgentToolsProtocol],
+                cursor: str | None = None,
+            ) -> dict[str, Any] | str:
+                try:
+                    return await ctx.deps.list_room_files(cursor)
+                except Exception as e:
+                    return f"Error listing room files: {e}"
+
+            agent.tool(band_list_room_files)
+
+            @platform_tool
+            async def band_read_room_file(
+                ctx: RunContext[AgentToolsProtocol],
+                file_id: str,
+            ) -> dict[str, Any] | str | list[BinaryContent]:
+                try:
+                    result = await ctx.deps.read_room_file(file_id)
+                    if is_mcp_content_result(result):
+                        return [
+                            BinaryContent(data=data, media_type=mime_type)
+                            for data, mime_type in (
+                                decode_image_block(block) for block in result["content"]
+                            )
+                        ]
+                    return result
+                except Exception as e:
+                    return f"Error reading room file: {e}"
+
+            agent.tool(band_read_room_file)
+
+            @platform_tool
+            async def band_send_room_file(
+                ctx: RunContext[AgentToolsProtocol],
+                content: str,
+                filename: str,
+                mentions: list[str],
+                caption: str = "",
+            ) -> dict[str, Any] | str:
+                try:
+                    return await ctx.deps.send_room_file(
+                        content, filename, caption, mentions
+                    )
+                except Exception as e:
+                    return f"Error sending room file '{filename}': {e}"
+
+            agent.tool(band_send_room_file)
 
         # Register custom tools (user-provided PydanticAI-compatible functions) on
         # the path their signature calls for — pydantic-ai keeps the two apart.
@@ -788,13 +947,16 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) as events:
                 async for event in events:
                     if isinstance(event, FunctionToolCallEvent):
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.ARGS: event.part.args,
+                                            ToolEventKey.ARGS: redact_tool_call_args(
+                                                event.part.tool_name,
+                                                event.part.args_as_dict(),
+                                            ),
                                             ToolEventKey.TOOL_CALL_ID: event.part.tool_call_id,
                                         }
                                     ),
@@ -815,15 +977,26 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             custom_terminal=result_name in self._custom_terminal_names,
                         ):
                             tool_executed = True
-                        if Emit.EXECUTION in self.features.emit:
+                        if Emit.TOOL_CALLS in self.features.emit:
+                            output = event.part.content
+                            if (
+                                isinstance(output, list)
+                                and output
+                                and all(
+                                    isinstance(item, BinaryContent) for item in output
+                                )
+                            ):
+                                # str() on BinaryContent embeds its raw `data`
+                                # bytes -- band_read_room_file's image result
+                                # would otherwise dump the full file into this
+                                # event instead of a bounded placeholder.
+                                output = image_block_placeholder(len(output))
                             try:
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
                                             ToolEventKey.NAME: event.part.tool_name,
-                                            ToolEventKey.OUTPUT: str(
-                                                event.part.content
-                                            ),
+                                            ToolEventKey.OUTPUT: str(output),
                                             ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
                                         }
                                     ),
@@ -859,9 +1032,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # other response the run cannot turn into output can still spend the
             # refused output budget. Once a terminal tool has run (a
             # band_send_message reply, a band_store_memory, ...) the work already went
-            # out, so that exhaustion is benign — mirror the crewai adapter and
-            # swallow it. Genuine no-response failures (no terminal tool ran — only
-            # read-only lookups or failed tools) still propagate.
+            # out, so that exhaustion is benign — swallow it. Genuine no-response
+            # failures (no terminal tool ran — only read-only lookups or failed
+            # tools) still propagate here, unlike the crewai adapter, which cannot
+            # tell them apart from the empty completion that ends its every turn.
             if tool_executed and _is_output_retries_exhausted(e):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted its output retries after "

@@ -7,6 +7,7 @@ in ``test_letta_mcp.py``; the shared mock factories in ``lettakit.py``.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -17,9 +18,10 @@ from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
     LettaMCPConfig,
-    _RoomContext,
+    RoomContext,
 )
 from band.converters.letta import LettaSessionState
+from band.core.types import Emit
 from band.testing import FakeAgentTools
 from tests.adapters.lettakit import (
     default_enforcement,
@@ -51,10 +53,14 @@ class TestLettaAdapterInit:
             provider_key="sk-test",
             mode="shared",
             mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
-            enable_execution_reporting=True,
         )
         adapter = LettaAdapter(config=config)
         assert adapter.config is config
+
+    def test_no_leaked_adapter_config_env_vars(
+        self, assert_no_leaked_adapter_config_env: None
+    ) -> None:
+        """Requesting the fixture is the assertion — see its docstring."""
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -118,7 +124,7 @@ class TestLettaAdapterOnMessagePerRoom:
         adapter, mock_client = adapter_with_client
 
         # Setup room with agent
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_assistant_message("I'll help you!")
@@ -148,7 +154,7 @@ class TestLettaAdapterOnMessagePerRoom:
     ) -> None:
         adapter, mock_client = adapter_with_client
 
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_call_message("band_send_message"),
@@ -180,7 +186,7 @@ class TestLettaAdapterOnMessagePerRoom:
         adapter, mock_client = adapter_with_client
         adapter.config.turn_timeout_s = 0.01
 
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         async def slow_response(**kwargs: Any) -> MagicMock:
             await asyncio.sleep(1)
@@ -212,7 +218,7 @@ class TestLettaAdapterOnMessagePerRoom:
     ) -> None:
         adapter, mock_client = adapter_with_client
 
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_assistant_message("Got it.")
@@ -357,7 +363,7 @@ class TestLettaAdapterSharedMode:
 
         # Setup: first room already connected
         adapter._shared_agent_id = "shared-agent"
-        adapter._rooms["room-1"] = _RoomContext(
+        adapter._rooms["room-1"] = RoomContext(
             agent_id="shared-agent", conversation_id="conv-1"
         )
 
@@ -546,7 +552,7 @@ class TestLettaAdapterSharedMode:
         every message reminds the agent which room_id to pass to tools."""
         adapter, mock_client = shared_adapter
         adapter._shared_agent_id = "shared-agent"
-        adapter._rooms["room-42"] = _RoomContext(
+        adapter._rooms["room-42"] = RoomContext(
             agent_id="shared-agent", conversation_id="conv-1"
         )
 
@@ -568,7 +574,7 @@ class TestLettaAdapterSharedMode:
         content = mock_client.conversations.messages.create.call_args.kwargs[
             "messages"
         ][0]["content"]
-        assert "Current room_id: room-42" in content
+        assert "Current chat_id: room-42" in content
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -579,14 +585,14 @@ class TestLettaAdapterSharedMode:
 class TestExecutionReporting:
     @pytest.mark.asyncio
     async def test_reports_non_silent_tool_calls(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
         adapter._mcp.tool_ids = []
         adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_call_message("band_lookup_peers", "{}"),
@@ -619,14 +625,14 @@ class TestExecutionReporting:
 
     @pytest.mark.asyncio
     async def test_silent_tools_not_reported(self) -> None:
-        config = LettaAdapterConfig(enable_execution_reporting=True)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
         adapter._mcp.tool_ids = []
         adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_call_message("band_send_message"),
@@ -654,6 +660,54 @@ class TestExecutionReporting:
         ]
         assert len(tool_events) == 0
 
+    @pytest.mark.asyncio
+    async def test_send_room_file_reports_content_placeholder_not_raw_bytes(
+        self,
+    ) -> None:
+        """ToolCall.arguments is a raw JSON string (letta_client's own wire
+        shape); the tool_call event must still redact band_send_room_file's
+        content field, not embed the real file bytes verbatim."""
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=Emit.TOOL_CALLS)
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.tool_ids = []
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_tool_call_message(
+                "band_send_room_file",
+                '{"content": "SECRET FILE BYTES", "filename": "f.txt"}',
+            ),
+            make_tool_return_message("band_send_room_file", '{"status": "ok"}'),
+            make_assistant_message("Done"),
+        )
+
+        tools = FakeAgentTools()
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        await adapter.on_message(
+            msg,
+            tools,
+            history,
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        tool_call_events = [
+            e for e in tools.events_sent if e["message_type"] == "tool_call"
+        ]
+        assert len(tool_call_events) == 1
+        reported_args = json.loads(tool_call_events[0]["content"])["args"]
+        assert "SECRET FILE BYTES" not in json.dumps(reported_args)
+        assert "byte file content" in reported_args["content"]
+        assert reported_args["filename"] == "f.txt"
+
 
 # ──────────────────────────────────────────────────────────────────────
 # on_cleanup
@@ -666,7 +720,7 @@ class TestLettaAdapterOnCleanup:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -689,7 +743,7 @@ class TestLettaAdapterOnCleanup:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
         await adapter.on_cleanup("room-1")  # Should not raise
@@ -701,8 +755,8 @@ class TestLettaAdapterOnCleanup:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
-        adapter._rooms["room-2"] = _RoomContext(agent_id="agent-2")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
+        adapter._rooms["room-2"] = RoomContext(agent_id="agent-2")
 
         await adapter.on_cleanup("room-1")
 
@@ -712,7 +766,7 @@ class TestLettaAdapterOnCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_without_client(self) -> None:
         adapter = LettaAdapter()
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         # No client — should not raise
         await adapter.on_cleanup("room-1")
@@ -807,7 +861,7 @@ class TestRejoinContext:
         adapter._mcp.server_id = "mcp-server-1"
 
         last_time = datetime.now(timezone.utc) - timedelta(hours=2)
-        adapter._rooms["room-1"] = _RoomContext(
+        adapter._rooms["room-1"] = RoomContext(
             agent_id="agent-1",
             last_interaction=last_time,
             summary="Discussed project plan",
@@ -881,8 +935,8 @@ class TestTaskEvents:
 
     @pytest.mark.asyncio
     async def test_task_events_disabled(self) -> None:
-        config = LettaAdapterConfig(enable_task_events=False)
-        adapter = LettaAdapter(config=config)
+        config = LettaAdapterConfig()
+        adapter = LettaAdapter(config=config, emit=())
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
@@ -960,7 +1014,7 @@ class TestMemoryConsolidation:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -973,7 +1027,7 @@ class TestMemoryConsolidation:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.side_effect = Exception("API error")
 
@@ -1057,7 +1111,7 @@ class TestSummaryStorage:
         adapter._system_prompt = "Test"
         adapter._mcp.tool_ids = []
         adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_assistant_message("The weather is sunny. More details follow.")
@@ -1135,7 +1189,7 @@ class TestSendToolResolution:
         adapter._mcp.resolve_send_tools(
             ["create_agent_chat_message", "create_agent_chat_event"]
         )
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_call_message("create_agent_chat_message"),
@@ -1171,7 +1225,7 @@ class TestAutoRelayDisabled:
         adapter._client = mock_client
         adapter._system_prompt = "Test"
         adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_assistant_message("I'll help you!")
@@ -1200,7 +1254,7 @@ class TestAutoRelayDisabled:
         adapter._client = mock_client
         adapter._system_prompt = "Test"
         adapter._mcp.server_id = "mcp-server-1"
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = make_letta_response(
             make_tool_call_message("band_send_message"),
@@ -1475,7 +1529,7 @@ class TestDeleteAgentsOnCleanup:
         adapter = LettaAdapter(config=LettaAdapterConfig(delete_agents_on_cleanup=True))
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -1488,7 +1542,7 @@ class TestDeleteAgentsOnCleanup:
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -1501,7 +1555,7 @@ class TestDeleteAgentsOnCleanup:
         )
         mock_client = AsyncMock()
         adapter._client = mock_client
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")
 
@@ -1515,7 +1569,46 @@ class TestDeleteAgentsOnCleanup:
         mock_client = AsyncMock()
         adapter._client = mock_client
         mock_client.agents.delete.side_effect = Exception("gone already")
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = RoomContext(agent_id="agent-1")
 
         await adapter.on_cleanup("room-1")  # should not raise
         assert "room-1" not in adapter._rooms
+
+
+class TestConfigEnvSourcing:
+    """provider_key env sourcing: LETTA_* names only, never bare vars."""
+
+    @pytest.fixture(autouse=True)
+    def clean_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for var in ("API_KEY", "PROVIDER_KEY", "LETTA_API_KEY", "LETTA_PROVIDER_KEY"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_bare_env_vars_never_populate_provider_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A foreign secret in API_KEY/PROVIDER_KEY must not reach Letta."""
+        monkeypatch.setenv("API_KEY", "foreign-secret")
+        monkeypatch.setenv("PROVIDER_KEY", "foreign-secret")
+
+        assert LettaAdapterConfig().provider_key is None
+
+    def test_letta_api_key_env_populates_provider_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_API_KEY", "cloud-key")
+
+        assert LettaAdapterConfig().provider_key == "cloud-key"
+
+    def test_prefixed_field_name_env_populates_provider_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_PROVIDER_KEY", "prefixed-key")
+
+        assert LettaAdapterConfig().provider_key == "prefixed-key"
+
+    def test_explicit_kwarg_wins_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LETTA_API_KEY", "env-key")
+
+        assert LettaAdapterConfig(provider_key="kwarg-key").provider_key == "kwarg-key"

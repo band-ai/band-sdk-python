@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from band import BandConnectionError
 from band.integrations.codex import (
     CodexJsonRpcError,
     CodexStdioClient,
@@ -200,6 +201,14 @@ async def _build_client(
         experimental_api=True,
     )
     return client
+
+
+@pytest.mark.asyncio
+async def test_stdio_client_missing_binary_names_the_fix() -> None:
+    """A missing Codex CLI binary must fail with instructions, not a raw FileNotFoundError."""
+    client = CodexStdioClient(command=["definitely-not-a-real-codex-binary-xyz"])
+    with pytest.raises(BandConnectionError, match="Codex CLI binary not found"):
+        await client.connect()
 
 
 def test_stdio_client_merges_custom_env_with_parent(

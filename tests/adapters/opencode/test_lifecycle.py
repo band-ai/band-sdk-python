@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 from band.adapters.opencode import OpencodeAdapter
 from band.core.types import (
-    AdapterFeatures,
     Emit,
     TurnUsage,
 )
@@ -42,7 +41,7 @@ async def test_watch_task_drains_the_turn_that_started_it() -> None:
     fake_client = FakeOpencodeClient(prompt_event_sequences=[[]])
     adapter = OpencodeAdapter(
         client_factory=lambda _config: fake_client,
-        features=AdapterFeatures(emit={Emit.USAGE}),
+        emit=Emit.USAGE,
     )
     tools = FakeAgentTools()
     await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -94,7 +93,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     captured, not whatever the room currently points at."""
     adapter = OpencodeAdapter(
         client_factory=lambda _config: FakeOpencodeClient(),
-        features=AdapterFeatures(emit={Emit.USAGE}),
+        emit=Emit.USAGE,
     )
     tools = FakeAgentTools()
     room_state = await adapter._get_or_create_room_state("room-1")

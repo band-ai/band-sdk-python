@@ -51,69 +51,84 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AGatewayAdapter
 from band.config import load_agent_config
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+        "uvicorn": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    # Fallback credentials, used only when agent_config.yaml has no
+    # gateway_agent entry.
+    band_api_key: str = ""
+    band_agent_id: str = "a2a-gateway"
+    gateway_port: int = 10000
+    gateway_url: str = ""
 
 
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     try:
         agent_id, api_key = load_agent_config("gateway_agent")
         logger.info("Loaded gateway credentials from agent_config.yaml")
     except Exception:
-        api_key = os.getenv("BAND_API_KEY")
-        if not api_key:
+        if not settings.band_api_key:
             raise ValueError(
                 "Configure 'gateway_agent' in agent_config.yaml, or set "
                 "BAND_API_KEY and BAND_AGENT_ID environment variables"
             )
-        agent_id = os.getenv("BAND_AGENT_ID", "a2a-gateway")
+        api_key = settings.band_api_key
+        agent_id = settings.band_agent_id
         logger.info("Loaded gateway credentials from environment variables")
-
-    # Gateway configuration
-    gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
-    gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
     # Create gateway adapter
     # It uses its own REST client for room/message operations
+    # gateway_url derives from port unless GATEWAY_URL overrides it (e.g.
+    # behind a public host/reverse proxy, where localhost would be unreachable)
     adapter = A2AGatewayAdapter(
-        rest_url=rest_url,
-        api_key=api_key,
-        gateway_url=gateway_url,
-        port=gateway_port,
+        port=settings.gateway_port, gateway_url=settings.gateway_url
     )
 
     # Create and start agent
     # The gateway connects to Band and starts its HTTP server
-    agent = Agent.create(
+
+    logger.info("Starting A2A Gateway on %s...", adapter.gateway_url)
+    logger.info("Peers will be exposed at:")
+    logger.info(
+        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)",
+        adapter.gateway_url,
+    )
+    logger.info(
+        "  - %s/agents/{peer_id}/v1/message:stream (messaging)", adapter.gateway_url
+    )
+    logger.info("Waiting for peers to be discovered...")
+
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting A2A Gateway on %s...", gateway_url)
-    logger.info("Peers will be exposed at:")
-    logger.info(
-        "  - %s/agents/{peer_id}/.well-known/agent-card.json (discovery)", gateway_url
-    )
-    logger.info("  - %s/agents/{peer_id}/v1/message:stream (messaging)", gateway_url)
-    logger.info("Waiting for peers to be discovered...")
-
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

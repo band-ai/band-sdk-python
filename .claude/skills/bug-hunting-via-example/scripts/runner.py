@@ -421,7 +421,7 @@ def reply_capture_context(
 ) -> AbstractAsyncContextManager[ReplyCapture]:
     """Open a baseline reply capture; imported late, after ``sys.path`` is set."""
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.toolkit.capture import reply_capture
+    from tests.e2e.baseline.toolkit.capture import reply_capture  # noqa: PLC0415
 
     return reply_capture(
         ws, room_id, user_ops=user_ops, settings=settings, deadline_s=deadline_s
@@ -1072,16 +1072,16 @@ async def run_live(plan: Plan, repo: Path, keep: bool, results: list[Result]) ->
     """
     sys.path.insert(0, str(repo))
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.settings import BaselineSettings
+    from tests.e2e.baseline.settings import BaselineSettings  # noqa: PLC0415
 
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.toolkit.provisioning import (
+    from tests.e2e.baseline.toolkit.provisioning import (  # noqa: PLC0415
         ResourceManager,
         user_rest_client,
     )
 
     # pyrefly: ignore[missing-import]
-    from tests.e2e.baseline.toolkit.ws import user_ws_observer
+    from tests.e2e.baseline.toolkit.ws import user_ws_observer  # noqa: PLC0415
 
     settings = BaselineSettings()
     if not settings.e2e_tests_enabled:

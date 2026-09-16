@@ -8,15 +8,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from band.runtime.claims import MessageClaimRegistry
+from band_sdk_core import ClaimRegistry, RetryTracker
+
+from band.client.streaming import MessageMetadata
+from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
     Execution,
     ExecutionContext,
     ExecutionState,
-    _BacklogProcessResult,
+    BacklogProcessResult,
     _error_label,
 )
-from band.runtime.types import ConversationContext, SessionConfig
+from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import (
@@ -25,6 +28,7 @@ from tests.conftest import (
     make_participant_mock,
     make_participant_removed_event,
 )
+from tests.runtime.conftest import wait_for_condition
 
 
 @pytest.fixture
@@ -182,8 +186,7 @@ class TestExecutionContextEvents:
         event = make_message_event(room_id="room-123", msg_id="msg-1", content="Hello")
         await ctx.on_event(event)
 
-        # Wait for processing
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: mock_handler.call_count >= 1)
 
         mock_handler.assert_called()
         call_args = mock_handler.call_args[0]
@@ -202,9 +205,9 @@ class TestExecutionContextEvents:
 
         # Send same message twice
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: mock_handler.call_count >= 1)
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx.queue.qsize() == 0)
 
         # Should only be called once
         assert mock_handler.call_count == 1
@@ -363,6 +366,75 @@ class TestExecutionContextParticipants:
 
         assert ctx.participants_changed() is True
 
+    def test_participants_changed_true_after_pure_reorder(
+        self, mock_link, mock_handler
+    ):
+        """band_sdk_core.ParticipantRoster.changed() is order-sensitive: the
+        exact same membership, resent in a different order, must still report
+        changed -- a deliberate behavior change from the old Python
+        id-keyed-dict comparison, which was order-insensitive."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants(
+            [
+                {"id": "user-1", "name": "User 1", "type": "User"},
+                {"id": "user-2", "name": "User 2", "type": "User"},
+            ]
+        )
+        ctx.mark_participants_sent()
+        assert ctx.participants_changed() is False
+
+        ctx.set_participants(
+            [
+                {"id": "user-2", "name": "User 2", "type": "User"},
+                {"id": "user-1", "name": "User 1", "type": "User"},
+            ]
+        )
+
+        assert ctx.participants_changed() is True
+
+    def test_set_participants_duplicate_id_raises_and_leaves_roster_untouched(
+        self, mock_link, mock_handler
+    ):
+        """A duplicate id in the authoritative snapshot must reject the whole
+        snapshot with a ValueError naming the repeated id in .issues, leaving
+        the previous roster in place rather than partially applying it."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants([{"id": "user-1", "name": "User One", "type": "User"}])
+
+        with pytest.raises(ValueError) as exc_info:
+            ctx.set_participants(
+                [
+                    {"id": "user-2", "name": "User Two", "type": "User"},
+                    {"id": "user-2", "name": "User Two Dup", "type": "User"},
+                ]
+            )
+
+        issues = exc_info.value.issues
+        assert any("user-2" in issue[2] for issue in issues)
+        assert [p["id"] for p in ctx.participants] == ["user-1"]
+
+    def test_set_participants_duplicate_id_error_carries_the_turn_trace_context(
+        self, mock_link, mock_handler
+    ):
+        """set_participants passes the ambient per-turn TRACE_CONTEXT into
+        set_all, not a hardcoded None -- the duplicate-id error must carry
+        whichever turn actually called it."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        duplicates = [
+            {"id": "user-1", "name": "User One", "type": "User"},
+            {"id": "user-1", "name": "User One Dup", "type": "User"},
+        ]
+
+        with trace_context_scope():
+            active = TRACE_CONTEXT.get()
+            with pytest.raises(ValueError) as exc_info:
+                ctx.set_participants(duplicates)
+        assert exc_info.value.trace_context == active
+
+        with pytest.raises(ValueError) as exc_info:
+            ctx.set_participants(duplicates)
+        assert exc_info.value.trace_context is None
+
 
 class TestExecutionContextHydration:
     """Test context hydration."""
@@ -423,6 +495,42 @@ class TestExecutionContextHydration:
             == 1
         )
 
+    async def test_load_participants_empty_list_clears_roster(
+        self, mock_link, mock_handler
+    ):
+        """response.data == [] is authoritative and empty -- it must clear a
+        previously-loaded roster, not be treated as falsy/no-op."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants([{"id": "stale-user", "name": "Stale", "type": "User"}])
+
+        mock_link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+            return_value=MagicMock(data=[])
+        )
+        ctx._participants_loaded = False
+
+        result = await ctx.load_participants()
+
+        assert result == []
+        assert ctx.participants == []
+
+    async def test_load_participants_none_data_leaves_roster_untouched(
+        self, mock_link, mock_handler
+    ):
+        """response.data is None (a transient/unexpected response) must leave
+        the previous roster in place -- unlike an authoritative empty list."""
+        ctx = ExecutionContext("room-123", mock_link, mock_handler)
+        ctx.set_participants([{"id": "kept-user", "name": "Kept", "type": "User"}])
+
+        mock_link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+            return_value=MagicMock(data=None)
+        )
+        ctx._participants_loaded = False
+
+        result = await ctx.load_participants()
+
+        assert [p["id"] for p in result] == ["kept-user"]
+        assert [p["id"] for p in ctx.participants] == ["kept-user"]
+
 
 class TestExecutionContextLLMState:
     """Test LLM initialization state."""
@@ -452,7 +560,7 @@ class TestExecutionContextParticipantEvents:
             type="User",
         )
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx.queue.qsize() == 0)
 
         assert any(p["id"] == "user-2" for p in ctx.participants)
 
@@ -472,11 +580,40 @@ class TestExecutionContextParticipantEvents:
             participant_id="user-1",
         )
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx.queue.qsize() == 0)
 
         assert not any(p["id"] == "user-1" for p in ctx.participants)
 
         await ctx.stop()
+
+    async def test_participant_added_visible_in_same_cycle_context(
+        self, mock_link, mock_handler
+    ):
+        """A participant_added event applied inside _process_event_body must
+        be visible in the same-cycle get_context() call that follows it --
+        without a second REST fetch. build_context() refreshes participants
+        from the live roster on every call instead of returning whatever
+        snapshot was baked in at hydrate time."""
+        captured: list[str] = []
+
+        async def handler(ctx, event):
+            context = await ctx.get_context()
+            captured.extend(p["id"] for p in context.participants)
+
+        ctx = ExecutionContext("room-123", mock_link, handler)
+        await ctx.hydrate()  # seeds the roster with user-1 (mock_link fixture)
+
+        event = make_participant_added_event(
+            room_id="room-123",
+            participant_id="user-2",
+            name="User Two",
+            type="User",
+        )
+        await ctx._process_event_body(event, None, None)
+
+        assert "user-1" in captured
+        assert "user-2" in captured
+        assert mock_link.rest.agent_api_context.get_agent_chat_context.call_count == 1
 
 
 class TestCrashRecoverySync:
@@ -542,7 +679,7 @@ class TestCrashRecoverySync:
         ctx = ExecutionContext("room-123", mock_link_with_next, mock_handler)
 
         await ctx.start()
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         assert ctx._sync_complete is True
         mock_link_with_next.get_next_message.assert_called()
@@ -553,8 +690,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Sync should process backlog messages from /next."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         # Setup get_next_message to return one backlog message, then None
         backlog_msg = PlatformMessage(
@@ -581,7 +716,7 @@ class TestCrashRecoverySync:
         )
 
         await ctx.start()
-        await asyncio.sleep(0.2)
+        await wait_for_condition(lambda: mock_handler.call_count >= 1)
 
         # Handler should be called for backlog message
         assert mock_handler.call_count >= 1
@@ -595,8 +730,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """When sync point is reached, marker is cleared and dedupe is preserved."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         # Setup: WS message arrives, then /next returns same message
         sync_msg = PlatformMessage(
@@ -627,7 +760,7 @@ class TestCrashRecoverySync:
 
         # Start should sync and find sync point
         await ctx.start()
-        await asyncio.sleep(0.2)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         # Marker should be cleared
         assert ctx._first_ws_msg_id is None
@@ -640,8 +773,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Sync should dedupe when non-message events are ahead of sync-point WS copy."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         sync_msg = PlatformMessage(
             id="msg-sync-001",
@@ -682,7 +813,12 @@ class TestCrashRecoverySync:
 
         # Start triggers sync
         await ctx.start()
-        await asyncio.sleep(0.2)
+        # Two handler dispatches expected (sync message + participant event);
+        # queue must be fully drained so Phase 2's participant processing has
+        # also settled, not just the sync-point crash-recovery phase.
+        await wait_for_condition(
+            lambda: mock_handler.call_count >= 2 and ctx.queue.qsize() == 0
+        )
 
         # Sync point reached and duplicate removed from WS phase
         assert ctx._first_ws_msg_id is None
@@ -715,8 +851,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Processed WebSocket replay should not call mark_processing or execute."""
-        from band.client.streaming import MessageMetadata
-
         ctx = ExecutionContext(
             "room-123",
             mock_link_with_next,
@@ -725,7 +859,7 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=False),
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         event = make_message_event(
             room_id="room-123",
@@ -736,7 +870,7 @@ class TestCrashRecoverySync:
             ),
         )
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx.queue.qsize() == 0)
 
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processing.assert_not_called()
@@ -771,11 +905,11 @@ class TestCrashRecoverySync:
             config=SessionConfig(enable_context_hydration=True),
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         event = make_message_event(room_id="room-123", msg_id="msg-stale-replay")
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx.queue.qsize() == 0)
 
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processing.assert_not_called()
@@ -783,11 +917,74 @@ class TestCrashRecoverySync:
 
         await ctx.stop()
 
+    async def test_ws_skips_self_authored_message(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The live-event self-echo guard (band_sdk_core.is_self_echo) must
+        never reach the handler or mark anything."""
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        await ctx.start()
+        await asyncio.sleep(0.05)
+
+        event = make_message_event(
+            room_id="room-123",
+            msg_id="msg-self-echo",
+            sender_id="agent-123",
+            sender_type="Agent",
+        )
+        await ctx.on_event(event)
+        await asyncio.sleep(0.1)
+
+        mock_handler.assert_not_called()
+        mock_link_with_next.mark_processing.assert_not_called()
+        assert "msg-self-echo" not in ctx.claims.completed_ids(ctx.room_id)
+
+        await ctx.stop()
+
+    async def test_backlog_skips_self_authored_message(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The backlog self-echo guard (band_sdk_core.is_self_echo) must
+        never reach the handler or mark anything."""
+
+        msg = PlatformMessage(
+            id="msg-backlog-self-echo",
+            room_id="room-123",
+            content="echo",
+            sender_id="agent-123",
+            sender_type="Agent",
+            sender_name=None,
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == BacklogProcessResult.ADVANCED
+        mock_handler.assert_not_awaited()
+        mock_link_with_next.mark_processing.assert_not_awaited()
+        mock_link_with_next.mark_processed.assert_not_awaited()
+
+        await ctx.stop()
+
     async def test_pending_next_message_present_in_context_still_executes(
         self, mock_link_with_next, mock_handler
     ):
         """A pending /next message is work even when it appears in room context."""
-        from band.runtime.types import PlatformMessage
 
         pending_msg = PlatformMessage(
             id="msg-pending-down",
@@ -828,7 +1025,9 @@ class TestCrashRecoverySync:
         )
 
         await ctx.start()
-        await asyncio.sleep(0.2)
+        await wait_for_condition(
+            lambda: mock_link_with_next.mark_processed.call_count >= 1
+        )
 
         mock_link_with_next.mark_processing.assert_called_once_with(
             "room-123", "msg-pending-down"
@@ -845,7 +1044,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Only one path should execute when /next and WebSocket race on an id."""
-        from band.runtime.types import PlatformMessage
 
         processing_started = asyncio.Event()
         release_processing = asyncio.Event()
@@ -890,7 +1088,7 @@ class TestCrashRecoverySync:
         await backlog_task
 
         assert mock_handler.await_count == 1
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_first_message_to_fresh_room_executes_once(self, mock_link_with_next):
         """A message posted before the room's context was live executes once.
@@ -900,7 +1098,6 @@ class TestCrashRecoverySync:
         WebSocket copy arrives while that execution is still in flight. The
         second delivery must be deduplicated, not re-executed.
         """
-        from band.runtime.types import PlatformMessage
 
         handler_started = asyncio.Event()
         release_handler = asyncio.Event()
@@ -941,7 +1138,10 @@ class TestCrashRecoverySync:
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-first"))
 
         release_handler.set()
-        await asyncio.sleep(0.2)  # Let sync finish and Phase 2 drain the WS copy
+        # Let sync finish and Phase 2 drain the WS copy.
+        await wait_for_condition(
+            lambda: mock_link_with_next.mark_processed.await_count >= 1
+        )
 
         assert handled_message_ids == ["msg-first"]
         assert mock_link_with_next.mark_processing.await_count == 1
@@ -967,7 +1167,7 @@ class TestCrashRecoverySync:
             handler_started.set()
             await release_handler.wait()
 
-        registry = MessageClaimRegistry()
+        registry = ClaimRegistry()
 
         def fresh_context() -> ExecutionContext:
             return ExecutionContext(
@@ -1019,7 +1219,7 @@ class TestCrashRecoverySync:
         )
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processed.assert_not_called()
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_handler_failure_marks_failed_and_releases_claim(
         self, mock_link_with_next
@@ -1044,13 +1244,12 @@ class TestCrashRecoverySync:
         mock_link_with_next.mark_failed.assert_awaited_once_with(
             "room-123", "msg-handler-fails", "handler failed"
         )
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_backlog_processed_ack_failure_is_not_remembered(
         self, mock_link_with_next, mock_handler
     ):
         """Local success without durable processed ack must not enter processed dedupe."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-ack-fails",
@@ -1074,14 +1273,14 @@ class TestCrashRecoverySync:
 
         result = await ctx._process_backlog_message(msg)
 
-        assert result == _BacklogProcessResult.RETRY_LATER
+        assert result == BacklogProcessResult.RETRY_LATER
         mock_handler.assert_awaited_once()
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-ack-fails"
         )
         assert "msg-ack-fails" not in ctx.claims.completed_ids(ctx.room_id)
         assert ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-fails")
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
     async def test_websocket_processed_ack_failure_is_not_remembered(
         self, mock_link_with_next, mock_handler
@@ -1110,7 +1309,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Redelivery after local success should retry only the processed ack."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-backlog-ack-retry",
@@ -1133,9 +1331,9 @@ class TestCrashRecoverySync:
         )
 
         assert (
-            await ctx._process_backlog_message(msg) == _BacklogProcessResult.RETRY_LATER
+            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
         )
-        assert await ctx._process_backlog_message(msg) == _BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1146,7 +1344,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Permanent processed ack failure should not deadlock or replay local side effects."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-ack-budget",
@@ -1172,9 +1369,9 @@ class TestCrashRecoverySync:
         )
 
         assert (
-            await ctx._process_backlog_message(msg) == _BacklogProcessResult.RETRY_LATER
+            await ctx._process_backlog_message(msg) == BacklogProcessResult.RETRY_LATER
         )
-        assert await ctx._process_backlog_message(msg) == _BacklogProcessResult.ADVANCED
+        assert await ctx._process_backlog_message(msg) == BacklogProcessResult.ADVANCED
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
@@ -1263,10 +1460,12 @@ class TestCrashRecoverySync:
         )
 
         await ctx.start()
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx._sync_complete)
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-old-ws"))
         await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-new-ws"))
-        await asyncio.sleep(0.3)
+        await wait_for_condition(
+            lambda: mock_link_with_next.mark_processed.await_count >= 3
+        )
 
         assert [call.args[1].payload.id for call in mock_handler.await_args_list] == [
             "msg-old-ws",
@@ -1279,11 +1478,55 @@ class TestCrashRecoverySync:
 
         await ctx.stop()
 
+    async def test_resync_retries_pending_ack_before_advancing_to_newer_backlog(
+        self, mock_link_with_next, mock_handler
+    ):
+        """_wait_until_resync_complete (the backlog-side resync loop, distinct
+        from the WebSocket-queue path above) must retry a stuck pending ACK
+        before processing a newer /next backlog message -- normal resync
+        cannot get past a stuck pending ACK to reach newer backlog. Once the
+        ACK confirms, resync proceeds normally to the newer message."""
+
+        newer_msg = PlatformMessage(
+            id="msg-newer",
+            room_id="room-123",
+            content="newer",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(return_value=True)
+        mock_link_with_next.get_next_message = AsyncMock(side_effect=[newer_msg, None])
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        ctx.claims.remember_ack_pending("room-123", "msg-stuck")
+
+        await ctx._wait_until_resync_complete()
+
+        # The stuck ACK is retried before the newer backlog message is fetched.
+        assert mock_link_with_next.mark_processed.await_args_list[0].args == (
+            "room-123",
+            "msg-stuck",
+        )
+        assert "msg-stuck" in ctx.claims.completed_ids("room-123")
+        # The handler only ever ran for the newer message -- the stuck entry's
+        # ACK retry never replays it.
+        mock_handler.assert_awaited_once()
+        assert "msg-newer" in ctx.claims.completed_ids("room-123")
+
     async def test_sync_point_claim_failure_does_not_clear_marker(
         self, mock_link_with_next, mock_handler
     ):
         """A failed durable claim is not a completed sync point."""
-        from band.runtime.types import PlatformMessage
 
         sync_msg = PlatformMessage(
             id="msg-sync-claim-fails",
@@ -1309,7 +1552,9 @@ class TestCrashRecoverySync:
             make_message_event(room_id="room-123", msg_id="msg-sync-claim-fails")
         )
         await ctx.start()
-        await asyncio.sleep(0.2)
+        await wait_for_condition(
+            lambda: mock_link_with_next.mark_processing.await_count >= 1
+        )
 
         assert ctx._first_ws_msg_id == "msg-sync-claim-fails"
         mock_handler.assert_not_called()
@@ -1321,7 +1566,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Startup sync should stop after one unclaimable non-sync backlog message."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-startup-claim-fails",
@@ -1358,7 +1602,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Startup sync should not switch to WebSocket after an unclaimable backlog message."""
-        from band.runtime.types import PlatformMessage
 
         backlog_msg = PlatformMessage(
             id="msg-older-claim-fails",
@@ -1387,7 +1630,9 @@ class TestCrashRecoverySync:
             make_message_event(room_id="room-123", msg_id="msg-newer-ws")
         )
         await ctx.start()
-        await asyncio.sleep(0.2)
+        await wait_for_condition(
+            lambda: mock_link_with_next.mark_processing.await_count >= 1
+        )
 
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-older-claim-fails"
@@ -1402,7 +1647,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Resync should stop after one unclaimable /next message."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-resync-claim-fails",
@@ -1438,7 +1682,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Phase 2 resync should block queued WebSocket events behind older /next work."""
-        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-resync-older-claim-fails",
@@ -1464,12 +1707,14 @@ class TestCrashRecoverySync:
         )
 
         await ctx.start()
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: ctx._sync_complete)
         await ctx.request_resync()
         await ctx.on_event(
             make_message_event(room_id="room-123", msg_id="msg-resync-newer-ws")
         )
-        await asyncio.sleep(0.2)
+        await wait_for_condition(
+            lambda: mock_link_with_next.mark_processing.await_count >= 1
+        )
 
         mock_link_with_next.mark_processing.assert_awaited_once_with(
             "room-123", "msg-resync-older-claim-fails"
@@ -1483,8 +1728,6 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Sync should skip permanently failed messages."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         failed_msg = PlatformMessage(
             id="msg-failed-001",
@@ -1511,7 +1754,7 @@ class TestCrashRecoverySync:
         ctx._retry_tracker.mark_permanently_failed("msg-failed-001")
 
         await ctx.start()
-        await asyncio.sleep(0.2)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         # Handler should NOT be called for failed message
         assert mock_handler.call_count == 0
@@ -1520,8 +1763,6 @@ class TestCrashRecoverySync:
 
     async def test_retry_tracker_records_failures(self, mock_link_with_next):
         """Retry tracker should record failed processing attempts."""
-        from datetime import datetime, timezone
-        from band.runtime.types import PlatformMessage
 
         # Handler that fails
         failing_handler = AsyncMock(side_effect=Exception("Processing failed"))
@@ -1554,6 +1795,49 @@ class TestCrashRecoverySync:
         # Note: With max_retries=2, after 3 attempts it's permanently failed
         # But we only process once per /next call
         await ctx.stop()
+
+    async def test_retry_saturation_skips_handler_on_next_delivery(
+        self, mock_link_with_next
+    ):
+        """Once a message's attempts exceed max_retries it becomes permanently
+        failed, and a *subsequent* delivery of that same message must skip the
+        handler entirely rather than invoke it again."""
+
+        failing_handler = AsyncMock(side_effect=Exception("Processing failed"))
+        msg = PlatformMessage(
+            id="msg-saturates",
+            room_id="room-123",
+            content="Test",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_failed = AsyncMock(return_value=True)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            failing_handler,
+            config=SessionConfig(enable_context_hydration=False, max_message_retries=1),
+        )
+
+        # Attempt 1 (attempts=1, within max_retries=1) invokes the handler and
+        # fails. Attempt 2 (attempts=2, exceeds max_retries=1) is the allowed
+        # budget's last attempt getting saturated -- record_attempt reports
+        # exceeded before the handler would run, so it is skipped here too.
+        await ctx._process_backlog_message(msg)
+        await ctx._process_backlog_message(msg)
+        assert failing_handler.await_count == 1
+        assert ctx._retry_tracker.is_permanently_failed("msg-saturates")
+
+        # A further delivery of the same message must not invoke the handler.
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == BacklogProcessResult.ADVANCED
+        assert failing_handler.await_count == 1
 
 
 class TestSessionConfigDefaults:
@@ -1634,14 +1918,14 @@ class TestCancellationDuringProcessing:
         await ctx.start()
 
         # Wait for sync to complete
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         # Enqueue a message to trigger processing
         event = make_message_event(room_id="room-123", msg_id="msg-001", content="Test")
         await ctx.on_event(event)
 
-        # Give time to start processing
-        await asyncio.sleep(0.05)
+        # Wait for the slow handler to actually be in flight
+        await wait_for_condition(lambda: ctx.is_processing)
 
         # Stop should cancel processing
         start = asyncio.get_running_loop().time()
@@ -1652,7 +1936,7 @@ class TestCancellationDuringProcessing:
         assert elapsed < 1.0, f"stop() took {elapsed}s - should cancel processing"
 
         # Cancellation must release the local in-flight claim
-        assert ctx.claims.inflight_ids(ctx.room_id) == set()
+        assert ctx.claims.inflight_ids(ctx.room_id) == []
 
 
 class TestContextHydrationConfig:
@@ -1867,11 +2151,11 @@ class TestContextCacheTTL:
         ctx._context_hydrated = True
 
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         event = make_message_event(room_id="room-123", msg_id="msg-ttl")
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: mock_handler.call_count >= 1)
 
         mock_handler.assert_called()
         assert mock_link.rest.agent_api_context.get_agent_chat_context.await_count == 1
@@ -1900,7 +2184,7 @@ class TestParticipantCallbacks:
             on_participant_added=on_participant_added,
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         event = make_participant_added_event(
             room_id="room-123",
@@ -1908,7 +2192,7 @@ class TestParticipantCallbacks:
             name="User Two",
         )
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: mock_handler.await_count >= 1)
 
         on_participant_added.assert_awaited_once_with("room-123", event)
         mock_handler.assert_awaited_once()
@@ -1932,14 +2216,14 @@ class TestParticipantCallbacks:
             on_participant_removed=on_participant_removed,
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         event = make_participant_removed_event(
             room_id="room-123",
             participant_id="user-1",
         )
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: mock_handler.await_count >= 1)
 
         on_participant_removed.assert_awaited_once_with("room-123", event)
         mock_handler.assert_awaited_once()
@@ -1959,7 +2243,7 @@ class TestParticipantCallbacks:
             on_participant_added=on_participant_added,
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         event = make_participant_added_event(
             room_id="room-123",
@@ -1967,7 +2251,7 @@ class TestParticipantCallbacks:
             name="User Two",
         )
         await ctx.on_event(event)
-        await asyncio.sleep(0.1)
+        await wait_for_condition(lambda: mock_handler.await_count >= 1)
 
         on_participant_added.assert_awaited_once()
         mock_handler.assert_awaited_once()
@@ -2046,14 +2330,14 @@ class TestGracefulStopWithTimeout:
             config=SessionConfig(enable_context_hydration=False),
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         # Enqueue a message
         event = make_message_event(room_id="room-123", msg_id="msg-001")
         await ctx.on_event(event)
 
-        # Give time to start processing
-        await asyncio.sleep(0.05)
+        # Wait for the handler to actually be in flight
+        await wait_for_condition(lambda: ctx.is_processing)
 
         # Stop with timeout - should wait for processing
         result = await ctx.stop(timeout=5.0)
@@ -2074,14 +2358,14 @@ class TestGracefulStopWithTimeout:
             config=SessionConfig(enable_context_hydration=False),
         )
         await ctx.start()
-        await asyncio.sleep(0.05)
+        await wait_for_condition(lambda: ctx._sync_complete)
 
         # Enqueue a message
         event = make_message_event(room_id="room-123", msg_id="msg-001")
         await ctx.on_event(event)
 
-        # Give time to start processing
-        await asyncio.sleep(0.05)
+        # Wait for the handler to actually be in flight
+        await wait_for_condition(lambda: ctx.is_processing)
 
         # Stop with short timeout
         start = asyncio.get_running_loop().time()
@@ -2141,3 +2425,33 @@ class TestErrorLabel:
 
     def test_strips_surrounding_whitespace(self):
         assert _error_label(ValueError("  trimmed  ")) == "trimmed"
+
+
+class TestBandSdkCoreConstructorValidation:
+    """Regression guard for band-sdk-core's RetryTracker.max_retries
+    range-validation gap, fixed in 0.7.2: every zero-capacity/out-of-range
+    constructor argument must raise a clean ValueError, never a bare
+    OverflowError. Runs against the actual installed band_sdk_core artifact,
+    not a mock -- ExecutionContext constructs both types directly from it."""
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            pytest.param(
+                lambda: ClaimRegistry(max_completed=0), id="claim-zero-capacity"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_tracked=0), id="retry-zero-max-tracked"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_retries=-1), id="retry-negative-max-retries"
+            ),
+            pytest.param(
+                lambda: RetryTracker(max_retries=4294967296),  # u32::MAX + 1
+                id="retry-max-retries-overflows-u32",
+            ),
+        ],
+    )
+    def test_rejects_invalid_constructor_args(self, factory):
+        with pytest.raises(ValueError):
+            factory()

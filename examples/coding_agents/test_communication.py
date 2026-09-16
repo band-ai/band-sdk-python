@@ -17,8 +17,16 @@ import sys
 from pathlib import Path
 
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LoggingStyle, LogSettings
+from band_rest import AsyncRestClient
+from band_rest.types import (
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
+    ChatRoomRequest,
+    ParticipantRequest,
+)
 
 # The bare message format only exists for the standard style, so the style is
 # pinned rather than read from BAND_LOG_CONSOLE_STYLE.
@@ -32,6 +40,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 SCRIPT_DIR = Path(__file__).parent
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_rest_url: str = "https://app.band.ai"
+
+
 def load_agent_config(filename: str) -> dict:
     """Load agent config from YAML file."""
     path = SCRIPT_DIR / filename
@@ -40,22 +56,17 @@ def load_agent_config(filename: str) -> dict:
 
 
 async def main() -> None:
-    from band_rest import AsyncRestClient
-    from band_rest.types import (
-        ChatMessageRequest,
-        ChatMessageRequestMentionsItem,
-        ChatRoomRequest,
-        ParticipantRequest,
-    )
 
     # Load agent configs
     planner = load_agent_config("planner.yaml")
     reviewer = load_agent_config("reviewer.yaml")
 
-    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    settings = Settings()
 
     # Use planner as the "orchestrator" to create the room
-    client = AsyncRestClient(api_key=planner["api_key"], base_url=base_url)
+    client = AsyncRestClient(
+        api_key=planner["api_key"], base_url=settings.band_rest_url
+    )
 
     # Step 1: Create a chat room
     logger.info("Creating chat room...")

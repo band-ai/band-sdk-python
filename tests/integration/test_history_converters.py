@@ -26,6 +26,9 @@ import pytest
 from band_rest import ChatEventRequest, ChatMessageRequest
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
+from band.converters.anthropic import AnthropicHistoryConverter
+from band.converters.pydantic_ai import PydanticAIHistoryConverter
+from band.runtime.formatters import format_history_for_llm
 from tests.integration.conftest import fetch_all_context, requires_api
 
 logger = logging.getLogger(__name__)
@@ -82,8 +85,6 @@ class TestAnthropicConverterIntegration:
         """Verify Anthropic converter handles real platform tool history."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -177,8 +178,6 @@ class TestAnthropicConverterIntegration:
         """Verify converter batches parallel tool calls from platform."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -293,8 +292,6 @@ class TestPydanticAIConverterIntegration:
         ModelRequest = pydantic_ai_messages.ModelRequest
         ModelResponse = pydantic_ai_messages.ModelResponse
 
-        from band.converters.pydantic_ai import PydanticAIHistoryConverter
-
         chat_id = shared_room
         agent_name = shared_agent1_info.name
         tc_id = _unique_id("call_pai")
@@ -380,8 +377,6 @@ class TestMixedConversationIntegration:
         """Test converter handles realistic conversation with multiple turns."""
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
-
-        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -504,8 +499,6 @@ class TestEdgeCasesIntegration:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from band.converters.anthropic import AnthropicHistoryConverter
-
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
         thought_content = f"Let me think about this request {marker}..."
@@ -560,8 +553,6 @@ class TestEdgeCasesIntegration:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from band.converters.anthropic import AnthropicHistoryConverter
-
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
         error_content = f"Error: API rate limit exceeded {marker}"
@@ -600,8 +591,6 @@ class TestMentionReplacementIntegration:
         """Verify platform stores mentions as UUIDs and SDK converts back to handles."""
         if shared_room is None or shared_user_peer is None:
             pytest.skip("shared_room or shared_user_peer not available")
-
-        from band.runtime.formatters import format_history_for_llm
 
         chat_id = shared_room
         peer_id = shared_user_peer.id

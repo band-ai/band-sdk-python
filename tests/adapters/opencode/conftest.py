@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
+from typing_extensions import Unpack
+
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures
+from band.core.types import FeatureKwargs
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
 
@@ -34,13 +36,13 @@ def make_adapter() -> Callable[..., OpencodeAdapter]:
         *,
         config: OpencodeAdapterConfig | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> OpencodeAdapter:
         return OpencodeAdapter(
             config=config,
             additional_tools=additional_tools,
             client_factory=lambda _: client,
-            features=features,
+            **features,
         )
 
     return build

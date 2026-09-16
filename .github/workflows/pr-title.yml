@@ -55,6 +55,7 @@ jobs:
             deps
             tests
             examples
+            mcp
           # Require scope to be provided
           requireScope: false
           # Disable validation for merge commits

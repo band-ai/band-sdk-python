@@ -57,7 +57,7 @@ from band.adapters.crewai_flow import (  # noqa: E402
     get_current_flow_runtime,
 )
 from band.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage  # noqa: E402
+from band.core.types import Capability, Emit, PlatformMessage  # noqa: E402
 from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 
@@ -100,6 +100,26 @@ async def _run_one_turn(
     )
 
 
+def task_statuses(tools: FakeAgentTools, adapter: CrewAIFlowAdapter) -> list[Any]:
+    """The finalization-namespace status of every task event, in order."""
+    ns = adapter.metadata_namespace
+    return [
+        e["metadata"].get(ns, {}).get("status")
+        for e in tools.events_sent
+        if e.get("message_type") == "task"
+    ]
+
+
+def task_error_codes(tools: FakeAgentTools, adapter: CrewAIFlowAdapter) -> list[Any]:
+    """The finalization-namespace error code of every task event, in order."""
+    ns = adapter.metadata_namespace
+    return [
+        e["metadata"].get(ns, {}).get("error", {}).get("code")
+        for e in tools.events_sent
+        if e.get("message_type") == "task"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # direct_response
 # ---------------------------------------------------------------------------
@@ -128,11 +148,7 @@ class TestDirectResponse:
         assert tools.messages_sent[0]["content"] == "hello"
         assert tools.messages_sent[0]["mentions"] == ["@example/peer"]
         # At least: reservation event + finalized event.
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e.get("message_type") == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "side_effect_reserved" in statuses
         assert "finalized" in statuses
 
@@ -156,11 +172,7 @@ class TestWaiting:
         await _run_one_turn(adapter, tools, _msg())
 
         assert tools.messages_sent == []
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e.get("message_type") == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "waiting" in statuses
 
 
@@ -186,12 +198,8 @@ class TestFailedAndMalformed:
         await _run_one_turn(adapter, tools, _msg())
 
         error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
         assert len(error_events) == 1
-        assert any(
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status") == "failed"
-            for e in task_events
-        )
+        assert "failed" in task_statuses(tools, adapter)
         assert tools.messages_sent == []
 
     @pytest.mark.asyncio
@@ -204,11 +212,7 @@ class TestFailedAndMalformed:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "failed" in statuses
         assert tools.messages_sent == []
 
@@ -263,11 +267,7 @@ class TestFailedAndMalformed:
         )
 
         assert tools.messages_sent == []
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "failed" in statuses
 
     @pytest.mark.asyncio
@@ -284,11 +284,7 @@ class TestFailedAndMalformed:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert "failed" in statuses
         assert tools.messages_sent == []
 
@@ -312,21 +308,8 @@ class TestFlowFactoryException:
         # Must not propagate.
         await _run_one_turn(adapter, tools, _msg())
 
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
-        codes = [
-            e["metadata"]
-            .get(adapter.metadata_namespace, {})
-            .get("error", {})
-            .get("code")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
-        assert "failed" in statuses
-        assert "flow_factory_error" in codes
+        assert "failed" in task_statuses(tools, adapter)
+        assert "flow_factory_error" in task_error_codes(tools, adapter)
         assert tools.messages_sent == []
 
 
@@ -336,18 +319,14 @@ class TestFlowFactoryException:
 
 
 class TestNestAsyncioNotInvoked:
+    @requires_nest_asyncio
     @pytest.mark.asyncio
     async def test_direct_response_does_not_apply_nest_asyncio(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Patch nest_asyncio.apply at the module level.
-        try:
-            import nest_asyncio  # type: ignore
-
-            apply_mock = MagicMock()
-            monkeypatch.setattr(nest_asyncio, "apply", apply_mock)
-        except ImportError:
-            pytest.skip("nest_asyncio not installed")
+        apply_mock = MagicMock()
+        monkeypatch.setattr(nest_asyncio, "apply", apply_mock)
 
         flow = _make_flow_returning(
             {"decision": "direct_response", "content": "hi", "mentions": []}
@@ -610,7 +589,7 @@ class TestRuntimeTools:
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
             additional_tools=[(EchoInput, echo)],
-            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+            emit=Emit.TOOL_CALLS,
         )
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
@@ -749,10 +728,8 @@ class TestRuntimeTools:
         adapter = CrewAIFlowAdapter(
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
-            features=AdapterFeatures(
-                include_categories=("contacts",),
-                exclude_tools=("band_remove_contact",),
-            ),
+            include_categories=("contacts",),
+            exclude_tools=("band_remove_contact",),
         )
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
@@ -788,7 +765,7 @@ class TestRuntimeTools:
                         for t in rt.create_crewai_tools()
                         if t.name == "band_send_message"
                     )
-                    send_tool._run(content="subcrew visible", mentions="[]")
+                    send_tool._run(content="subcrew visible", mentions=[])
                     return {
                         "decision": "direct_response",
                         "content": "should not finalize",
@@ -805,11 +782,7 @@ class TestRuntimeTools:
         await _run_one_turn(adapter, tools, _msg())
 
         assert tools.messages_sent == []
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert statuses == ["side_effect_reserved", "indeterminate"]
 
     @pytest.mark.asyncio
@@ -848,7 +821,7 @@ class TestRuntimeTools:
                         for t in rt.create_crewai_tools()
                         if t.name == "band_send_message"
                     )
-                    result = send_tool._run(content="subcrew visible", mentions="[]")
+                    result = send_tool._run(content="subcrew visible", mentions=[])
                     assert '"status": "success"' in result
                     return {"decision": "waiting", "reason": "done"}
 
@@ -967,9 +940,5 @@ class TestFlowStateScratch:
             room_id="room-1",
         )
         # Both turns should record waiting; nothing leaks via Flow state.
-        statuses = [
-            e["metadata"].get(adapter.metadata_namespace, {}).get("status")
-            for e in tools.events_sent
-            if e["message_type"] == "task"
-        ]
+        statuses = task_statuses(tools, adapter)
         assert statuses.count("waiting") >= 2

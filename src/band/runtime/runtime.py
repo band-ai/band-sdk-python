@@ -11,9 +11,11 @@ import logging
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
+from band_sdk_core import ClaimRegistry
+
+from band.client.streaming import ControlMode
 from band.platform.event import PlatformEvent
 
-from .claims import MessageClaimRegistry
 from .execution import Execution, ExecutionContext, ExecutionHandler
 from .presence import RoomPresence
 from .types import (
@@ -142,7 +144,7 @@ class AgentRuntime:
 
         # Shared by default contexts so a room/message pair executes at most
         # once per runtime, including across context recreation.
-        self._claim_registry = MessageClaimRegistry()
+        self._claim_registry = ClaimRegistry()
 
         # Set up presence callbacks
         self.presence.on_room_joined = self._on_room_joined
@@ -320,13 +322,13 @@ class AgentRuntime:
         for execution in targets:
             await self._apply_control(execution, payload.mode)
 
-    async def _apply_control(self, execution: Execution, mode: str) -> None:
+    async def _apply_control(self, execution: Execution, mode: ControlMode) -> None:
         """Dispatch one control mode to one execution, degrading gracefully.
 
         Custom ``Execution`` implementations that omit the control methods are
         skipped with a log (mirrors how ``request_resync`` degrades).
         """
-        if mode == "interrupt":
+        if mode == ControlMode.INTERRUPT:
             fn = getattr(execution, "interrupt", None)
             if fn is None:
                 logger.debug(
@@ -335,7 +337,7 @@ class AgentRuntime:
                 )
                 return
             fn()
-        elif mode == "stop":
+        elif mode == ControlMode.STOP:
             fn = getattr(execution, "stop_room", None)
             if fn is None:
                 logger.debug(
@@ -344,7 +346,7 @@ class AgentRuntime:
                 )
                 return
             fn()
-        elif mode == "play":
+        elif mode == ControlMode.PLAY:
             fn = getattr(execution, "resume_room", None)
             if fn is None:
                 logger.debug(

@@ -35,6 +35,7 @@ from a2a.server.tasks import (
     InMemoryTaskStore,
 )
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 from agent import OrchestratorAgent
 from agent_executor import OrchestratorAgentExecutor
@@ -45,6 +46,14 @@ load_dotenv()
 
 LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    openai_api_key: str
 
 
 @click.command()
@@ -67,10 +76,7 @@ logger = logging.getLogger(__name__)
 )
 def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None:
     """Start the Demo Orchestrator A2A server."""
-    # Check for OpenAI API key
-    if not os.getenv("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY environment variable is required")
-        sys.exit(1)
+    Settings()
 
     # Parse available peers from CLI arg
     available_peers = [p.strip() for p in peers.split(",") if p.strip()]

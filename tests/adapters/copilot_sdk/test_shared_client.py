@@ -6,6 +6,7 @@ import pytest
 
 from band.adapters.copilot_sdk import CopilotSDKAdapter, CopilotSDKAdapterConfig
 from band.core.exceptions import BandConfigError
+from band.testing.platform import platform_connection_stub
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -59,8 +60,8 @@ class TestSharedClient:
         tom = CopilotSDKAdapter(client=shared)
         jerry = CopilotSDKAdapter(client=shared)
         # The Band runtime sets the immutable agent id before on_started.
-        tom._band_agent_id = "agent-tom-id"
-        jerry._band_agent_id = "agent-jerry-id"
+        tom.platform = platform_connection_stub(agent_id="agent-tom-id")
+        jerry.platform = platform_connection_stub(agent_id="agent-jerry-id")
         await tom.on_started("Tom", "cat")
         await jerry.on_started("Jerry", "mouse")
 

@@ -41,10 +41,10 @@ import sys
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import LogSettings, Agent
+from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
-from band.core.types import AdapterFeatures, Emit
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -55,19 +55,18 @@ from prompts.characters import generate_jerry_prompt
 logger = logging.getLogger(__name__)
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str
+
+
 async def main() -> None:
     load_dotenv()
     LogSettings().for_application().configure()
-
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-
-    ws_url = os.environ.get("BAND_WS_URL")
-    rest_url = os.environ.get("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
+    Settings()
 
     # You own the Agno agent — model and in-character instructions.
     agno_agent = AgnoAgent(
@@ -75,19 +74,14 @@ async def main() -> None:
         instructions=generate_jerry_prompt("Jerry"),
     )
 
-    agent = Agent.from_config(
-        "jerry_agent",
-        # emit=EXECUTION posts tool_call/tool_result events so Jerry's platform
-        # actions (lookup, invite, send) are visible in the room.
-        adapter=AgnoAdapter(
-            agno_agent, features=AdapterFeatures(emit={Emit.EXECUTION})
-        ),
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info("Jerry is ready to outsmart Tom...")
-    await agent.run()
+    async with Agent.from_config(
+        "jerry_agent",
+        # Default emit posts tool_call/tool_result events so Jerry's platform
+        # actions (lookup, invite, send) are visible in the room.
+        adapter=AgnoAdapter(agno_agent),
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

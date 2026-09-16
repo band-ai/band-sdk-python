@@ -12,6 +12,7 @@ recognise its own resources by prefix and never touch a non-test agent.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from collections.abc import AsyncGenerator, Iterator, Sequence
@@ -30,12 +31,14 @@ from band_rest import (
     AsyncRestClient,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
+    NotFoundError,
 )
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 if TYPE_CHECKING:
@@ -166,6 +169,55 @@ class PeerActor:
                 mentions=[
                     ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
                 ],
+            ),
+        )
+        return response.data.id
+
+    async def send_file(
+        self,
+        room_id: str,
+        body: bytes,
+        *,
+        filename: str,
+        content_type: str,
+        caption: str,
+        mention_id: str,
+        mention_name: str,
+    ) -> str:
+        """Upload ``body`` as an attachment and post it as this peer; return the
+        message id.
+
+        Uploading is Agent-API-only (there is no ``human_api_files``), so a peer
+        agent — never ``UserOps`` — has to play the uploader.
+        """
+        try:
+            upload = await self._client.agent_api_files.upload_agent_chat_file(
+                chat_id=room_id,
+                request=body,
+                request_options={
+                    "additional_headers": {
+                        "x-file-name": filename,
+                        "x-file-sha256": hashlib.sha256(body).hexdigest(),
+                        "content-type": content_type,
+                    }
+                },
+            )
+        except NotFoundError as error:
+            raise RuntimeError(
+                f"Uploading a file to room {room_id} as peer {self._peer.name} "
+                "got 404 Not Found. Either the room doesn't exist, or this "
+                "deployment has ff_file_transfer off (an on-prem-only flag, "
+                "off on SaaS today) — see the local-platform-testing skill to "
+                "stand up a deployment with it on."
+            ) from error
+        response = await self._client.agent_api_messages.create_agent_chat_message(
+            room_id,
+            message=ChatMessageRequest(
+                content=caption,
+                mentions=[
+                    ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
+                ],
+                attachment_ids=[upload.data.id],
             ),
         )
         return response.data.id
@@ -407,6 +459,30 @@ class ResourceManager:
 
 
 @asynccontextmanager
+async def running_agent_with_handle(
+    provisioned: ProvisionedAgent,
+    adapter: SimpleAdapter[Any],
+    settings: BaselineSettings,
+) -> AsyncGenerator[Agent, None]:
+    """Like ``running_agent``, but yields the live ``Agent`` itself.
+
+    ``running_agent`` only yields the identity because no caller has needed the
+    object itself — reconnect-behavior tests do, to reach the running agent's
+    transport via ``agent.runtime.link`` (both already-public properties).
+    """
+    endpoints = settings.endpoints
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=provisioned.id,
+        api_key=provisioned.api_key,
+        ws_url=endpoints.ws_url,
+        rest_url=endpoints.rest_url,
+    )
+    async with agent:
+        yield agent
+
+
+@asynccontextmanager
 async def running_agent(
     provisioned: ProvisionedAgent,
     adapter: SimpleAdapter[Any],
@@ -424,15 +500,7 @@ async def running_agent(
     platform rehydrating the room's history on bootstrap (``/context``), which is
     exactly what a rejoin scenario asserts.
     """
-    endpoints = settings.endpoints
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=provisioned.id,
-        api_key=provisioned.api_key,
-        ws_url=endpoints.ws_url,
-        rest_url=endpoints.rest_url,
-    )
-    async with agent:
+    async with running_agent_with_handle(provisioned, adapter, settings):
         yield provisioned
 
 
@@ -514,15 +582,9 @@ class AdapterCell:
         features: AdapterFeatures | None = None,
         tools: list[ToolSpec] | None = None,
     ) -> SimpleAdapter[Any]:
-        """Construct (do not run) this cell's adapter; arguments override cell defaults.
-
-        ``build_adapter`` is imported lazily so this module never pulls the adapter
-        registry (and its optional framework deps) at import time.
-        """
+        """Construct (do not run) this cell's adapter; arguments override cell defaults."""
         # Overrides use None-means-"cell default" (not a sentinel): no test needs to
         # clear a default back to "no prompt", so the sentinel would be dead machinery.
-        from tests.e2e.baseline.toolkit.adapters import build_adapter
-
         return build_adapter(
             self.adapter_id,
             self.settings,
@@ -561,6 +623,28 @@ class AdapterCell:
         with self.resources.track_running(identity.id):
             async with running_agent(identity, adapter, self.settings):
                 yield identity
+
+    @asynccontextmanager
+    async def run_as_with_handle(
+        self,
+        identity: ProvisionedAgent,
+        *,
+        prompt: str | None = None,
+        features: AdapterFeatures | None = None,
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncGenerator[Agent, None]:
+        """Like :meth:`run_as`, but yields the live ``Agent`` itself.
+
+        For tests that need to reach the running agent's transport (e.g.
+        ``band.testing.transport.force_transport_disconnect`` for reconnect
+        coverage) via ``agent.runtime.link``.
+        """
+        adapter = self.build(prompt=prompt, features=features, tools=tools)
+        with self.resources.track_running(identity.id):
+            async with running_agent_with_handle(
+                identity, adapter, self.settings
+            ) as agent:
+                yield agent
 
     @asynccontextmanager
     async def running(

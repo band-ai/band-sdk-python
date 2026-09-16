@@ -159,14 +159,21 @@ class Backends(BaseSettings):
     letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str = ""  # MCP_SERVER_URL (external band-mcp SSE endpoint)
 
-    # Copilot-hosted SDK examples and Copilot ACP use this runtime-auth token.
-    # The baseline Copilot SDK builder uses singular Anthropic BYOK and needs no
-    # GitHub auth.
-    github_token: str = ""  # GITHUB_TOKEN
-
     # Copilot CLI over ACP (copilot_acp adapter). Command defaults to `copilot --acp`;
-    # override the binary + args via COPILOT_COMMAND. Auth reuses github_token above.
+    # override the binary + args via COPILOT_COMMAND. Matrix-cell auth is Anthropic
+    # BYOK (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder.
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
+
+    # Copilot-hosted auth for the single non-BYOK smoke
+    # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix
+    # cells never read it. The smoke skips when unset.
+    github_token: str = ""  # GITHUB_TOKEN
+    # Pins that same smoke's model instead of leaving it to Copilot's `auto`
+    # picker, which can land on an expensive reasoning-tier model (observed:
+    # gpt-5.6-terra). gpt-5.6-luna is the cheapest model in the GPT-5.6 family
+    # while still agentic/tool-calling, so the one billed reply turn stays
+    # cheap and deterministic across runs.
+    copilot_hosted_model: str = "gpt-5.6-luna"  # COPILOT_HOSTED_MODEL
 
 
 class LLMModels(BaseSettings):
@@ -202,6 +209,28 @@ class LLMModels(BaseSettings):
         return self
 
 
+class DeploymentFeatures(BaseSettings):
+    """Which optional platform features the connected Band deployment serves.
+
+    Declared, not probed -- the same reason ``Backends.opencode_bash_asks`` is:
+    the platform only reports a flag through an authenticated ``/me`` call made
+    after an agent exists, and a collection-time gate has neither.
+    """
+
+    model_config = SettingsConfigDict(
+        env_ignore_empty=True,
+        env_prefix="E2E_",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # ``ff_file_transfer`` is on-prem-only and off everywhere on SaaS today, so
+    # ``prune_unsupported`` drops ``Capability.FILES`` before a file tool ever
+    # reaches the model and the file/image cells cannot pass there. Opt in when
+    # the run targets a deployment that has the flag on.
+    file_transfer: bool = False  # E2E_FILE_TRANSFER
+
+
 class BaselineSettings(BaseSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
 
@@ -222,3 +251,4 @@ class BaselineSettings(BaseSettings):
     llm_credentials: LLMCredentials = Field(default_factory=LLMCredentials)
     llm_models: LLMModels = Field(default_factory=LLMModels)
     backends: Backends = Field(default_factory=Backends)
+    deployment: DeploymentFeatures = Field(default_factory=DeploymentFeatures)

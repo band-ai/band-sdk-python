@@ -43,6 +43,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from band.runtime.formatters import build_participants_message
+
 if TYPE_CHECKING:
     from band.runtime.execution import ExecutionContext
 
@@ -67,8 +69,6 @@ def check_and_format_participants(ctx: "ExecutionContext") -> str | None:
         Formatted participant message if changed, None otherwise.
         Automatically calls mark_participants_sent() if changed.
     """
-    from band.runtime.formatters import build_participants_message
-
     if not ctx.participants_changed():
         return None
 

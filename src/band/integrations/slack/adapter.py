@@ -18,9 +18,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+
+from typing_extensions import Unpack
 
 from band.client.rest import (
     AsyncRestClient,
@@ -36,6 +38,7 @@ from band.core.types import (
     AgentInput,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
 )
 from band.integrations.slack.block_kit import (
@@ -49,6 +52,7 @@ from band.integrations.slack.block_kit import (
 )
 from band.integrations.slack.server import build_router
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
+from band.platform.posting import post_event
 from band.runtime.tools import AgentTools
 
 if TYPE_CHECKING:
@@ -115,7 +119,7 @@ def _merge_context_note(existing: str | None, note: str) -> str:
     return f"{note}\n\n{existing}"
 
 
-class _SlackTeeingTools(AgentTools):
+class SlackTeeingTools(AgentTools):
     """``AgentTools`` subclass that adds a Slack-only ``slack_send_message`` tool.
 
     The brain sees two outbound options:
@@ -218,15 +222,10 @@ class _SlackTeeingTools(AgentTools):
         self,
         format: str,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]] | list[Any]:
         """Return the base schemas plus our ``slack_send_message`` entry."""
-        base = super().get_tool_schemas(
-            format,
-            include_memory=include_memory,
-            include_contacts=include_contacts,
-        )
+        base = super().get_tool_schemas(format, capabilities=capabilities)
         if format == "openai":
             slack_schema: dict[str, Any] = {
                 "type": "function",
@@ -252,10 +251,10 @@ class _SlackTeeingTools(AgentTools):
 
         Plan rendering is observed directly here (not by intercepting
         ``send_event``) so it's independent of the brain's
-        ``Emit.EXECUTION`` setting. The two emit/visibility knobs are
+        ``Emit.TOOL_CALLS`` setting. The two emit/visibility knobs are
         fully orthogonal:
 
-        - Brain's ``Emit.EXECUTION`` → controls Band-side recording
+        - Brain's ``Emit.TOOL_CALLS`` → controls Band-side recording
           of ``tool_call``/``tool_result`` events.
         - ``SlackAdapter.show_tool_progress`` → controls Slack-side
           plan-block rendering. Lives on this object as
@@ -327,7 +326,6 @@ class SlackAdapter(SimpleAdapter[Any]):
                     bot_token="xoxb-...",
                 ),
             ],
-            api_key="...",
         )
         agent = Agent.create(adapter=slack, agent_id="...", api_key="...")
         # mount slack.router into your ASGI app on the side, e.g.:
@@ -343,16 +341,14 @@ class SlackAdapter(SimpleAdapter[Any]):
         *,
         inner: SimpleAdapter[Any],
         apps: list[SlackApp],
-        rest_url: str = "https://app.band.ai",
-        api_key: str = "",
         port: int = 3000,
         transport: SlackTransport = "http",
         web_client_factory: WebClientFactory | None = None,
         rest_client: AsyncRestClient | None = None,
-        features: AdapterFeatures | None = None,
         write_tool_names: frozenset[str] | set[str] | None = None,
         show_tool_progress: bool = True,
         mirror_slack_context: bool = True,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize the Slack adapter.
 
@@ -360,10 +356,6 @@ class SlackAdapter(SimpleAdapter[Any]):
             inner: The framework adapter that does the actual reasoning
                 (e.g. ``AnthropicAdapter``, ``LangGraphAdapter``).
             apps: One or more ``SlackApp`` configurations.
-            rest_url: Base URL for the Band REST API.
-            api_key: API key for the Band agent (same key passed to
-                ``Agent.create``). Used to mirror Slack messages into
-                Band rooms.
             port: TCP port for the HTTP server.
             transport: ``"http"`` (default) serves events via a mountable
                 Starlette router; the developer points their Slack app's
@@ -374,9 +366,11 @@ class SlackAdapter(SimpleAdapter[Any]):
             web_client_factory: Optional factory for injecting mock
                 ``AsyncWebClient`` instances in tests.
             rest_client: Optional ``AsyncRestClient`` injection seam.
-            features: Optional override for adapter features. Defaults
-                to the inner adapter's features so the brain's
-                capabilities flow through unchanged.
+            **features: Optional override for adapter features (emit,
+                capabilities, ...). Omitted entirely (the default), the
+                bridge adopts the inner adapter's features verbatim so the
+                brain's capabilities flow through unchanged; passing any
+                feature kwarg here replaces that wholesale.
             mirror_slack_context: When ``True`` (default), each inbound
                 Slack user turn is mirrored into the bound Band room
                 as a context-only ``thought`` event so the Band UI
@@ -392,7 +386,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 by the chosen transport is missing.
         """
         try:
-            import slack_sdk  # noqa: F401
+            import slack_sdk  # noqa: F401, PLC0415
         except ImportError as exc:
             raise ImportError(
                 "slack-sdk is required for SlackAdapter. "
@@ -423,16 +417,22 @@ class SlackAdapter(SimpleAdapter[Any]):
                 f"Unknown transport={transport!r}; expected 'http' or 'socket'"
             )
 
-        # Use the inner adapter's history converter and feature settings
-        # so the brain sees its native history type and capabilities.
+        # Mirror the inner adapter's declared support *before* super().__init__
+        # runs its construction-time validation, so a feature kwarg the brain
+        # supports (but this wrapper's own empty ClassVars would reject) is
+        # validated against the brain's real capabilities instead.
+        self.SUPPORTED_EMIT = inner.SUPPORTED_EMIT  # type: ignore[read-only]
+        self.SUPPORTED_CAPABILITIES = inner.SUPPORTED_CAPABILITIES  # type: ignore[read-only]
+        # Set before super().__init__() so _resolve_features (below) can read it.
+        self._inner = inner
+
+        # Use the inner adapter's history converter so the brain sees its
+        # native history type.
         super().__init__(
             history_converter=inner.history_converter or SlackHistoryConverter(),
-            features=features or inner.features,
+            **features,
         )
-        self._inner = inner
         self.apps = apps
-        self._rest_url = rest_url
-        self._api_key = api_key
         self._port = port
         self._transport: SlackTransport = transport
         self._router: Router | None = None
@@ -472,6 +472,74 @@ class SlackAdapter(SimpleAdapter[Any]):
         # value: channel display label (e.g. "#general" or "DM")
         self._channel_label_cache: dict[str, str] = {}
 
+    def _resolve_features(
+        self,
+        *,
+        emit: Emit | Iterable[Emit] | None = None,
+        capabilities: Capability | Iterable[Capability] | None = None,
+        include_tools: Iterable[str] | None = None,
+        exclude_tools: Iterable[str] | None = None,
+        include_categories: Iterable[str] | None = None,
+    ) -> AdapterFeatures:
+        """Adopt the inner adapter's resolved features, merging any overrides.
+
+        No override kwarg given: reuse ``inner.features`` directly rather
+        than re-deriving from the mirrored ``SUPPORTED_EMIT``/
+        ``SUPPORTED_CAPABILITIES`` — the inner adapter may have narrowed
+        itself further than what it merely supports (e.g. constructed with
+        ``emit=()``), and that narrowing must carry through unchanged.
+
+        A partial override merges over ``inner.features`` field by field,
+        for the same reason: adding ``capabilities=`` must not resurrect
+        emissions the inner was constructed to silence, or drop its tool
+        filters. Only the fields actually supplied change.
+
+        The merged result is written onto ``inner.features`` too: a turn
+        dispatches straight to ``self._inner.on_message(...)``, whose body
+        reads its own ``self.features`` (the inner instance's), not this
+        wrapper's — so the override has to live there to actually take
+        effect, not just be reflected on the wrapper's own ``self.features``.
+        """
+        if (
+            emit is None
+            and capabilities is None
+            and include_tools is None
+            and exclude_tools is None
+            and include_categories is None
+        ):
+            return self._inner.features
+        inner_features = self._inner.features
+        resolved = super()._resolve_features(
+            emit=inner_features.emit if emit is None else emit,
+            capabilities=(
+                inner_features.capabilities if capabilities is None else capabilities
+            ),
+            include_tools=(
+                inner_features.include_tools if include_tools is None else include_tools
+            ),
+            exclude_tools=(
+                inner_features.exclude_tools if exclude_tools is None else exclude_tools
+            ),
+            include_categories=(
+                inner_features.include_categories
+                if include_categories is None
+                else include_categories
+            ),
+        )
+        self._inner.features = resolved
+        return resolved
+
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Mirror post-negotiation features onto the wrapped inner adapter too.
+
+        ``_resolve_features`` mirrors into ``self._inner.features`` only once,
+        at construction, so this keeps it in sync afterward. Delegates to the
+        inner's own hook (not a direct assignment) so an inner adapter that
+        overrides it for its own caching still runs.
+        """
+        super().apply_effective_features(features)
+        self._inner.apply_effective_features(features)
+
     @property
     def inner(self) -> SimpleAdapter[Any]:
         """The wrapped framework adapter (the brain)."""
@@ -499,6 +567,11 @@ class SlackAdapter(SimpleAdapter[Any]):
             self._router = build_router(self.apps, dispatcher=self._dispatch_event)
         return self._router
 
+    @property
+    def rest(self) -> AsyncRestClient:
+        """The adapter's REST client; raises before the agent starts."""
+        return self.require_rest_client(self._rest)
+
     async def wait_idle(self) -> None:
         """Wait for all background event handlers to complete."""
         while self._background_tasks:
@@ -507,40 +580,28 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Build the REST client and start the inner adapter."""
-        # We adopt ``inner.features`` (see __init__) and delegate all
-        # reasoning to the inner brain, so the inner — not this wrapper — is
-        # what actually acts on emit/capability values. Mirror its declared
-        # support before the base feature-mismatch check runs, otherwise
-        # SimpleAdapter warns "SlackAdapter does not support emit values:
-        # execution" even though the brain handles it. The inner's own
-        # on_started still performs the authoritative check.
-        # type: ignore[read-only] — base declares these ClassVar; shadowing
-        # per-instance is intentional since support is the inner's, not ours.
-        self.SUPPORTED_EMIT = self._inner.SUPPORTED_EMIT  # type: ignore[read-only]
-        self.SUPPORTED_CAPABILITIES = self._inner.SUPPORTED_CAPABILITIES  # type: ignore[read-only]
+        # SUPPORTED_EMIT/SUPPORTED_CAPABILITIES were already mirrored from
+        # inner in __init__ (before construction-time validation ran); we
+        # adopt inner.features wholesale and delegate all reasoning to it, so
+        # the inner -- not this wrapper -- is what actually acts on emit/
+        # capability values.
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:
-            if not self._api_key:
-                raise ValueError(
-                    "SlackAdapter requires api_key to reach the Band REST API; "
-                    "pass it via SlackAdapter(api_key=...)."
-                )
-            self._rest = AsyncRestClient(base_url=self._rest_url, api_key=self._api_key)
+            self._rest = self.build_rest_client()
 
-        # Propagate the agent identity to the inner adapter. ``Agent.start``
-        # sets ``_band_agent_id`` on us before calling ``on_started``;
-        # the inner adapter needs it too so it can dedup own messages.
-        own_id = getattr(self, "_band_agent_id", None)
-        if own_id is not None:
-            setattr(self._inner, "_band_agent_id", own_id)
+        # Propagate the platform connection to the inner adapter. ``Agent.start``
+        # injects it on us before calling ``on_started``; the inner adapter
+        # needs it too (e.g. to dedup its own messages by agent id).
+        if self.platform is not None:
+            setattr(self._inner, "platform", self.platform)
 
         await self._inner.on_started(agent_name, agent_description)
 
         if self._transport == "socket":
             # Lazy import so HTTP-only installs don't pay the aiohttp /
             # Socket Mode import cost.
-            from band.integrations.slack.socket import (
+            from band.integrations.slack.socket import (  # noqa: PLC0415
                 start_socket_listeners,
             )
 
@@ -639,7 +700,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             app = self._apps_by_slug.get(binding.app_slug)
             if app is not None:
                 slack_client = self._get_client(app)
-                tools = _SlackTeeingTools(
+                tools = SlackTeeingTools(
                     wrap=tools,
                     slack=slack_client,
                     binding=binding,
@@ -745,7 +806,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         )
 
         binding = self._room_to_binding[room_id]
-        assert self._rest is not None
         synthesized = PlatformMessage(
             id=f"slack:{ts}",
             room_id=room_id,
@@ -778,8 +838,8 @@ class SlackAdapter(SimpleAdapter[Any]):
             )
 
         slack_client = self._get_client(app)
-        real_tools = AgentTools(room_id=room_id, rest=self._rest, participants=[])
-        tools = _SlackTeeingTools(
+        real_tools = AgentTools(room_id=room_id, rest=self.rest, participants=[])
+        tools = SlackTeeingTools(
             wrap=real_tools,
             slack=slack_client,
             binding=binding,
@@ -860,8 +920,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             if existing is not None:
                 return existing, False
 
-            assert self._rest is not None
-            response = await self._rest.agent_api_chats.create_agent_chat(
+            response = await self.rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -902,10 +961,10 @@ class SlackAdapter(SimpleAdapter[Any]):
         thread_ts: str,
         slack_user: str,
     ) -> None:
-        assert self._rest is not None
-        await self._rest.agent_api_events.create_agent_chat_event(
-            chat_id=room_id,
-            event=ChatEventRequest(
+        await post_event(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="Slack thread context",
                 message_type="task",
                 metadata={
@@ -945,7 +1004,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         failure here is logged and swallowed so it can't break the reply
         path.
         """
-        assert self._rest is not None
         slack_client = self._get_client(app)
         display_name, handle = await self._resolve_user_label(slack_client, slack_user)
         channel_label = await self._resolve_channel_label(slack_client, channel)
@@ -962,9 +1020,10 @@ class SlackAdapter(SimpleAdapter[Any]):
         content = f"💬 Slack · {channel_label} — {who}: {text}"
 
         try:
-            await self._rest.agent_api_events.create_agent_chat_event(
-                chat_id=room_id,
-                event=ChatEventRequest(
+            await post_event(
+                rest=self.rest,
+                room_id=room_id,
+                request=ChatEventRequest(
                     content=content,
                     message_type="thought",
                     metadata={
@@ -1221,7 +1280,9 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     @staticmethod
     def _default_web_client_factory(app: SlackApp) -> AsyncWebClient:
-        from slack_sdk.web.async_client import AsyncWebClient
+        # slack extra kept out of this module's unconditional import surface;
+        # TYPE_CHECKING above supplies the annotation without a runtime cost
+        from slack_sdk.web.async_client import AsyncWebClient  # noqa: PLC0415
 
         return AsyncWebClient(token=app.bot_token)
 

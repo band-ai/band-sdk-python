@@ -28,6 +28,7 @@ from band.integrations.slack.adapter import STATUS_THINKING, SlackAdapter
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.runtime.tools import AgentTools
+from band.testing.platform import platform_connection_stub
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -101,11 +102,10 @@ def _make_adapter(
     adapter = SlackAdapter(
         inner=inner,
         apps=[_app()],
-        api_key="k",
         rest_client=rest,
         web_client_factory=lambda _a: slack_client,
     )
-    adapter._band_agent_id = "bridge-uuid"  # type: ignore[attr-defined]
+    adapter.platform = platform_connection_stub(agent_id="bridge-uuid")
     return adapter, slack_client, rest
 
 

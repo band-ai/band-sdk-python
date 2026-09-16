@@ -239,7 +239,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
-| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_opencode.py`, `test_parlant.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_a2a.py`, `test_a2a_gateway.py`, `test_a2a_roundtrip.py` (+ their shared `a2aServer.py` fixture -- a scripted, non-Band A2A counterparty), `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_opencode.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -396,7 +396,7 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Inspect the delivery lifecycle | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
 | Scope a read to a later turn (reused capture) | `mark = capture.messages.snapshot()` before sending; `capture.messages.since(mark)` after the barrier |
-| See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.EXECUTION`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
+| See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.TOOL_CALLS`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive, subset args) |
 | See which events an agent emitted | `await capture.thoughts(sender_id=agent.id)` (or `errors()`/`tasks()`/`events(MessageType.X)`) |
 | Assert an event was emitted | `thoughts.assert_present()` / `thoughts.assert_contains_any([marker])` |
@@ -485,7 +485,7 @@ calls.assert_fired("get_weather", with_args={"place": "Zorath"})
 ```
 
 This reads the persisted `tool_call` events (so the agent must run with
-`Emit.EXECUTION` — use `**TOOL_AGENT`-style features), not a live subscription. It is
+`Emit.TOOL_CALLS` — use `**TOOL_AGENT`-style features), not a live subscription. It is
 race-free: the platform marks the trigger `processed` only after the reply is
 emitted, by which point the turn's tool-call events are already persisted.
 `assert_fired` is tolerant — name matches case-insensitively and `with_args` is a
@@ -513,7 +513,7 @@ generic `error` event on any turn exception. See `smoke/inspection/test_events.p
 
 - **Call layer** — `mem.calls` (a `MemoryToolCalls`), from the room's `tool_call`
   events: `mem.calls.assert_store_called(scope=..., system=..., type=...)`,
-  `assert_list_called()`, etc. Needs `Emit.EXECUTION` (use `**MEMORY_AGENT`).
+  `assert_list_called()`, etc. Needs `Emit.TOOL_CALLS` (use `**MEMORY_AGENT`).
 - **Store layer** — `mem.stored` (a `Memories`) of records that *actually landed*,
   from the memories API: `mem.stored.where(scope=..., system=...)` +
   `.assert_stored(...)` / `.assert_present()` / `.assert_none()`.
@@ -558,7 +558,7 @@ the `dev` extra but are split out for isolation.
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI`, auth via `GITHUB_TOKEN`) |
+| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI` + `Dep.ANTHROPIC` — Anthropic BYOK; optional `GITHUB_TOKEN` for the single Copilot-hosted auth smoke) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 | `parlant` | `dev-parlant` | *(none — parlant is a bespoke smoke, not a registered matrix adapter; pinned via `@lane(Lane.PARLANT)`)* | provider keys; isolated venv (parlant's `griffe`/`griffelib` transitive deps collide with pydantic_ai's — `pyproject.toml [tool.uv] conflicts`); no server setup — the smoke spins up its own in-process Parlant server |
 
@@ -659,16 +659,167 @@ CI a queryable N-A instead of a silent gap.
   report, keyed by exact nodeid — no junit scraping), out-of-lane cells as `skip`, and
   the `@per_adapter` exclusions as `na` with their reasons. Empty (the local default)
   emits nothing.
-- **CI folds the lanes together.** Each `e2e` lane writes its own slice to
-  `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final `scorecard` job merges
-  them (`python -m tests.e2e.baseline.scorecard merge … --out … --markdown …`) into one
-  `artifacts/scorecard.json` (+ a markdown grid). A cell runs in exactly one lane, so the
-  union keeps its real outcome over the `skip`s and never clobbers an `na`. The job
-  *reports* the matrix; it does not gate on it.
+- **CI folds the lanes together and gates on the result.** Each `e2e` lane writes its
+  own slice to `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final
+  `scorecard` job merges them (`python -m tests.e2e.baseline.scorecard merge … --out …
+  --markdown … --expected-lanes …`) into one `artifacts/scorecard.json` (+ a markdown
+  grid, also written to the run's step summary). A cell runs in exactly one lane, so
+  the union keeps its real outcome over the `skip`s and never clobbers an `na`.
 
-The logic (`na_rows` / `outcome_row` / `merge`) lives in `scorecard.py` as pure functions
-(unit-tested in `tests/framework_conformance/test_scorecard.py`); the conftest is a thin
-`pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
+The logic (`na_rows` / `outcome_row` / `merge` / `gate`) lives in `scorecard.py` as pure
+functions (unit-tested in `tests/framework_conformance/test_scorecard.py`); the
+conftest is a thin `pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
+
+### CI gating & flake policy
+
+The suite runs nightly (`e2e.yml`'s `schedule:` cron), full lane × OS matrix,
+unattended. A `workflow_dispatch` with the default `lane: all` / `os: all` reproduces
+that run exactly — it is not a lesser "manual mode." Only a *scoped* dispatch (one
+lane and/or one OS) skips the parts below that assume the full matrix ran.
+
+**Fail-loud rule** (`gate()` in `scorecard.py`): a `fail` cell reddens the run. A
+`skip` cell reddens it too, but only if its home lane (from `ci_lanes()` — see "CI
+lanes" above) was one of this invocation's `--expected-lanes`; a `skip` from a lane
+that was never selected this run is simply out of scope. `na` (+ reason) always
+passes. A cell-level gate can't see a whole OS leg of an expected lane producing *zero*
+scorecard fragment (`ScorecardRow` carries no OS dimension) — the `scorecard` job's
+final "Compute gate verdict" step backstops that by also failing whenever
+`needs.e2e.result != 'success'`.
+
+That backstop is also the *only* net for a bespoke `@lane`-pinned smoke (parlant,
+and the non-`@per_adapter` tests in `backends`/`letta`) — this is a pre-existing
+property of the scorecard module, not something this gate changes: `outcome_row`
+only recognizes a nodeid whose `[…]` parametrization is a registered adapter id
+(`_ADAPTER_IDS`), so a bespoke smoke never produces a `ScorecardRow` at all and is
+structurally invisible to the cell-level grid. It is still covered — just at the
+coarser matrix-leg granularity, not the per-cell one the grid markets.
+
+A subtlety worth calling out for on-call: once `release-gate.yml` has recorded a
+*failure*, GitHub does not automatically re-check it just because a later nightly run
+posts a fresh green `baseline-green` status — a completed check is final until another
+Release Please PR event creates a new gate. A Release Please update emits
+`pull_request:synchronize`, and that new gate reads the newest baseline status from
+`main`; a manual re-run remains available when no release update is needed.
+
+Two reporting jobs (`mark-baseline`, `report-scoped-run`) are gated on `!cancelled()`
+rather than `always()`. They write externally visible state — a commit status, and a
+comment on the tested commit — and a *cancelled* run is not evidence of anything:
+under `always()`, a nightly whose legs were cancelled mid-flight (the per-(lane,OS)
+concurrency group, or a human cancelling the run) would report the baseline as red
+with nothing actually broken. Declining to report is the safe direction, since the
+release gate treats an absent status as blocking anyway. A `timeout-minutes` leg kill
+does *not* cancel the run, so a genuine hang still reddens.
+
+**Flake policy — two layers, deliberately not automatic-override-on-a-timer:**
+
+1. **Per-test** (`flaky.py`, already existed before this policy): `flaky_model`
+   reruns a test whose failure can be genuine LLM non-determinism (an `AssertionError`
+   is retried too — a capable model's bad moment); `flaky_infra` reruns only
+   non-assertion failures (timeouts, cold starts) and lets an `AssertionError` fail
+   loud immediately, since that's a real bug. Every flaky-prone test carries an
+   explicit kind + reason (`assert_flaky_is_classified` rejects a raw
+   `@pytest.mark.flaky`).
+2. **Per-lane** (`e2e.yml`'s run step): if the lane's first pytest invocation has any
+   failure at all, it reruns only the failed nodeids once (`--last-failed --lfnf=none`)
+   before the scorecard is written. This absorbs a whole-lane transient (e.g. a
+   rate-limit window) that per-test taxonomy wouldn't catch on its own; a genuine bug
+   still fails the rerun and reddens the gate (`ScorecardCollector`'s "last write wins"
+   is exactly this rerun's final report being the cell's real outcome). `--lfnf=none` is
+   load-bearing, not decoration: pytest's default for "`--last-failed` with no
+   lastfailed cache" is to run *everything*, so an attempt 1 that died without
+   recording a failed nodeid (collection error, import-time raise, OOM kill) would
+   silently promote the retry into a second full live lane — double the provider spend
+   and wall clock against a leg that carries a wall-clock cap. With the flag, such a
+   retry deselects everything and exits 5, which the script reads as "nothing to retry"
+   and keeps attempt 1's verdict.
+
+No time-boxed automatic override is layered on top of either — a lane stuck failing
+on a real provider outage does not silently start passing after N nights. The
+deliberate manual-override path is the `main-branch-protection` ruleset's existing
+`OrganizationAdmin` bypass actor, used the same way any other required-check override
+would be.
+
+**Per-leg timeout:** `e2e.yml`'s `e2e` job carries a `timeout-minutes` cap — without
+it, GitHub's own default (360 minutes) is the only ceiling on a genuinely stuck leg.
+The workflow is the single source of that number; this section deliberately does not
+restate it, and neither does the digest text, so there is no second copy to go stale.
+Sizing it is a real trade-off in both directions: too loose and a hung leg burns
+runner time to no purpose, but too tight is worse than it looks — GitHub reports a
+timeout as `cancelled`, which the gate treats exactly like a failure, so a cap that
+clips legs which were still making progress *manufactures* red baselines and trains
+people to ignore the signal. It was raised from an initial 120 after a full-matrix run
+showed healthy legs still working past 90 minutes. Verified live that GitHub reports a
+`timeout-minutes` kill as conclusion `cancelled`, not `failure` — `MATRIX_OK` in
+`compute-gate-verdict.sh` only checks equality with `success`, so a timeout reddens
+the gate the same as an outright failure with no extra handling, and the nightly
+digest's warning line names "failed, crashed, or hit its time cap" explicitly rather
+than only "crashed."
+
+**`baseline-green` + the release gate:** on a full-matrix run, `e2e.yml`'s
+`mark-baseline` job posts a `baseline-green` commit status (success/failure) on the
+tested commit. `.github/workflows/release-gate.yml` is a separate, narrow,
+PR-triggered check: an instant no-op for every ordinary PR, and for the standing
+release-please PR it consults that status and fails the PR's check until the baseline
+is green. This is *not* the same thing as making the whole E2E suite a required PR
+check (explicitly out of scope; PR-level gating is covered by the existing Tier-1
+checks) — this thin lookup remains optional, so the cost stays negligible for the 99%
+of PRs that aren't the release PR.
+
+It gates on the most recently **tested** commit of the base branch, not the live tip
+(`.github/scripts/check-release-baseline.sh`). A nightly marks exactly one commit —
+whatever main's tip was at 03:17 UTC — so a tip-only check would go red the instant
+anything merged after that nightly, leaving the gate red by default and training people
+to bypass rather than trust it. The script walks the branch newest-first (bounded by
+`COMMIT_SCAN_LIMIT`, default 40 commits) for the most recent commit carrying a
+`baseline-green` status, and blocks unless that verdict is `success`. Two bounds keep it
+honest: a non-green verdict blocks, and a green one older than `MAX_BASELINE_AGE_DAYS`
+(default 7) stops vouching, so a long-dead nightly can't certify today's main. Both the
+producer and the consumer read the status context name from
+`.github/scripts/baseline-status-context.sh`, so the two sides cannot drift apart —
+a typo in a re-typed literal would fail silently, blocking the release PR forever with
+nothing to point at.
+
+**Nightly digest:** the same job also posts a compact digest (pass or fail) as a
+**comment on the tested commit** — not a GitHub Issue (this repo doesn't use them);
+GitHub still delivers a mention notification/email off a commit comment exactly as
+it would off an issue comment, which is the only reason this exists. The comment
+individually mentions each `band-ai/integrations` member, listed in
+`.github/integrations-team.txt` (one GitHub username per line) — verified live that a
+bot-authored `@org/team` mention does not reliably fan out a per-member notification,
+even with every member's own settings correctly configured, so individual mentions
+are what actually delivers. The roster lives in that plain data file rather than
+inline in the workflow so updating membership never means editing YAML. GitHub's own
+mention-notification delivery emails each one per their own account settings, so
+there's no mailer to stand up and no email address this repo ever has to see or
+store. The digest (`digest_body` in `scorecard.py`) is deliberately *not* the wide
+adapter×test grid — a real run spans every registered adapter (15+ columns as of this
+writing) across all lanes, which is fine full-width in the step summary but turns
+into an unreadable wall in a notification email. It's a small GFM counts table
+(Passed/Failed/N-A/Skipped) plus only the problem cells (failing / missing, listed
+separately), plus a link back to the run for the full grid — GitHub's comment/email
+renderer sanitizes out `<style>`/inline CSS, so plain GFM (tables, bold, bullets) is
+the ceiling for styling here; `post-baseline-digest.sh` also adds a shields.io
+PASS/FAIL badge image alongside the bold emoji+text header (the bold text is the
+guaranteed-to-render fallback for mail clients that block remote images by default).
+Its PASS/FAIL header is built by the workflow from the job's combined verdict
+(`$PASSED`), not read off the cell-level digest — a matrix-leg crash the cell grid
+can't see (no OS dimension on `ScorecardRow`) can flip that verdict in a way the
+digest content alone wouldn't show, so the workflow says so explicitly when it
+happens rather than let the email quietly disagree with the `baseline-green` commit
+status.
+
+**Scoped manual reports:** a manual dispatch that selects one lane and/or OS posts
+the same compact digest as a comment on that commit and mentions only the person who
+initiated it. Its header names the selected scope and explicitly says it does not
+certify the full baseline; it never writes `baseline-green`.
+
+**Local preview:** `scripts/preview-baseline-digest.sh [pass|fail] [nightly|manual]`
+posts a real comment in seconds without waiting on E2E, against local HEAD (which
+must already be pushed — the commit-comments API 404s on a SHA the remote doesn't
+have). It fabricates a tiny scorecard and drives the same
+`.github/scripts/post-baseline-digest.sh` path CI uses, so formatting cannot drift.
+`nightly` (the default) pings the roster; `manual` mentions only the current GitHub
+user. Use either sparingly.
 
 ## Letta lane
 

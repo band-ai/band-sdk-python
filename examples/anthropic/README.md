@@ -96,14 +96,13 @@ adapter = AnthropicAdapter(
 
 ### Execution Reporting
 
-Enable visibility into tool calls:
+Tool calls are visible in the chat by default (`emit` defaults to everything
+the adapter supports). To silence it instead:
 
 ```python
-from band.core.types import AdapterFeatures, Emit
-
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
-    features=AdapterFeatures(emit={Emit.EXECUTION}),  # Shows tool calls in chat
+    emit=(),  # No tool_call/tool_result/usage events posted to the room
 )
 ```
 

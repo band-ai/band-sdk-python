@@ -35,33 +35,31 @@ import sys
 
 from copilot import ProviderConfig
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Add examples directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CopilotSDKAdapter, CopilotSDKAdapterConfig
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    anthropic_api_key: str
 
 
 async def main() -> None:
     load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required for BYOK")
+    settings = Settings()
 
     # The MEMORY/CONTACTS capabilities already inject full memory- and
     # contact-tool instructions into the system prompt; custom_section only
@@ -78,16 +76,14 @@ async def main() -> None:
             provider=ProviderConfig(
                 type="anthropic",
                 base_url="https://api.anthropic.com",
-                api_key=anthropic_api_key,
+                api_key=settings.anthropic_api_key,
             ),
             use_logged_in_user=False,
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-contact-memory-",
         ),
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY, Capability.CONTACTS},
-            emit={Emit.EXECUTION},
-        ),
+        capabilities=Capability.MEMORY | Capability.CONTACTS,
+        emit=Emit.TOOL_CALLS,
     )
 
     # Contact WebSocket events (requests arriving, contacts added/removed):
@@ -101,16 +97,13 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Copilot SDK contact-and-memory example agent")
+    async with Agent.from_config(
         "copilot_contact_memory_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
         contact_config=contact_config,
-    )
-
-    logger.info("Starting Copilot SDK contact-and-memory example agent")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

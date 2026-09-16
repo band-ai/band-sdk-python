@@ -26,6 +26,8 @@ except ImportError as e:
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
+from band.core.types import Capability
+from band.integrations.mcp.engine import extend_with_chat_id
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -33,9 +35,13 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     BASE_TOOL_NAMES,
+    CHAT_ID_FIELD_NAME,
     CHAT_TOOL_NAMES,
+    AgentTools,
+    BandTool,
     ToolDefinition,
     append_mention_handles_hint,
+    is_image_passthrough_result,
     iter_tool_definitions,
     mcp_tool_names,
     serialize_tool_result,
@@ -73,7 +79,18 @@ def __getattr__(name: str) -> Any:
 
 
 def _make_result(data: Any) -> dict[str, Any]:
-    """Format tool result for Claude SDK MCP responses."""
+    """Format tool result for Claude SDK MCP responses.
+
+    Always json-encodes into a text block. This function has no per-tool
+    identity to scope a passthrough decision against -- it also formats every
+    custom tool's result (``_build_custom_sdk_tool``), so a loose structural
+    check here (e.g. "does this dict merely look MCP-content-shaped?") would
+    misfire on an unrelated custom tool whose own return value happens to
+    have a "content" list of dicts each carrying a "type" key. The
+    band_read_room_file passthrough is instead decided by the one caller that
+    actually needs it -- see ``is_image_passthrough_result`` at the
+    ``_build_builtin_sdk_tool`` call site.
+    """
     return {"content": [{"type": "text", "text": json.dumps(data, default=str)}]}
 
 
@@ -95,31 +112,17 @@ def _build_sdk_schema(
     *,
     include_room_id: bool,
 ) -> dict[str, Any]:
-    """Convert a Pydantic model to Claude SDK JSON schema format."""
-    schema: dict[str, Any] = dict(input_model.model_json_schema())
+    """Convert a Pydantic model to Claude SDK JSON schema format.
+
+    Room-field injection reuses the engine's canonical
+    ``extend_with_chat_id`` rather than hand-splicing a schema dict: same
+    uniform-wrap shape every embedded consumer uses, one definition of
+    "how a room field gets added to a tool's schema."
+    """
+    model = extend_with_chat_id(input_model, None) if include_room_id else input_model
+    schema: dict[str, Any] = dict(model.model_json_schema())
     schema.pop("title", None)
-
-    raw_properties = schema.get("properties")
-    properties: dict[str, Any] = (
-        dict(raw_properties) if isinstance(raw_properties, dict) else {}
-    )
-    raw_required = schema.get("required")
-    required: list[str] = (
-        [item for item in raw_required if isinstance(item, str)]
-        if isinstance(raw_required, list)
-        else []
-    )
-
-    if include_room_id:
-        properties = {"room_id": {"type": "string"}, **properties}
-        if "room_id" not in required:
-            required.insert(0, "room_id")
-
     schema["type"] = "object"
-    schema["properties"] = properties
-    if required:
-        schema["required"] = required
-
     return schema
 
 
@@ -129,11 +132,16 @@ def _format_success_payload(
     result: Any,
 ) -> dict[str, Any]:
     """Keep tool result payloads stable across Claude integrations."""
-    if tool_name == "band_send_message":
+    if is_image_passthrough_result(tool_name, result):
+        # Pass the image content block through bare -- wrapping it in
+        # {"status": "success", **result} would bury "content" behind an
+        # extra key, and _make_result would no longer recognize the shape.
+        return result
+    if tool_name == BandTool.SEND_MESSAGE:
         return {"status": "success", "message": "Message sent"}
-    if tool_name == "band_send_event":
+    if tool_name == BandTool.SEND_EVENT:
         return {"status": "success", "message": "Event sent"}
-    if tool_name == "band_add_participant":
+    if tool_name == BandTool.ADD_PARTICIPANT:
         return {
             "status": "success",
             "message": (
@@ -141,13 +149,13 @@ def _format_success_payload(
             ),
             **result,
         }
-    if tool_name == "band_remove_participant":
+    if tool_name == BandTool.REMOVE_PARTICIPANT:
         return {
             "status": "success",
             "message": f"Participant '{call_args['identifier']}' removed",
             **result,
         }
-    if tool_name == "band_get_participants":
+    if tool_name == BandTool.GET_PARTICIPANTS:
         participants = result if isinstance(result, list) else []
         # Convert Fern models to dicts for JSON serialization
         serialized = [
@@ -158,7 +166,7 @@ def _format_success_payload(
             "participants": serialized,
             "count": len(serialized),
         }
-    if tool_name == "band_create_chatroom":
+    if tool_name == BandTool.CREATE_CHATROOM:
         return {
             "status": "success",
             "message": "Chat room created",
@@ -200,8 +208,8 @@ def _build_builtin_sdk_tool(
         schema,
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
-        room_id = args.get("room_id", "") if include_room_id else ""
-        raw_args = {k: v for k, v in args.items() if k != "room_id"}
+        room_id = args.get(CHAT_ID_FIELD_NAME, "") if include_room_id else ""
+        raw_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
         tools = get_tools(room_id)
         if tools is None:
             return _make_error(f"No tools available for room {room_id}")
@@ -220,12 +228,17 @@ def _build_builtin_sdk_tool(
                 room_id,
                 result,
             )
-            return _make_result(
-                _format_success_payload(definition.name, call_args, result)
-            )
+            payload = _format_success_payload(definition.name, call_args, result)
+            # band_read_room_file's image branch already returns a real MCP
+            # content block (see _format_success_payload) -- pass it through
+            # bare instead of json-encoding it into a text block, which is
+            # what _make_result would otherwise do to any dict.
+            if is_image_passthrough_result(definition.name, payload):
+                return payload
+            return _make_result(payload)
         except (ValueError, BandToolError) as error:
             if (
-                definition.name == "band_send_message"
+                definition.name == BandTool.SEND_MESSAGE
                 and get_participant_handles is not None
             ):
                 available = get_participant_handles(room_id)
@@ -254,7 +267,7 @@ def _build_custom_sdk_tool(
     )
     async def handler(args: dict[str, Any]) -> dict[str, Any]:
         try:
-            tool_args = {k: v for k, v in args.items() if k != "room_id"}
+            tool_args = {k: v for k, v in args.items() if k != CHAT_ID_FIELD_NAME}
             result = await execute_custom_tool(tool_def, tool_args)
             return _make_result(result)
         except Exception as error:
@@ -312,7 +325,6 @@ def create_band_mcp_server(agent: Any) -> Any:
     The returned server uses room-scoped ``AgentTools`` instances resolved from
     the running agent state at tool-call time.
     """
-    from band.runtime.tools import AgentTools
 
     def _execution_for(room_id: str) -> ExecutionContext | None:
         executions = agent.runtime.executions if agent.runtime else {}
@@ -332,7 +344,9 @@ def create_band_mcp_server(agent: Any) -> Any:
 
     tool_definitions = [
         definition
-        for definition in iter_tool_definitions(include_memory=False)
+        for definition in iter_tool_definitions(
+            capabilities=frozenset({Capability.CONTACTS})
+        )
         if definition.name in BASE_TOOL_NAMES
     ]
     sdk_tools = build_band_sdk_tools(

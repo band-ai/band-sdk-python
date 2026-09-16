@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.framework_conformance import venv_job_coverage as vjc
+from tests.framework_configs.sentinel import StrictnessSettings
 from tests.paths import REPO_ROOT
 
 # Import names of the distributions only `dev-crewai` installs. Kept as a map so
@@ -59,8 +60,10 @@ def test_crewai_only_dependency_set_matches_pyproject() -> None:
 def test_detection_finds_the_tests_that_only_the_crewai_venv_can_run() -> None:
     """Guard the guard: if the pattern drifts, the tests above pass empty.
 
-    These are the whole set today — `phase3` for its nest_asyncio cases, the rest
-    for importing crewai itself.
+    These are the whole set today — `phase3` for its nest_asyncio cases,
+    `test_files_image_passthrough_matrix.py` for its guarded `import crewai`
+    (real-package probe, `_CREWAI_AVAILABLE` skip elsewhere), the rest for
+    importing crewai itself.
     """
     pattern = vjc.needs_venv_pattern(frozenset(_CREWAI_ONLY_MODULES.values()))
     needed = vjc.tests_needing_venv(pattern)
@@ -69,6 +72,7 @@ def test_detection_finds_the_tests_that_only_the_crewai_venv_can_run() -> None:
         Path("tests/integrations/test_crewai_flow_real_sdk.py"),
         Path("tests/integrations/test_crewai_real_tools.py"),
         Path("tests/test_capability_gating_e2e.py"),
+        Path("tests/framework_conformance/test_files_image_passthrough_matrix.py"),
     }
 
 
@@ -86,8 +90,6 @@ def test_missing_framework_optout_is_parsed_as_a_boolean(
     """
     monkeypatch.setenv("CI", "true")
     monkeypatch.setenv("BAND_ALLOW_MISSING_FRAMEWORKS", flag)
-
-    from tests.framework_configs.sentinel import StrictnessSettings
 
     settings = StrictnessSettings()
     strict = settings.ci and not settings.band_allow_missing_frameworks

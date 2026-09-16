@@ -6,11 +6,13 @@ import re
 
 # A room message is delivered to an agent only when it @mentions it, so the
 # platform prepends one normalized ``@[[uuid]]`` token per mention to the
-# content, which replace_uuid_mentions() rewrites to ``@handle``; a human may
-# type more inline. Matching on ``@\S+`` is safe because handles are slugified
-# (``owner/agent-name``) and so never contain whitespace, whatever the display
-# name is. These match that leading block so a terse control reply can be read
-# from the text after it. Whitespace after each token is consumed, so newlines
+# content, which replace_uuid_mentions() rewrites to ``@handle`` (or a
+# whitespace-collapsed ``@name`` when no handle is on file); a human may type
+# more inline. Matching on ``@\S+`` is safe because both forms are guaranteed
+# whitespace-free -- handles are slugified (``owner/agent-name``), and
+# replace_uuid_mentions() collapses a multi-word display name the same way.
+# These match that leading block so a terse control reply can be read from the
+# text after it. Whitespace after each token is consumed, so newlines
 # separating a multi-answer reply survive only past it.
 _LEADING_MENTIONS = re.compile(r"^\s*(?:@\S+(?:\s+|$))+")
 _LEADING_MENTION = re.compile(r"^\s*@\S+(?:\s+|$)")
@@ -36,23 +38,30 @@ def strip_leading_mentions(content: str, *, only_first: bool = False) -> str:
 
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
     """
-    Replace UUID mentions in content with @handle format using participants list.
+    Replace UUID mentions in content with @handle (or @name) using participants list.
 
     Args:
         content: Message content potentially containing @[[uuid]] patterns
         participants: List of participants with {id, handle, name, type}
 
     Returns:
-        Content with UUID mentions replaced by @handle
+        Content with UUID mentions replaced by @handle, falling back to a
+        whitespace-collapsed @name -- the platform's own ChatParticipant.handle
+        is documented as omitted when unavailable (e.g. a room's implicit human
+        owner), and a bare @[[uuid]] left in an LLM's context is unreadable and
+        gets echoed back verbatim. The fallback must stay whitespace-free like a
+        real handle: strip_leading_mentions()'s ``@\\S+`` matching (this same
+        module) assumes a mention token never contains a space.
     """
     if not participants or not content:
         return content
 
     for p in participants:
         participant_id = p.get("id")
-        handle = p.get("handle")
-        if participant_id and handle:
-            content = content.replace(f"@[[{participant_id}]]", f"@{handle}")
+        name = p.get("name")
+        label = p.get("handle") or ("-".join(name.split()) if name else None)
+        if participant_id and label:
+            content = content.replace(f"@[[{participant_id}]]", f"@{label}")
 
     return content
 

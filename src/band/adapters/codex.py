@@ -5,25 +5,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time as _time
-import warnings
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import ClassVar, Any, Callable, Literal, NamedTuple, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing_extensions import Unpack
 
 from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     AgentInput,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
@@ -52,10 +53,31 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
-from band.runtime.tools import is_room_posting_tool
+from band.runtime.tools import (
+    image_block_placeholder,
+    is_image_passthrough_result,
+    is_room_posting_tool,
+    redact_tool_call_args,
+)
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _image_content_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """An image tool result as Codex app-server ``inputImage`` content items.
+
+    Inlined as a data: URI -- the protocol's ``imageUrl`` is a bare string with
+    no documented inline-vs-http distinction.
+    """
+    return [
+        {
+            "type": "inputImage",
+            "imageUrl": f"data:{block['mimeType']};base64,{block['data']}",
+        }
+        for block in result["content"]
+    ]
+
 
 TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -100,7 +122,7 @@ _MAX_TASK_TITLES = 500
 # multi-byte content (emoji, CJK).
 _MAX_DIFF_METADATA_BYTES = 64 * 1024
 
-# item/completed "type" values gated on Emit.EXECUTION; dispatched in
+# item/completed "type" values gated on Emit.TOOL_CALLS; dispatched in
 # _extract_tool_item.
 _TOOL_ITEM_TYPES: frozenset[CodexItemType] = frozenset(
     {
@@ -160,11 +182,12 @@ class SetReasoningInput(BaseModel):
 
 
 # Hardcoded default — update when OpenAI rotates model IDs.
-# Override at runtime via CodexAdapterConfig.model or CODEX_MODEL env var.
+# Override at construction via CodexAdapterConfig(model=...) or the
+# CODEX_MODEL environment variable.
 _DEFAULT_MODEL = "gpt-5.5"
 
 
-class _CodexClientProtocol(Protocol):
+class CodexClientProtocol(Protocol):
     async def connect(self) -> None: ...
 
     async def initialize(
@@ -202,7 +225,7 @@ class _CodexClientProtocol(Protocol):
 
 
 @dataclass
-class _PendingApproval:
+class PendingApproval:
     request_id: int | str
     method: str
     summary: str
@@ -212,7 +235,7 @@ class _PendingApproval:
 
 
 @dataclass
-class _TurnResult:
+class TurnResult:
     """Aggregated result from processing a single Codex turn's event stream."""
 
     final_text: str = ""
@@ -221,9 +244,19 @@ class _TurnResult:
     saw_send_message_tool: bool = False
 
 
-@dataclass
-class CodexAdapterConfig:
+class CodexAdapterConfig(BaseSettings):
     """Runtime configuration for Codex adapter sessions.
+
+    Every field can be set explicitly (highest priority) or via a
+    ``CODEX_``-prefixed environment variable (e.g. ``CODEX_MODEL``,
+    ``CODEX_TRANSPORT``, ``CODEX_APPROVAL_MODE``); ``codex_ws_url`` is
+    sourced from ``CODEX_WS_URL`` (the field name already carries the
+    ``codex_`` part), ``emit_turn_task_markers`` also accepts the legacy
+    ``CODEX_TURN_TASK_MARKERS``, and ``codex_command`` is sourced from the
+    established ``CODEX_COMMAND`` (not the doubly-prefixed
+    ``CODEX_CODEX_COMMAND``), parsed the same way as an explicit tuple: a
+    whitespace-split shell string (e.g. ``"custom-codex --args"``). An
+    explicit constructor kwarg always wins over the environment.
 
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
@@ -235,13 +268,26 @@ class CodexAdapterConfig:
         when its extra metadata is desired.
     """
 
+    # extra="forbid" (not the usual settings "ignore"): this config is
+    # commonly built with many explicit kwargs, so a typo'd field name
+    # must fail construction instead of silently vanishing.
+    # populate_by_name: an aliased field stays constructible by its field name
+    # and keeps its prefix-derived environment variable.
+    model_config = SettingsConfigDict(
+        env_prefix="CODEX_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+        populate_by_name=True,
+    )
+
     transport: TransportKind = "stdio"
     model: str | None = None
     reasoning_effort: (
         Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
     ) = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
-    cwd: str | None = None
+    cwd: str = Field(default_factory=os.getcwd)
     approval_policy: str = "never"
     personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
     sandbox: str | None = None
@@ -250,9 +296,13 @@ class CodexAdapterConfig:
     custom_section: str = ""
     include_base_instructions: bool = True
     experimental_api: bool = True
-    enable_task_events: bool = True
-    emit_turn_task_markers: bool = False
-    emit_thought_events: bool = False
+    # A validation_alias names an environment variable verbatim (env_prefix is
+    # not applied), so aliases must be full CODEX_* names — an unprefixed alias
+    # would read a bare env var set for something else entirely.
+    emit_turn_task_markers: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CODEX_TURN_TASK_MARKERS"),
+    )
     fallback_send_agent_text: bool = True
     approval_mode: ApprovalMode = "manual"
     approval_text_notifications: bool = True
@@ -262,12 +312,17 @@ class CodexAdapterConfig:
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
-    codex_command: tuple[str, ...] | None = None
+    codex_command: tuple[str, ...] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CODEX_COMMAND"),
+    )
     codex_env: dict[str, str] | None = None
-    codex_ws_url: str = "ws://127.0.0.1:8765"
-    enable_execution_reporting: bool = False
+    codex_ws_url: str = Field(
+        default="ws://127.0.0.1:8765",
+        validation_alias=AliasChoices("CODEX_WS_URL"),
+    )
     enable_self_config_tools: bool = False
-    additional_dynamic_tools: list[dict[str, Any]] = field(default_factory=list)
+    additional_dynamic_tools: list[dict[str, Any]] = Field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
     max_pending_approvals_per_room: int = 50
@@ -313,20 +368,33 @@ class CodexAdapterConfig:
     emit_diff_events: bool = False
     emit_token_usage_events: bool = False
 
+    @field_validator("codex_command", mode="before")
+    @classmethod
+    def _split_codex_command(cls, value: Any) -> Any:
+        """CODEX_COMMAND is a shell string; an explicit tuple/list kwarg
+        passes through unchanged."""
+        if isinstance(value, str):
+            return value.split()
+        return value
+
 
 class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
     One Band room maps to one Codex thread. Mapping is persisted in task
-    events metadata and restored via CodexHistoryConverter on bootstrap.
+    events metadata and restored via CodexHistoryConverter on bootstrap --
+    so narrowing ``emit`` to exclude ``Emit.TASK_EVENTS`` doesn't just silence
+    narration, it also stops thread-resume persistence: every restart starts
+    a fresh Codex thread instead of resuming. Leave it in ``emit`` unless
+    that's intended.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -335,56 +403,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         *,
         additional_tools: list[CustomToolDef] | None = None,
         history_converter: CodexHistoryConverter | None = None,
-        client_factory: Callable[[CodexAdapterConfig], _CodexClientProtocol]
+        client_factory: Callable[[CodexAdapterConfig], CodexClientProtocol]
         | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         self._config = config or CodexAdapterConfig()
 
-        # --- Deprecation shim: boolean → features migration ---
-        # Only trigger for non-default booleans (enable_task_events defaults
-        # to True, so it doesn't count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_execution_reporting or self._config.emit_thought_events
-        )
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in CodexAdapterConfig "
-                "(enable_execution_reporting / emit_thought_events) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
-        if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_execution_reporting and emit_thought_events in "
-                    "CodexAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(emit={Emit.EXECUTION, "
-                    "Emit.THOUGHTS}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.emit_thought_events:
-                emit = emit | frozenset({Emit.THOUGHTS})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=frozenset(), emit=emit)
-
         super().__init__(
             history_converter=history_converter or CodexHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = self._config
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         if self.config.enable_self_config_tools:
             self._custom_tools.extend(self._build_self_config_tools())
         self._client_factory = client_factory
-        self._client: _CodexClientProtocol | None = None
+        self._client: CodexClientProtocol | None = None
         self._initialized = False
         self._selected_model: str | None = None
         self._system_prompt: str = ""
@@ -392,7 +426,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._prompt_injected_rooms: set[str] = set()
         self._task_titles_by_id: OrderedDict[str, str] = OrderedDict()
         self._max_task_titles: int = _MAX_TASK_TITLES
-        self._pending_approvals: dict[str, dict[str, _PendingApproval]] = {}
+        self._pending_approvals: dict[str, dict[str, PendingApproval]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
         # Token usage tracking per thread
@@ -497,7 +531,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._selected_model or self.config.model or "auto",
             self.config.sandbox or "default",
             self.config.approval_mode,
-            Emit.EXECUTION in self.features.emit,
+            Emit.TOOL_CALLS in self.features.emit,
             self.config.enable_self_config_tools,
             Emit.TASK_EVENTS in self.features.emit,
             self.config.emit_turn_task_markers,
@@ -666,7 +700,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     thread_id,
                     turn_id,
                 )
-                result = _TurnResult(
+                result = TurnResult(
                     turn_status="failed",
                     turn_error="Internal error during turn processing",
                 )
@@ -694,12 +728,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         thread_id: str,
         turn_id: str | None,
         turn_start: float,
-    ) -> _TurnResult:
+    ) -> TurnResult:
         """Consume the Codex event stream for a single turn and return the result."""
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None during turn event loop")
 
-        result = _TurnResult()
+        result = TurnResult()
         try:
             while True:
                 _remaining = max(
@@ -1047,7 +1081,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._selected_model = await self._select_model()
             self._initialized = True
 
-    def _build_client(self, config: CodexAdapterConfig) -> _CodexClientProtocol:
+    def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
         if self._client_factory is not None:
             return self._client_factory(config)
 
@@ -1180,8 +1214,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         seen: set[str] = set()
 
         for schema in tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         ):
             if not isinstance(schema, dict):
                 continue
@@ -1336,7 +1369,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             # Don't emit reporting for codex-local slash commands — they already
             # surface their outcome in the room themselves.
             should_report = (
-                Emit.EXECUTION in self.features.emit
+                Emit.TOOL_CALLS in self.features.emit
                 and tool_name not in _SILENT_REPORTING_TOOLS
             )
 
@@ -1345,7 +1378,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     content=json.dumps(
                         {
                             ToolEventKey.NAME: tool_name,
-                            ToolEventKey.ARGS: arguments,
+                            ToolEventKey.ARGS: redact_tool_call_args(
+                                tool_name, arguments
+                            ),
                             ToolEventKey.TOOL_CALL_ID: call_id,
                         }
                     ),
@@ -1366,15 +1401,20 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                     result = outcome.value
                     success = outcome.ok
-                text_result = (
-                    result
-                    if isinstance(result, str)
-                    else json.dumps(result, default=str)
-                )
+                if success and is_image_passthrough_result(tool_name, result):
+                    content_items = _image_content_items(result)
+                    text_result = image_block_placeholder(len(content_items))
+                else:
+                    text_result = (
+                        result
+                        if isinstance(result, str)
+                        else json.dumps(result, default=str)
+                    )
+                    content_items = [{"type": "inputText", "text": text_result}]
                 await self._client.respond(
                     event.id,
                     {
-                        "contentItems": [{"type": "inputText", "text": text_result}],
+                        "contentItems": content_items,
                         "success": success,
                     },
                 )
@@ -1753,9 +1793,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         metadata: dict[str, Any],
     ) -> None:
         """Inner dispatch for item events — may raise on API errors."""
-        # Tool-like items gated on Emit.EXECUTION
+        # Tool-like items gated on Emit.TOOL_CALLS
         if item_type in _TOOL_ITEM_TYPES:
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
             name, args, output = self._extract_tool_item(item_type, item)
             await tools.send_event(
@@ -1860,6 +1900,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         mcp_args = item.get("arguments", {})
         if not isinstance(mcp_args, dict):
             mcp_args = {}
+        # redact_tool_call_args compares against the bare tool name (e.g.
+        # "band_send_room_file"), not the "mcp:{server}/{tool}" display name
+        # this method returns -- redact before that prefix is applied.
+        mcp_args = redact_tool_call_args(tool, mcp_args)
         output = CodexAdapter._stringify_tool_output(
             item.get("result"),
             item.get("error"),
@@ -2040,7 +2084,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise RuntimeError("approval request must have an id")
         token = self._approval_token(event.id, params)
         loop = asyncio.get_running_loop()
-        pending = _PendingApproval(
+        pending = PendingApproval(
             request_id=event.id,
             method=event.method,
             summary=summary,

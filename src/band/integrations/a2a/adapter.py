@@ -19,11 +19,12 @@ from a2a.types import (
     Task,
     TaskState,
 )
+from typing_extensions import Unpack
 
 from band.converters.a2a import A2AHistoryConverter
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
@@ -35,6 +36,13 @@ from band.integrations.a2a.protocol import (
 from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
 logger = logging.getLogger(__name__)
+
+# httpx's read timeout resets on every chunk received, so this bounds the gap
+# between SSE events, not the turn as a whole. Generous enough for the
+# multi-second silences of a live LLM call or tool loop; still finite, so a
+# peer that accepts the connection and then hangs eventually fails the turn
+# instead of blocking the room forever.
+_SSE_READ_TIMEOUT_S = 300.0
 
 
 class A2AAdapter(SimpleAdapter[A2ASessionState]):
@@ -76,7 +84,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         remote_url: str,
         auth: A2AAuth | None = None,
         streaming: bool = True,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         """Initialize A2A adapter.
 
@@ -87,7 +95,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """
         super().__init__(
             history_converter=A2AHistoryConverter(),
-            features=features,
+            **features,
         )
         self.remote_url = remote_url
         self.auth = auth
@@ -106,7 +114,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
         headers = self.auth.to_headers() if self.auth else {}
 
-        self._http_client = httpx.AsyncClient(headers=headers)
+        # httpx's default 5s read timeout fires on the normal, multi-second
+        # gap between SSE events during a real remote turn (a live LLM call,
+        # a tool loop) -- not a hang. Use a generous bound instead of the
+        # default so a genuinely dead peer still fails promptly.
+        self._http_client = httpx.AsyncClient(
+            headers=headers,
+            timeout=httpx.Timeout(10.0, read=_SSE_READ_TIMEOUT_S),
+        )
         factory = ClientFactory(
             ClientConfig(streaming=self.streaming, httpx_client=self._http_client)
         )
@@ -318,12 +333,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     async def cleanup_all(self) -> None:
         """Close the owned A2A client and its HTTP transport."""
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        client, self._client = self._client, None
+        http_client, self._http_client = self._http_client, None
+        try:
+            if client is not None:
+                await client.close()
+        finally:
+            if http_client is not None:
+                await http_client.aclose()
 
     async def _emit_task_event(
         self, tools: AgentToolsProtocol, task: Task, state: TaskState

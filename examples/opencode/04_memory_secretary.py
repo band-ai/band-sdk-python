@@ -19,18 +19,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging
 from settings import OpenCodeExampleSettings
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import Capability, Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    stream="stdout",
+    root_level=logging.INFO,
+    extra_loggers={"httpx": logging.WARNING},
+)
 logger = logging.getLogger(__name__)
 
 MEMORY_INSTRUCTIONS = (
@@ -54,21 +55,16 @@ async def main() -> None:
             approval_mode=settings.opencode_approval_mode,
             custom_section=MEMORY_INSTRUCTIONS,
         ),
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY},
-            emit={Emit.EXECUTION},
-        ),
-    )
-
-    agent = Agent.from_config(
-        settings.agent_key,
-        adapter=adapter,
-        ws_url=settings.band_ws_url,
-        rest_url=settings.band_rest_url,
+        capabilities=Capability.MEMORY,
+        emit=Emit.TOOL_CALLS,
     )
 
     logger.info("Starting OpenCode memory secretary")
-    await agent.run()
+    async with Agent.from_config(
+        settings.agent_key,
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

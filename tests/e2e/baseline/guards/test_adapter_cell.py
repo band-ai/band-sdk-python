@@ -49,10 +49,10 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     ) -> Any:
         yield provisioned
 
-    # build() lazily does `from ...toolkit.adapters import build_adapter`, so patch there.
-    monkeypatch.setattr(
-        "tests.e2e.baseline.toolkit.adapters.build_adapter", fake_build_adapter
-    )
+    # provisioning.py imports build_adapter at top level, so it must be patched at that
+    # use site -- patching toolkit.adapters.build_adapter leaves provisioning's own
+    # already-bound name pointing at the real function.
+    monkeypatch.setattr(provisioning, "build_adapter", fake_build_adapter)
     monkeypatch.setattr(provisioning, "running_agent", fake_running_agent)
     return calls
 

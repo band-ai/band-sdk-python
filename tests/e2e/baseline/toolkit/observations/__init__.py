@@ -9,7 +9,10 @@ methods, so a check lives with the data it inspects. ``ReplyCapture`` (see
 - :class:`Replies` -- captured agent reply messages.
 - :class:`ToolCall` / :class:`ToolCalls` -- the agent's tool calls (memory tools
   excluded by default); :class:`MemoryToolCalls` -- the call-layer memory view;
-  :class:`MemoryTool` / :class:`ContactTool` -- canonical capability-tool names.
+  :class:`TaskToolCalls` -- the call-layer task-board view; :class:`MemoryTool` /
+  :class:`ContactTool` / :class:`TaskTool` -- canonical capability-tool names.
+- :class:`ToolResult` / :class:`ToolResults` -- the agent's tool results (the
+  ``tool_result`` counterpart to ``ToolCall`` / ``ToolCalls``).
 - :class:`Events` / :class:`Thoughts` / :class:`Errors` / :class:`Tasks` -- the
   free-text emitted events.
 - :class:`Memories` -- the store-layer view: memory records that actually landed
@@ -35,26 +38,35 @@ from tests.e2e.baseline.toolkit.observations.memories import (
 from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.observations.tool_calls import (
     ContactTool,
+    FileTool,
     MemoryTool,
     MemoryToolCalls,
+    TaskTool,
+    TaskToolCalls,
     ToolCall,
     ToolCalls,
 )
+from tests.e2e.baseline.toolkit.observations.tool_results import ToolResult, ToolResults
 from tests.e2e.baseline.toolkit.observations.usage import Usage, UsageRecord
 
 __all__ = [
     "ContactTool",
     "Errors",
     "Events",
+    "FileTool",
     "Memories",
     "MemoryObservation",
     "MemoryTool",
     "MemoryToolCalls",
     "Replies",
+    "TaskTool",
+    "TaskToolCalls",
     "Tasks",
     "Thoughts",
     "ToolCall",
     "ToolCalls",
+    "ToolResult",
+    "ToolResults",
     "Usage",
     "UsageRecord",
 ]

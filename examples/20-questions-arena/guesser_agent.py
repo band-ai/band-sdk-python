@@ -78,17 +78,6 @@ async def main() -> None:
     logger.info("  model flag : %s", args.model or "(auto-detect)")
     logger.info("=" * 60)
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
-    logger.info("  ws_url     : %s", ws_url)
-    logger.info("  rest_url   : %s", rest_url)
-
     # Select LLM: explicit model name or auto-detect from env
     if args.model:
         llm = create_llm_by_name(args.model)
@@ -107,16 +96,12 @@ async def main() -> None:
         custom_section=generate_guesser_prompt("Guesser"),
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Guesser is ready -- waiting to be invited to a game...")
+    async with Agent.from_config(
         args.config,
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Guesser is ready -- waiting to be invited to a game...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

@@ -26,11 +26,10 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -78,13 +77,6 @@ def get_weather(city: str) -> str:
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with custom tools
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
@@ -100,16 +92,12 @@ async def main() -> None:
         Always send your response using band_send_message.""",
     )
 
-    # Create and start agent
-    agent = Agent.from_config(
+    logger.info("Starting agent with custom tools...")
+    async with Agent.from_config(
         "custom_tools_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting agent with custom tools...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

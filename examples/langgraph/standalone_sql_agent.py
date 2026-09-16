@@ -18,7 +18,10 @@ This is a complete, functional example with:
 - Query validation before execution
 """
 
+import logging
 import os
+import sqlite3
+import urllib.request
 from typing import Annotated, Literal
 
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
@@ -104,10 +107,6 @@ def create_sql_agent(db_path: str = "Chinook.db"):
 
 def download_chinook_db():
     """Download the Chinook sample database if not present."""
-    import logging
-    import os
-    import urllib.request
-
     logger = logging.getLogger(__name__)
 
     db_path = "Chinook.db"
@@ -125,9 +124,6 @@ def download_chinook_db():
     except Exception as e:
         logger.error("Error downloading database: %s", e)
         logger.info("Creating minimal test database instead...")
-
-        # Create minimal test database if download fails
-        import sqlite3
 
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()

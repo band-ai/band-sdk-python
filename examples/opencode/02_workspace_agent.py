@@ -25,17 +25,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging
 from settings import OpenCodeExampleSettings
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    stream="stdout",
+    root_level=logging.INFO,
+    extra_loggers={"httpx": logging.WARNING},
+)
 logger = logging.getLogger(__name__)
 
 
@@ -63,18 +65,15 @@ async def main() -> None:
                 "not modify files or run commands without the user's approval."
             ),
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.TASK_EVENTS}),
-    )
-
-    agent = Agent.from_config(
-        settings.agent_key,
-        adapter=adapter,
-        ws_url=settings.band_ws_url,
-        rest_url=settings.band_rest_url,
+        emit=Emit.TOOL_CALLS | Emit.TASK_EVENTS,
     )
 
     logger.info("Starting workspace agent for %s", settings.opencode_directory)
-    await agent.run()
+    async with Agent.from_config(
+        settings.agent_key,
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

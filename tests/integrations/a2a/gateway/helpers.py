@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from band_rest import Peer
 
 
@@ -16,3 +18,9 @@ def make_peer(peer_id: str, name: str, description: str = "") -> Peer:
         is_contact=False,
         source="registry",
     )
+
+
+def peers_page(peers: list[Peer]) -> SimpleNamespace:
+    """A fake ``list_agent_peers`` response page -- only ``.data`` matters
+    to ``_fetch_all_peers``, which pages until a page comes back short."""
+    return SimpleNamespace(data=peers)

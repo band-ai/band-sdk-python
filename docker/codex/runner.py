@@ -31,8 +31,12 @@ from typing import Any, Literal
 
 import yaml
 
+from band import Agent
+from band.adapters import CodexAdapter
+from band.adapters.codex import CodexAdapterConfig
 from band.config.loader import load_agent_config
 from band.config.logs import LogSettings
+from band.core.types import Emit
 from band.docker.repo_init import initialize_repo
 
 # Global flag for graceful shutdown
@@ -177,18 +181,6 @@ async def main() -> None:
 
     agent_key = os.environ.get("AGENT_KEY", os.environ.get("CODEX_AGENT_KEY", "agent"))
 
-    ws_url = os.environ.get(
-        "BAND_WS_URL",
-        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
-    )
-    rest_url = os.environ.get(
-        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    )
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is empty")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is empty")
-
     validate_mounts()
 
     logger.info("Loading config from: %s (key: %s)", config_path, agent_key)
@@ -199,10 +191,6 @@ async def main() -> None:
         agent_key=agent_key,
         lock_timeout_s=lock_timeout_s,
     )
-
-    from band import Agent
-    from band.adapters import CodexAdapter
-    from band.adapters.codex import CodexAdapterConfig
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]
@@ -269,21 +257,17 @@ async def main() -> None:
                 part for part in (custom_section, repo_init.context_bundle) if part
             ),
             include_base_instructions=True,
-            enable_task_events=True,
             emit_turn_task_markers=codex_turn_markers,
-            enable_execution_reporting=False,
-            emit_thought_events=False,
             fallback_send_agent_text=True,
             experimental_api=True,
-        )
+        ),
+        emit=Emit.TASK_EVENTS,
     )
 
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Codex agent: %s", agent_id)

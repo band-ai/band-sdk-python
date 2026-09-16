@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -585,12 +586,10 @@ class TestMain:
                 "30",
             ],
         )
-        import asyncio as _asyncio
-
         with (
             patch(
                 "band.cli.trigger.asyncio.run",
-                side_effect=_fake_asyncio_run(side_effect=_asyncio.TimeoutError()),
+                side_effect=_fake_asyncio_run(side_effect=asyncio.TimeoutError()),
             ),
             pytest.raises(SystemExit) as exc_info,
         ):
@@ -612,12 +611,10 @@ class TestMain:
                 "45",
             ],
         )
-        import asyncio as _asyncio
-
         with (
             patch(
                 "band.cli.trigger.asyncio.run",
-                side_effect=_fake_asyncio_run(side_effect=_asyncio.TimeoutError()),
+                side_effect=_fake_asyncio_run(side_effect=asyncio.TimeoutError()),
             ),
             pytest.raises(SystemExit),
         ):

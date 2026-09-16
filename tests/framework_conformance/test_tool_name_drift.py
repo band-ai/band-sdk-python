@@ -1,6 +1,6 @@
 """Conformance tests that detect tool-name drift between the central registry and adapters.
 
-When a new tool is added to ``TOOL_MODELS`` in ``runtime/tools.py``, these
+When a new tool is added to ``TOOL_MODELS`` in ``runtime/tools/``, these
 tests will fail for any adapter or integration that is missing it — surfacing
 the gap before it reaches production.
 
@@ -22,14 +22,19 @@ import re
 
 import pytest
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
+from band.core.types import ALL_CAPABILITIES
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     CONTACT_TOOL_NAMES,
+    FILE_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
+    TASK_TOOL_NAMES,
     iter_tool_definitions,
 )
+
+from band.integrations.crewai.tools import PLATFORM_TOOLS
 
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
@@ -92,7 +97,7 @@ class TestClaudeSDKAdapterToolDrift:
     def test_shared_builder_covers_all_tools(self):
         """Every Band tool should be buildable for the Claude SDK adapter."""
         sdk_tools = build_band_sdk_tools(
-            tool_definitions=iter_tool_definitions(include_memory=True),
+            tool_definitions=iter_tool_definitions(capabilities=ALL_CAPABILITIES),
             get_tools=lambda _room_id: None,
         )
         found = {tool.name for tool in sdk_tools}
@@ -159,24 +164,19 @@ class TestLangGraphToolDrift:
 
 
 class TestCrewAIToolDrift:
-    """CrewAI tool classes (integrations/crewai/tools.py).
+    """CrewAI platform tools (integrations/crewai/catalog.py).
 
-    The BaseTool subclasses were moved out of ``adapters/crewai.py`` into the
-    shared ``integrations/crewai/tools.py`` module so that both the legacy
-    ``CrewAIAdapter`` and the new ``CrewAIFlowAdapter`` consume one set of
-    wrappers. The drift check now scans the shared module.
+    Both ``CrewAIAdapter`` and ``CrewAIFlowAdapter`` consume one set of
+    wrappers, declared as ``@band_tool`` bodies rather than string literals,
+    so the drift check reads the registry those decorators build.
     """
 
-    _FILE = SRC_ROOT / "integrations" / "crewai" / "tools.py"
-
     def test_all_tools_registered(self):
-        """Every tool in TOOL_MODELS has a CrewAI tool class."""
-        source = self._FILE.read_text()
-        found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - found
+        """Every tool in TOOL_MODELS has a CrewAI ``@band_tool`` body."""
+        missing = ALL_TOOL_NAMES - {spec.name for spec in PLATFORM_TOOLS}
         assert not missing, (
-            f"CrewAI adapter is missing tool classes for: {sorted(missing)}. "
-            f"Add tool classes in _register_tools()."
+            f"CrewAI adapter is missing tool bodies for: {sorted(missing)}. "
+            "Add a @band_tool body in integrations/crewai/catalog.py."
         )
 
 
@@ -186,10 +186,16 @@ class TestPydanticAIToolDrift:
     _FILE = SRC_ROOT / "adapters" / "pydantic_ai.py"
 
     def test_all_tools_registered(self):
-        """Every tool in TOOL_MODELS has a PydanticAI tool function."""
+        """Every non-file tool in TOOL_MODELS has a PydanticAI tool function.
+
+        File tools are excluded: each Band tool is its own
+        ``@platform_tool``-decorated function here, so exposing
+        ``Capability.FILES`` needs a real new function per tool, not just a
+        capability declaration -- not yet done.
+        """
         source = self._FILE.read_text()
         found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - found
+        missing = ALL_TOOL_NAMES - FILE_TOOL_NAMES - found
         assert not missing, (
             f"PydanticAI adapter is missing tool functions for: {sorted(missing)}. "
             f"Add tool registrations in _register_tools()."
@@ -214,12 +220,12 @@ class TestGeminiToolDrift:
             "tool declarations dynamically from the central registry."
         )
 
-    def test_supports_memory_tools_toggle(self):
-        """Verify include_memory is wired through to get_openai_tool_schemas."""
+    def test_supports_capability_gating(self):
+        """Verify the adapter's declared capabilities reach get_openai_tool_schemas."""
         source = self._FILE.read_text()
-        assert "include_memory" in source, (
-            "Gemini adapter should pass include_memory to "
-            "get_openai_tool_schemas() so memory tools can be toggled."
+        assert "capabilities" in source, (
+            "Gemini adapter should pass capabilities= to "
+            "get_openai_tool_schemas() so memory/contacts/files can be toggled."
         )
 
 
@@ -247,8 +253,10 @@ class TestParlantToolDrift:
 class TestToolRegistryConsistency:
     """Verify the derived sets are consistent with TOOL_MODELS."""
 
-    def test_all_equals_base_plus_memory(self):
-        assert ALL_TOOL_NAMES == BASE_TOOL_NAMES | MEMORY_TOOL_NAMES
+    def test_all_equals_base_plus_memory_plus_files_plus_tasks(self):
+        assert ALL_TOOL_NAMES == (
+            BASE_TOOL_NAMES | MEMORY_TOOL_NAMES | FILE_TOOL_NAMES | TASK_TOOL_NAMES
+        )
 
     def test_base_equals_chat_plus_contact(self):
         assert BASE_TOOL_NAMES == CHAT_TOOL_NAMES | CONTACT_TOOL_NAMES
@@ -259,11 +267,17 @@ class TestToolRegistryConsistency:
     def test_no_overlap_base_memory(self):
         assert not (BASE_TOOL_NAMES & MEMORY_TOOL_NAMES)
 
+    def test_no_overlap_base_task(self):
+        assert not (BASE_TOOL_NAMES & TASK_TOOL_NAMES)
+
     def test_memory_tools_subset_of_all(self):
         assert MEMORY_TOOL_NAMES <= ALL_TOOL_NAMES
 
     def test_contact_tools_subset_of_all(self):
         assert CONTACT_TOOL_NAMES <= ALL_TOOL_NAMES
+
+    def test_task_tools_subset_of_all(self):
+        assert TASK_TOOL_NAMES <= ALL_TOOL_NAMES
 
     def test_all_memory_prefixed_tools_in_memory_set(self):
         """Catch new memory tools not added to MEMORY_TOOL_NAMES."""
@@ -279,4 +293,12 @@ class TestToolRegistryConsistency:
         assert contact_like <= CONTACT_TOOL_NAMES, (
             f"Tools matching contact naming convention not in CONTACT_TOOL_NAMES: "
             f"{contact_like - CONTACT_TOOL_NAMES}"
+        )
+
+    def test_all_task_prefixed_tools_in_task_set(self):
+        """Catch new task tools not added to TASK_TOOL_NAMES."""
+        task_like = {n for n in ALL_TOOL_NAMES if "task" in n}
+        assert task_like <= TASK_TOOL_NAMES, (
+            f"Tools matching task naming convention not in TASK_TOOL_NAMES: "
+            f"{task_like - TASK_TOOL_NAMES}"
         )

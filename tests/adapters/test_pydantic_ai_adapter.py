@@ -8,7 +8,7 @@ stream event handling, execution reporting, and custom tools.
 """
 
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +20,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
@@ -29,9 +29,11 @@ from pydantic_ai import (
     InstrumentationSettings,
     RunContext,
     UnexpectedModelBehavior,
+    _tool_execution,
 )
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -48,13 +50,17 @@ from pydantic_ai.models.test import TestModel
 from band.adapters.pydantic_ai import (
     OUTPUT_RETRIES_EXHAUSTED,
     PydanticAIAdapter,
+    _custom_tool_def_to_callable,
     _drop_non_replayable_messages,
     _is_output_retries_exhausted,
     _is_replayable_history_message,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.core.types import Capability, Emit, PlatformMessage, TurnUsage
 from band.runtime.custom_tools import get_custom_tool_name
+from tests.adapters.usage_events import sent_usage_payloads
+from band.runtime.tools import get_tool_description
+from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
 
 def make_stream_events(
@@ -82,6 +88,7 @@ def make_stream_events(
                 event.part = MagicMock()
                 event.part.tool_name = tool_name
                 event.part.args = args
+                event.part.args_as_dict = MagicMock(return_value=args)
                 event.part.tool_call_id = tool_call_id
                 yield event
 
@@ -178,7 +185,6 @@ class TestUsageMapping:
         Reading it as a method instead would raise, and the guarded read would then
         report zeros for every turn — silent, so this is the guard.
         """
-        from band.core.types import TurnUsage
 
         result = SimpleNamespace(
             usage=SimpleNamespace(
@@ -197,7 +203,6 @@ class TestUsageMapping:
 
     def test_usage_from_result_swallows_errors(self):
         """Usage that fails to read yields empty usage, never propagates."""
-        from band.core.types import TurnUsage
 
         class Unreadable:
             @property
@@ -212,7 +217,6 @@ class TestUsageMapping:
         Covers the empty-final-response path (no AgentRunResultEvent fires) where
         the turn still spent tokens — each ModelResponse carries its own usage.
         """
-        from band.core.types import TurnUsage
 
         messages = [
             ModelRequest(parts=[]),  # non-response: ignored
@@ -225,9 +229,6 @@ class TestUsageMapping:
 
     def test_usage_from_messages_empty_when_no_responses(self):
         """No ModelResponse in the captured messages → empty usage."""
-        from pydantic_ai.messages import ModelRequest
-
-        from band.core.types import TurnUsage
 
         assert (
             PydanticAIAdapter._usage_from_messages([ModelRequest(parts=[])])
@@ -245,7 +246,6 @@ class TestUsageMapping:
         run — and combined with the ModelResponse-only sum, yields only this turn's
         usage.
         """
-        from band.core.types import TurnUsage
 
         # Prior history: a real response, then two instruction-less requests that
         # pydantic-ai would merge into one on the next run.
@@ -477,6 +477,13 @@ def instrument_all_restored() -> Iterator[None]:
         Agent.instrument_all(previous)
 
 
+def message_types(mock_tools: MagicMock) -> list[str]:
+    """``message_type`` of every event posted through send_event, in order."""
+    return [
+        call.kwargs.get("message_type") for call in mock_tools.send_event.call_args_list
+    ]
+
+
 def _reply(text: str) -> FunctionModel:
     """A model that answers in plain text, so a run needs no network or tools."""
 
@@ -633,7 +640,7 @@ class TestOnStarted:
         with patch("band.adapters.pydantic_ai.Agent"):
             adapter = PydanticAIAdapter(
                 model="openai:gpt-5.4",
-                features=AdapterFeatures(capabilities={Capability.MEMORY}),
+                capabilities=Capability.MEMORY,
             )
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -667,6 +674,178 @@ class TestOnStarted:
 
         for tool in expected_tools:
             assert tool in tool_names, f"Tool {tool} not found"
+
+
+class TestAdvertisedToolSchemas:
+    """Per-argument text fidelity is asserted in test_tool_text_drift.
+
+    What is pydantic-ai-specific, and checked here, is the split: griffe
+    consumes the rendered ``Args:`` section into the argument schema, so the
+    tool's own blurb must come back as the plain master docstring.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_blurb_is_the_master_docstring(self):
+        blurbs = {
+            name: schema.description
+            for name, schema in (await pydantic_ai_probe_tools()).items()
+        }
+
+        assert blurbs, "no tools registered, so nothing was actually checked"
+        assert blurbs == {name: get_tool_description(name).strip() for name in blurbs}
+
+
+class TestFileTools:
+    """band_list_room_files/band_read_room_file/band_send_room_file, the
+    hand-written wrappers gated behind Capability.FILES.
+
+    Drives each tool function directly (grabbed off the real, started agent's
+    function toolset) rather than through a full mocked agent run, since the
+    behavior under test is each wrapper's own argument plumbing to
+    AgentToolsProtocol -- not pydantic-ai's tool-calling loop.
+    """
+
+    @pytest.fixture
+    def file_tools(self):
+        """Mock AgentToolsProtocol with the three room-file methods."""
+        tools = MagicMock()
+        tools.list_room_files = AsyncMock(
+            return_value={"data": [{"id": "file-1", "name": "report.txt"}]}
+        )
+        tools.read_room_file = AsyncMock(
+            return_value={"name": "report.txt", "text": "hello world"}
+        )
+        tools.send_room_file = AsyncMock(
+            return_value={"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+        )
+        return tools
+
+    async def _tool_functions(self) -> dict[str, Any]:
+        adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
+        await adapter.on_started(agent_name="Probe", agent_description="probe")
+        return {
+            name: tool.function
+            for name, tool in adapter._agent._function_toolset.tools.items()
+        }
+
+    @pytest.mark.asyncio
+    async def test_agent_has_file_tools_registered_only_with_capability(self):
+        without_files = PydanticAIAdapter(model="test")
+        await without_files.on_started(agent_name="Probe", agent_description="probe")
+        names = set(without_files._agent._function_toolset.tools)
+
+        assert "band_list_room_files" not in names
+        assert "band_read_room_file" not in names
+        assert "band_send_room_file" not in names
+
+        with_files = await self._tool_functions()
+
+        assert "band_list_room_files" in with_files
+        assert "band_read_room_file" in with_files
+        assert "band_send_room_file" in with_files
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_forwards_cursor(self, file_tools):
+        functions = await self._tool_functions()
+
+        result = await functions["band_list_room_files"](
+            SimpleNamespace(deps=file_tools), cursor="cursor-1"
+        )
+
+        file_tools.list_room_files.assert_called_once_with("cursor-1")
+        assert result == {"data": [{"id": "file-1", "name": "report.txt"}]}
+
+    @pytest.mark.asyncio
+    async def test_list_room_files_handles_exception(self, file_tools):
+        file_tools.list_room_files.side_effect = Exception("backend unavailable")
+        functions = await self._tool_functions()
+
+        result = await functions["band_list_room_files"](
+            SimpleNamespace(deps=file_tools), cursor=None
+        )
+
+        assert "Error listing room files" in result
+        assert "backend unavailable" in result
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_forwards_file_id(self, file_tools):
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="file-1"
+        )
+
+        file_tools.read_room_file.assert_called_once_with("file-1")
+        assert result == {"name": "report.txt", "text": "hello world"}
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_image_result_becomes_binary_content(self, file_tools):
+        file_tools.read_room_file = AsyncMock(
+            return_value={
+                "content": [
+                    {"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}
+                ]
+            }
+        )
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="file-1"
+        )
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], BinaryContent)
+        assert result[0].data == b"fake"
+        assert result[0].media_type == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_read_room_file_handles_exception(self, file_tools):
+        file_tools.read_room_file.side_effect = Exception("not found")
+        functions = await self._tool_functions()
+
+        result = await functions["band_read_room_file"](
+            SimpleNamespace(deps=file_tools), file_id="missing"
+        )
+
+        assert "Error reading room file" in result
+        assert "not found" in result
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_forwards_args_in_protocol_order(self, file_tools):
+        """Regression pin: the wrapper's own signature order (content, filename,
+        mentions, caption) differs from the positional order AgentToolsProtocol
+        wants (content, filename, caption, mentions) -- assert the call site
+        reorders correctly rather than passing mentions where caption goes."""
+        functions = await self._tool_functions()
+
+        result = await functions["band_send_room_file"](
+            SimpleNamespace(deps=file_tools),
+            content="file body",
+            filename="notes.txt",
+            mentions=["Alice", "Bob"],
+            caption="here's a file",
+        )
+
+        file_tools.send_room_file.assert_called_once_with(
+            "file body", "notes.txt", "here's a file", ["Alice", "Bob"]
+        )
+        assert result == {"attachment": {"id": "file-2"}, "message_id": "msg-1"}
+
+    @pytest.mark.asyncio
+    async def test_send_room_file_handles_exception(self, file_tools):
+        file_tools.send_room_file.side_effect = Exception("upload failed")
+        functions = await self._tool_functions()
+
+        result = await functions["band_send_room_file"](
+            SimpleNamespace(deps=file_tools),
+            content="body",
+            filename="notes.txt",
+            mentions=["Alice"],
+        )
+
+        assert "Error sending room file 'notes.txt'" in result
+        assert "upload failed" in result
 
 
 class TestOnMessage:
@@ -1009,10 +1188,10 @@ class TestExecutionReporting:
     async def test_emits_tool_call_events_when_enabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Should emit tool_call events when enable_execution_reporting=True."""
+        """Should emit tool_call events when emit=Emit.TOOL_CALLS."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1042,13 +1221,56 @@ class TestExecutionReporting:
         )
 
     @pytest.mark.asyncio
+    async def test_tool_call_event_redacts_send_room_file_content(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """band_send_room_file's content arg can carry up to
+        MAX_SEND_CONTENT_BYTES of real file bytes; the tool_call event must
+        report a bounded placeholder instead of the raw content."""
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            emit=Emit.TOOL_CALLS,
+        )
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_calls=[
+                    (
+                        "band_send_room_file",
+                        {"content": "SECRET FILE BYTES", "filename": "f.txt"},
+                        "call-123",
+                    )
+                ],
+            )
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        reported_content = mock_tools.send_event.call_args_list[0].kwargs["content"]
+        assert "SECRET FILE BYTES" not in reported_content
+        assert "byte file content" in reported_content
+        assert '"filename": "f.txt"' in reported_content
+
+    @pytest.mark.asyncio
     async def test_emits_tool_result_events_when_enabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Should emit tool_result events when enable_execution_reporting=True."""
+        """Should emit tool_result events when emit=Emit.TOOL_CALLS."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1080,11 +1302,51 @@ class TestExecutionReporting:
         )
 
     @pytest.mark.asyncio
+    async def test_tool_result_event_redacts_binary_content(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """band_read_room_file's image result is a list[BinaryContent]; str()
+        on that embeds the raw image bytes via BinaryContent.__repr__. The
+        tool_result event must report a bounded placeholder instead."""
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            emit=Emit.TOOL_CALLS,
+        )
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        image = BinaryContent(
+            data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, media_type="image/png"
+        )
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(
+                result_messages=[],
+                tool_results=[("band_read_room_file", [image], "call-1")],
+            )
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_event.assert_any_call(
+            content='{"name": "band_read_room_file", "output": "<1 image content block(s)>", "tool_call_id": "call-1"}',
+            message_type="tool_result",
+        )
+
+    @pytest.mark.asyncio
     async def test_no_events_when_reporting_disabled(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Should NOT emit events when enable_execution_reporting=False (default)."""
-        adapter = PydanticAIAdapter(model="openai:gpt-5.4")  # Default is False
+        """emit=() disables tool_call/tool_result events (emit otherwise defaults on)."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4", emit=())
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -1108,9 +1370,7 @@ class TestExecutionReporting:
         )
 
         # Verify send_event was NOT called for tool_call or tool_result
-        for call in mock_tools.send_event.call_args_list:
-            _, kwargs = call
-            assert kwargs.get("message_type") not in ["tool_call", "tool_result"]
+        assert not set(message_types(mock_tools)) & {"tool_call", "tool_result"}
 
     @pytest.mark.asyncio
     async def test_multiple_tool_calls_all_reported(
@@ -1119,7 +1379,7 @@ class TestExecutionReporting:
         """Should emit events for all tool calls in sequence."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1152,19 +1412,9 @@ class TestExecutionReporting:
         )
 
         # Count tool_call and tool_result events
-        tool_call_count = sum(
-            1
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "tool_call"
-        )
-        tool_result_count = sum(
-            1
-            for call in mock_tools.send_event.call_args_list
-            if call.kwargs.get("message_type") == "tool_result"
-        )
-
-        assert tool_call_count == 3
-        assert tool_result_count == 3
+        types = message_types(mock_tools)
+        assert types.count("tool_call") == 3
+        assert types.count("tool_result") == 3
 
     @pytest.mark.asyncio
     async def test_event_failure_does_not_crash_run(
@@ -1173,7 +1423,7 @@ class TestExecutionReporting:
         """Should continue running if send_event fails."""
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            enable_execution_reporting=True,
+            emit=Emit.TOOL_CALLS,
         )
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1256,7 +1506,6 @@ class TestEmptyFinalAnswer:
         exactly what 2.x did to the 1.x phrasing ("Exceeded maximum retries (N) for
         output validation"). Read the real source so a future reword fails here.
         """
-        from pydantic_ai import _tool_execution
 
         source = Path(_tool_execution.__file__).read_text(encoding="utf-8").lower()
         assert OUTPUT_RETRIES_EXHAUSTED in source
@@ -1297,7 +1546,6 @@ class TestEmptyFinalAnswer:
         # Regression (fallback path): with the run mocked, capture_run_messages records
         # nothing, so the swallow falls back to preserving at least the user prompt so
         # the next same-session turn isn't amnesiac.
-        from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         preserved = adapter._message_history["room-123"]
         assert preserved, "swallowed turn should still record the user message"
@@ -1313,14 +1561,6 @@ class TestEmptyFinalAnswer:
     ):
         """The swallow persists the whole captured turn — not just the user prompt —
         so a later 'what did you just say?' has the agent's reply in context."""
-        from contextlib import contextmanager
-
-        from pydantic_ai.messages import (
-            ModelRequest,
-            ModelResponse,
-            TextPart,
-            UserPromptPart,
-        )
 
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
@@ -1396,14 +1636,10 @@ class TestEmptyFinalAnswer:
         Tokens spent before the failure were still spent: the finally-based emit
         falls back to summing this run's captured ModelResponses when no result
         event fired, so a hard mid-run failure doesn't silently drop usage."""
-        from contextlib import contextmanager
-
-        from band.core.types import Emit
-        from tests.adapters.usage_events import sent_usage_payloads
 
         adapter = PydanticAIAdapter(
             model="openai:gpt-5.4",
-            features=AdapterFeatures(emit={Emit.USAGE}),
+            emit=Emit.USAGE,
         )
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -1681,7 +1917,6 @@ class TestPortableCustomToolDef:
 
     @pytest.mark.asyncio
     async def test_tuple_is_normalized_to_a_named_callable(self):
-        from pydantic import BaseModel
 
         class LookupInput(BaseModel):
             """look up a code."""
@@ -1704,7 +1939,6 @@ class TestPortableCustomToolDef:
     async def test_async_handler_is_awaited(self):
         """An async portable handler must be awaited (not returned as a coroutine) —
         the same shared-executor path every other adapter uses."""
-        from pydantic import BaseModel
 
         class LookupInput(BaseModel):
             key: str
@@ -1718,7 +1952,6 @@ class TestPortableCustomToolDef:
         assert await adapter._custom_tools[0](LookupInput(key="beta")) == "code:beta"
 
     def test_tuple_terminal_marker_is_honored(self):
-        from pydantic import BaseModel
 
         class DeployInput(BaseModel):
             """deploy."""
@@ -1736,11 +1969,6 @@ class TestPortableCustomToolDef:
         assert adapter._custom_terminal_names == frozenset({"deploy"})
 
     def test_converted_tuple_flattens_in_pydantic_ai(self):
-        from pydantic import BaseModel
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class LookupInput(BaseModel):
             """look up a code."""
@@ -1761,7 +1989,6 @@ class TestPortableCustomToolDef:
 
     @staticmethod
     def _tool_return_contents(result) -> list:
-        from pydantic_ai.messages import ToolReturnPart
 
         return [
             part.content
@@ -1775,11 +2002,6 @@ class TestPortableCustomToolDef:
         """An async CustomToolDef handler returns its awaited value through a real
         pydantic-ai run — not an unawaited coroutine (which the previous sync
         passthrough produced, failing serialization)."""
-        from pydantic import BaseModel
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class LookupInput(BaseModel):
             """look up a code."""
@@ -1804,11 +2026,6 @@ class TestPortableCustomToolDef:
         """A zero-argument handler with an empty InputModel executes through a real
         pydantic-ai run — the previous sync passthrough called it with one
         positional arg and raised TypeError."""
-        from pydantic import BaseModel
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class PingInput(BaseModel):
             """ping."""
@@ -1829,11 +2046,6 @@ class TestPortableCustomToolDef:
         """An InputModel using a field alias executes through a real pydantic-ai
         run — a dump/re-validate round-trip would emit field names and fail
         re-validation against the alias-only model."""
-        from pydantic import BaseModel, Field
-        from pydantic_ai import Agent
-        from pydantic_ai.models.test import TestModel
-
-        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
 
         class AliasedInput(BaseModel):
             """look up a user."""

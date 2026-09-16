@@ -8,8 +8,9 @@ import pytest
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.runtime.tools import serialize_tool_result
+from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools
+from tests.content import BLANK_CONTENT_CASES
 
 
 async def store_fact(tools: FakeAgentTools, content: str) -> None:
@@ -37,7 +38,7 @@ def listed_contents(listing: dict[str, Any]) -> list[str]:
 
 
 class TestMemoryListing:
-    """list_memories must serve the real SDK's Fern envelope (data/meta)."""
+    """list_memories must serve the real SDK's Fern envelope (data/meta/metadata)."""
 
     async def test_stored_memories_come_back_in_the_real_envelope(self) -> None:
         tools = FakeAgentTools()
@@ -45,15 +46,16 @@ class TestMemoryListing:
 
         listing = await listing_seen_by_adapter(tools)
 
-        assert set(listing) == {"data", "meta"}, (
+        assert set(listing) == {"data", "meta", "metadata"}, (
             f"Envelope keys {set(listing)} drifted from the real SDK's "
-            "{data, meta} — adapters reading .data/.meta would go untested"
+            "{data, meta, metadata} — adapters reading .data/.meta would go untested"
         )
         assert listed_contents(listing) == ["prefers dark mode"], (
             "A stored memory must be visible in the listing's data"
         )
-        assert listing["meta"] == {"page_size": 1, "total_count": 1}, (
-            "meta must report this page's size and the total match count"
+        assert listing["meta"]["page_size"] == 1, "meta must report this page's size"
+        assert listing["meta"]["total_count"] == 1, (
+            "meta must report the total match count"
         )
 
     async def test_page_size_serves_the_first_page(self) -> None:
@@ -66,9 +68,11 @@ class TestMemoryListing:
         assert listed_contents(listing) == ["first", "second"], (
             "page_size must truncate to the first page, oldest first"
         )
-        assert listing["meta"] == {"page_size": 2, "total_count": 3}, (
-            "meta.page_size is the served page's size, "
-            "total_count the whole store — the platform's semantics"
+        assert listing["meta"]["page_size"] == 2, (
+            "meta.page_size is the served page's size, not the whole store"
+        )
+        assert listing["meta"]["total_count"] == 3, (
+            "meta.total_count is the whole store — the platform's semantics"
         )
 
     async def test_seeded_memories_are_listed(self) -> None:
@@ -183,6 +187,18 @@ class TestSendMessage:
         assert tools.messages_sent[0]["id"] == "msg-0"
         assert tools.messages_sent[1]["id"] == "msg-1"
 
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    async def test_refuses_content_with_no_visible_characters(self, content):
+        """Same fidelity rule as the mention requirement: the real send
+        refuses blank content and returns None, so a fake that recorded it
+        would hide the bug until production."""
+        tools = FakeAgentTools()
+
+        result = await tools.send_message(content=content, mentions=["user-1"])
+
+        assert result is None
+        assert tools.messages_sent == []
+
 
 class TestSendEvent:
     """Tests for send_event tracking."""
@@ -209,6 +225,15 @@ class TestSendEvent:
         )
 
         assert tools.events_sent[0]["metadata"] == {"tool_name": "search"}
+
+    @pytest.mark.parametrize("content", BLANK_CONTENT_CASES)
+    async def test_refuses_content_with_no_visible_characters(self, content):
+        tools = FakeAgentTools()
+
+        result = await tools.send_event(content=content, message_type="thought")
+
+        assert result is None
+        assert tools.events_sent == []
 
 
 class TestParticipantOperations:
@@ -312,6 +337,84 @@ class TestCreateChatroom:
         result = await tools.create_chatroom()
 
         assert result.startswith("room-")
+
+
+class TestFileTools:
+    """Tests for list_room_files / read_room_file / send_room_file."""
+
+    async def test_seeded_files_are_listed(self) -> None:
+        seeded = {
+            "id": "file-1",
+            "name": "notes.txt",
+            "content_type": "text/plain",
+            "bytes": 12,
+            "sha256": "a" * 64,
+            "has_thumb": False,
+        }
+        tools = FakeAgentTools(files=[seeded])
+
+        listing = await tools.list_room_files()
+
+        assert [f["id"] for f in listing["data"]] == ["file-1"]
+
+    async def test_read_room_file_describes_a_seeded_file(self) -> None:
+        seeded = {
+            "id": "file-1",
+            "name": "notes.txt",
+            "content_type": "text/plain",
+            "bytes": 12,
+            "sha256": "a" * 64,
+            "has_thumb": False,
+        }
+        tools = FakeAgentTools(files=[seeded])
+
+        result = await tools.read_room_file("file-1")
+
+        assert result["name"] == "notes.txt"
+
+    async def test_read_room_file_unknown_id_raises(self) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(BandToolError):
+            await tools.read_room_file("nope")
+
+    async def test_send_room_file_stores_and_sends_message(self) -> None:
+        tools = FakeAgentTools()
+
+        result = await tools.send_room_file(
+            "hello world", "report.txt", caption="here", mentions=["user-1"]
+        )
+
+        assert [f["name"] for f in tools.files] == ["report.txt"]
+        assert result["attachment"]["name"] == "report.txt"
+        assert tools.messages_sent[0]["content"] == "here"
+
+    async def test_send_room_file_defaults_caption_when_omitted(self) -> None:
+        """Mirrors AgentTools.send_room_file's real fix: the platform
+        rejects blank message content, so the fake must not let a
+        captionless call pass a unit test that the real API would reject."""
+        tools = FakeAgentTools()
+
+        await tools.send_room_file("hello world", "report.txt", mentions=["user-1"])
+
+        assert tools.messages_sent[0]["content"] == DEFAULT_FILE_CAPTION.format(
+            filename="report.txt"
+        )
+
+    async def test_send_room_file_rejects_a_message_with_no_mentions(self) -> None:
+        """Reuses send_message's mention requirement, matching the real tool.
+
+        Same order as the real tool: mentions are validated via send_message
+        before the file is recorded, so a rejected call leaves no orphaned
+        upload behind.
+        """
+        tools = FakeAgentTools()
+
+        with pytest.raises(BandToolError, match="At least one mention is required"):
+            await tools.send_room_file("hello world", "report.txt")
+
+        assert tools.messages_sent == []
+        assert tools.files == []
 
 
 class TestToolSchemas:

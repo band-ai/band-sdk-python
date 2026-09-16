@@ -29,38 +29,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import LogSettings, Agent
+from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 
 
 logger = logging.getLogger(__name__)
 
 
-def load_environment() -> tuple[str, str]:
-    """Load env vars, validate credentials, and return (ws_url, rest_url)."""
-    load_dotenv()
-    LogSettings().for_application().configure()
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-
-    ws_url = os.environ.get("BAND_WS_URL")
-    rest_url = os.environ.get("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-    return ws_url, rest_url
+    anthropic_api_key: str
 
 
 async def main() -> None:
-    ws_url, rest_url = load_environment()
+    load_dotenv()
+    LogSettings().for_application().configure()
+    Settings()
 
     # Build the Agno agent — you choose the model, instructions, and tools.
     agno_agent = AgnoAgent(
@@ -71,15 +64,12 @@ async def main() -> None:
     # Bridge the Agno agent to Band.
     adapter = AgnoAdapter(agno_agent)
 
-    agent = Agent.from_config(
+    logger.info("Starting Agno agent...")
+    async with Agent.from_config(
         "agno_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting Agno agent...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

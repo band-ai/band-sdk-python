@@ -20,7 +20,7 @@ from band.adapters.codex import CodexAdapter
 from band.adapters.gemini import GeminiAdapter
 from band.adapters.google_adk import GoogleADKAdapter
 from band.adapters.letta import LettaAdapter
-from band.core.types import TurnUsage
+from band.core.types import USAGE_METADATA_KEY, TurnUsage, is_usage_event
 from band.integrations.opencode import OpencodeMessageInfo
 
 
@@ -73,13 +73,9 @@ class TestIsUsageEvent:
     """The shared discriminator task-event consumers use to skip usage records."""
 
     def test_true_when_band_usage_present(self):
-        from band.core.types import USAGE_METADATA_KEY, is_usage_event
-
         assert is_usage_event({USAGE_METADATA_KEY: {"input_tokens": 1}}) is True
 
     def test_false_for_lifecycle_task_or_non_mapping(self):
-        from band.core.types import is_usage_event
-
         assert is_usage_event({"codex_thread_id": "x"}) is False
         assert is_usage_event(None) is False
         assert is_usage_event("nope") is False

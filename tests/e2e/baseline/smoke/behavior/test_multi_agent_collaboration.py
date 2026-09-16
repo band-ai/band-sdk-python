@@ -13,6 +13,10 @@ agno) so they all install in one venv and the run is lane-schedulable:
   specialist mid-conversation, which then runs the tool the coordinator can't.
 * ``test_heterogeneous_agents_triage_concurrent_mentions`` — three framework
   types in one room, hit with concurrent mentions, each handling only its own.
+* ``test_coordinator_delegates_via_task_board`` — a coordinator hands off a
+  sprint through the room's task board instead of chat: it creates one task per
+  specialist, and each specialist claims, works, and completes its task via
+  ``band_update_task`` -- no chat reply from either specialist.
 
 Design notes (why this shape, not a bespoke build):
 
@@ -43,8 +47,14 @@ import asyncio
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
+from band.core.task_types import TaskAssignmentStatus
+from band.core.types import AdapterFeatures, Capability, Emit
+
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.smoke.samples.sample_agents import (
+    task_board_delegation_instruction,
+)
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,
@@ -55,7 +65,7 @@ from tests.e2e.baseline.smoke.samples.sample_tools import (
     WEATHER_TOOL,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.observations import Replies
+from tests.e2e.baseline.toolkit.observations import Replies, TaskTool
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -90,6 +100,31 @@ RECRUIT_KEY = "beta"
 # in sample_tools fails loudly here instead of silently weakening the barrier.
 FORECAST_FRAGMENT = "triple sunrise"
 assert FORECAST_FRAGMENT in FORECASTS[PANEL_PLACE.lower()]
+
+# A dual-mode prompt for the task-board handoff scenario: the same text serves a
+# specialist (claim + work + complete a named task) and a coordinator (set up the
+# board and delegate), mirroring COLLAB_PROMPT's role-by-user-message shape. Kept
+# separate from COLLAB_PROMPT so that test's proven wording stays untouched.
+TASK_BOARD_COLLAB_PROMPT = (
+    "You are one agent in a shared multi-agent room with a task board. You have "
+    f"two tools for values you cannot know on your own: `{LOOKUP}` returns a "
+    f"secret access code for a key, and `{WEATHER}` returns the forecast for a "
+    "place. You also have task-board tools, including band_set_board, "
+    "band_create_task, and band_update_task. Follow the user's instructions "
+    "exactly.\n"
+    "- If you are asked to set up the task board and hand work off to other "
+    "named agents, do NOT call the lookup/weather tools yourself: use "
+    "band_set_board, band_create_task, and a single band_send_message exactly "
+    "as instructed.\n"
+    "- If you are instead asked to claim and complete a specific task (you "
+    "will be given its number or id), you MUST: first call band_update_task "
+    "with that id and status='in_progress'; then call the matching tool "
+    f"({LOOKUP} or {WEATHER}) to get the value (you cannot guess it); then "
+    "call band_update_task again with the same id, status='completed', and a "
+    "comment stating the exact value you found. Do not send a chat message "
+    "for this -- recording it on the task board via band_update_task is your "
+    "only action."
+)
 
 
 @with_adapters(
@@ -315,3 +350,102 @@ async def test_heterogeneous_agents_triage_concurrent_mentions(
     assert not any(c.args.get("key") == "alpha" for c in agno_calls), (
         "agno agent answered another agent's lookup mention"
     )
+
+
+@with_adapters(
+    *PANEL,
+    tools=[LOOKUP_TOOL, WEATHER_TOOL],
+    prompt=TASK_BOARD_COLLAB_PROMPT,
+    features=AdapterFeatures(capabilities={Capability.TASKS}, emit={Emit.TOOL_CALLS}),
+)
+@flaky_model("multi-hop task-board cascade occasionally drops a turn; retry")
+@pytest.mark.timeout(extra=300)  # coordinator setup turn + 2 specialist turns
+@pytest.mark.asyncio(loop_scope="session")
+async def test_coordinator_delegates_via_task_board(
+    agents: list[ProvisionedAgent],
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
+) -> None:
+    """A coordinator hands off a sprint through the task board instead of chat.
+
+    The coordinator sets the room goal, creates one task per specialist, and
+    delegates in a single message naming each task. Each specialist claims its
+    task (status=in_progress), runs its own opaque tool, then completes it
+    (status=completed) with the result recorded in the comment -- entirely
+    through task-board tool calls, with no chat reply from either specialist.
+    Task-board state, not room text, is what proves the hand-off worked.
+    """
+    coordinator, lookup_spec, weather_spec = agents
+    room_id = await resource_manager.provision_room(
+        title="e2e-task-board-handoff",
+        participants=[coordinator.id, lookup_spec.id, weather_spec.id],
+    )
+    # The cascade is coordinator setup -> 2 specialist claim/work/complete turns.
+    cascade_deadline = baseline_settings.e2e_timeout * 3
+
+    async with reply_capture(room_id) as capture:
+        user_msg_id = await user_ops.send_message(
+            room_id,
+            task_board_delegation_instruction(
+                lookup_spec.name,
+                lookup_spec.id,
+                PANEL_KEY,
+                weather_spec.name,
+                weather_spec.id,
+                PANEL_PLACE,
+            ),
+            mention_id=coordinator.id,
+            mention_name=coordinator.name,
+        )
+        # The coordinator's own delegation message is what the specialists react
+        # to, so wait for its *text* to be captured (wait_for_processed alone
+        # only proves the turn finished, not that the message_created frame for
+        # its reply has arrived -- an independent, unordered platform event).
+        coordinator_replies = await capture.wait_for_reply(
+            user_msg_id, coordinator.id, deadline_s=cascade_deadline
+        )
+        delegation_msg = coordinator_replies[-1]
+
+        await asyncio.gather(
+            capture.wait_for_processed(
+                delegation_msg.id, lookup_spec.id, deadline_s=cascade_deadline
+            ),
+            capture.wait_for_processed(
+                delegation_msg.id, weather_spec.id, deadline_s=cascade_deadline
+            ),
+        )
+
+        (
+            coordinator_tasks,
+            lookup_calls,
+            weather_calls,
+            lookup_tasks,
+            weather_tasks,
+        ) = await asyncio.gather(
+            capture.task_calls(sender_id=coordinator.id),
+            capture.tool_calls(sender_id=lookup_spec.id),
+            capture.tool_calls(sender_id=weather_spec.id),
+            capture.task_calls(sender_id=lookup_spec.id),
+            capture.task_calls(sender_id=weather_spec.id),
+        )
+
+    # The coordinator set up the board and created one task per specialist.
+    coordinator_tasks.assert_set_board_called()
+    created = coordinator_tasks.named(TaskTool.CREATE)
+    assert len(created) == 2, f"expected 2 band_create_task calls, got {len(created)}"
+    # Each specialist claimed a task and completed it, reporting its own opaque
+    # result in the comment -- proof the round trip went through the task board.
+    lookup_tasks.assert_update_called(status=TaskAssignmentStatus.IN_PROGRESS.value)
+    lookup_tasks.assert_update_called(
+        status=TaskAssignmentStatus.COMPLETED.value, comment=ACCESS_CODES[PANEL_KEY]
+    )
+    weather_tasks.assert_update_called(status=TaskAssignmentStatus.IN_PROGRESS.value)
+    weather_tasks.assert_update_called(
+        status=TaskAssignmentStatus.COMPLETED.value, comment=FORECAST_FRAGMENT
+    )
+    # ...and each specialist ran ITS OWN tool -- proof the panel collaborated
+    # rather than the coordinator answering alone (opaque values can't be guessed).
+    lookup_calls.assert_fired(LOOKUP, with_args={"key": PANEL_KEY})
+    weather_calls.assert_fired(WEATHER, with_args={"place": PANEL_PLACE})

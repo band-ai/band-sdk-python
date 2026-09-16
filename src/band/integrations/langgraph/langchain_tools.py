@@ -11,12 +11,14 @@ import logging
 import warnings
 from typing import Any
 
+from langchain_core.messages import ImageContentBlock
 from langchain_core.tools import StructuredTool
 
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -26,10 +28,28 @@ from band.runtime.tools import (
     format_tool_validation_error,
     get_band_tool_category,
     get_tool_description,
+    is_image_passthrough_result,
     iter_tool_definitions,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _with_capability(
+    capabilities: frozenset[Capability], capability: Capability, enabled: bool
+) -> frozenset[Capability]:
+    """``capabilities`` with ``capability`` forced on or off per ``enabled``."""
+    return capabilities | {capability} if enabled else capabilities - {capability}
+
+
+def _image_content_blocks(result: dict[str, Any]) -> list[ImageContentBlock]:
+    """LangChain image content blocks for an MCP-content-shaped tool result."""
+    return [
+        ImageContentBlock(
+            type="image", mime_type=block["mimeType"], base64=block["data"]
+        )
+        for block in result["content"]
+    ]
 
 
 def agent_tools_to_langchain(
@@ -58,8 +78,7 @@ def agent_tools_to_langchain(
     """
     features = features or AdapterFeatures()
 
-    include_memory = Capability.MEMORY in features.capabilities
-    include_contact_tools = Capability.CONTACTS in features.capabilities
+    capabilities = features.capabilities
 
     if include_memory_tools is not None:
         warnings.warn(
@@ -67,7 +86,9 @@ def agent_tools_to_langchain(
             DeprecationWarning,
             stacklevel=2,
         )
-        include_memory = include_memory_tools
+        capabilities = _with_capability(
+            capabilities, Capability.MEMORY, include_memory_tools
+        )
 
     if include_contacts is not None:
         warnings.warn(
@@ -75,16 +96,15 @@ def agent_tools_to_langchain(
             DeprecationWarning,
             stacklevel=2,
         )
-        include_contact_tools = include_contacts
+        capabilities = _with_capability(
+            capabilities, Capability.CONTACTS, include_contacts
+        )
 
-    effective_include_contacts = include_contact_tools or (
-        getattr(tools, "is_hub_room", False) is True
+    effective_capabilities = with_hub_room_contacts(
+        capabilities, is_hub_room=tools.is_hub_room
     )
 
-    definitions = iter_tool_definitions(
-        include_memory=include_memory,
-        include_contacts=effective_include_contacts,
-    )
+    definitions = iter_tool_definitions(capabilities=effective_capabilities)
     definitions = filter_tool_schemas(
         definitions,
         features,
@@ -98,13 +118,18 @@ def agent_tools_to_langchain(
             definition.name
         )
 
+        # ``execute_tool_call`` is typed ``Any`` by ``AgentToolsProtocol``, so the
+        # pass-through branch below cannot honestly be narrowed here.
         async def execute_definition(
             *,
             _tool_name: str = definition.name,
             **kwargs: Any,
         ) -> Any:
             try:
-                return await tools.execute_tool_call(_tool_name, kwargs)
+                result = await tools.execute_tool_call(_tool_name, kwargs)
+                if is_image_passthrough_result(_tool_name, result):
+                    return _image_content_blocks(result)
+                return result
             except (BandToolError, ValueError) as e:
                 return str(e)
             except Exception:

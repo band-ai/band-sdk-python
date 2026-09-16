@@ -257,8 +257,17 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     wire-arrival order, so room posts keep the stream's causal order.
     """
 
-    def __init__(self, profile: ACPClientProfile | None = None) -> None:
+    def __init__(
+        self,
+        profile: ACPClientProfile | None = None,
+        canonicalize_tool_name: Callable[[str], str] | None = None,
+    ) -> None:
         self._profile = profile or NoopACPClientProfile()
+        # Rewrites a runtime's MCP spelling of a tool name (e.g. Copilot's
+        # ``band-band_send_message``) back to the canonical band name at the
+        # single point where tool-call chunks are born, so every downstream
+        # consumer (room narration, reply suppression) sees one vocabulary.
+        self._canonicalize_tool_name = canonicalize_tool_name or (lambda name: name)
         self._session_chunks: dict[str, list[CollectedChunk]] = {}
         self._permission_handlers: dict[str, PermissionHandler] = {}
         # Per session, the canonical tool_result chunk for each tool_call_id, so a
@@ -324,7 +333,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
     def _tool_call_chunk(self, update: object) -> CollectedChunk:
         raw_input = getattr(update, "raw_input", None)
-        call = ACPToolCall.from_acp(update)
+        call = ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
         metadata = {
             "tool_call_id": call.tool_call_id,
             "raw_input": raw_input,
@@ -845,6 +854,18 @@ class ACPRuntime:
         if self._client is None:
             return []
         return self._client.get_collected_chunks(session_id)
+
+    @property
+    def client(self) -> ACPCollectingClient | None:
+        """The active collecting client, once started.
+
+        ``ACPRuntime`` only forwards the handful of client methods a real turn
+        needs (``get_collected_chunks``, ``reset_session``, ...); this is the
+        read-only escape hatch for callers that need something else off the
+        buffer directly (e.g. ``get_collected_text``) rather than growing
+        ``ACPRuntime`` a passthrough per client method.
+        """
+        return self._client
 
     async def stop(self) -> None:
         ctx: AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]] | None

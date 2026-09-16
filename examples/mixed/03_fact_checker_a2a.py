@@ -21,6 +21,8 @@ Run with:
 from __future__ import annotations
 
 import logging
+
+from band import configure_logging
 import os
 
 import uvicorn
@@ -47,7 +49,6 @@ from a2a.types import (
 )
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class FactCheckerExecutor(AgentExecutor):
 
 def main() -> None:
     """Run the fact checker A2A server."""
-    setup_logging()
+    configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
     host = os.getenv("MIXED_FACT_HOST", "127.0.0.1")

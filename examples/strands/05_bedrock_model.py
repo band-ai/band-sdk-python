@@ -31,11 +31,10 @@ import os
 from dotenv import load_dotenv
 from strands.models import BedrockModel
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import StrandsAdapter
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -43,14 +42,6 @@ MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 async def main() -> None:
     load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
 
     # `model=MODEL_ID` (a bare string) is equivalent to this and picks up the
     # ambient AWS region; construct the provider when you need to pin one.
@@ -61,15 +52,12 @@ async def main() -> None:
         custom_section="You are a helpful assistant. Be concise and friendly.",
     )
 
-    agent = Agent.from_config(
+    logger.info("Starting Strands agent on Bedrock model %s...", MODEL_ID)
+    async with Agent.from_config(
         "strands_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
-    logger.info("Starting Strands agent on Bedrock model %s...", MODEL_ID)
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

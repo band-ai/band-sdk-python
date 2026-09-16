@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE, CopilotSDKAdapter
-from band.core.types import AdapterFeatures, Emit, TurnUsage
+from band.core.types import Emit, TurnUsage
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     ToolSchemaFakeTools,
@@ -64,9 +64,7 @@ class TestUsage:
                 AssistantUsageData(model="m", input_tokens=3, output_tokens=7),
             ]
         )
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.USAGE})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.USAGE)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -88,7 +86,7 @@ class TestUsage:
                 AssistantUsageData(model="m", input_tokens=3, output_tokens=7),
             ]
         )
-        adapter = await make_started_adapter(client)  # default features: no USAGE
+        adapter = await make_started_adapter(client, emit=())  # explicitly silent
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)
@@ -106,9 +104,7 @@ class TestUsage:
                 SessionErrorData(error_type="model_error", message="boom"),
             ]
         )
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.USAGE})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.USAGE)
         tools = ToolSchemaFakeTools()
 
         with pytest.raises(Exception, match="boom"):
@@ -128,9 +124,7 @@ class TestUsage:
     @pytest.mark.asyncio
     async def test_no_usage_emitted_for_empty_turn(self):
         client = FakeCopilotClient(turn_events=[])  # no usage events this turn
-        adapter = await make_started_adapter(
-            client, features=AdapterFeatures(emit={Emit.USAGE})
-        )
+        adapter = await make_started_adapter(client, emit=Emit.USAGE)
         tools = ToolSchemaFakeTools()
 
         await run_message(adapter, tools)

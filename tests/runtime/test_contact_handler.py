@@ -1,5 +1,6 @@
 """Tests for ContactEventHandler."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,7 @@ from band.platform.event import (
     ContactRequestUpdatedEvent,
     ContactAddedEvent,
     ContactRemovedEvent,
+    MessageEvent,
 )
 from band.client.streaming import (
     ContactRequestReceivedPayload,
@@ -16,7 +18,11 @@ from band.client.streaming import (
     ContactAddedPayload,
     ContactRemovedPayload,
 )
-from band.runtime.contact_handler import ContactEventHandler, MAX_DEDUP_CACHE_SIZE
+from band.runtime.contact_handler import (
+    ContactEventHandler,
+    HUB_ROOM_SYSTEM_PROMPT,
+    MAX_DEDUP_CACHE_SIZE,
+)
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -497,7 +503,6 @@ class TestHubRoomStrategy:
 
     async def test_hub_room_thread_safe(self, mock_hub_link, mock_hub_event_callback):
         """Concurrent events should reuse the same hub room."""
-        import asyncio
 
         config = ContactEventConfig(strategy=ContactEventStrategy.HUB_ROOM)
         handler = ContactEventHandler(
@@ -553,7 +558,6 @@ class TestHubRoomStrategy:
         self, mock_hub_link, mock_hub_event_callback, sample_request_received_event
     ):
         """Events should be injected as MessageEvent with type 'text'."""
-        from band.platform.event import MessageEvent
 
         config = ContactEventConfig(strategy=ContactEventStrategy.HUB_ROOM)
         handler = ContactEventHandler(
@@ -758,7 +762,6 @@ class TestHubRoomStrategy:
         self, mock_hub_link, mock_hub_event_callback, sample_request_received_event
     ):
         """System prompt should be injected on first event only."""
-        from band.runtime.contact_handler import HUB_ROOM_SYSTEM_PROMPT
 
         mock_hub_init_callback = AsyncMock()
 
@@ -792,7 +795,6 @@ class TestHubRoomStrategy:
 
     async def test_hub_room_system_prompt_contains_instructions(self):
         """System prompt should contain contact management instructions."""
-        from band.runtime.contact_handler import HUB_ROOM_SYSTEM_PROMPT
 
         # Verify key instructions are present
         assert "contact requests" in HUB_ROOM_SYSTEM_PROMPT.lower()

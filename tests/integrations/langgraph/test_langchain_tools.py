@@ -11,7 +11,7 @@ from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
     MemorySystem,
-    WorkingLongTermMemoryType,
+    MemoryType,
 )
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
@@ -127,7 +127,7 @@ async def test_wrappers_call_agent_tools_methods() -> None:
         {
             "content": "prefers concise answers",
             "system": MemorySystem.LONG_TERM,
-            "type": WorkingLongTermMemoryType.SEMANTIC,
+            "type": MemoryType.SEMANTIC,
             "segment": MemorySegment.USER,
             "thought": "user stated preference",
             "scope": MemoryStoreScope.ORGANIZATION,
@@ -143,6 +143,42 @@ def test_add_participant_schema_exposes_identifier_and_role() -> None:
 
     assert "identifier" in schema_fields
     assert "role" in schema_fields
+
+
+@pytest.mark.asyncio
+async def test_read_room_file_image_result_becomes_image_content_block() -> None:
+    tools = make_tools()
+    tools.execute_tool_call = AsyncMock(
+        return_value={
+            "content": [{"type": "image", "data": "ZmFrZQ==", "mimeType": "image/png"}]
+        }
+    )
+    wrapped = by_name(
+        agent_tools_to_langchain(
+            tools, features=AdapterFeatures(capabilities=frozenset({Capability.FILES}))
+        )
+    )
+
+    result = await wrapped["band_read_room_file"].ainvoke({"file_id": "f1"})
+
+    assert result == [{"type": "image", "mime_type": "image/png", "base64": "ZmFrZQ=="}]
+
+
+@pytest.mark.asyncio
+async def test_read_room_file_non_image_result_stays_raw() -> None:
+    tools = make_tools()
+    tools.execute_tool_call = AsyncMock(
+        return_value={"name": "notes.txt", "content_type": "text/plain"}
+    )
+    wrapped = by_name(
+        agent_tools_to_langchain(
+            tools, features=AdapterFeatures(capabilities=frozenset({Capability.FILES}))
+        )
+    )
+
+    result = await wrapped["band_read_room_file"].ainvoke({"file_id": "f1"})
+
+    assert result == {"name": "notes.txt", "content_type": "text/plain"}
 
 
 @pytest.mark.asyncio

@@ -5,25 +5,31 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import warnings
 from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
+from typing_extensions import Unpack
 
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
 )
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from band.integrations.langgraph import langchain_tools
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    BandTool,
+    image_block_placeholder,
+    redact_tool_call_args,
+)
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -33,6 +39,35 @@ logger = logging.getLogger(__name__)
 
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
+
+
+def _redacted_tool_end_output(tool_name: str, data: dict[str, Any]) -> Any:
+    """The value a tool_result event reports for one on_tool_end/on_tool_error.
+
+    ``data["output"]`` may be a langchain ``ToolMessage`` whose ``.content``
+    is the ``list[ImageContentBlock]`` that ``langchain_tools.py``'s
+    ``execute_definition`` builds for ``band_read_room_file``'s image branch
+    (a *different* shape than the platform's own MCP content blocks --
+    ``mime_type``/``base64`` keys, not ``mimeType``/``data``). That object
+    isn't JSON-serializable, so ``json.dumps``'s ``default=str`` would
+    otherwise fall back to ``str(ToolMessage(...))``, embedding the full
+    base64 payload.
+    """
+    if data.get("error"):
+        return data["error"]
+    output = data.get("output", "")
+    if tool_name == BandTool.READ_ROOM_FILE:
+        content = getattr(output, "content", output)
+        if (
+            isinstance(content, list)
+            and content
+            and all(
+                isinstance(block, dict) and block.get("type") == "image"
+                for block in content
+            )
+        ):
+            return image_block_placeholder(len(content))
+    return output
 
 
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
@@ -79,9 +114,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -96,41 +131,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         prompt_template: str = "default",
         custom_section: str = "",
         additional_tools: list[Any] | None = None,
-        enable_memory_tools: bool = False,
-        enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
-        features: AdapterFeatures | None = None,
         inject_system_prompt: bool | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
-        # --- Deprecation shim: boolean → features migration ---
-        if (enable_memory_tools or enable_execution_reporting) and features is not None:
-            raise BandConfigError(
-                "Cannot pass both 'features' and legacy boolean params "
-                "(enable_memory_tools, enable_execution_reporting)."
-            )
-
-        if enable_memory_tools or enable_execution_reporting:
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated. "
-                "Use features=AdapterFeatures(...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            capabilities = (
-                frozenset({Capability.MEMORY}) if enable_memory_tools else frozenset()
-            )
-            emit = (
-                frozenset({Emit.EXECUTION})
-                if enable_execution_reporting
-                else frozenset()
-            )
-            features = AdapterFeatures(capabilities=capabilities, emit=emit)
-
         # Use default LangChain converter if not provided
         super().__init__(
             history_converter=history_converter or LangChainHistoryConverter(),
-            features=features,
+            **features,
         )
 
         # Accept the SDK's portable custom-tool form: convert any CustomToolDef
@@ -140,16 +149,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # patterns get a uniform tool list, and a tool written once works across
         # adapters (LangChain would otherwise reject a bare tuple).
         if additional_tools:
-            from band.integrations.langgraph.langchain_tools import (
-                custom_tool_defs_to_langchain,
-            )
-
             normalized: list[Any] = []
             for item in additional_tools:
                 if isinstance(
                     item, tuple
                 ):  # a band CustomToolDef (InputModel, handler)
-                    normalized.extend(custom_tool_defs_to_langchain([item]))
+                    normalized.extend(
+                        langchain_tools.custom_tool_defs_to_langchain([item])
+                    )
                 else:  # already a LangChain tool / callable
                     normalized.append(item)
             additional_tools = normalized
@@ -163,8 +170,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # ("system", ...) message on bootstrap and the checkpointer carries it
         # forward, matching the pattern used by every other Band adapter.
         if uses_simple_pattern:
-            from langchain.agents import create_agent
-            from langgraph.checkpoint.memory import InMemorySaver
+            # `langchain` (distinct from `langgraph`) is only needed for this
+            # pattern -- a caller who supplies graph_factory=/graph= directly
+            # never touches create_agent and shouldn't have to install it.
+            from langchain.agents import create_agent  # noqa: PLC0415 -- only needed by the simple llm= pattern below
 
             if checkpointer is None:
                 checkpointer = InMemorySaver()
@@ -273,15 +282,11 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         room_id: str,
     ) -> None:
         """Handle message with LangGraph."""
-        from band.integrations.langgraph.langchain_tools import (
-            agent_tools_to_langchain,
-        )
-
         logger.info("[HANDLE] Message %s in room %s", msg.id, room_id)
 
         # Get LangChain tools
-        langchain_tools = (
-            agent_tools_to_langchain(
+        lc_tools = (
+            langchain_tools.agent_tools_to_langchain(
                 tools,
                 features=self.features,
             )
@@ -290,7 +295,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         # Build or get graph
         if self.graph_factory:
-            graph = self.graph_factory(langchain_tools)
+            graph = self.graph_factory(lc_tools)
         else:
             graph = self._static_graph
 
@@ -401,14 +406,16 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             payload = {
                 ToolEventKey.NAME: tool_name,
-                ToolEventKey.ARGS: data.get("input", {}),
+                ToolEventKey.ARGS: redact_tool_call_args(
+                    tool_name, data.get("input", {})
+                ),
                 ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
             }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
@@ -421,7 +428,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type in {"on_tool_end", "on_tool_error"}:
-            if Emit.EXECUTION not in self.features.emit:
+            if Emit.TOOL_CALLS not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
@@ -429,7 +436,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             is_error = event_type == "on_tool_error" or bool(data.get("error"))
             payload = {
                 ToolEventKey.NAME: tool_name,
-                ToolEventKey.OUTPUT: data.get("error") or data.get("output", ""),
+                ToolEventKey.OUTPUT: _redacted_tool_end_output(tool_name, data),
                 ToolEventKey.TOOL_CALL_ID: event.get("run_id", "unknown"),
                 ToolEventKey.IS_ERROR: is_error,
             }

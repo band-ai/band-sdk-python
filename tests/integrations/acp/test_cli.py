@@ -33,7 +33,12 @@ def stubbed_acp_server() -> Iterator[MagicMock]:
         )
         stack.enter_context(patch("band.integrations.acp.push_handler.ACPPushHandler"))
         stack.enter_context(patch("band.integrations.acp.server.ACPServer"))
-        stack.enter_context(patch("acp.run_agent", new=AsyncMock(return_value=None)))
+        stack.enter_context(
+            patch(
+                "band.integrations.acp.server.run_acp_server",
+                new=AsyncMock(return_value=None),
+            )
+        )
         yield adapter
 
 

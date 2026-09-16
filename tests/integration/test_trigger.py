@@ -21,8 +21,9 @@ from band.cli.trigger import (
     find_peer_by_handle,
     run,
 )
-from band_rest import AsyncRestClient
+from band_rest import AsyncRestClient, ChatRoomRequest
 from band_rest.core.api_error import ApiError
+from band_rest.types import ParticipantRequest
 
 from tests.conftest_integration import (
     AgentInfo,
@@ -171,16 +172,12 @@ class TestTriggerAgentMode:
         """Trigger a real ApiError and verify _format_api_error extracts the message."""
         # Use an invalid participant_id to trigger a real API error
         # First create a room we can use
-        from band_rest import ChatRoomRequest
-
         chat_response = await api_client.agent_api_chats.create_agent_chat(
             chat=ChatRoomRequest()
         )
         room_id = chat_response.data.id
 
         try:
-            from band_rest.types import ParticipantRequest
-
             with pytest.raises(ApiError) as exc_info:
                 await api_client.agent_api_participants.add_agent_chat_participant(
                     chat_id=room_id,

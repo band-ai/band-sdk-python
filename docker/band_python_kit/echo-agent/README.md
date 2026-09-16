@@ -21,6 +21,10 @@ Put your registered agent's id in `band.yaml` (`agent.id`), or export
 `BAND_AGENT_ID`. Endpoints default to production; the annotated `band.yaml`
 shows how to target another Band deployment.
 
+No agent registered yet? `band-kit provision` registers one and fills
+`agent.id` for you — see the kit README's
+[Self-registration](../README.md#self-registration-no-pre-provisioned-agent).
+
 ## Credentials
 
 **Preferred — proxy-managed (real keys never enter the VM).** `band.yaml`

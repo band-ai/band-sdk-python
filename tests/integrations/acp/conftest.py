@@ -8,10 +8,11 @@ pytest fixtures and the message/rest builders.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -21,10 +22,10 @@ from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
 
-from .acp_toolkit import (
+from tests.integrations.acp.acp_toolkit import (
     FakeACPAgent as FakeACPAgent,  # re-exported for tests importing from conftest
 )
-from .acp_toolkit import (
+from tests.integrations.acp.acp_toolkit import (
     FakeSpawn,
     Reply,
     acp_adapter as acp_adapter,  # re-exported
@@ -174,33 +175,39 @@ def make_tool_result_message(
     )
 
 
-@pytest.fixture
-def mock_rest_client() -> MagicMock:
-    """Create a mock AsyncRestClient with pre-configured responses."""
-    client = MagicMock()
+async def wait_for_pending_prompt(
+    adapter: BandACPServerAdapter, room_id: str
+) -> PendingACPPrompt:
+    """Wait until a pending prompt is registered for a room.
 
-    # Mock chat creation
-    mock_chat_response = MagicMock()
-    mock_chat_response.data = MagicMock()
-    mock_chat_response.data.id = "room-new-123"
-    client.agent_api_chats.create_agent_chat = AsyncMock(
-        return_value=mock_chat_response
+    ``handle_prompt`` blocks until the peer replies, so tests dispatch it as
+    a task and use this to wait for the prompt to reach the room.
+    """
+    while True:
+        pending = adapter._pending_prompts.get(room_id)
+        if pending is not None:
+            return pending
+        await asyncio.sleep(0)
+
+
+def has_pending_prompt(adapter: BandACPServerAdapter, room_id: str) -> bool:
+    """Whether a room currently has a prompt awaiting a reply."""
+    return adapter._pending_prompts.get(room_id) is not None
+
+
+async def release_pending_prompt(
+    adapter: BandACPServerAdapter, room_id: str, *, timeout: float = 0.5
+) -> None:
+    """Wait for a pending prompt to register, then resolve it.
+
+    Dispatch this as a background task before awaiting the call that
+    registers the prompt (``handle_prompt``), so that blocking call
+    resolves instead of hanging for the test.
+    """
+    pending = await asyncio.wait_for(
+        wait_for_pending_prompt(adapter, room_id), timeout=timeout
     )
-
-    # Mock participant listing
-    mock_participants_response = MagicMock()
-    mock_participants_response.data = []
-    client.agent_api_participants.list_agent_chat_participants = AsyncMock(
-        return_value=mock_participants_response
-    )
-
-    # Mock message creation
-    client.agent_api_messages.create_agent_chat_message = AsyncMock()
-
-    # Mock event creation
-    client.agent_api_events.create_agent_chat_event = AsyncMock()
-
-    return client
+    pending.done_event.set()
 
 
 @pytest.fixture

@@ -50,54 +50,57 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import CopilotACPAdapter, CopilotACPAdapterConfig
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    root_level=logging.INFO,
+    extra_loggers={
+        "httpcore": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    acp_agent_cwd: str = "."
+    github_token: str = ""
+    # Optional TCP transport: connect to an already-running `copilot --acp --port`
+    # instead of spawning a local subprocess.
+    copilot_acp_host: str = ""
+    copilot_acp_port: int | None = None
 
 
 async def main() -> None:
     load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
-    cwd = os.getenv("ACP_AGENT_CWD", ".")
-    github_token = os.getenv("GITHUB_TOKEN")
-
-    # Optional TCP transport: connect to an already-running `copilot --acp --port`
-    # instead of spawning a local subprocess.
-    host = os.getenv("COPILOT_ACP_HOST")
-    port = os.getenv("COPILOT_ACP_PORT")
+    settings = Settings()
 
     config = CopilotACPAdapterConfig(
-        host=host,
-        port=int(port) if port else None,
-        cwd=cwd,
-        github_token=github_token,
-        rest_url=rest_url,
+        host=settings.copilot_acp_host or None,
+        port=settings.copilot_acp_port,
+        cwd=settings.acp_agent_cwd,
+        github_token=settings.github_token or None,
         inject_band_tools=True,
     )
     adapter = CopilotACPAdapter(config)
 
-    agent = Agent.from_config(
-        "copilot_acp_agent",
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
-
     logger.info("Starting GitHub Copilot ACP client bridge...")
     logger.info("Messages from Band will be forwarded to Copilot.")
-    await agent.run()
+    async with Agent.from_config(
+        "copilot_acp_agent",
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

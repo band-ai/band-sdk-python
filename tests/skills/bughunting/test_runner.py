@@ -29,6 +29,7 @@ from band_rest.types.chat_message import ChatMessage
 
 from band.client.streaming import MessageCreatedPayload
 
+import tests.e2e.baseline.toolkit.capture as capture_module
 from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall, ToolCalls
 from tests.paths import REPO_ROOT
@@ -183,7 +184,6 @@ def running_example(
 
 def install_capture(monkeypatch: pytest.MonkeyPatch, capture: Capture) -> None:
     """Make the runner's late-imported ``reply_capture`` yield ``capture``."""
-    import tests.e2e.baseline.toolkit.capture as capture_module
 
     @asynccontextmanager
     async def factory(*args: Any, **kwargs: Any) -> AsyncIterator[Capture]:

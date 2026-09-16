@@ -34,76 +34,45 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import Emit
 
-setup_logging()
+configure_logging(
+    level=logging.INFO,
+    style="json",
+    root_level=logging.INFO,
+    stream="stdout",
+    extra_loggers={
+        "websockets": logging.WARNING,
+        "httpx": logging.WARNING,
+    },
+)
 logger = logging.getLogger(__name__)
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    agent_key: str = "darter"
+    codex_role: str = ""
 
 
 async def main() -> None:
     load_dotenv()
+    settings = Settings()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
-    codex_bin = shutil.which("codex")
-    if codex_bin is None:
-        logger.error(
-            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
-        )
-        sys.exit(1)
-
-    login_check = subprocess.run(
-        [codex_bin, "login", "status"],
-        capture_output=True,
-        text=True,
-    )
-    if login_check.returncode != 0:
-        print("Codex is not logged in.")
-        try:
-            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
-        except EOFError:
-            print("Non-interactive shell. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-        if answer in ("", "y", "yes"):
-            result = subprocess.run([codex_bin, "login"], check=False)
-            if result.returncode != 0:
-                print("Login failed. Check the output above and retry.")
-                sys.exit(1)
-        else:
-            print("Exiting. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-
-    agent_key = os.getenv("AGENT_KEY", "darter")
-    codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
-    if codex_transport not in {"stdio", "ws"}:
-        raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
+    agent_key = settings.agent_key
 
     # Load role prompt from file if CODEX_ROLE is set
-    codex_role = os.getenv("CODEX_ROLE")
+    codex_role = settings.codex_role
     custom_section = "You are a helpful assistant. Keep responses concise."
     if codex_role:
         prompt_file = Path(__file__).parent / "prompts" / f"{codex_role}.md"
@@ -115,37 +84,29 @@ async def main() -> None:
                 "Role '%s' specified but no prompt file at %s", codex_role, prompt_file
             )
 
+    # transport/codex_ws_url/model/cwd/approval_policy/approval_mode/
+    # emit_turn_task_markers all self-source from CODEX_* env vars (see module
+    # docstring) when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            transport=codex_transport,  # type: ignore[arg-type]  # str from env, validated at runtime
-            codex_ws_url=os.getenv("CODEX_WS_URL", "ws://127.0.0.1:8765"),
-            model=os.getenv("CODEX_MODEL") or None,
-            cwd=os.getenv("CODEX_CWD", os.getcwd()),
-            approval_policy=os.getenv("CODEX_APPROVAL_POLICY", "never"),
-            approval_mode=os.getenv("CODEX_APPROVAL_MODE", "manual"),  # type: ignore[arg-type]  # str from env, validated at runtime
             personality="pragmatic",
             custom_section=custom_section,
             include_base_instructions=True,
-            emit_turn_task_markers=_env_bool("CODEX_TURN_TASK_MARKERS", False),
             fallback_send_agent_text=True,
         ),
-        features=AdapterFeatures(emit={Emit.TASK_EVENTS, Emit.THOUGHTS}),
-    )
-
-    agent = Agent.from_config(
-        agent_key,
-        adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        emit={Emit.TASK_EVENTS, Emit.THOUGHTS},
     )
 
     logger.info(
-        "Starting Codex agent: agent_key=%s transport=%s role=%s",
+        "Starting Codex agent: agent_key=%s role=%s",
         agent_key,
-        codex_transport,
         codex_role or "none",
     )
-    await agent.run()
+    async with Agent.from_config(
+        agent_key,
+        adapter=adapter,
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

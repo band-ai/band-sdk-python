@@ -16,10 +16,12 @@ conftest when building oneshot/REST-side fixtures.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from band_rest import (
     AgentMe,
     ChatMessage,
@@ -30,7 +32,39 @@ from band_rest import (
     ListAgentChatParticipantsResponse,
 )
 
-from band.core.types import PlatformMessage
+from band.core.types import PlatformConnection, PlatformMessage
+from band.runtime.presence import RoomPresence
+
+
+async def wait_for_condition(
+    predicate, *, timeout: float = 1.0, interval: float = 0.01
+) -> None:
+    """Wait until a predicate becomes true, failing fast on timeout."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(interval)
+    pytest.fail("Timed out waiting for condition")
+
+
+def admit_room(presence: RoomPresence, room_id: str) -> None:
+    """Seed ``room_id`` as already ``Admitted`` on a presence's roster.
+
+    For tests about dispatch/routing, not about the join flow itself — goes
+    through RoomRoster's own public methods, not a private attribute.
+    """
+    ticket = presence.roster.begin_room_admission(room_id, passes_filter=True)
+    assert ticket is not None
+    presence.roster.record_room_admission(room_id, ticket, True)
+
+
+def chat_row(room_id: str) -> MagicMock:
+    """One room as the chats listing returns it."""
+    room = MagicMock()
+    room.id = room_id
+    room.model_dump.return_value = {"id": room_id}
+    return room
 
 
 def make_participant(p: dict[str, Any]) -> ChatParticipant:
@@ -94,6 +128,7 @@ def make_link_mock(
     agent_name: str = "TestBot",
     agent_description: str = "a test agent",
     history_pages: list[list[ChatMessage]] | None = None,
+    feature_flags: dict[str, bool] | None = None,
 ) -> MagicMock:
     """Build a fake BandLink.
 
@@ -112,6 +147,19 @@ def make_link_mock(
     """
     link = MagicMock()
 
+    # Platform connection (startup() injects it into the adapter).
+    link.api_key = "test-api-key"
+    link.rest_url = "https://app.band.ai"
+    link.ws_url = "wss://app.band.ai/api/v1/socket/websocket"
+    link.to_platform_connection = MagicMock(
+        side_effect=lambda agent_id: PlatformConnection(
+            agent_id=agent_id,
+            api_key=link.api_key,
+            rest_url=link.rest_url,
+            ws_url=link.ws_url,
+        )
+    )
+
     # Identity (for startup()).
     identity_response = GetAgentMeResponse(
         data=AgentMe(
@@ -122,6 +170,7 @@ def make_link_mock(
             description=agent_description,
             owner_uuid="owner-1",
             updated_at=datetime.now(timezone.utc),
+            feature_flags=feature_flags or {},
         )
     )
     link.rest.agent_api_identity.get_agent_me = AsyncMock(

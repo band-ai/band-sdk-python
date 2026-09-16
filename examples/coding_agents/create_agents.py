@@ -15,8 +15,11 @@ import logging
 import os
 
 import yaml
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LoggingStyle, LogSettings
+from band_rest import AsyncRestClient
+from band_rest.types import AgentRegisterRequest
 
 # The bare message format only exists for the standard style, so the style is
 # pinned rather than read from BAND_LOG_CONSOLE_STYLE.
@@ -31,17 +34,21 @@ AGENTS = [
 ]
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    band_api_key: str
+    band_rest_url: str = "https://app.band.ai"
+
+
 async def main() -> None:
-    api_key = os.environ.get("BAND_API_KEY")
-    if not api_key:
-        raise ValueError("BAND_API_KEY environment variable is required")
+    settings = Settings()
 
-    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
-
-    from band_rest import AsyncRestClient
-    from band_rest.types import AgentRegisterRequest
-
-    client = AsyncRestClient(api_key=api_key, base_url=base_url)
+    client = AsyncRestClient(
+        api_key=settings.band_api_key, base_url=settings.band_rest_url
+    )
 
     created = []
     script_dir = os.path.dirname(os.path.abspath(__file__))

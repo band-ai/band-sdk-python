@@ -25,6 +25,8 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 
+from dotenv import load_dotenv
+
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import MessageCreatedPayload
 from band.runtime.types import PlatformMessage
@@ -749,8 +751,6 @@ async def main(
 
         asyncio.run(main())
     """
-    from dotenv import load_dotenv
-
     load_dotenv()
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()

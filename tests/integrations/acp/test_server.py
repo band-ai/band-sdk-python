@@ -26,7 +26,7 @@ class TestACPServerInitialize:
     @pytest.mark.asyncio
     async def test_initialize_returns_agent_info(self) -> None:
         """Should return agent metadata, capabilities, and auth methods."""
-        adapter = BandACPServerAdapter()
+        adapter = BandACPServerAdapter(rest_client=MagicMock())
         await adapter.on_started("My Agent", "A test agent")
         server = ACPServer(adapter)
 
@@ -391,23 +391,6 @@ class TestACPServerResumeSession:
         assert response is not None
         assert adapter._session_cwd["session-1"] == "/workspace"
         assert adapter._session_mcp_servers["session-1"] == mcp_servers
-
-
-class TestACPServerSetSessionModel:
-    """Tests for ACPServer.set_session_model()."""
-
-    @pytest.mark.asyncio
-    async def test_set_session_model(self) -> None:
-        """Should store model in adapter state."""
-        adapter = BandACPServerAdapter()
-        server = ACPServer(adapter)
-
-        response = await server.set_session_model(
-            model_id="gpt-5.4", session_id="session-1"
-        )
-
-        assert response is not None
-        # set_session_model stores for future use; verify it doesn't raise
 
 
 class TestACPServerAuthenticate:

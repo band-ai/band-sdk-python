@@ -19,11 +19,15 @@ from band_rest import (
     AgentContact,
     AgentMe,
     AgentMemory,
+    Attachment,
+    Board,
     ChatMessageRequest,
     ChatEventRequest,
     ChatRoomRequest,
     ParticipantRequest,
     AgentMemoryCreateRequest,
+    GetChatTaskHistoryResponse,
+    GetChatTaskHistoryResponseMetadata,
     ListAgentContactRequestsResponse,
     ListAgentContactRequestsResponseData,
     ListAgentContactRequestsResponseMetadata,
@@ -35,10 +39,16 @@ from band_rest import (
     ListAgentMemoriesResponseMeta,
     ListAgentPeersResponse,
     ListAgentPeersResponseMetadata,
+    ListChatTasksResponse,
+    ListChatTasksResponseMetadata,
     NotFoundError,
     Peer,
+    Task,
+    TaskActor,
     UnauthorizedError,
+    UnprocessableEntityError,
 )
+from band_rest.core import ParsingError
 from band_rest.core.request_options import RequestOptions
 from band_rest.types import ChatMessageRequestMentionsItem
 
@@ -47,18 +57,35 @@ from band_rest.types import ChatMessageRequestMentionsItem
 # We set max_retries=3 to handle transient rate limit errors gracefully.
 DEFAULT_REQUEST_OPTIONS: RequestOptions = {"max_retries": 3}
 
+
+async def aclose_rest_client(client: AsyncRestClient) -> None:
+    """Close ``client``'s underlying httpx client.
+
+    Fern's generated wrapper buries the real httpx client three attributes
+    deep (``_client_wrapper.httpx_client.httpx_client``) -- one place to
+    reach through that chain so a future ``band_rest`` upgrade only needs
+    updating here.
+    """
+    await client._client_wrapper.httpx_client.httpx_client.aclose()
+
+
 __all__ = [
     "RestClient",
     "AsyncRestClient",
+    "aclose_rest_client",
     "AgentContact",
     "AgentMe",
     "AgentMemory",
+    "Attachment",
     "ChatMessageRequest",
     "ChatMessageRequestMentionsItem",
     "ChatEventRequest",
     "ChatRoomRequest",
     "ParticipantRequest",
     "AgentMemoryCreateRequest",
+    "Board",
+    "GetChatTaskHistoryResponse",
+    "GetChatTaskHistoryResponseMetadata",
     "ListAgentContactRequestsResponse",
     "ListAgentContactRequestsResponseData",
     "ListAgentContactRequestsResponseMetadata",
@@ -70,9 +97,15 @@ __all__ = [
     "ListAgentMemoriesResponseMeta",
     "ListAgentPeersResponse",
     "ListAgentPeersResponseMetadata",
+    "ListChatTasksResponse",
+    "ListChatTasksResponseMetadata",
     "NotFoundError",
+    "ParsingError",
     "Peer",
+    "Task",
+    "TaskActor",
     "UnauthorizedError",
+    "UnprocessableEntityError",
     "RequestOptions",
     "DEFAULT_REQUEST_OPTIONS",
 ]

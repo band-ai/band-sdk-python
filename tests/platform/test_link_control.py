@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import band.platform.link as link_mod
 from band.client.streaming import AgentControlPayload
 from band.platform.link import BandLink
 
@@ -70,8 +71,6 @@ class TestOnControlRouting:
             return fake_ws
 
         # Patch WebSocketClient construction to return our fake.
-        import band.platform.link as link_mod
-
         orig = link_mod.WebSocketClient
         link_mod.WebSocketClient = lambda *a, **k: fake_ws  # type: ignore[assignment]
         try:
