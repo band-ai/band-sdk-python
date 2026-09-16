@@ -1,0 +1,11 @@
+{
+  "extraKnownMarketplaces": {
+    "private-agent-skills": {
+      "source": { "source": "github", "repo": "band-ai/private-agent-skills" },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": {
+    "changelog-generator@private-agent-skills": true
+  }
+}

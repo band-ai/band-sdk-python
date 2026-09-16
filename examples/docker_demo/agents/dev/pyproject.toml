@@ -1,0 +1,6 @@
+[project]
+name = "band-demo-dev"
+version = "0.1.0"
+description = "Lead Developer agent (Codex) for the Band Docker demo."
+requires-python = ">=3.11"
+dependencies = ["band-sdk[codex]>=1.1.0", "pydantic-settings>=2.0.0"]

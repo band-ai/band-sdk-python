@@ -6,8 +6,8 @@ Usage:
     uv run python examples/a2a_gateway/demo_orchestrator/__main__.py --gateway-url http://localhost:10000
 
 This starts an A2A-compliant server that:
-1. Exposes itself at /.well-known/agent.json
-2. Accepts messages at /v1/message:stream
+1. Exposes itself at /.well-known/agent-card.json
+2. Accepts messages at /message:stream and / (JSON-RPC)
 3. Routes requests to Band peers via the A2A Gateway
 """
 
@@ -19,31 +19,41 @@ import os
 import sys
 from pathlib import Path
 
+from band import LogSettings
+
 # Add parent directory to path for direct script execution
 sys.path.insert(0, str(Path(__file__).parent))
 
 import click
 import uvicorn
-from a2a.server.apps import A2AStarletteApplication
+from a2a.server.routes.agent_card_routes import create_agent_card_routes
+from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
+from a2a.server.routes.rest_routes import create_rest_routes
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,
     InMemoryTaskStore,
 )
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from dotenv import load_dotenv
-
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from starlette.applications import Starlette
 from agent import OrchestratorAgent
 from agent_executor import OrchestratorAgentExecutor
+from dotenv import load_dotenv
 from remote_agent import GatewayClient
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+LogSettings().for_application().configure()
 logger = logging.getLogger(__name__)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    openai_api_key: str
 
 
 @click.command()
@@ -66,10 +76,7 @@ logger = logging.getLogger(__name__)
 )
 def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None:
     """Start the Demo Orchestrator A2A server."""
-    # Check for OpenAI API key
-    if not os.getenv("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY environment variable is required")
-        sys.exit(1)
+    Settings()
 
     # Parse available peers from CLI arg
     available_peers = [p.strip() for p in peers.split(",") if p.strip()]
@@ -135,7 +142,13 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
                 "Band platform peers via the A2A Gateway. It intelligently "
                 "determines which peer can best handle each request."
             ),
-            url=f"http://{host}:{port}/",
+            supported_interfaces=[
+                AgentInterface(
+                    protocol_binding="JSONRPC",
+                    protocol_version="1.0",
+                    url=f"http://{host}:{port}/",
+                )
+            ],
             version="1.0.0",
             default_input_modes=OrchestratorAgent.SUPPORTED_CONTENT_TYPES,
             default_output_modes=OrchestratorAgent.SUPPORTED_CONTENT_TYPES,
@@ -149,16 +162,24 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
         request_handler = DefaultRequestHandler(
             agent_executor=OrchestratorAgentExecutor(agent),
             task_store=InMemoryTaskStore(),
+            agent_card=agent_card,
             push_config_store=push_config_store,
         )
 
-        server = A2AStarletteApplication(
-            agent_card=agent_card,
-            http_handler=request_handler,
+        server = Starlette(
+            routes=(
+                create_agent_card_routes(agent_card)
+                + create_jsonrpc_routes(
+                    request_handler,
+                    rpc_url="/",
+                    enable_v0_3_compat=True,
+                )
+                + create_rest_routes(request_handler, enable_v0_3_compat=True)
+            )
         )
 
         # Run server
-        uvicorn.run(server.build(), host=host, port=port)
+        uvicorn.run(server, host=host, port=port)
 
     except Exception as e:
         logger.error("Error starting server: %s", e)

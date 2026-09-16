@@ -49,9 +49,9 @@ from tests.conftest_integration import (
     # Helpers
     fetch_all_context,
     is_room_alive,
+    send_user_mention,
     wait_until,
 )
-
 # NOTE: pytestmark in conftest.py is NOT applied to collected tests.
 # The 120s timeout is applied via pytest_collection_modifyitems below.
 
@@ -109,5 +109,6 @@ __all__ = [
     # Helpers
     "fetch_all_context",
     "is_room_alive",
+    "send_user_mention",
     "wait_until",
 ]

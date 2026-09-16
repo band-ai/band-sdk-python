@@ -32,8 +32,6 @@ import logging
 import httpx
 import pytest
 import pytest_asyncio
-from band_rest import ChatMessageRequest
-from band_rest.types import ChatMessageRequestMentionsItem
 
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
@@ -45,6 +43,7 @@ from tests.integration.conftest import (
     get_ws_url,
     requires_api,
     requires_user_api,
+    send_user_mention,
     wait_until,
 )
 
@@ -70,20 +69,6 @@ async def _post(path: str) -> httpx.Response:
 async def _get(path: str) -> httpx.Response:
     async with httpx.AsyncClient(timeout=30.0) as client:
         return await client.get(f"{get_base_url()}{path}", headers=_user_headers())
-
-
-async def _send_user_mention(
-    user_api_client, chat_id: str, agent_id: str, text: str
-) -> str:
-    """Post a message from the user that @mentions the agent; return message id."""
-    resp = await user_api_client.human_api_messages.send_my_chat_message(
-        chat_id,
-        message=ChatMessageRequest(
-            content=text,
-            mentions=[ChatMessageRequestMentionsItem(id=agent_id)],
-        ),
-    )
-    return resp.data.id
 
 
 # --------------------------------------------------------------------------- #
@@ -150,7 +135,7 @@ class TestControlSignalsIntegration:
         assert stop.status_code == 200, f"stop failed: {stop.status_code} {stop.text}"
 
         # A mention sent while stopped must NOT be processed by the handler.
-        stopped_msg_id = await _send_user_mention(
+        stopped_msg_id = await send_user_mention(
             user_api_client, chat_id, agent_id, "ping while stopped — please stay quiet"
         )
         await asyncio.sleep(10.0)
@@ -179,7 +164,7 @@ class TestControlSignalsIntegration:
         handler.block = True
         handler.started.clear()
 
-        msg_id = await _send_user_mention(
+        msg_id = await send_user_mention(
             user_api_client, chat_id, agent_id, "begin a long task and keep working"
         )
         assert await wait_until(handler.started.is_set, timeout=90.0), (

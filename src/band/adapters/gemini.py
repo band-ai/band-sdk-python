@@ -10,6 +10,7 @@ from typing import Any, ClassVar, cast
 
 import httpx
 from pydantic import ValidationError
+from typing_extensions import Unpack
 
 try:
     from google import genai  # type: ignore[missing-module-attribute]
@@ -27,10 +28,11 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
@@ -42,8 +44,31 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    decode_image_block,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _image_function_response_parts(
+    result: dict[str, Any],
+) -> list[types.FunctionResponsePart]:
+    """Convert an MCP-content-shaped band_read_room_file result into Gemini
+    FunctionResponsePart inline_data blocks, so the model receives real image
+    content instead of a JSON-stringified blob."""
+    parts: list[types.FunctionResponsePart] = []
+    for block in result["content"]:
+        data, mime_type = decode_image_block(block)
+        parts.append(
+            types.FunctionResponsePart(
+                inline_data=types.FunctionResponseBlob(mime_type=mime_type, data=data)
+            )
+        )
+    return parts
 
 
 class GeminiAdapter(SimpleAdapter[GeminiMessages]):
@@ -56,18 +81,15 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         adapter = GeminiAdapter(
             model="gemini-2.5-flash",
             prompt="You are a helpful assistant.",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY},
-                emit={Emit.EXECUTION},
-            ),
+            capabilities=Capability.MEMORY,
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -84,14 +106,12 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         max_history_messages: int = 200,
         history_converter: GeminiHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         include_base_instructions: bool = True,
         # --- Deprecated (one release, then remove) ---
         api_key: str | None = None,
         gemini_api_key: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         # --- Selective: provider_key rename ---
         if gemini_api_key is not None:
@@ -127,30 +147,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 raise BandConfigError("Cannot pass both prompt and custom_section")
             prompt = custom_section
 
-        # --- Universal: boolean → AdapterFeatures migration ---
-        if enable_memory_tools or enable_execution_reporting:
-            if features is not None:
-                raise BandConfigError(
-                    "Cannot pass both features= and legacy boolean params "
-                    "(enable_memory_tools, enable_execution_reporting)"
-                )
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated, "
-                "use features=AdapterFeatures(...) instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or GeminiHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -440,8 +439,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         declarations: list[types.FunctionDeclaration] = []
 
         openai_schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
         for schema in openai_schemas:
             function = schema.get("function", {})
@@ -518,14 +516,16 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             tool_input = dict(function_call.args or {})
             tool_call_id = function_call.id or f"gemini_tool_call_{index}"
 
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "args": tool_input,
-                                "tool_call_id": tool_call_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, tool_input
+                                ),
+                                ToolEventKey.TOOL_CALL_ID: tool_call_id,
                             }
                         ),
                         message_type="tool_call",
@@ -533,17 +533,22 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 except Exception as e:
                     logger.warning("Failed to send tool_call event: %s", e)
 
+            response_parts: list[types.FunctionResponsePart] | None = None
             try:
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                result_str = (
-                    json.dumps(result, default=str)
-                    if not isinstance(result, str)
-                    else result
-                )
+                if is_image_passthrough_result(tool_name, result):
+                    response_parts = _image_function_response_parts(result)
+                    result_str = image_block_placeholder(len(response_parts))
+                else:
+                    result_str = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                 is_error = False
             except ValidationError as exc:
                 errors = format_validation_error(exc)
@@ -555,15 +560,15 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 is_error = True
                 logger.exception("Tool %s failed: %s", tool_name, e)
 
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "output": result_str,
-                                "tool_call_id": tool_call_id,
-                                "is_error": is_error,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: result_str,
+                                ToolEventKey.TOOL_CALL_ID: tool_call_id,
+                                ToolEventKey.IS_ERROR: is_error,
                             }
                         ),
                         message_type="tool_result",
@@ -580,6 +585,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         id=tool_call_id,
                         name=tool_name,
                         response=response_payload,
+                        parts=response_parts,
                     )
                 )
             )

@@ -65,7 +65,7 @@ def create_calculator_graph() -> MarkdownCalculatorGraph:
 def _try_lazy_adapter(name: str) -> type | None:
     """Import an adapter via ``band.adapters`` lazy loader when extras are installed."""
     try:
-        import band.adapters as adapters_mod
+        import band.adapters as adapters_mod  # noqa: PLC0415
 
         return getattr(adapters_mod, name)
     except (ImportError, ModuleNotFoundError, AttributeError):
@@ -90,7 +90,7 @@ def _sdk_symbols() -> dict[str, object]:
             symbols[adapter_name] = adapter_cls
 
     try:
-        from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+        from band.adapters.codex import CodexAdapter, CodexAdapterConfig  # noqa: PLC0415
 
         symbols["CodexAdapter"] = CodexAdapter
         symbols["CodexAdapterConfig"] = CodexAdapterConfig

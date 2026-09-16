@@ -20,7 +20,7 @@ process never resolves that name.
 |------|---------|
 | `docker-compose.yml` | Two services: `copilot` (ACP over TCP) + `band-mcp` (Band tools over SSE) |
 | `Dockerfile.copilot` | Copilot CLI + `socat` bridging `copilot --acp` (stdio) onto TCP `0.0.0.0:8080` |
-| `Dockerfile.band-mcp` | `pip install band-mcp`, run the `thenvoi-mcp` SSE server |
+| `Dockerfile.band-mcp` | `pip install band-mcp>=1.3.2`, run the `band-mcp` SSE server |
 | `client.py` | Host-side Band agent: TCP to Copilot, `inject_band_tools=False`, explicit MCP URL |
 | `.env.example` | Required secrets/endpoints |
 
@@ -28,16 +28,17 @@ process never resolves that name.
 
 - Docker + Docker Compose.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
-- A Band **agent** API key (`BAND_AGENT_KEY`, `thnv_a_…` / `band_a_…`) for band-mcp.
-- A configured Band agent named `copilot_acp_agent` for the host client (see the
-  SDK's `Agent.from_config` / `agent_config.yaml`).
+- A configured Band agent named `copilot_acp_agent` in `agent_config.yaml`.
+  Put that agent's `api_key` into `.env` as `BAND_AGENT_KEY` — host and band-mcp
+  must be the same identity (room tools 404 otherwise).
 
 ## Run
 
 ```bash
 cd examples/acp/copilot_docker/compose
-cp .env.example .env      # fill in GITHUB_TOKEN + BAND_AGENT_KEY
-docker compose up --build # starts copilot (:8080) + band-mcp (internal :3000)
+cp .env.example .env
+# Fill GITHUB_TOKEN and BAND_AGENT_KEY (= copilot_acp_agent api_key from agent_config.yaml)
+docker compose up --build
 
 # in another shell, from the repo root:
 uv run examples/acp/copilot_docker/compose/client.py
@@ -69,14 +70,18 @@ and calls Band tools via band-mcp.
   reachable off-host. Widen it (behind your own auth) only for a remote SDK host.
 - **band-mcp uses SSE, not streamable HTTP.** The endpoint is `/sse`; the adapter's
   `mcp_servers` entry is `{"type": "sse", …}`.
+- **`mcp<2` pin.** `Dockerfile.band-mcp` installs `band-mcp>=1.3.2` with
+  `mcp>=1.23.0,<2` because band-mcp 1.3.2 imports `mcp.server.fastmcp`, which
+  mcp 2.0 removed.
 - **DNS-rebinding protection.** band-mcp rejects SSE requests with **HTTP 421**
   unless the caller's `Host` is allow-listed. `docker-compose.yml` sets
   `ALLOWED_HOSTS='["band-mcp:*"]'` (the compose-DNS name Copilot dials). Add your
   own host there if you change the service name, or set
   `ENABLE_DNS_REBINDING_PROTECTION=false` for local experiments.
-- **Auth model.** band-mcp holds one Band identity (its agent key) and MCP clients
-  present **no** credentials. Treat band-mcp as a trusted sidecar — it is not
-  published to the host here. One container = one Band identity.
+- **Auth model.** band-mcp holds one Band identity (`BAND_AGENT_KEY`) and MCP
+  clients present **no** credentials. That key must be the same agent as host
+  `client.py` (`copilot_acp_agent` in `agent_config.yaml`). Treat band-mcp as a
+  trusted sidecar — it is not published to the host here.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a
   stored `copilot login`. A container has no stored login, so set a token env
@@ -88,11 +93,11 @@ and calls Band tools via band-mcp.
   the flag to gate built-in shell/file tools; note enterprise policy can disable
   allow-all flags at startup.
 - **Room routing.** band-mcp's chat/message tools take a `chat_id` argument per
-  call (scoped within that one identity). This differs from the SDK's in-process
-  `inject_band_tools` path (which injects a `room_id` per tool) — expect the agent
-  to reference `chat_id` when driven through band-mcp.
-- **Platform base URL.** band-mcp defaults to `https://app.thenvoi.com`; the
-  compose file points it at `BAND_REST_URL` (default `https://app.band.ai`).
+  call (scoped within that one identity) — the same argument name the SDK's
+  in-process `inject_band_tools` path advertises, so the agent references
+  `chat_id` either way.
+- **Platform base URL.** band-mcp (`BAND_BASE_URL`) defaults to `https://app.band.ai`;
+  the compose file points it at `BAND_REST_URL` (default `https://app.band.ai`).
 
 > This example is a deployment template — it needs Docker, live Band credentials,
 > and a Copilot-entitled token, so it is not run in CI.

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.client import connect
 
 
@@ -59,16 +58,11 @@ class WebSocketUpgradeError(Exception):
         )
 
 
-async def classify_initial_upgrade_error(
-    exc: Exception, websocket_url: str
-) -> WebSocketUpgradeError | None:
-    """Recover platform upgrade errors hidden by the Phoenix client supervisor."""
-    upgrade_error = WebSocketUpgradeError.from_exception(exc)
-    if upgrade_error is not None:
-        return upgrade_error
-    if not isinstance(exc, PHXConnectionError):
-        return None
-
+async def probe_upgrade_error(websocket_url: str) -> WebSocketUpgradeError | None:
+    """Recover a platform upgrade error hidden by the Phoenix client
+    supervisor's generic PHXConnectionError, via a fresh live-socket
+    handshake (blocks for up to open_timeout=5s) -- the supervisor's own
+    exception carries no HTTP status of its own to classify."""
     try:
         async with connect(websocket_url, open_timeout=5):
             return None

@@ -16,12 +16,19 @@ return SDK-native types for pattern matching compatibility.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
+from functools import cache
+from itertools import count
 from pathlib import Path
-from unittest.mock import AsyncMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
+from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band.client.rest import AsyncRestClient
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -48,11 +55,48 @@ from band.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
 )
+from band.platform.link import BandLink
+from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import PlatformMessage
+
+from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
 pytest_plugins = ["pytester"]
+
+# Env-var prefixes that adapter config classes (CodexAdapterConfig,
+# LettaAdapterConfig, OpencodeAdapterConfig) self-source from.
+_ADAPTER_CONFIG_ENV_PREFIXES = ("CODEX_", "LETTA_", "OPENCODE_")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Block ``.env.test``'s adapter-config keys before collection can leak them.
+
+    ``tests/e2e/baseline/settings.py`` calls ``load_dotenv(ENV_TEST_FILE,
+    override=False)`` at import time; several subdirectory ``conftest.py``
+    modules (e.g. ``tests/docker/conftest.py``,
+    ``tests/framework_conformance/conftest.py``) import it transitively, at
+    whichever indeterminate, collection-order-dependent moment they happen to
+    load. Any ``CODEX_``/``LETTA_``/``OPENCODE_`` key it would set is one the
+    adapter config classes above now read by default, so a contributor's
+    local ``.env.test`` would otherwise leak into unrelated unit tests'
+    "no override" defaults, and inconsistently depending on whether a given
+    default was baked before or after that key got set.
+
+    Reserving each such key as an empty string here — before any subdirectory
+    conftest can run — makes the later ``load_dotenv(override=False)`` skip
+    it (already present), while ``env_ignore_empty=True`` on those settings
+    classes treats an empty value the same as unset.
+
+    Skipped entirely when ``E2E_TESTS_ENABLED`` is set: a live E2E run wants
+    ``.env.test``'s real values (e.g. ``CODEX_CWD``), not neutralized ones.
+    """
+    if os.environ.get("E2E_TESTS_ENABLED", "").lower() == "true":
+        return
+    for key in dotenv_values(ENV_TEST_FILE):
+        if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES) and key not in os.environ:
+            os.environ[key] = ""
 
 
 class CollectionGateSettings(BaseSettings):
@@ -73,6 +117,7 @@ class CollectionGateSettings(BaseSettings):
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
     docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
     sandbox_tests_enabled: bool = False  # SANDBOX_TESTS_ENABLED
+    vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
 
 
 def pytest_ignore_collect(collection_path: Path) -> bool | None:
@@ -89,35 +134,39 @@ def pytest_ignore_collect(collection_path: Path) -> bool | None:
     return None
 
 
+# Opt-in suite gates: marker -> the CollectionGateSettings field that opens it.
+# The env var IS the field name uppercased (the pydantic-settings contract), so
+# the skip reason is derived — one row here is all a new gated suite needs.
+GATED_MARKERS: dict[str, str] = {
+    "e2e": "e2e_tests_enabled",
+    "docker_build": "docker_tests_enabled",
+    "sandbox": "sandbox_tests_enabled",
+    "vscode_chat": "vscode_chat_tests_enabled",
+}
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skip e2e- and docker_build-marked tests unless explicitly enabled.
+    """Skip gate-marked suites unless their env gate is explicitly enabled.
 
-    tests/e2e/ gates itself through its own conftest; this covers
-    e2e-marked tests living elsewhere (e.g. the codex ACP protocol
-    tests), which spawn real backends and must never ride a normal
-    unit run.
-
-    docker_build-marked tests shell out to a real `docker build`/`docker
-    run` — CI runners do have a Docker daemon (unlike the nested
-    virtualization sbx tests need), so a plain Docker-availability check
-    isn't enough to keep them off CI; they need the same explicit opt-in
-    as e2e tests.
+    tests/e2e/ gates itself through its own conftest; this covers marked
+    tests living elsewhere (e.g. the codex ACP protocol tests). These
+    suites spawn real backends, real `docker build`s, sbx microVMs, or a
+    live VS Code window — none may ride a normal unit run, and none can
+    rely on mere tool availability (CI runners do have Docker), so each
+    needs its explicit opt-in.
     """
     gates = CollectionGateSettings()
-    skip_e2e = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
-    skip_docker = pytest.mark.skip(
-        reason="set DOCKER_TESTS_ENABLED=true to run docker_build tests"
-    )
-    skip_sandbox = pytest.mark.skip(
-        reason="set SANDBOX_TESTS_ENABLED=true to run sbx sandbox tests"
-    )
+    closed = {
+        marker: pytest.mark.skip(
+            reason=f"set {field.upper()}=true to run {marker}-marked tests"
+        )
+        for marker, field in GATED_MARKERS.items()
+        if not getattr(gates, field)
+    }
     for item in items:
-        if not gates.e2e_tests_enabled and item.get_closest_marker("e2e"):
-            item.add_marker(skip_e2e)
-        if not gates.docker_tests_enabled and item.get_closest_marker("docker_build"):
-            item.add_marker(skip_docker)
-        if not gates.sandbox_tests_enabled and item.get_closest_marker("sandbox"):
-            item.add_marker(skip_sandbox)
+        for marker, skip in closed.items():
+            if item.get_closest_marker(marker):
+                item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
@@ -138,8 +187,6 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
         yield
         return
 
-    from band.runtime.single_instance import SingleInstanceGuard
-
     lock_dir: list = []
     created: list[SingleInstanceGuard] = []
 
@@ -158,6 +205,66 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     # the lock fd (and its process-registry entry) for the whole session.
     for guard in created:
         guard.release()
+
+
+@pytest.fixture(autouse=True)
+def isolated_adapter_config_env(request, monkeypatch):
+    """Defense-in-depth: strip adapter-config env vars before each unit test.
+
+    ``pytest_configure`` above closes the ``.env.test`` leak at its source;
+    this additionally protects against a test that sets one of these vars
+    directly (``monkeypatch.setenv`` without cleanup, a subprocess, etc.)
+    from bleeding into an unrelated later test's "no override" defaults.
+
+    Live tests (e2e/integration) keep the real environment: there, those
+    values are the point.
+    """
+    if {"e2e", "integration"} & set(request.node.path.parts):
+        yield
+        return
+
+    for key in list(os.environ):
+        if key.startswith(_ADAPTER_CONFIG_ENV_PREFIXES):
+            monkeypatch.delenv(key, raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_leaked_threading_instrumentation() -> None:
+    """Undo OpenTelemetry's ThreadingInstrumentor if a test left it patched.
+
+    Constructing a real Strands ``Tracer`` (tests/adapters/test_strands_adapter.py
+    and friends, which build a live strands.Agent) unconditionally calls
+    ``ThreadingInstrumentor().instrument()`` and never undoes it -- correct for a
+    long-lived process, but it globally monkeypatches ``threading.Thread.start``
+    for the rest of the pytest session. Left in place, an unrelated later test
+    that spawns a thread during interpreter/logging shutdown (e.g.
+    tests/example_agents/test_otel_setup.py flushing via ``LoggingHandler.flush()``)
+    can deadlock inside the wrapped ``start()``.
+    """
+    yield
+    try:
+        # Only present when an adapter that pulls it in (e.g. strands) is installed.
+        from opentelemetry.instrumentation.threading import (  # noqa: PLC0415
+            ThreadingInstrumentor,
+        )
+    except ImportError:
+        return
+    instrumentor = ThreadingInstrumentor()
+    if instrumentor.is_instrumented_by_opentelemetry:
+        instrumentor.uninstrument()
+
+
+@pytest.fixture
+def assert_no_leaked_adapter_config_env() -> None:
+    """Fail loudly if a CODEX_/LETTA_/OPENCODE_ var reached this test.
+
+    Requested by a handful of adapters' own "config defaults" tests to prove
+    ``isolated_adapter_config_env`` above is actually doing its job, rather
+    than each repeating the prefix tuple and the check.
+    """
+    leaked = [k for k in os.environ if k.startswith(_ADAPTER_CONFIG_ENV_PREFIXES)]
+    assert leaked == [], f"leaked adapter-config env vars: {leaked}"
 
 
 # =============================================================================
@@ -216,6 +323,31 @@ class BlockingHandler:
 
 
 # =============================================================================
+# BandLink Test Helpers
+# =============================================================================
+
+
+def spy_on_reconciliation_drain(link: BandLink) -> asyncio.Event:
+    """Arm a spy on ``_drain_reconciliation`` -- the last step
+    ``_on_reconnected`` runs -- and return an event set the instant the real
+    call completes. Lets a caller deterministically await one full
+    post-reconnect cycle (rejoin-failure detection, then drain) instead of
+    polling observable state on a fixed interval and hoping it has caught
+    up. Call before whatever triggers the reconnect (e.g.
+    ``server.abort_connection()``), so the spy is in place before
+    ``_on_reconnected`` fires."""
+    handled = asyncio.Event()
+    original_drain = link._drain_reconciliation
+
+    async def spy() -> None:
+        await original_drain()
+        handled.set()
+
+    link._drain_reconciliation = spy
+    return handled
+
+
+# =============================================================================
 # Event Factory Helpers (must return SDK-native types for pattern matching)
 # =============================================================================
 
@@ -263,10 +395,9 @@ def make_room_removed_event(
     """Create a RoomRemovedEvent using SDK-native types."""
     payload = RoomRemovedPayload(
         id=room_id,
-        status=kwargs.get("status", "removed"),
-        type=kwargs.get("type", "direct"),
         title=title,
-        removed_at=kwargs.get("removed_at", "2024-01-01T00:00:00Z"),
+        inserted_at=kwargs.get("inserted_at", "2024-01-01T00:00:00Z"),
+        updated_at=kwargs.get("updated_at", "2024-01-01T00:00:00Z"),
     )
     return RoomRemovedEvent(room_id=room_id, payload=payload)
 
@@ -277,6 +408,157 @@ def make_room_deleted_event(room_id: str = "room-123") -> RoomDeletedEvent:
     return RoomDeletedEvent(room_id=room_id, payload=payload)
 
 
+def make_participant_mock(
+    participant_id: str,
+    name: str,
+    type: str,
+    handle: str | None = None,
+    description: str | None = None,
+) -> MagicMock:
+    """A mock REST participant/peer model: attribute access + ``model_dump()``.
+
+    One field list drives both access styles, so the mock cannot drift into a
+    shape a real Fern model never has. ``mock.name`` must be assigned after
+    construction — passing ``name=`` to ``MagicMock()`` sets the mock's
+    identity, not its ``.name`` attribute.
+    """
+    fields = {
+        "id": participant_id,
+        "name": name,
+        "type": type,
+        "handle": handle,
+        "description": description,
+    }
+    mock = MagicMock(**{k: v for k, v in fields.items() if k != "name"})
+    mock.name = name
+    mock.model_dump.return_value = dict(fields)
+    return mock
+
+
+@cache
+def agent_api_namespace_classes() -> dict[str, type]:
+    """The Fern client's agent-side namespace classes, keyed by attribute name.
+
+    The namespaces are lazy properties, so the classes are harvested from a
+    throwaway client instance (constructing one performs no I/O).
+    """
+    harvest = AsyncRestClient(api_key="spec-harvest", base_url="http://localhost:0")
+    return {
+        name: type(getattr(harvest, name))
+        for name in dir(type(harvest))
+        if name.startswith("agent_api_")
+    }
+
+
+@pytest.fixture
+def mock_rest_client() -> MagicMock:
+    """Mock AsyncRestClient shared by AgentTools, ContactTools and the ACP
+    server adapter tests — the three suites that instantiate a REST-backed
+    client directly.
+
+    Spec'd against the real Fern client: every ``agent_api_*`` namespace is an
+    autospec of its real class, so async methods are awaitable AsyncMocks with
+    the real call signatures, and a ``band-client-rest`` bump that renames a
+    namespace, drops a method, or changes a signature fails these tests
+    instead of passing silently (the pin-bump tripwire the workarounds policy
+    relies on).
+
+    A test overrides whichever method's return value it needs; the ids below
+    (``room-new-123``, ``msg-123``, ``evt-123``, ``user-1``, ``agent-2``) are
+    asserted on directly by existing tests, so they are fixed rather than
+    incidental.
+
+    ``list_agent_chat_participants`` defaults to one non-self participant
+    (``user-1``) rather than an empty list, since AgentTools/ContactTools
+    tests assert mentions are generated from it. A test asserting exact
+    message content after a call that mentions participants (e.g. ACP's
+    ``handle_prompt``) must override ``list_agent_chat_participants`` to
+    ``data=[]`` itself rather than relying on an empty default.
+    """
+    client = MagicMock(spec=AsyncRestClient)
+    for name, namespace_class in agent_api_namespace_classes().items():
+        # spec_set so overriding a method the real class no longer has fails
+        # at the assignment, not as a dead attribute nothing ever calls.
+        setattr(
+            client, name, create_autospec(namespace_class, instance=True, spec_set=True)
+        )
+
+    # Chat creation (ACP: new/fork session). Each call gets its own room id
+    # (first call is the fixed "room-new-123" existing tests assert on) so a
+    # test creating two sessions (e.g. a fork) doesn't collide them onto one
+    # room.
+    room_ids = (f"room-new-{n}" for n in count(123))
+
+    def _create_agent_chat_response(*_args: Any, **_kwargs: Any) -> MagicMock:
+        response = MagicMock()
+        response.data = MagicMock()
+        response.data.id = next(room_ids)
+        return response
+
+    client.agent_api_chats.create_agent_chat.side_effect = _create_agent_chat_response
+
+    # Message creation (AgentTools.send_message / ACP prompt forwarding)
+    message_response = MagicMock()
+    message_response.data = MagicMock()
+    message_response.data.model_dump.return_value = {
+        "id": "msg-123",
+        "content": "Hello",
+        "sender_id": "agent-1",
+    }
+    client.agent_api_messages.create_agent_chat_message.return_value = message_response
+
+    # Event creation (AgentTools.send_event / ACP prompt forwarding)
+    event_response = MagicMock()
+    event_response.data = MagicMock()
+    event_response.data.model_dump.return_value = {
+        "id": "evt-123",
+        "content": "Thinking...",
+        "message_type": "thought",
+    }
+    client.agent_api_events.create_agent_chat_event.return_value = event_response
+
+    # Participant listing (AgentTools.get_participants / ACP session bootstrap)
+    participant1 = make_participant_mock(
+        "user-1", "User One", "User", handle="user-one"
+    )
+    client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+        data=[participant1]
+    )
+
+    # Peer lookup (AgentTools.lookup_peers)
+    peer1 = make_participant_mock(
+        "agent-2", "Agent Two", "Agent", handle="agent-two", description="Another agent"
+    )
+    peers_response = MagicMock()
+    peers_response.data = [peer1]
+    peers_response.metadata = MagicMock()
+    peers_response.metadata.page = 1
+    peers_response.metadata.page_size = 50
+    peers_response.metadata.total_count = 1
+    peers_response.metadata.total_pages = 1
+    peers_response.model_dump = MagicMock(
+        return_value={
+            "data": [
+                {
+                    "id": "agent-2",
+                    "name": "Agent Two",
+                    "type": "Agent",
+                    "description": "Another agent",
+                }
+            ],
+            "metadata": {
+                "page": 1,
+                "page_size": 50,
+                "total_count": 1,
+                "total_pages": 1,
+            },
+        }
+    )
+    client.agent_api_peers.list_agent_peers.return_value = peers_response
+
+    return client
+
+
 def make_participant_added_event(
     room_id: str = "room-123",
     participant_id: str = "user-456",
@@ -285,22 +567,18 @@ def make_participant_added_event(
     **kwargs,
 ) -> ParticipantAddedEvent:
     """Create a ParticipantAddedEvent using SDK-native types."""
-    payload = ParticipantAddedPayload(
-        id=participant_id,
-        name=name,
-        type=type,
-        is_remote=kwargs.get("is_remote"),
-        is_external=kwargs.get("is_external"),
-    )
+    payload = ParticipantAddedPayload(id=participant_id, name=name, type=type, **kwargs)
     return ParticipantAddedEvent(room_id=room_id, payload=payload)
 
 
 def make_participant_removed_event(
     room_id: str = "room-123",
     participant_id: str = "user-456",
+    name: str = "Test User",
+    type: str = "User",
 ) -> ParticipantRemovedEvent:
     """Create a ParticipantRemovedEvent using SDK-native types."""
-    payload = ParticipantRemovedPayload(id=participant_id)
+    payload = ParticipantRemovedPayload(id=participant_id, name=name, type=type)
     return ParticipantRemovedEvent(room_id=room_id, payload=payload)
 
 

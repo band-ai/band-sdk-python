@@ -75,7 +75,9 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
         )
 
     # Startup warns that Band rehydration is disabled, and flags the guard.
-    adapter = AgnoAdapter(build_agent("first answer"))
+    # emit=(): CapturingModel's streaming hooks are inert stubs, and this test
+    # only cares about history sourcing, not narration.
+    adapter = AgnoAdapter(build_agent("first answer"), emit=())
     with pytest.warns(UserWarning, match="manages its own conversation history"):
         await adapter.on_started("Bot", "desc")
     assert adapter._agno_manages_history is True
@@ -88,7 +90,7 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
     assert not any(m.from_history for m in _captured(adapter).captured_messages or [])
 
     # "Reset": a brand-new adapter/agent instance pointed at the same db+session.
-    adapter2 = AgnoAdapter(build_agent("second answer"))
+    adapter2 = AgnoAdapter(build_agent("second answer"), emit=())
     with pytest.warns(UserWarning, match="manages its own conversation history"):
         await adapter2.on_started("Bot", "desc")
 

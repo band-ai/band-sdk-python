@@ -39,8 +39,10 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
             ACPClientSessionState with room-to-session resume candidates and
             the room's replayable text transcript.
         """
-        # Runtime import to avoid circular import at module load time
-        from band.integrations.acp.client_types import ACPClientSessionState
+        # band.integrations.acp.client_types imports client_runtime, which
+        # imports the optional `acp` extra (agent-client-protocol) at module
+        # top level — deferred so this converter stays importable without it.
+        from band.integrations.acp.client_types import ACPClientSessionState  # noqa: PLC0415
 
         room_to_session: dict[str, str] = {}
 

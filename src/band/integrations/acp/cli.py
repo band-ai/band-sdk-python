@@ -8,6 +8,10 @@ import logging
 import os
 import sys
 
+from band import Agent
+from band.config.logs import LogSettings
+from band.logging_config import LogStream
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,9 +53,9 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)",
+        help="Logging level (env: BAND_LOG_LEVEL, default: INFO)",
     )
 
     return parser.parse_args(args)
@@ -66,25 +70,26 @@ async def main(args: argparse.Namespace | None = None) -> None:
     if args is None:
         args = parse_args()
 
-    logging.basicConfig(level=getattr(logging, args.log_level))
+    # Only an explicit CLI flag overrides BAND_LOG_*; omitted lets env win.
+    # The stream is not negotiable: stdout is the JSON-RPC transport, so a log
+    # line written there corrupts the editor's ACP session.
+    LogSettings.create(
+        log_level=args.log_level, log_stream=LogStream.STDERR
+    ).configure()
 
     if not args.agent_id:
         raise ValueError("Agent ID is required. Use --agent-id or set BAND_AGENT_ID.")
     if not args.api_key:
         raise ValueError("API key is required. Use --api-key or set BAND_API_KEY.")
 
-    # Lazy imports to avoid import errors when ACP deps are not installed
-    from acp import run_agent
+    # Lazy: band.integrations.acp.server imports the optional `acp` extra
+    # (agent-client-protocol) at its own top level, so importing it eagerly
+    # here would break every venv that doesn't install the `acp` extra.
+    from band.integrations.acp.push_handler import ACPPushHandler  # noqa: PLC0415
+    from band.integrations.acp.server import ACPServer, run_acp_server  # noqa: PLC0415
+    from band.integrations.acp.server_adapter import BandACPServerAdapter  # noqa: PLC0415
 
-    from band import Agent
-    from band.integrations.acp.push_handler import ACPPushHandler
-    from band.integrations.acp.server import ACPServer
-    from band.integrations.acp.server_adapter import BandACPServerAdapter
-
-    adapter = BandACPServerAdapter(
-        rest_url=args.rest_url,
-        api_key=args.api_key,
-    )
+    adapter = BandACPServerAdapter()
 
     # Wire up push handler
     push_handler = ACPPushHandler(adapter)
@@ -105,7 +110,7 @@ async def main(args: argparse.Namespace | None = None) -> None:
     # Start Band agent in background, run ACP server in foreground
     async with agent:
         try:
-            await run_agent(server)
+            await run_acp_server(server)
         finally:
             await adapter.close()
 

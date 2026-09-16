@@ -27,14 +27,16 @@ simplest networking, one image, no cross-service DNS.
 
 - Docker.
 - A **Copilot-entitled** `GITHUB_TOKEN`.
-- A Band **agent** API key (`BAND_AGENT_KEY`) for the in-container band-mcp.
-- A configured Band agent named `copilot_acp_agent` for the host client.
+- A configured Band agent named `copilot_acp_agent` in `agent_config.yaml`.
+  Put that agent's `api_key` into `.env` as `BAND_AGENT_KEY` — host and band-mcp
+  must be the same identity (room tools 404 otherwise).
 
 ## Run
 
 ```bash
 cd examples/acp/copilot_docker/colocated
-cp .env.example .env         # fill in GITHUB_TOKEN + BAND_AGENT_KEY
+cp .env.example .env
+# Fill GITHUB_TOKEN and BAND_AGENT_KEY (= copilot_acp_agent api_key from agent_config.yaml)
 docker build -t copilot-band-acp .
 docker run --rm --env-file .env -p 127.0.0.1:8080:8080 copilot-band-acp
 
@@ -66,12 +68,15 @@ Then message the `copilot_acp_agent` from a Band room.
   so expose it off-host only behind your own auth.
 - **band-mcp uses SSE, not streamable HTTP** (`/sse`); the adapter's `mcp_servers`
   entry is `{"type": "sse", …}`.
+- **`mcp<2` pin.** The image installs `band-mcp>=1.3.2` with `mcp>=1.23.0,<2`
+  because band-mcp 1.3.2 imports `mcp.server.fastmcp`, which mcp 2.0 removed.
 - **DNS-rebinding protection.** band-mcp 421s SSE requests whose `Host` isn't
   allow-listed. `entrypoint.sh` sets `ALLOWED_HOSTS='["localhost:*","127.0.0.1:*"]'`
   for the in-container loopback caller.
-- **Auth model.** band-mcp holds one Band identity (its agent key); MCP clients
-  present no credentials. Colocation keeps band-mcp bound to loopback and never
-  published — it is unreachable from outside the container.
+- **Auth model.** band-mcp holds one Band identity (`BAND_AGENT_KEY`); MCP
+  clients present no credentials. That key must be the same agent as host
+  `client.py` (`copilot_acp_agent` in `agent_config.yaml`). Colocation keeps
+  band-mcp bound to loopback and never published.
 - **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
   `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a stored `copilot login`. A container
   has no stored login, so set a token env (v2 fine-grained PAT with "Copilot

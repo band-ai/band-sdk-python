@@ -22,13 +22,27 @@ REST is faked with ``unittest.mock.AsyncMock``.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from band_rest import (
+    AgentRegisterRequest,
+    AsyncRestClient,
+    CreateContactRequestRequestContactRequest,
+    CreateMyChatRoomRequestChat,
+)
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
+    ChatMessageRequest,
+    ParsingError,
+    ParticipantRequest,
+)
 from band.runtime.tools import HumanTools
 
 
@@ -71,7 +85,6 @@ async def test_list_my_agents_forwards_page_args() -> None:
 
 @pytest.mark.asyncio
 async def test_register_my_agent_builds_request_object() -> None:
-    from band_rest import AgentRegisterRequest
 
     rest = _make_rest_fake()
     response = MagicMock()
@@ -105,7 +118,6 @@ async def test_list_my_chats_forwards_pagination() -> None:
 
 @pytest.mark.asyncio
 async def test_create_my_chat_room_with_task_id() -> None:
-    from band_rest import CreateMyChatRoomRequestChat
 
     rest = _make_rest_fake()
     rest.human_api_chats.create_my_chat_room = AsyncMock(return_value=MagicMock())
@@ -119,7 +131,6 @@ async def test_create_my_chat_room_with_task_id() -> None:
 
 @pytest.mark.asyncio
 async def test_create_my_chat_room_without_task_id() -> None:
-    from band_rest import CreateMyChatRoomRequestChat
 
     rest = _make_rest_fake()
     rest.human_api_chats.create_my_chat_room = AsyncMock(return_value=MagicMock())
@@ -157,7 +168,6 @@ async def test_list_my_contacts_forwards_pagination() -> None:
 
 @pytest.mark.asyncio
 async def test_create_contact_request_without_message() -> None:
-    from band_rest import CreateContactRequestRequestContactRequest
 
     rest = _make_rest_fake()
     rest.human_api_contacts.create_contact_request = AsyncMock(return_value=MagicMock())
@@ -174,7 +184,6 @@ async def test_create_contact_request_without_message() -> None:
 
 @pytest.mark.asyncio
 async def test_create_contact_request_with_message() -> None:
-    from band_rest import CreateContactRequestRequestContactRequest
 
     rest = _make_rest_fake()
     rest.human_api_contacts.create_contact_request = AsyncMock(return_value=MagicMock())
@@ -259,6 +268,62 @@ async def test_resolve_handle_passes_handle() -> None:
 
     await HumanTools(rest).resolve_handle(handle="@alice")
     rest.human_api_contacts.resolve_handle.assert_awaited_once_with(handle="@alice")
+
+
+@asynccontextmanager
+async def _rest_client_over(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> AsyncIterator[AsyncRestClient]:
+    """A real ``band_rest.AsyncRestClient`` whose HTTP boundary is a fake
+    transport instead of the network, so response-parsing errors (like the
+    ``ValidationError`` -> ``ParsingError`` wrapping in
+    ``raw_client.resolve_handle``) are raised by the real dependency rather
+    than simulated.
+    """
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler)
+    ) as httpx_client:
+        yield AsyncRestClient(api_key="test-key", httpx_client=httpx_client)
+
+
+@pytest.mark.asyncio
+async def test_resolve_handle_succeeds_when_api_omits_id() -> None:
+    """API v1.10.0 omits ``id`` from a successful resolve-handle response.
+    ``band-client-rest`` 0.0.15+ dropped the required ``id`` field from
+    ``ResolvedEntity``, so this now parses cleanly into the typed
+    ``ResolveHandleResponse`` — reproduced here via a faked HTTP transport
+    (not a stubbed method) so the fix is proven against the real boundary.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {"handle": "nir/mcp-test", "name": "mcp-test", "type": "Agent"}
+            },
+        )
+
+    async with _rest_client_over(handler) as rest:
+        result = await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
+
+    assert result.data.handle == "nir/mcp-test"
+    assert result.data.name == "mcp-test"
+    assert result.data.type == "Agent"
+    assert not hasattr(result.data, "id")
+
+
+@pytest.mark.asyncio
+async def test_resolve_handle_reraises_unrelated_parsing_error() -> None:
+    """Only the known missing-``data.id`` shape is degraded; any other
+    response-parsing failure must still surface to the caller.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    async with _rest_client_over(handler) as rest:
+        with pytest.raises(ParsingError):
+            await HumanTools(rest).resolve_handle(handle="@nir/mcp-test")
 
 
 @pytest.mark.asyncio
@@ -353,7 +418,6 @@ def _mk_participant(**kwargs: Any) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_send_my_chat_message_resolves_recipients_by_name() -> None:
-    from band_rest import ChatMessageRequest
 
     rest = _make_rest_fake()
     alice = _mk_participant(id="u-1", name="Alice")
@@ -434,7 +498,6 @@ async def test_list_my_chat_participants_forwards_filter() -> None:
 
 @pytest.mark.asyncio
 async def test_add_my_chat_participant_builds_request_with_default_role() -> None:
-    from band_rest import ParticipantRequest
 
     rest = _make_rest_fake()
     rest.human_api_participants.add_my_chat_participant = AsyncMock(

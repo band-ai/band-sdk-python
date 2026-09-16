@@ -125,6 +125,7 @@ dmypy.json
 .pyre/
 
 # IDE files
+.cursor/
 .cursorignore
 .vscode/
 .idea/

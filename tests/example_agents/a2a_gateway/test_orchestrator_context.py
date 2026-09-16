@@ -8,20 +8,20 @@ gateway client, ensuring conversation continuity.
 from __future__ import annotations
 
 import os
-import sys
-from tests.paths import EXAMPLES_ROOT
 from unittest.mock import AsyncMock
 
 import pytest
 
-# Add demo_orchestrator to path (from tests/example_agents/a2a_gateway/)
-demo_orchestrator_path = EXAMPLES_ROOT / "a2a_gateway" / "demo_orchestrator"
-sys.path.insert(0, str(demo_orchestrator_path))
+from tests.loaders import load_script_module
 
 # Set dummy OpenAI API key for testing (model won't be called)
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-unit-tests")
 
-from agent import call_peer_agent, set_gateway_client  # noqa: E402
+agent = load_script_module(
+    "examples/a2a_gateway/demo_orchestrator/agent.py", "demo_orchestrator_agent"
+)
+call_peer_agent = agent.call_peer_agent
+set_gateway_client = agent.set_gateway_client
 
 
 class TestOrchestratorContextId:

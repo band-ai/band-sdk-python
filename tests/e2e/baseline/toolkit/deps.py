@@ -74,6 +74,7 @@ class Lane(StrEnum):
     BACKENDS = "backends"
     GOOGLE = "google"
     LETTA = "letta"
+    PARLANT = "parlant"
 
 
 # The shared default lane: every provider-key adapter with no special isolation
@@ -91,12 +92,13 @@ class Extra(StrEnum):
 
     DEV = "dev"
     DEV_CREWAI = "dev-crewai"
+    DEV_PARLANT = "dev-parlant"
 
 
 # Lane -> the ``uv`` extra a lane's job installs. Lane id and extra are separate:
 # several lanes share the ``dev`` extra but are split out for isolation (their own
-# server/CLI, or rate-limit flakiness). crewai is the one lane that *needs* its own
-# conflicting extra (see pyproject [tool.uv] conflicts).
+# server/CLI, or rate-limit flakiness). crewai and parlant are lanes that *need*
+# their own conflicting extra (see pyproject [tool.uv] conflicts).
 LANE_EXTRAS: dict[Lane, Extra] = {
     Lane.CORE: Extra.DEV,
     Lane.CREWAI: Extra.DEV_CREWAI,
@@ -108,6 +110,10 @@ LANE_EXTRAS: dict[Lane, Extra] = {
     # Letta runs the ``dev`` extra but stands up its own self-hosted server, so it
     # gets its own lane (split out of ``backends``, which keeps codex + opencode).
     Lane.LETTA: Extra.DEV,
+    # Parlant's own `griffe`/`griffelib` transitive deps collide with pydantic-ai's
+    # (same import path, two distributions), so it needs its own extra entirely —
+    # `dev` can no longer install parlant at all (see pyproject [tool.uv] conflicts).
+    Lane.PARLANT: Extra.DEV_PARLANT,
 }
 
 
@@ -141,6 +147,7 @@ class Dep(Enum):
     CODEX_CLI = "codex_cli"  # the `codex` CLI reachable on PATH
     CODEX_CWD = "codex_cwd"  # an explicit, disposable working dir outside the repo
     OPENCODE_SERVER = "opencode_server"  # OPENCODE_BASE_URL of a running server
+    OPENCODE_BASH_ASKS = "opencode_bash_asks"  # that serve gates `bash` to `ask`
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
@@ -276,6 +283,16 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OPENCODE_SERVER: DepSpec(
         lambda s: bool(s.backends.opencode_base_url),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
+        lane=Lane.BACKENDS,
+    ),
+    # The serve -- not the adapter's approval_mode -- decides when a permission is
+    # asked, so the manual-relay smoke needs a serve whose rules gate `bash` to
+    # `ask`. Unstated, that smoke stalls to its deadline instead of naming why.
+    Dep.OPENCODE_BASH_ASKS: DepSpec(
+        lambda s: s.backends.opencode_bash_asks,
+        "E2E_OPENCODE_BASH_ASKS=true must declare that OPENCODE_BASE_URL's serve "
+        'gates `bash` to `ask` (permission rule {"bash": "ask"}, as '
+        ".github/scripts/setup-opencode.sh configures)",
         lane=Lane.BACKENDS,
     ),
     Dep.LETTA: DepSpec(

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,7 @@ from band.docker.launcher import (
     execute,
     resolve_launch,
 )
+from tests.logsupport import band_log_env, restored_logging
 
 from .fakes import Workspace, make_env
 
@@ -95,6 +98,56 @@ def test_missing_customer_interpreter_rejected(
     launch = resolve_launch(make_env(workspace))
     with pytest.raises(LaunchError, match=r"\[exec\].*interpreter"):
         execute(launch)
+
+
+def test_launcher_logging_preserves_iso_format(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_file = tmp_path / "launcher.log"
+    with (
+        restored_logging("launcher.probe"),
+        band_log_env(
+            monkeypatch,
+            LEVEL="INFO",
+            ROOT_LEVEL=None,
+            FILE=None,
+            CONSOLE_STYLE="json",
+            FILE_STYLE="json",
+        ),
+    ):
+        launcher_run.configure_logging(log_file=log_file)
+        logging.getLogger("launcher.probe").info("launcher visible")
+        err = capsys.readouterr().err
+
+    pattern = (
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4} "
+        r"launcher\.probe INFO launcher visible$"
+    )
+    assert re.search(pattern, err, re.MULTILINE)
+    assert re.search(pattern, log_file.read_text(), re.MULTILINE)
+
+
+def test_configure_logging_honors_band_log_file_with_no_explicit_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The no-args call (before the launch path is resolved) must still read BAND_LOG_FILE.
+
+    LogSettings(log_file=None, ...) would beat the environment with an explicit
+    None; LogSettings.create() omits it so BAND_LOG_FILE still applies.
+    """
+    log_file = tmp_path / "early.log"
+
+    with (
+        restored_logging("launcher.early"),
+        band_log_env(monkeypatch, LEVEL="INFO", FILE=str(log_file)),
+    ):
+        launcher_run.configure_logging()
+        logging.getLogger("launcher.early").info("early boot")
+
+    assert "early boot" in log_file.read_text()
 
 
 def test_main_exits_nonzero_on_launch_error(

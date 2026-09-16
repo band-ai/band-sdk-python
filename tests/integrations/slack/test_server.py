@@ -6,14 +6,18 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from band.core.simple_adapter import SimpleAdapter
 from band.integrations.slack.server import build_router
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
+from band.integrations.slack.adapter import SlackAdapter
 
 
 def _sign(secret: str, body: bytes, timestamp: str) -> str:
@@ -247,11 +251,6 @@ def test_dispatcher_exception_does_not_break_ack():
 
 
 def test_adapter_router_property_exposes_starlette_router():
-    from typing import Any
-    from unittest.mock import MagicMock
-
-    from band.core.simple_adapter import SimpleAdapter
-    from band.integrations.slack.adapter import SlackAdapter
 
     class _NoopInner(SimpleAdapter[Any]):
         async def on_message(self, *args: Any, **kwargs: Any) -> None:

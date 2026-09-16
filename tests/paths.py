@@ -23,3 +23,7 @@ SRC_ROOT = REPO_ROOT / "src" / "band"
 EXAMPLES_ROOT = REPO_ROOT / "examples"
 KIT_DIR = REPO_ROOT / "docker" / "band_python_kit"
 ENV_TEST_FILE = REPO_ROOT / ".env.test"
+BUG_HUNTING_SCRIPTS = (
+    REPO_ROOT / ".claude" / "skills" / "bug-hunting-via-example" / "scripts"
+)
+CI_SCRIPTS = REPO_ROOT / ".github" / "scripts"

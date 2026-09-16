@@ -5,31 +5,39 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import ClassVar, Any
 
+from typing_extensions import Unpack
+
 from band.converters.letta import LettaHistoryConverter, LettaSessionState
-from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
     AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.integrations.letta.config import (
     LettaAdapterConfig,
     LettaMCPConfig,
     MCPTransport,
+    is_letta_cloud_url,
 )
 from band.integrations.letta.mcp import LettaMCPBridge, bounded_teardown
+from band.integrations.letta.orgscope import resolve_org_scoped_headers
 from band.integrations.letta.prompts import render_tool_enforcement
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
+    iter_tool_definitions,
+    redact_tool_call_args,
+)
 
 __all__ = [
     "LettaAdapter",
@@ -42,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _RoomContext:
+class RoomContext:
     """Per-room state for a Letta agent."""
 
     agent_id: str
@@ -98,63 +106,33 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
+
+    ``Emit.TASK_EVENTS`` is more than narration here: the room's Letta
+    ``agent_id`` is persisted in task event metadata and read back by
+    LettaHistoryConverter to resume the server-side agent. Narrowing
+    ``emit`` to exclude it doesn't just silence updates, it also stops
+    resumption -- every restart creates a fresh Letta agent instead of
+    reattaching. Leave it in ``emit`` unless that's intended.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
         self,
         config: LettaAdapterConfig | None = None,
         history_converter: LettaHistoryConverter | None = None,
-        *,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         self._config = config or LettaAdapterConfig()
 
-        # Detect non-default legacy booleans (enable_task_events defaults to
-        # True, so only enable_memory_tools and enable_execution_reporting
-        # count as "legacy usage").
-        _has_legacy_booleans = (
-            self._config.enable_memory_tools or self._config.enable_execution_reporting
-        )
-
-        if _has_legacy_booleans and features is not None:
-            raise BandConfigError(
-                "Cannot pass both legacy boolean flags in LettaAdapterConfig "
-                "(enable_memory_tools / enable_execution_reporting) "
-                "and 'features'. "
-                "Use features=AdapterFeatures(...) instead."
-            )
-
-        # Build features from config booleans when not explicitly provided.
-        if features is None:
-            if _has_legacy_booleans:
-                warnings.warn(
-                    "enable_memory_tools and enable_execution_reporting in "
-                    "LettaAdapterConfig are deprecated. "
-                    "Use features=AdapterFeatures(capabilities={Capability.MEMORY}, "
-                    "emit={Emit.EXECUTION}) instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if self._config.enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if self._config.enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            if self._config.enable_task_events:
-                emit = emit | frozenset({Emit.TASK_EVENTS})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or LettaHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = self._config
 
@@ -162,21 +140,13 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self._client: Any = None
 
         # Per-room state
-        self._rooms: dict[str, _RoomContext] = {}
+        self._rooms: dict[str, RoomContext] = {}
 
         # Shared mode: single agent ID used across all rooms
         self._shared_agent_id: str | None = None
 
         # The Band MCP tool path: self-hosted server + Letta registration.
-        self._mcp = LettaMCPBridge(
-            self.config.mcp,
-            tool_definitions=iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
-            ),
-            get_tools=self._get_room_tools,
-            teardown_timeout_s=self.config.teardown_timeout_s,
-        )
+        self._mcp = self._build_mcp_bridge()
 
         # Protects agent creation and MCP (re)registration only — not held
         # during message handling, so concurrent rooms process in parallel.
@@ -184,6 +154,21 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         # Built during on_started
         self._system_prompt: str = ""
+
+    def _build_mcp_bridge(self) -> LettaMCPBridge:
+        return LettaMCPBridge(
+            self.config.mcp,
+            tool_definitions=iter_tool_definitions(
+                capabilities=self.features.capabilities,
+            ),
+            get_tools=self._get_room_tools,
+            teardown_timeout_s=self.config.teardown_timeout_s,
+        )
+
+    def apply_effective_features(self, features: AdapterFeatures) -> None:
+        """Rebuild the unstarted MCP bridge with negotiated capabilities."""
+        super().apply_effective_features(features)
+        self._mcp = self._build_mcp_bridge()
 
     def _get_room_tools(self, room_id: str) -> AgentToolsProtocol | None:
         """Resolve room-scoped tools for the self-hosted MCP server."""
@@ -202,8 +187,32 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             features=self.features,
         )
 
+        self._client = await self._build_client(agent_name)
+
+        # Fail loud at startup if the tool path cannot be wired — the adapter
+        # is useless without it.
+        await self._mcp.ensure_ready(self._client)
+
+        logger.info(
+            "Letta adapter started for agent: %s (mode=%s, mcp=%s)",
+            agent_name,
+            self.config.mode,
+            self.config.mcp.mode,
+        )
+
+    async def _build_client(self, agent_name: str) -> Any:
+        """Construct the AsyncLetta SDK client, org-scoped for self-hosted servers.
+
+        Self-hosted Letta dedupes MCP-discovered Tool rows by
+        (name, organization_id): with no user_id header, every instance
+        resolves to the same default org, and a second instance's MCP
+        registration silently re-points the first instance's tool row to
+        its own server. Scoping each instance to its own org+user closes
+        that collision. Cloud is never scoped (org_scoped=True against it
+        is already rejected at config construction — see LettaAdapterConfig).
+        """
         try:
-            from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency
+            from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency  # noqa: PLC0415
         except ImportError:
             raise ImportError(
                 "letta-client is required for LettaAdapter. "
@@ -217,18 +226,28 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             client_kwargs["api_key"] = self.config.provider_key
         if self.config.project:
             client_kwargs["project"] = self.config.project
-        self._client = AsyncLetta(**client_kwargs)
 
-        # Fail loud at startup if the tool path cannot be wired — the adapter
-        # is useless without it.
-        await self._mcp.ensure_ready(self._client)
-
-        logger.info(
-            "Letta adapter started for agent: %s (mode=%s, mcp=%s)",
-            agent_name,
-            self.config.mode,
-            self.config.mcp.mode,
+        org_scoped = (
+            self.config.org_scoped
+            if self.config.org_scoped is not None
+            else not is_letta_cloud_url(self.config.base_url)
         )
+        if org_scoped:
+            client_kwargs["default_headers"] = await resolve_org_scoped_headers(
+                base_url=self.config.base_url,
+                agent_name=agent_name,
+                bearer_token=self.config.provider_key,
+            )
+
+        client = AsyncLetta(**client_kwargs)
+        if org_scoped:
+            # A fresh org has zero Tool rows; base tools (send_message, etc.)
+            # are seeded lazily only by this list call (GET /v1/tools/ with
+            # upsert_base_tools). Nothing else in this adapter's flow reaches
+            # it, so the first agents.create(include_base_tools=True) in a
+            # fresh org would otherwise raise before the agent exists.
+            await client.tools.list()
+        return client
 
     # ------------------------------------------------------------------
     # Message handling
@@ -314,7 +333,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         room_id: str,
         history: LettaSessionState,
         tools: AgentToolsProtocol,
-    ) -> _RoomContext | None:
+    ) -> RoomContext | None:
         """The room's context — normally pre-created by ``on_message``; falls
         back to creating the agent when a racing cleanup popped the room."""
         if (room_ctx := self._rooms.get(room_id)) is not None:
@@ -328,7 +347,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     def _compose_turn_content(
         self,
         msg: PlatformMessage,
-        room_ctx: _RoomContext,
+        room_ctx: RoomContext,
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
@@ -363,8 +382,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         if self.config.mcp.mode == "self_host" and self.config.mode == "shared":
             parts.append(
-                f"[System]: Current room_id: {room_id} — pass it as the "
-                "`room_id` argument in every tool call."
+                f"[System]: Current {CHAT_ID_FIELD_NAME}: {room_id} — pass it as "
+                f"the `{CHAT_ID_FIELD_NAME}` argument in every tool call."
             )
 
         if participants_msg:
@@ -379,7 +398,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
-        room_ctx: _RoomContext,
+        room_ctx: RoomContext,
         content: str,
         room_id: str,
     ) -> None:
@@ -426,7 +445,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         agent_id: str,
         content: str,
         tools: AgentToolsProtocol,
-        room_ctx: _RoomContext,
+        room_ctx: RoomContext,
         room_id: str,
         reply_to_sender_id: str = "",
     ) -> list[str]:
@@ -499,15 +518,29 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     )
                     if tool_name == self._mcp.send_message_tool:
                         used_send_message = True
+                    # ToolCall.arguments is a JSON string (letta_client's own
+                    # wire shape); parse it so redact_tool_call_args can
+                    # replace band_send_room_file's content field -- reporting
+                    # the raw string would put real file bytes in this event.
+                    raw_arguments = (
+                        getattr(tool_call, "arguments", "{}") if tool_call else "{}"
+                    )
+                    try:
+                        parsed_arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        parsed_arguments = raw_arguments
+                    reported_args = (
+                        redact_tool_call_args(tool_name, parsed_arguments)
+                        if isinstance(parsed_arguments, dict)
+                        else parsed_arguments
+                    )
                     await self._report_execution_event(
                         tools,
                         "tool_call",
                         tool_name,
                         {
-                            "name": tool_name,
-                            "args": getattr(tool_call, "arguments", "{}")
-                            if tool_call
-                            else "{}",
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.ARGS: reported_args,
                         },
                     )
                 case "tool_return_message":
@@ -517,8 +550,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                         "tool_result",
                         tool_name,
                         {
-                            "name": tool_name,
-                            "output": getattr(resp_msg, "tool_return", ""),
+                            ToolEventKey.NAME: tool_name,
+                            ToolEventKey.OUTPUT: getattr(resp_msg, "tool_return", ""),
                         },
                     )
 
@@ -572,7 +605,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         The send tools stay silent — their execution already produces visible
         platform output, so reporting them would be duplicate noise.
         """
-        if Emit.EXECUTION not in self.features.emit:
+        if Emit.TOOL_CALLS not in self.features.emit:
             return
         if tool_name in self._mcp.silent_reporting_tools:
             return
@@ -690,7 +723,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     e,
                 )
 
-        room_ctx = _RoomContext(agent_id=self._shared_agent_id)
+        room_ctx = RoomContext(agent_id=self._shared_agent_id)
         if conversation_id is None:
             conversation = await self._client.conversations.create(
                 agent_id=self._shared_agent_id,
@@ -724,7 +757,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # Try to resume: prefer history agent_id, fall back to config agent_id
         resume_agent_id = self._resume_candidate(history)
         if resume_agent_id and await self._resume_agent(resume_agent_id, room_id):
-            self._rooms[room_id] = _RoomContext(
+            self._rooms[room_id] = RoomContext(
                 agent_id=resume_agent_id,
                 conversation_id=history.conversation_id or None,
             )
@@ -736,7 +769,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # already has some (no live agent to resume — the cold-boot case).
         agent_id = await self._create_agent(room_id)
 
-        room_ctx = _RoomContext(agent_id=agent_id)
+        room_ctx = RoomContext(agent_id=agent_id)
         if history.replay_messages:
             room_ctx.pending_seed = list(history.replay_messages)
             logger.info(

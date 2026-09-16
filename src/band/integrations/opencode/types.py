@@ -11,6 +11,7 @@ class OpencodeSessionState:
     """Session metadata persisted in Band task events."""
 
     session_id: str | None = None
+    mcp_server_name: str | None = None
     room_id: str | None = None
     created_at: datetime | None = None
     replay_messages: list[str] = field(default_factory=list)

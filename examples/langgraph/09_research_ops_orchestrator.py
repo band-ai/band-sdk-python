@@ -35,15 +35,14 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.pregel import Pregel
 
-from setup_logging import setup_logging
 from standalone_calculator import create_calculator_graph
 from standalone_sql_agent import create_sql_agent, download_chinook_db
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 from band.config import load_agent_config
 from band.integrations.langgraph import graph_as_tool
 
-setup_logging()
+configure_logging(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -147,14 +146,13 @@ async def main() -> None:
         inject_system_prompt=True,
     )
 
-    agent = Agent.create(
+    logger.info("Starting custom LangGraph operations orchestrator...")
+    async with Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-    )
-
-    logger.info("Starting custom LangGraph operations orchestrator...")
-    await agent.run()
+    ) as agent:
+        await agent.run_forever()
 
 
 if __name__ == "__main__":

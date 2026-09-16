@@ -14,7 +14,8 @@ RUN apt-get update \
     && npm install -g @github/copilot \
     # band-mcp in its own venv (Debian's system Python is externally managed).
     && python3 -m venv /opt/band-mcp \
-    && /opt/band-mcp/bin/pip install --no-cache-dir "band-mcp>=1.3.2"
+    # Pin mcp<2: band-mcp 1.3.2 imports mcp.server.fastmcp, removed in mcp 2.0.
+    && /opt/band-mcp/bin/pip install --no-cache-dir "band-mcp>=1.3.2" "mcp>=1.23.0,<2"
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

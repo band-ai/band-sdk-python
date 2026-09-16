@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from band_rest import AsyncRestClient
+from phoenix_channels_python_client.exceptions import PHXClientError
 
 from band.client.streaming import (
     DeliveryStatus,
@@ -60,9 +61,11 @@ from tests.e2e.baseline.toolkit.observations import (
     MemoryObservation,
     MemoryToolCalls,
     Replies,
+    TaskToolCalls,
     Tasks,
     Thoughts,
     ToolCalls,
+    ToolResults,
     Usage,
 )
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -386,6 +389,47 @@ class ReplyCapture:
             include_memory=include_memory,
         )
 
+    async def tool_results(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+        include_memory: bool = False,
+    ) -> ToolResults:
+        """Read this room's tool results (call after the turn settles). Same
+        read contract as ``tool_calls`` (including the memory-tool exclusion
+        default)."""
+        return await ToolResults.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+            include_memory=include_memory,
+        )
+
+    async def task_calls(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> TaskToolCalls:
+        """Read this room's task-board tool calls (call after the turn settles).
+
+        Same read contract as ``tool_calls``, restricted to the task-board tools
+        (``TaskTool``). Not to be confused with ``tasks()``, which reads ``task``
+        *events* (``band_send_event``) -- an unrelated, pre-existing mechanism.
+        """
+        return await TaskToolCalls.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
     async def usage(
         self,
         *,
@@ -438,7 +482,7 @@ class ReplyCapture:
         The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
         filters narrow the store read. ``limit`` caps both layers (call events and
         stored records). Needs ``user_ops`` and ``settings`` (both bound by the
-        ``reply_capture`` fixture); the agent must run with ``Emit.EXECUTION`` for
+        ``reply_capture`` fixture); the agent must run with ``Emit.TOOL_CALLS`` for
         the call layer to be populated.
         """
         user_ops = self._require_user_ops()
@@ -564,7 +608,20 @@ async def reply_capture(
     try:
         yield capture
     finally:
-        await ws.leave_chat_room_channel(room_id)
+        # Best-effort, but only for the transport: a leave the server never acks
+        # (``PHXTopicError``) or one attempted while the socket is down (
+        # ``PHXConnectionError``) -- both plausible for a WS starved during a long
+        # turn -- must not fail an otherwise-passing test, nor replace the body's
+        # real exception on an error exit. Anything else (e.g. the ``RuntimeError``
+        # from an unstarted client) is misuse and fails loudly.
+        try:
+            await ws.leave_chat_room_channel(room_id)
+        except PHXClientError:
+            logger.warning(
+                "reply_capture: leaving room %s failed on teardown",
+                room_id,
+                exc_info=True,
+            )
 
 
 # Type of the ``reply_capture`` fixture: call with a room id, get a

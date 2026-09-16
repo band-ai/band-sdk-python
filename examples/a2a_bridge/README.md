@@ -64,12 +64,6 @@ export A2A_AGENT_URL=http://localhost:10000
 Before starting the bridge, confirm the remote agent card is reachable:
 
 ```bash
-curl http://localhost:10000/.well-known/agent.json
-```
-
-or:
-
-```bash
 curl http://localhost:10000/.well-known/agent-card.json
 ```
 

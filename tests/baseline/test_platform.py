@@ -12,6 +12,7 @@ def test_mention_routing_uses_handles_and_never_exposes_participant_ids() -> Non
             "name": "Research Agent",
             "type": "Agent",
             "handle": "org/research",
+            "description": "Answers research questions.",
         },
         {
             "id": "user-opaque-id",
@@ -25,6 +26,7 @@ def test_mention_routing_uses_handles_and_never_exposes_participant_ids() -> Non
 
     assert "@org/research" in prompt
     assert "@baseline-user" in prompt
+    assert "Answers research questions." in prompt
     assert "agent-opaque-id" not in prompt
     assert "user-opaque-id" not in prompt
 

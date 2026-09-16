@@ -41,6 +41,7 @@ class OpencodeHistoryConverter(HistoryConverter["OpencodeSessionState"]):
             created_at = parse_iso_datetime(metadata.get("opencode_created_at"))
             return OpencodeSessionState(
                 session_id=str(session_id),
+                mcp_server_name=optional_str(metadata.get("opencode_mcp_server_name")),
                 room_id=optional_str(metadata.get("opencode_room_id")),
                 created_at=created_at,
                 replay_messages=replay_messages,

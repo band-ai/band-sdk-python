@@ -86,4 +86,4 @@ def lookup_code_instruction(key: str) -> str:
 # Shape for @with_adapters / build_adapter: surface each tool call as a ``tool_call``
 # event so ``capture.tool_calls`` can read it. Spread it: ``@with_adapters(
 # Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)``.
-EXECUTION_REPORTING = {"features": AdapterFeatures(emit={Emit.EXECUTION})}
+EXECUTION_REPORTING = {"features": AdapterFeatures(emit={Emit.TOOL_CALLS})}

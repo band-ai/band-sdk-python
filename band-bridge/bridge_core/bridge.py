@@ -25,6 +25,8 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 
+from dotenv import load_dotenv
+
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import MessageCreatedPayload
 from band.runtime.types import PlatformMessage
@@ -253,13 +255,12 @@ class AgentRunner:
 
     async def _connect_and_consume(self) -> None:
         """Connect, subscribe, and consume events until shutdown."""
+        # BandLink.connect() joins the control channel, whose pushes may arrive
+        # before connect() returns. Install the hook before subscribing so an
+        # early interrupt or stop is not dropped.
+        self._link.on_control = self._control.handle
         await self._link.connect()
         self._connected_event.set()
-
-        # Route control signals (interrupt/stop/play) to the control handler.
-        # Set as soon as connected so the hook is live for the agent_control
-        # channel BandLink.connect() already joined.
-        self._link.on_control = self._control.handle
 
         await self._link.subscribe_agent_rooms(self._config.agent_id)
 
@@ -750,8 +751,6 @@ async def main(
 
         asyncio.run(main())
     """
-    from dotenv import load_dotenv
-
     load_dotenv()
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()

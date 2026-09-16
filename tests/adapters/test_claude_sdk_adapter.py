@@ -11,29 +11,161 @@ session persistence, and the chat-based approval flow.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel, Field
 
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
+    _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
-    _PendingApproval,
+    _FORCED_DECLINE,
+    PendingApproval,
     _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
     BAND_MEMORY_TOOLS,
+    BAND_TASK_TOOLS,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
-from band.runtime.tools import ALL_TOOL_NAMES
-from band.core.types import PlatformMessage
+from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.tools import (
+    ALL_TOOL_NAMES,
+    FILE_TOOL_NAMES,
+    MAX_INLINE_IMAGE_BYTES,
+    missing_reply_error,
+    mcp_tool_names,
+)
+from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
+from claude_agent_sdk._errors import CLIConnectionError
+from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
+from claude_agent_sdk.types import PermissionResultDeny
+from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
     reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
 )
+
+if _CLAUDE_SDK_AVAILABLE:
+    from claude_agent_sdk._errors import CLIConnectionError
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ResultMessage,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
+    )
+    from claude_agent_sdk.types import PermissionResultDeny, ToolPermissionContext
+
+
+# The reply tool as the SDK namespaces it (MCP_TOOL_PREFIX + bare name).
+_SEND_MESSAGE_MCP_NAME = "mcp__band__band_send_message"
+_ANY_MODEL = "claude-sonnet-4-6"
+# What a turn that ended without a reply going out must say — the "Error: "
+# prefix is _report_error's own formatting, asserted by substring below
+# rather than re-derived here.
+_MISSING_REPLY_TEXT = missing_reply_error("Claude SDK")
+
+
+def _tool_turn(mcp_tool_name: str) -> list:
+    """A turn's stream in the protocol shape: the assistant calls a tool, then
+    the result comes back in a user-type envelope."""
+    return [
+        AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=mcp_tool_name, input={})],
+            model=_ANY_MODEL,
+        ),
+        UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False)
+            ]
+        ),
+    ]
+
+
+def _error_events(mock_tools: MagicMock) -> list[str]:
+    """Contents of the error events posted through send_event."""
+    return [
+        call.kwargs["content"]
+        for call in mock_tools.send_event.call_args_list
+        if call.kwargs.get("message_type") == "error"
+    ]
+
+
+def _narrated_message_types(mock_tools: MagicMock) -> list[str]:
+    """``message_type`` of every event posted through send_event, in order."""
+    return [
+        call.kwargs["message_type"] for call in mock_tools.send_event.call_args_list
+    ]
+
+
+def _tool_result_payload(mock_tools: MagicMock) -> dict[str, Any]:
+    """The parsed content of the sole tool_result event posted through send_event."""
+    [result_call] = [
+        call
+        for call in mock_tools.send_event.call_args_list
+        if call.kwargs.get("message_type") == "tool_result"
+    ]
+    return json.loads(result_call.kwargs["content"])
+
+
+def register_pending_approval(
+    adapter: ClaudeSDKAdapter,
+    room_id: str = "room-1",
+    token: str = "a-1",
+    *,
+    tool_name: str = "Bash",
+    tool_input: dict[str, Any] | None = None,
+    summary: str | None = None,
+    created_at: datetime | None = None,
+    requester: dict[str, str] | None = None,
+) -> asyncio.Future[str]:
+    """Register one pending approval on adapter, returning its future."""
+    future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    adapter._pending_approvals.setdefault(room_id, {})[token] = PendingApproval(
+        tool_name=tool_name,
+        tool_input=tool_input if tool_input is not None else {},
+        summary=summary or tool_name,
+        created_at=created_at or datetime.now(timezone.utc),
+        future=future,
+        requester=requester or {"id": "test-user", "name": "Test"},
+    )
+    return future
+
+
+def _result_message(
+    *,
+    session_id: str = "sess-xyz",
+    is_error: bool = False,
+    result: str | None = None,
+    errors: list[str] | None = None,
+    api_error_status: int | None = None,
+    permission_denials: list[dict[str, Any]] | None = None,
+) -> ResultMessage:
+    """Build a real ``ResultMessage`` with only the fields a test cares about set."""
+    return ResultMessage(
+        subtype="success",
+        duration_ms=100,
+        duration_api_ms=100,
+        is_error=is_error,
+        num_turns=1,
+        session_id=session_id,
+        result=result,
+        errors=errors,
+        api_error_status=api_error_status,
+        permission_denials=permission_denials,
+    )
+
+
+def _denial(tool_use_id: str, tool_name: str) -> dict[str, Any]:
+    """A ``SDKPermissionDenial``-shaped entry for ``ResultMessage.permission_denials``."""
+    return {"tool_name": tool_name, "tool_use_id": tool_use_id, "tool_input": {}}
 
 
 @pytest.fixture
@@ -71,17 +203,11 @@ class TestInitialization:
     def test_default_initialization(self):
         """Should initialize with no memory capability by default."""
         adapter = ClaudeSDKAdapter()
-
-        from band.core.types import Capability
-
         assert Capability.MEMORY not in adapter.features.capabilities
 
     def test_enable_memory_tools(self):
-        """Should accept enable_memory_tools parameter (deprecated)."""
-        adapter = ClaudeSDKAdapter(enable_memory_tools=True)
-
-        from band.core.types import Capability
-
+        """Should accept capabilities=Capability.MEMORY."""
+        adapter = ClaudeSDKAdapter(capabilities=Capability.MEMORY)
         assert Capability.MEMORY in adapter.features.capabilities
 
 
@@ -127,6 +253,38 @@ class TestOnStarted:
             sdk_options = mock_manager_class.call_args[0][0]
             assert sdk_options.model == _DEFAULT_MODEL
             assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_max_buffer_size_exceeds_claude_agent_sdks_default(self):
+        """Reproduced live: band_read_room_file inlined a 737.8 KB JPEG as
+        base64 (~4/3 size increase) inside one JSON-per-line message from the
+        Claude CLI subprocess -- comfortably clearing claude_agent_sdk's
+        stdio transport's default max_buffer_size of 1 MiB
+        (claude_agent_sdk._internal.transport.subprocess_cli.
+        _DEFAULT_MAX_BUFFER_SIZE) -- and that fatally dropped the whole CLI
+        connection, not just the one tool call. The configured buffer must
+        clear both the library's real default and the base64-inflated size
+        of the largest image band_read_room_file advertises inlining
+        (MAX_INLINE_IMAGE_BYTES); anything less reopens the same crash.
+        """
+        adapter = ClaudeSDKAdapter()
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            claude_agent_sdk_default_buffer_bytes = 1024 * 1024
+            largest_inline_image_base64_bytes = MAX_INLINE_IMAGE_BYTES * 4 // 3
+
+            assert sdk_options.max_buffer_size == _CLAUDE_SDK_MAX_BUFFER_BYTES
+            assert sdk_options.max_buffer_size > claude_agent_sdk_default_buffer_bytes
+            assert sdk_options.max_buffer_size > largest_inline_image_base64_bytes
 
     @pytest.mark.asyncio
     async def test_explicit_model_is_forwarded(self):
@@ -206,9 +364,6 @@ class TestOnMessage:
             # By default the adapter wraps tools with DedupingAgentTools so
             # MCP tool calls go through the dedup shim.  The wrapped
             # instance is what gets stored and forwarded.
-            from band.integrations.claude_sdk.dedup_tools import (
-                DedupingAgentTools,
-            )
 
             stored_tools = adapter._room_tools["room-123"]
             assert isinstance(stored_tools, DedupingAgentTools)
@@ -342,7 +497,6 @@ class TestCLIConnectionError:
         self, sample_message, mock_tools
     ):
         """CLIConnectionError should invalidate the dead session and re-raise."""
-        from claude_agent_sdk._errors import CLIConnectionError
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -382,7 +536,6 @@ class TestCLIConnectionError:
         self, sample_message, mock_tools
     ):
         """CLIConnectionError should report error event to the user."""
-        from claude_agent_sdk._errors import CLIConnectionError
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -421,7 +574,6 @@ class TestCLIConnectionError:
         self, sample_message, mock_tools
     ):
         """CLIConnectionError should clear cached session ID so resume is not attempted."""
-        from claude_agent_sdk._errors import CLIConnectionError
 
         adapter = ClaudeSDKAdapter()
         # Pre-populate a session ID
@@ -453,6 +605,50 @@ class TestCLIConnectionError:
                 )
 
             assert "room-123" not in adapter._session_ids
+
+    @pytest.mark.asyncio
+    async def test_stream_ending_without_result_invalidates_session_and_fails_turn(
+        self, sample_message, mock_tools
+    ):
+        """An EOF before ResultMessage is a dead client, not a successful turn."""
+        adapter = ClaudeSDKAdapter()
+        adapter._session_ids["room-123"] = "sess-old"
+        mock_client = MagicMock()
+
+        async def receive():
+            if False:
+                yield None
+
+        mock_client.query = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=receive())
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+        mock_manager.invalidate_session = AsyncMock()
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager",
+            return_value=mock_manager,
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            with pytest.raises(CLIConnectionError, match="ended without a result"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=False,
+                    room_id="room-123",
+                )
+
+        mock_manager.invalidate_session.assert_awaited_once_with("room-123")
+        assert "room-123" not in adapter._session_ids
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "ended without a result" in errors[0]
 
 
 class TestRoomToolsStorage:
@@ -563,10 +759,15 @@ class TestBandTools:
         )
 
     def test_band_all_tools_combines_base_and_memory(self):
-        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
-        from band.runtime.tools import mcp_tool_names
+        """BAND_ALL_TOOLS should combine base, memory, file, and task tools
+        without duplicates."""
 
-        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert set(BAND_ALL_TOOLS) == (
+            set(BAND_BASE_TOOLS)
+            | set(BAND_MEMORY_TOOLS)
+            | set(mcp_tool_names(FILE_TOOL_NAMES))
+            | set(BAND_TASK_TOOLS)
+        )
         assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
         assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
             "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "
@@ -579,7 +780,6 @@ class TestCustomTools:
 
     def test_accepts_additional_tools_parameter(self):
         """Adapter accepts list of CustomToolDef tuples."""
-        from pydantic import BaseModel, Field
 
         class EchoInput(BaseModel):
             """Echo the message."""
@@ -598,7 +798,6 @@ class TestCustomTools:
 
     def test_multiple_custom_tools(self):
         """Should accept multiple custom tools."""
-        from pydantic import BaseModel
 
         class Tool1Input(BaseModel):
             """Tool 1."""
@@ -625,7 +824,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tools_added_to_allowed_tools(self):
         """Custom tools should be added to allowed_tools list."""
-        from pydantic import BaseModel
 
         class CalculatorInput(BaseModel):
             """Perform calculations."""
@@ -664,7 +862,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tools_registered_in_mcp_server(self):
         """Custom tools should be registered in MCP server (memory tools disabled)."""
-        from pydantic import BaseModel
 
         class EchoInput(BaseModel):
             """Echo tool."""
@@ -707,7 +904,6 @@ class TestCustomTools:
     @pytest.mark.asyncio
     async def test_custom_tools_registered_with_memory_tools_enabled(self):
         """Custom tools should be registered in MCP server (memory tools enabled)."""
-        from pydantic import BaseModel
 
         class EchoInput(BaseModel):
             """Echo tool."""
@@ -719,7 +915,7 @@ class TestCustomTools:
 
         adapter = ClaudeSDKAdapter(
             additional_tools=[(EchoInput, echo)],
-            enable_memory_tools=True,
+            capabilities=Capability.MEMORY,
         )
 
         mock_backend = MagicMock()
@@ -748,8 +944,6 @@ class TestCustomTools:
 
     def test_tool_name_derived_from_input_model(self):
         """Tool name should be derived from Pydantic model class name."""
-        from band.runtime.custom_tools import get_custom_tool_name
-        from pydantic import BaseModel
 
         class MyCustomToolInput(BaseModel):
             """A custom tool."""
@@ -774,25 +968,26 @@ class TestSessionPersistence:
     @pytest.mark.asyncio
     async def test_emits_task_event_after_session_id_capture(self, mock_tools):
         """Should emit task event with session_id after ResultMessage."""
-        adapter = ClaudeSDKAdapter()
+        # emit=() isolates the session task event, which posts unconditionally
+        # regardless of emit (see _persist_session_id) — narration is opt-out
+        # by default and would otherwise add tool_call/tool_result events too.
+        adapter = ClaudeSDKAdapter(emit=())
 
-        # Create a mock ResultMessage with session_id
-        mock_result_msg = MagicMock()
-        mock_result_msg.session_id = "sess-xyz-789"
-        mock_result_msg.duration_ms = 1500
-        mock_result_msg.total_cost_usd = 0.01
+        # A turn that actually replied via band_send_message, so the missing-reply
+        # guard stays quiet and the only send_event call is the session task event.
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        result_msg = _result_message(session_id="sess-xyz-789")
 
-        # Create mock client that yields the ResultMessage
         mock_client = MagicMock()
 
         async def mock_receive():
-            yield mock_result_msg
+            for sdk_message in turn:
+                yield sdk_message
+            yield result_msg
 
         mock_client.receive_response = mock_receive
 
-        # Patch isinstance checks for ResultMessage
-        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
-            await adapter._process_response(mock_client, "room-123", mock_tools)
+        await adapter._process_response(mock_client, "room-123", mock_tools)
 
         # Verify task event was emitted
         mock_tools.send_event.assert_called_once_with(
@@ -919,24 +1114,591 @@ class TestSessionPersistence:
         adapter = ClaudeSDKAdapter()
         mock_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
 
-        mock_result_msg = MagicMock()
-        mock_result_msg.session_id = "sess-xyz"
-        mock_result_msg.duration_ms = 100
-        mock_result_msg.total_cost_usd = 0.001
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        result_msg = _result_message(session_id="sess-xyz")
 
         mock_client = MagicMock()
 
         async def mock_receive():
-            yield mock_result_msg
+            for sdk_message in turn:
+                yield sdk_message
+            yield result_msg
 
         mock_client.receive_response = mock_receive
 
-        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
-            # Should not raise despite send_event failure
-            await adapter._process_response(mock_client, "room-123", mock_tools)
+        # Should not raise despite send_event failure
+        await adapter._process_response(mock_client, "room-123", mock_tools)
 
         # Session ID should still be captured in-memory
         assert adapter._session_ids["room-123"] == "sess-xyz"
+
+
+class TestTurnFailureSurfacing:
+    """A failed or silent turn must surface a room-visible error."""
+
+    def test_declined_the_reply_ignores_malformed_denial_entries(self):
+        """``permission_denials`` is typed ``list[Any]`` — raw, unvalidated
+        CLI JSON, not a structure this SDK guarantees the shape of. A
+        malformed entry must not crash turn-completion, just fail to match."""
+        adapter = ClaudeSDKAdapter()
+        assert (
+            adapter._declined_the_reply(["not-a-dict", 42, None], {"tool-1"}) is False
+        )
+
+    @staticmethod
+    def _client_yielding(*sdk_messages) -> MagicMock:
+        mock_client = MagicMock()
+
+        async def mock_receive():
+            for message in sdk_messages:
+                yield message
+
+        mock_client.receive_response = mock_receive
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_reports_error_on_is_error_result(self, mock_tools):
+        """``is_error`` must surface even though ``subtype`` claims success.
+
+        On a hard failure such as a CLI auth error, the CLI reports
+        ``is_error=True`` with ``subtype="success"``, so the adapter must gate
+        on ``is_error`` and never on ``subtype``.
+        """
+        adapter = ClaudeSDKAdapter()
+        result_msg = _result_message(
+            is_error=True,
+            result="Not logged in · Please run /login",
+            api_error_status=None,
+        )
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "Not logged in · Please run /login" in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_error_detail_includes_api_error_status(self, mock_tools):
+        """The HTTP status on a failed API call is surfaced alongside ``result``."""
+        adapter = ClaudeSDKAdapter()
+        result_msg = _result_message(
+            is_error=True,
+            result="Failed to authenticate. API Error: 401",
+            api_error_status=401,
+        )
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert "401" in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_reports_missing_reply_when_no_terminal_tool_ran(self, mock_tools):
+        """A clean turn that never called a Band tool must not go silent."""
+        adapter = ClaudeSDKAdapter()
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_no_error_reported_when_reply_tool_ran(self, mock_tools):
+        """A turn that replied via band_send_message must stay quiet."""
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(*turn, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_assistant_carried_tool_result_also_counts(self, mock_tools):
+        """A tool result arriving inside an assistant message (accepted
+        defensively alongside the protocol's user-envelope shape) still counts
+        as the turn's reply."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={}),
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
+            ],
+            model=_ANY_MODEL,
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_execution_narration_covers_user_envelope_results(self, mock_tools):
+        """With Emit.TOOL_CALLS on, a protocol-shaped turn narrates both the
+        tool_call and the tool_result (which arrives in a user envelope)."""
+        adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        mock_client = self._client_yielding(*turn, _result_message())
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        narrated_types = _narrated_message_types(mock_tools)
+        assert "tool_call" in narrated_types
+        assert "tool_result" in narrated_types
+
+    @pytest.mark.asyncio
+    async def test_tool_result_payload_includes_name_and_is_error(self, mock_tools):
+        """The tool_result event must carry NAME and IS_ERROR: parse_tool_result
+        (converters/parsing.py) drops any payload missing a name outright, and
+        every sibling adapter's tool_result payload sets both."""
+        adapter = ClaudeSDKAdapter(emit=Emit.TOOL_CALLS)
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="boom", is_error=True)
+            ]
+        )
+        mock_client = self._client_yielding(assistant_msg, user_msg, _result_message())
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        payload = _tool_result_payload(mock_tools)
+        assert payload[ToolEventKey.NAME] == "band_send_message"
+        assert payload[ToolEventKey.IS_ERROR] is True
+
+    @pytest.mark.asyncio
+    async def test_no_error_reported_when_only_read_only_tool_ran(self, mock_tools):
+        """A read-only lookup (e.g. band_list_contacts) is not a terminal reply."""
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn("mcp__band__band_list_contacts")
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(*turn, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_tool_result_with_is_error_none_counts_as_success(self, mock_tools):
+        """The SDK's own convention: ``ToolResultBlock.is_error`` omitted from
+        the CLI's JSON (``None``) means success, same as an explicit ``False``."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={}),
+            ],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=None)]
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_custom_terminal_tool_counts_as_reply(self, mock_tools):
+        """A custom tool marked ``band_terminal=True`` must be recognized under
+        its actual registered MCP name (get_custom_tool_name), not the Python
+        handler's ``__name__`` — those two can differ."""
+
+        class DeployInput(BaseModel):
+            target: str
+
+        def run_the_deploy_handler(args: DeployInput) -> str:
+            return "deployed"
+
+        run_the_deploy_handler.band_terminal = True
+        adapter = ClaudeSDKAdapter(
+            additional_tools=[(DeployInput, run_the_deploy_handler)]
+        )
+        # get_custom_tool_name(DeployInput) == "deploy" — deliberately unlike
+        # the handler's own __name__, to prove the fix keys off the former.
+        turn = _tool_turn("mcp__band__deploy")
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(*turn, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_declined_reply_tool_does_not_also_report_missing_reply(
+        self, mock_tools
+    ):
+        """A denied tool call already posts its own decline notice — the
+        missing-reply guard must not pile a second, contradictory error on
+        top of a turn the approval flow already explained."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        # The declined call's result comes back as an error, same as a real
+        # denial would surface through the SDK's own protocol.
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
+            ]
+        )
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", _SEND_MESSAGE_MCP_NAME)],
+        )
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_declined_side_tool_still_reports_missing_reply(self, mock_tools):
+        """Declining a tool that would never have delivered the reply (e.g. a
+        read-only lookup) does not explain a subsequent silent turn — only a
+        decline notice for what would have been the reply tool does."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            "mcp__band__band_list_contacts",
+            {},
+            ToolPermissionContext(tool_use_id="tool-1"),
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        assistant_msg = AssistantMessage(
+            content=[
+                ToolUseBlock(
+                    id="tool-1", name="mcp__band__band_list_contacts", input={}
+                )
+            ],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
+            ]
+        )
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", "mcp__band__band_list_contacts")],
+        )
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_notified_decline_does_not_leak_past_a_turn_that_replied(
+        self, mock_tools
+    ):
+        """A side tool declined-and-notified in a turn that still replies via
+        band_send_message must not leave a stale notified-decline entry for
+        this room once the turn completes — otherwise it grows unbounded
+        over the life of a room that declines side tools but keeps
+        answering normally."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            "mcp__band__band_list_contacts",
+            {},
+            ToolPermissionContext(tool_use_id="tool-1"),
+        )
+        assert isinstance(decision, PermissionResultDeny)
+        assert "tool-1" in adapter._notified_declines["room-123"]
+
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", "mcp__band__band_list_contacts")],
+        )
+        mock_client = self._client_yielding(*turn, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+        assert "room-123" not in adapter._notified_declines
+
+    @pytest.mark.asyncio
+    async def test_user_envelope_tool_use_is_tracked(self, mock_tools):
+        """A tool_use block carried in a user-type envelope (e.g. a
+        subagent's nested call) must be tracked the same as one carried by
+        an assistant message, not silently dropped."""
+        adapter = ClaudeSDKAdapter()
+        user_msg = UserMessage(
+            content=[
+                ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={}),
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False),
+            ]
+        )
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_stream_eof_after_delivered_reply_completes_the_turn(
+        self, mock_tools
+    ):
+        """The CLI dying between a delivered reply and its ResultMessage must
+        not fail the turn: the reply already reached the room, and a failed
+        turn would make the runtime redeliver the message and answer the user
+        twice. No exception, no room-visible error."""
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        mock_client = self._client_yielding(*turn)  # no ResultMessage
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_stream_eof_without_reply_still_fails_the_turn(self, mock_tools):
+        """An EOF on a turn that delivered nothing is a dead client: it must
+        reach the dead-client recovery path, not return as a success."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        mock_client = self._client_yielding(assistant_msg)  # no result, no reply
+
+        with pytest.raises(CLIConnectionError, match="ended without a result"):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
+
+    @pytest.mark.asyncio
+    async def test_replayed_tool_result_from_previous_turn_counts_as_reply(
+        self, mock_tools
+    ):
+        """A resumed session can replay a tool result whose tool_use streamed
+        in an earlier, truncated turn. The pending-call map is room-scoped so
+        that result still resolves to its tool name and counts as the turn's
+        answer — no spurious missing-reply error on an answered turn."""
+        adapter = ClaudeSDKAdapter()
+        tool_use_turn = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        dead_client = self._client_yielding(tool_use_turn)  # dies before result
+        with pytest.raises(CLIConnectionError, match="ended without a result"):
+            await adapter._process_response(dead_client, "room-123", mock_tools)
+
+        replayed_result = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="ok", is_error=False)
+            ]
+        )
+        resumed_client = self._client_yielding(
+            replayed_result, _result_message(is_error=False)
+        )
+        await adapter._process_response(resumed_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_band_tool_error_string_is_not_terminal_work(self, mock_tools):
+        """A Band tool wrapper that caught an exception returns an "Error "
+        string without setting is_error; that reply never reached the room,
+        so the missing-reply guard must still fire."""
+        adapter = ClaudeSDKAdapter()
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        failed_result = UserMessage(
+            content=[
+                ToolResultBlock(
+                    tool_use_id="tool-1", content="Error sending message", is_error=None
+                )
+            ]
+        )
+        mock_client = self._client_yielding(
+            assistant_msg, failed_result, _result_message(is_error=False)
+        )
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_unserializable_tool_payload_does_not_abort_the_turn(
+        self, mock_tools
+    ):
+        """Narration payloads are serialized lazily, past the emit gate and
+        inside its try — a tool result the default no-emit adapter can't
+        json.dumps must cost nothing and never abort the turn."""
+        adapter = ClaudeSDKAdapter()
+        turn = _tool_turn(_SEND_MESSAGE_MCP_NAME)
+        turn[1].content[0].content = object()  # not JSON-serializable
+
+        mock_client = self._client_yielding(*turn, _result_message(is_error=False))
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        assert _error_events(mock_tools) == []
+
+    @pytest.mark.asyncio
+    async def test_silent_auto_decline_still_reports_missing_reply(self, mock_tools):
+        """``approval_text_notifications=False`` means auto_decline denies a
+        tool call without ever telling the room why — so the missing-reply
+        guard must still fire; the turn cannot be silently marked as already
+        explained when no explanation was actually delivered."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="auto_decline", approval_text_notifications=False
+        )
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
+        )
+        assert isinstance(decision, PermissionResultDeny)
+        mock_tools.send_message.assert_not_awaited()
+
+        assistant_msg = AssistantMessage(
+            content=[ToolUseBlock(id="tool-1", name=_SEND_MESSAGE_MCP_NAME, input={})],
+            model=_ANY_MODEL,
+        )
+        user_msg = UserMessage(
+            content=[
+                ToolResultBlock(tool_use_id="tool-1", content="denied", is_error=True)
+            ]
+        )
+        # The CLI still reports the denial (see permission_denials) even
+        # though our own notification never reached the room — proves the
+        # guard is gated on delivery, not merely on the CLI's own record.
+        result_msg = _result_message(
+            is_error=False,
+            permission_denials=[_denial("tool-1", _SEND_MESSAGE_MCP_NAME)],
+        )
+        mock_client = self._client_yielding(assistant_msg, user_msg, result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_declined_marker_does_not_leak_into_next_turn(self, mock_tools):
+        """A decline from a turn that then dies before its ResultMessage must
+        not leave the room's next, unrelated turn looking pre-explained, even
+        though nothing ever clears the leftover notified-tool_use_id record
+        (a real CLI never reuses a tool_use_id, so the next turn's own
+        ``permission_denials`` can never accidentally match it)."""
+        adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        dead_turn_client = self._client_yielding()  # ends with no ResultMessage
+        with pytest.raises(CLIConnectionError, match="ended without a result"):
+            await adapter._process_response(dead_turn_client, "room-123", mock_tools)
+
+        # A fresh, unrelated turn: no tool activity, no permission_denials.
+        next_turn_client = self._client_yielding(_result_message(is_error=False))
+        await adapter._process_response(next_turn_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_undelivered_approval_prompt_still_reports_missing_reply(
+        self, mock_tools
+    ):
+        """Manual mode's approval prompt itself failed to send — the room got
+        no explanation at all — so the missing-reply guard must still fire
+        even though the tool call was denied."""
+        adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=5.0)
+        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
+
+    @pytest.mark.asyncio
+    async def test_undelivered_timeout_notice_still_reports_missing_reply(
+        self, mock_tools
+    ):
+        """An approval that times out into a decline suppresses the
+        missing-reply guard only when its timeout notice actually reached the
+        room; here the prompt sends fine but the timeout notice fails, so the
+        guard must still fire."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="manual",
+            approval_wait_timeout_s=0.05,
+            approval_timeout_decision="decline",
+        )
+        mock_tools.send_message = AsyncMock(
+            side_effect=[{"status": "sent"}, RuntimeError("network down")]
+        )
+        adapter._room_tools["room-123"] = mock_tools
+        can_use_tool = adapter._make_can_use_tool("room-123")
+
+        decision = await can_use_tool(
+            _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext()
+        )
+        assert isinstance(decision, PermissionResultDeny)
+
+        result_msg = _result_message(is_error=False)
+        mock_client = self._client_yielding(result_msg)
+
+        await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        errors = _error_events(mock_tools)
+        assert len(errors) == 1
+        assert _MISSING_REPLY_TEXT in errors[0]
 
 
 # ======================================================================
@@ -995,6 +1757,23 @@ class TestCommandExtraction:
     def test_command_with_leading_whitespace(self):
         """Leading whitespace should be ignored."""
         assert ClaudeSDKAdapter._extract_command("  /approve a-1") == ("approve", "a-1")
+
+    def test_command_after_leading_mention_block(self):
+        """A delivered reply arrives with the platform's ``@handle`` mention
+        prepended (a reply must mention the agent), so the command follows it.
+        The block is stripped so the command still matches -- without this the
+        chat-approval reply was silently forwarded to the model as a prompt."""
+        assert ClaudeSDKAdapter._extract_command("@alex/claude /approve a-1") == (
+            "approve",
+            "a-1",
+        )
+        # A human typing an inline mention doubles the token; still recognized.
+        assert ClaudeSDKAdapter._extract_command(
+            "@alex/claude @alex/claude /decline a-2"
+        ) == (
+            "decline",
+            "a-2",
+        )
 
     def test_approve_without_token(self):
         assert ClaudeSDKAdapter._extract_command("/approve") == ("approve", "")
@@ -1092,17 +1871,9 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """Should list pending approvals with token, summary, and age."""
-        loop = asyncio.get_running_loop()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={"command": "ls"},
-                summary="Bash: `ls`",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        register_pending_approval(
+            adapter_with_approval, tool_input={"command": "ls"}, summary="Bash: `ls`"
+        )
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1119,18 +1890,7 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """Should resolve the pending future with 'accept'."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1146,18 +1906,7 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """Should resolve the pending future with 'decline'."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1169,22 +1918,50 @@ class TestApprovalCommandHandling:
         assert future.result() == "decline"
 
     @pytest.mark.asyncio
+    async def test_decline_resolution_notice_failure_does_not_claim_delivery(
+        self, adapter_with_approval, mock_tools, sender
+    ):
+        """When the '/decline resolved as **decline**' notice itself fails to
+        send, the future must resolve to _FORCED_DECLINE, not plain
+        "decline" — otherwise _resolve_manual_approval's decision_raw ==
+        "decline" check would wrongly treat the tool call as having been
+        explained to the room and suppress the missing-reply guard."""
+        future = register_pending_approval(adapter_with_approval)
+        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+        await adapter_with_approval._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="decline",
+            args="a-1",
+            sender=sender,
+        )
+        assert future.done()
+        assert future.result() == _FORCED_DECLINE
+
+    @pytest.mark.asyncio
+    async def test_approve_resolution_notice_failure_still_accepts(
+        self, adapter_with_approval, mock_tools, sender
+    ):
+        """An approve's confirmation notice is best-effort: a failed send must
+        not turn an approved tool call into a decline."""
+        future = register_pending_approval(adapter_with_approval)
+        mock_tools.send_message = AsyncMock(side_effect=RuntimeError("network down"))
+        await adapter_with_approval._handle_approval_command(
+            tools=mock_tools,
+            room_id="room-1",
+            command="approve",
+            args="a-1",
+            sender=sender,
+        )
+        assert future.done()
+        assert future.result() == "accept"
+
+    @pytest.mark.asyncio
     async def test_approve_single_pending_no_token(
         self, adapter_with_approval, mock_tools, sender
     ):
         """When only 1 pending, /approve without token should resolve it."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1199,25 +1976,8 @@ class TestApprovalCommandHandling:
         self, adapter_with_approval, mock_tools, sender
     ):
         """When multiple pending, /approve without token should ask for token."""
-        loop = asyncio.get_running_loop()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-            "a-2": _PendingApproval(
-                tool_name="Edit",
-                tool_input={},
-                summary="Edit",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        register_pending_approval(adapter_with_approval, token="a-1", tool_name="Bash")
+        register_pending_approval(adapter_with_approval, token="a-2", tool_name="Edit")
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1231,17 +1991,7 @@ class TestApprovalCommandHandling:
     @pytest.mark.asyncio
     async def test_unknown_token(self, adapter_with_approval, mock_tools, sender):
         """Should report unknown token with available tokens."""
-        loop = asyncio.get_running_loop()
-        adapter_with_approval._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=loop.create_future(),
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        register_pending_approval(adapter_with_approval)
         await adapter_with_approval._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1271,18 +2021,7 @@ class TestApprovalAuthorization:
             approval_mode="manual",
             approval_authorized_senders={"admin-1"},
         )
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1299,18 +2038,7 @@ class TestApprovalAuthorization:
             approval_mode="manual",
             approval_authorized_senders={"admin-1"},
         )
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1345,18 +2073,7 @@ class TestApprovalAuthorization:
         """When approval_authorized_senders is None, any sender can approve."""
         adapter = ClaudeSDKAdapter(approval_mode="manual")
         sender = {"id": "anyone", "name": "Anyone"}
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
         await adapter._handle_approval_command(
             tools=mock_tools,
             room_id="room-1",
@@ -1374,10 +2091,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_accept_returns_allow(self, mock_tools):
         """auto_accept mode should return PermissionResultAllow."""
-        from claude_agent_sdk.types import (
-            PermissionResultAllow,
-            ToolPermissionContext,
-        )
 
         adapter = ClaudeSDKAdapter(approval_mode="auto_accept")
         adapter._room_tools["room-1"] = mock_tools
@@ -1391,7 +2104,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_accept_sends_notification(self, mock_tools):
         """auto_accept should send policy notification when enabled."""
-        from claude_agent_sdk.types import ToolPermissionContext
 
         adapter = ClaudeSDKAdapter(
             approval_mode="auto_accept", approval_text_notifications=True
@@ -1409,10 +2121,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_decline_returns_deny(self, mock_tools):
         """auto_decline mode should return PermissionResultDeny."""
-        from claude_agent_sdk.types import (
-            PermissionResultDeny,
-            ToolPermissionContext,
-        )
 
         adapter = ClaudeSDKAdapter(approval_mode="auto_decline")
         adapter._room_tools["room-1"] = mock_tools
@@ -1426,7 +2134,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_auto_accept_no_notification_when_disabled(self, mock_tools):
         """Should not send notification when approval_text_notifications=False."""
-        from claude_agent_sdk.types import ToolPermissionContext
 
         adapter = ClaudeSDKAdapter(
             approval_mode="auto_accept", approval_text_notifications=False
@@ -1442,10 +2149,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_sends_approval_request(self, mock_tools):
         """Manual mode should send approval message and wait on future."""
-        from claude_agent_sdk.types import (
-            PermissionResultAllow,
-            ToolPermissionContext,
-        )
 
         adapter = ClaudeSDKAdapter(approval_mode="manual", approval_wait_timeout_s=1.0)
         adapter._room_tools["room-1"] = mock_tools
@@ -1472,10 +2175,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_timeout_declines(self, mock_tools):
         """Manual mode should decline on timeout when timeout_decision='decline'."""
-        from claude_agent_sdk.types import (
-            PermissionResultDeny,
-            ToolPermissionContext,
-        )
 
         adapter = ClaudeSDKAdapter(
             approval_mode="manual",
@@ -1493,10 +2192,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_timeout_accepts(self, mock_tools):
         """Manual mode should accept on timeout when timeout_decision='accept'."""
-        from claude_agent_sdk.types import (
-            PermissionResultAllow,
-            ToolPermissionContext,
-        )
 
         adapter = ClaudeSDKAdapter(
             approval_mode="manual",
@@ -1514,10 +2209,6 @@ class TestCanUseToolCallback:
     @pytest.mark.asyncio
     async def test_manual_mode_notification_failure_declines(self, mock_tools):
         """If the approval notification can't be delivered, decline immediately."""
-        from claude_agent_sdk.types import (
-            PermissionResultDeny,
-            ToolPermissionContext,
-        )
 
         adapter = ClaudeSDKAdapter(
             approval_mode="manual",
@@ -1542,20 +2233,9 @@ class TestOnMessageCommandInterception:
     async def test_approve_command_intercepted(self, mock_tools):
         """Messages with /approve should not be sent to Claude."""
         adapter = ClaudeSDKAdapter(approval_mode="manual")
-        loop = asyncio.get_running_loop()
 
         # Pre-populate a pending approval
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
 
         msg = PlatformMessage(
             id="msg-1",
@@ -1823,23 +2503,12 @@ class TestApprovalCleanup:
         adapter = ClaudeSDKAdapter(approval_mode="manual")
         adapter._session_manager = AsyncMock()
 
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        future = register_pending_approval(adapter)
 
         await adapter.on_cleanup("room-1")
 
         assert future.done()
-        assert future.result() == "decline"
+        assert future.result() == _FORCED_DECLINE
         assert "room-1" not in adapter._pending_approvals
 
     @pytest.mark.asyncio
@@ -1848,34 +2517,15 @@ class TestApprovalCleanup:
         adapter = ClaudeSDKAdapter(approval_mode="manual")
         adapter._session_manager = AsyncMock()
 
-        loop = asyncio.get_running_loop()
-        f1: asyncio.Future[str] = loop.create_future()
-        f2: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Bash",
-                tool_input={},
-                summary="Bash",
-                created_at=datetime.now(timezone.utc),
-                future=f1,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
-        adapter._pending_approvals["room-2"] = {
-            "a-2": _PendingApproval(
-                tool_name="Edit",
-                tool_input={},
-                summary="Edit",
-                created_at=datetime.now(timezone.utc),
-                future=f2,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        f1 = register_pending_approval(adapter, room_id="room-1", tool_name="Bash")
+        f2 = register_pending_approval(
+            adapter, room_id="room-2", token="a-2", tool_name="Edit"
+        )
 
         await adapter.cleanup_all()
 
-        assert f1.result() == "decline"
-        assert f2.result() == "decline"
+        assert f1.result() == _FORCED_DECLINE
+        assert f2.result() == _FORCED_DECLINE
         assert len(adapter._pending_approvals) == 0
 
 
@@ -1885,7 +2535,6 @@ class TestPendingApprovalEviction:
     @pytest.mark.asyncio
     async def test_evicts_oldest_when_capacity_reached(self, mock_tools):
         """Should evict oldest pending when max capacity is reached."""
-        from claude_agent_sdk.types import ToolPermissionContext
 
         adapter = ClaudeSDKAdapter(
             approval_mode="manual",
@@ -1896,19 +2545,12 @@ class TestPendingApprovalEviction:
         adapter._room_tools["room-1"] = mock_tools
         adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
 
-        loop = asyncio.get_running_loop()
         # Pre-populate one pending approval
-        old_future: asyncio.Future[str] = loop.create_future()
-        adapter._pending_approvals["room-1"] = {
-            "a-1": _PendingApproval(
-                tool_name="Old",
-                tool_input={},
-                summary="Old",
-                created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
-                future=old_future,
-                requester={"id": "test-user", "name": "Test"},
-            ),
-        }
+        old_future = register_pending_approval(
+            adapter,
+            tool_name="Old",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
 
         # Now trigger a new approval (should evict old one)
         callback = adapter._make_can_use_tool("room-1")
@@ -1916,7 +2558,41 @@ class TestPendingApprovalEviction:
 
         # Old future should have been evicted and declined
         assert old_future.done()
-        assert old_future.result() == "decline"
+        assert old_future.result() == _FORCED_DECLINE
+
+    @pytest.mark.asyncio
+    async def test_evicted_approval_is_not_recorded_as_notified(self, mock_tools):
+        """Eviction force-resolves the oldest pending approval, but never
+        posts a room-visible notice for that specific call — only the
+        original 'Approval requested' prompt, sent when it was first created.
+        If the evicted call were recorded as notified and it happened to be
+        the reply tool, the turn would end completely silent: no reply (the
+        tool was declined) and no error (the guard wrongly suppressed)."""
+        adapter = ClaudeSDKAdapter(
+            approval_mode="manual",
+            max_pending_approvals_per_room=1,
+            approval_wait_timeout_s=0.1,
+        )
+        adapter._room_tools["room-1"] = mock_tools
+        adapter._room_last_sender["room-1"] = {"id": "u1", "name": "Bob"}
+        callback = adapter._make_can_use_tool("room-1")
+
+        async def request_first():
+            return await callback(
+                _SEND_MESSAGE_MCP_NAME, {}, ToolPermissionContext(tool_use_id="tool-1")
+            )
+
+        first_task = asyncio.create_task(request_first())
+        await asyncio.sleep(0.02)  # let the first approval register + prompt
+
+        second_result = await callback(
+            "Bash", {"command": "ls"}, ToolPermissionContext(tool_use_id="tool-2")
+        )
+        first_result = await first_task
+
+        assert isinstance(first_result, PermissionResultDeny)
+        assert isinstance(second_result, PermissionResultDeny)
+        assert "tool-1" not in adapter._notified_declines.get("room-1", set())
 
 
 class TestSendMessageDedupWiring:
@@ -1925,7 +2601,6 @@ class TestSendMessageDedupWiring:
     @pytest.mark.asyncio
     async def test_wraps_tools_by_default(self, sample_message, mock_tools):
         """By default, on_message stores a DedupingAgentTools wrapper."""
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -1960,7 +2635,6 @@ class TestSendMessageDedupWiring:
     @pytest.mark.asyncio
     async def test_ttl_zero_disables_wrapping(self, sample_message, mock_tools):
         """ttl=0 keeps the raw tools — no shim — for operators who opt out."""
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter(send_message_dedup_ttl_seconds=0)
         mock_client = MagicMock()
@@ -2050,7 +2724,6 @@ class TestSendMessageDedupWiring:
         and one after the second on_message — and assert the duplicate is
         suppressed across the turn boundary.
         """
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2170,7 +2843,6 @@ class TestSendMessageDedupWiring:
         a per-session or singleton tools cache) cannot silently turn the
         dedup wrapper into a tenant-wide message suppressor.
         """
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2232,7 +2904,6 @@ class TestSendMessageDedupWiring:
         """When the runtime hands the adapter the same tools object twice,
         ``update_inner`` is a no-op and must be skipped — otherwise we'd
         briefly contend on the wrapper's lock for no reason."""
-        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()

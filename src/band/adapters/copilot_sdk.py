@@ -24,7 +24,7 @@ from band.converters.copilot_sdk import (
 from band.core.exceptions import BandConfigError
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import Capability, Emit, MessageType, TurnUsage
+from band.core.types import Capability, Emit, MessageType, ToolEventKey, TurnUsage
 from band.integrations.copilot_sdk import CopilotSessionManager
 from band.integrations.copilot_sdk.prompts import TURN_COMPLETION_GUIDANCE
 from band.integrations.copilot_sdk.room_ask_user import (
@@ -42,10 +42,23 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_band_tool_category, is_room_posting_tool
+from band.runtime.tools import (
+    CHAT_ID_FIELD_NAME,
+    get_band_tool_category,
+    image_block_placeholder,
+    is_image_passthrough_result,
+    is_room_posting_tool,
+    redact_tool_call_args,
+)
 
 try:
-    from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
+    from copilot import (
+        CopilotClient,
+        PermissionHandler,
+        Tool,
+        ToolBinaryResult,
+        ToolResult,
+    )
     from copilot.generated.session_events import (
         AssistantReasoningData,
         AssistantUsageData,
@@ -67,9 +80,10 @@ if TYPE_CHECKING:
         UserInputRequest,
         UserInputResponse,
     )
+    from typing_extensions import Unpack
 
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
-    from band.core.types import AdapterFeatures, PlatformMessage
+    from band.core.types import FeatureKwargs, PlatformMessage
     from band.runtime.custom_tools import CustomToolDef
 
 logger = logging.getLogger(__name__)
@@ -78,6 +92,13 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CopilotSDKAdapterConfig:
     """Runtime configuration for Copilot SDK adapter sessions.
+
+    Stays a plain dataclass rather than adopting ``pydantic_settings.BaseSettings``
+    like CodexAdapterConfig/LettaAdapterConfig/OpencodeAdapterConfig: ``provider``
+    holds an external SDK type (``ProviderConfig``) and ``ask_user`` a callable,
+    both a poor fit for settings validation — env-var precedent on individual
+    fields (``github_token``, ``base_directory``/``COPILOT_HOME``) doesn't
+    outweigh that.
 
     Attributes:
         model: Copilot model to use (None = Copilot CLI default).
@@ -99,10 +120,14 @@ class CopilotSDKAdapterConfig:
             agents sharing a host.
         github_token: GitHub token for Copilot auth. Auth resolves
             automatically: the token wins when set, otherwise the locally
-            logged-in GitHub user is used — so both fields can usually stay
-            at their defaults.
-        use_logged_in_user: Force using the logged-in GitHub user; None
-            (default) lets the SDK resolve it from ``github_token``.
+            logged-in GitHub user is used. Not required when ``provider``
+            configures BYOK inference.
+        use_logged_in_user: ``True`` forces the logged-in GitHub user;
+            ``False`` opts out of GitHub identity entirely (the CLI runs
+            with ``--no-auto-login``), which is the BYOK path — pair it
+            with a ``provider`` or the runtime has no credentials at all;
+            ``None`` (default) lets the SDK resolve it from
+            ``github_token``.
         turn_timeout_s: Max seconds to wait for a turn to complete.
         ask_user: Routing for Copilot's built-in ``ask_user``
             human-in-the-loop tool; ``None`` (default) keeps the tool
@@ -188,17 +213,17 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     Example:
         adapter = CopilotSDKAdapter(
             CopilotSDKAdapterConfig(model="gpt-5"),
-            # Event reporting is off by default; opt in explicitly.
-            features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
+            # Narrowing is opt-in; the default is everything supported.
+            emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
         )
         agent = Agent.create(adapter=adapter, agent_id=..., api_key=...)
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
+        {Emit.TOOL_CALLS, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -207,9 +232,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         *,
         history_converter: HistoryConverter[CopilotSDKSessionState] | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         client: Any | None = None,
         client_factory: Callable[[], Any] | None = None,
+        **features: Unpack[FeatureKwargs],
     ):
         """Initialize the Copilot SDK adapter.
 
@@ -218,7 +243,6 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 prompts, timeouts) — see :class:`CopilotSDKAdapterConfig`.
             history_converter: Override the default history converter.
             additional_tools: Developer custom tools as (InputModel, handler).
-            features: Shared adapter feature settings.
             client: Externally-owned ``CopilotClient`` shared with other
                 adapters (one client, many sessions). The adapter borrows it —
                 it never calls ``stop()`` on it; the caller owns its lifecycle.
@@ -241,7 +265,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
 
         super().__init__(
             history_converter=history_converter or CopilotSDKHistoryConverter(),
-            features=features,
+            **features,
         )
         self.config = config or CopilotSDKAdapterConfig()
         ask_user = self.config.ask_user
@@ -314,9 +338,12 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             self.config.model or "<copilot default>",
         )
 
-    @staticmethod
-    async def _check_auth(client: Any) -> None:
-        """Fail fast with an actionable message when Copilot auth is missing."""
+    async def _check_auth(self, client: Any) -> None:
+        """Require GitHub auth only when inference uses the Copilot service."""
+        # A singular provider replaces Copilot-hosted inference. Current Copilot
+        # SDKs intentionally allow that BYOK path with no GitHub identity.
+        if self.config.provider is not None:
+            return
         get_auth_status = getattr(client, "get_auth_status", None)
         if get_auth_status is None:  # test fakes / exotic clients
             return
@@ -326,7 +353,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 "Not authenticated with GitHub Copilot: "
                 f"{getattr(status, 'statusMessage', None) or 'no credentials found'}. "
                 "Log in with the GitHub CLI (gh auth login) or set a token via "
-                "CopilotSDKAdapterConfig(github_token=...)."
+                "CopilotSDKAdapterConfig(github_token=...), or configure provider=... "
+                "for BYOK inference."
             )
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -444,8 +472,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         """
         if self.config.session_id_prefix is not None:
             return self.config.session_id_prefix
-        if agent_id := getattr(self, "_band_agent_id", None):
-            return f"band-{agent_id}-"
+        if self.platform is not None:
+            return f"band-{self.platform.agent_id}-"
         # Adapters driven without the Band runtime fall back to the name.
         agent_slug = re.sub(r"[^a-z0-9]+", "-", self.agent_name.lower()).strip("-")
         return f"band-{agent_slug or 'agent'}-"
@@ -618,8 +646,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
     ) -> list[Tool]:
         """Bridge Band platform tools + developer custom tools as Copilot tools."""
         schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            capabilities=self.features.capabilities,
         )
         schemas = filter_tool_schemas(
             schemas,
@@ -686,7 +713,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = Emit.EXECUTION in self.features.emit
+        should_report = Emit.TOOL_CALLS in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
 
@@ -725,14 +752,35 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 room_tools, invocation, f"Error: {exc}", report=should_report
             )
 
-        text_result = (
-            result if isinstance(result, str) else json.dumps(result, default=str)
-        )
+        binary_results: list[ToolBinaryResult] | None = None
+        if is_image_passthrough_result(tool_name, result):
+            # Same failure path as the tool-execution try/except above: a
+            # malformed or future-extended content block must still route
+            # through _fail_tool_call, not raise uncaught past it.
+            try:
+                binary_results = [
+                    ToolBinaryResult(
+                        data=block["data"], mime_type=block["mimeType"], type="image"
+                    )
+                    for block in result["content"]
+                ]
+            except (KeyError, TypeError) as exc:
+                logger.exception("Malformed image content block for %s", tool_name)
+                return await self._fail_tool_call(
+                    room_tools, invocation, f"Error: {exc}", report=should_report
+                )
+            text_result = image_block_placeholder(len(binary_results))
+        else:
+            text_result = (
+                result if isinstance(result, str) else json.dumps(result, default=str)
+            )
         if is_room_posting_tool(tool_name) and turn is not None:
             self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)
-        return ToolResult(text_result_for_llm=text_result)
+        return ToolResult(
+            text_result_for_llm=text_result, binary_results_for_llm=binary_results
+        )
 
     async def _fail_tool_call(
         self,
@@ -764,9 +812,11 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             room_tools,
             json.dumps(
                 {
-                    "name": invocation.tool_name,
-                    "args": arguments,
-                    "tool_call_id": invocation.tool_call_id,
+                    ToolEventKey.NAME: invocation.tool_name,
+                    ToolEventKey.ARGS: redact_tool_call_args(
+                        invocation.tool_name, arguments
+                    ),
+                    ToolEventKey.TOOL_CALL_ID: invocation.tool_call_id,
                 }
             ),
             MessageType.TOOL_CALL,
@@ -782,9 +832,9 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             room_tools,
             json.dumps(
                 {
-                    "name": invocation.tool_name,
-                    "output": output,
-                    "tool_call_id": invocation.tool_call_id,
+                    ToolEventKey.NAME: invocation.tool_name,
+                    ToolEventKey.OUTPUT: output,
+                    ToolEventKey.TOOL_CALL_ID: invocation.tool_call_id,
                 }
             ),
             MessageType.TOOL_RESULT,
@@ -801,7 +851,10 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         room_id: str,
         inject_text: str | None,
     ) -> str:
-        room_context = f"[room_id: {room_id}]"
+        # Label must read "chat_id" (the model-facing name everywhere else,
+        # e.g. claude_sdk.py's own room_context), not the Python-side room_id
+        # it's built from.
+        room_context = f"[{CHAT_ID_FIELD_NAME}: {room_id}]"
         parts: list[str] = []
         if inject_text:
             parts.append(f"[Previous conversation context:]\n{inject_text}")

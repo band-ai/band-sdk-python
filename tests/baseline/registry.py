@@ -64,6 +64,7 @@ SUPPORT: tuple[AdapterSupport, ...] = (
     AdapterSupport(
         Adapter.LETTA, reason="requires a self-hosted Letta server and MCP registration"
     ),
+    AdapterSupport(Adapter.STRANDS, injection="StrandsAdapter._build_agent"),
 )
 
 

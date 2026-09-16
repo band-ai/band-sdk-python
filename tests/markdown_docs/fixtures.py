@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from band import Agent
+from band.client.rest import AsyncRestClient
+from band.config import loader
 from tests.markdown_docs.globals import (
     MARKDOWN_AGENT_ID,
     MARKDOWN_API_KEY,
@@ -77,8 +80,6 @@ def _seed_markdown_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
     """Back `fixture:client` snippets with a generated client and fake HTTP."""
-    from band.client.rest import AsyncRestClient
-
     # Use the generated client so docs fail if Fern namespaces drift.
     rest_client = AsyncRestClient(
         api_key=MARKDOWN_API_KEY,
@@ -120,8 +121,6 @@ def _prepare_markdown_docs_runtime(
 @pytest.fixture
 def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Back `fixture:agent_config_path` snippets with temporary credentials."""
-    from band import Agent
-    from band.config import loader
 
     async def run_noop(self: Agent) -> None:
         return None

@@ -29,10 +29,23 @@ _THIS_FILE = Path(__file__).resolve()
 _RAW_EVICTION = re.compile(r"sys\.modules\.pop\(|del\s+sys\.modules\[")
 
 
+def _collected_test_sources() -> list[Path]:
+    """Every file pytest executes: the test modules and the conftests around them.
+
+    A conftest is the worse place for an eviction — it runs for a whole directory
+    — so scanning only ``test_*.py`` would miss the bigger blast radius.
+    """
+    return [
+        path
+        for pattern in ("test_*.py", "conftest.py")
+        for path in _TESTS_ROOT.rglob(pattern)
+    ]
+
+
 def test_no_test_evicts_modules_from_sys_modules() -> None:
     offenders = sorted(
         str(path.relative_to(REPO_ROOT))
-        for path in _TESTS_ROOT.rglob("test_*.py")
+        for path in _collected_test_sources()
         if path.resolve() != _THIS_FILE
         and _RAW_EVICTION.search(path.read_text(encoding="utf-8"))
     )

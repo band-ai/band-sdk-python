@@ -7,15 +7,15 @@ from typing import Any, Literal
 
 from typing_extensions import TypeAliasType
 
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
-from band.runtime.mcp_server import (
+from band.integrations.mcp.engine import build_resolved_band_mcp_tool_registrations
+from band.integrations.mcp.local_server import (
     LOCAL_MCP_HOST,
     LOCAL_MCP_PORT_MAX,
     LOCAL_MCP_PORT_MIN,
     LocalMCPServer,
-    build_resolved_band_mcp_tool_registrations,
 )
-from band.runtime.tools import ToolDefinition
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.tools import BAND_MCP_SERVER_NAME, ToolDefinition
 
 BandMCPBackendKind = TypeAliasType(
     "BandMCPBackendKind",
@@ -31,6 +31,15 @@ class BandMCPBackend:
     server: Any
     allowed_tools: list[str]
     local_server: LocalMCPServer | None = None
+
+    @property
+    def is_running(self) -> bool:
+        """False once the backing local server has crashed or stopped.
+
+        The ``sdk`` kind runs in-process with no server task to crash, so it's
+        always considered running.
+        """
+        return self.local_server is None or self.local_server.is_running
 
     async def stop(self) -> None:
         """Clean up backend resources when needed."""
@@ -73,7 +82,7 @@ async def create_band_mcp_backend(
     allowed_tools = _build_allowed_tools(tool_definitions, resolved_tools)
 
     if kind == "sdk":
-        from band.integrations.claude_sdk.tools import (
+        from band.integrations.claude_sdk.tools import (  # noqa: PLC0415 -- only load the claude_sdk extra when the sdk transport kind is selected
             build_band_sdk_tools,
             create_band_sdk_mcp_server,
         )
@@ -92,7 +101,7 @@ async def create_band_mcp_backend(
         )
 
     local_server = LocalMCPServer(
-        name="band",
+        name=BAND_MCP_SERVER_NAME,
         tool_registrations=build_resolved_band_mcp_tool_registrations(
             get_tools=get_tools,
             additional_tools=resolved_tools,

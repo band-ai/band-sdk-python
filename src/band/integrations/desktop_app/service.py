@@ -1,0 +1,498 @@
+"""Transcript reads for the Desktop room view, proven current by the relay."""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Callable, Protocol
+
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient, ChatRoomRequest
+from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
+from band.integrations.desktop_app.room import (
+    EPOCH,
+    AgentIdentity,
+    HostProfile,
+    RoomEvent,
+    RoomMessage,
+    RoomParticipant,
+    RoomTranscript,
+    parse_timestamp,
+)
+from band.integrations.desktop_app.prompts import (
+    ambiguous_room_guidance,
+    monitoring_notice,
+    room_briefing,
+    unknown_room_guidance,
+)
+from band.integrations.desktop_app.attention import RoomSession
+from band.integrations.desktop_app.settings import RoomViewTuning
+from band.runtime.tools import AgentTools, iter_chat_pages, serialize_tool_result
+
+logger = logging.getLogger(__name__)
+
+UUID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def covers(tail: list[RoomMessage], *, after: datetime | None, limit: int) -> bool:
+    """Whether the tail collected so far already holds all a read owes."""
+    if after is None:
+        return len(tail) >= limit
+    # A timestamp cursor is inclusive: messages committed with the cursor's
+    # timestamp may not have been visible on the preceding read.
+    return bool(tail) and tail[0].at < after
+
+
+class TranscriptTools(Protocol):
+    async def get_agent_profile(self) -> dict[str, Any]: ...
+
+    async def create_room(self, task_id: str | None = None) -> str: ...
+
+    async def list_rooms(self) -> list[dict[str, Any]]: ...
+
+    async def list_participants(self, chat_id: str) -> list[dict[str, Any]]: ...
+
+    async def list_agent_context(
+        self,
+        chat_id: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]: ...
+
+
+class AgentTranscriptTools:
+    """The Desktop room view's reads, over the SDK's room-bound AgentTools."""
+
+    def __init__(self, rest: AsyncRestClient) -> None:
+        self._rest = rest
+        self._rooms: dict[str, AgentTools] = {}
+
+    def _room(self, chat_id: str) -> AgentTools:
+        if chat_id not in self._rooms:
+            self._rooms[chat_id] = AgentTools(chat_id, self._rest)
+        return self._rooms[chat_id]
+
+    async def get_agent_profile(self) -> dict[str, Any]:
+        response = await self._rest.agent_api_identity.get_agent_me(
+            request_options=DEFAULT_REQUEST_OPTIONS
+        )
+        serialized = serialize_tool_result(response)
+        return serialized.get("data") or serialized
+
+    async def create_room(self, task_id: str | None = None) -> str:
+        chat = ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest()
+        response = await self._rest.agent_api_chats.create_agent_chat(
+            chat=chat,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        return str(response.data.id)
+
+    async def list_rooms(self) -> list[dict[str, Any]]:
+        async def fetch(page: int, page_size: int) -> Any:
+            return await self._rest.agent_api_chats.list_agent_chats(
+                page=page,
+                page_size=page_size,
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            )
+
+        return [
+            serialize_tool_result(item)
+            async for response in iter_chat_pages(fetch)
+            for item in (response.data or [])
+        ]
+
+    async def list_participants(self, chat_id: str) -> list[dict[str, Any]]:
+        participants = await self._room(chat_id).get_participants()
+        return [serialize_tool_result(item) for item in (participants or [])]
+
+    async def list_agent_context(
+        self,
+        chat_id: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        context = await self._room(chat_id).fetch_room_context(
+            room_id=chat_id,
+            page=page,
+            page_size=page_size,
+        )
+        return context["data"], context["meta"]
+
+
+@dataclass
+class ReadPulse:
+    """The newest message any read of this room has ever returned.
+
+    The watermark a caller may be behind — and deliberately not a proof that a
+    later tick may skip reading: the platform does not echo an agent's own
+    messages back to its own WebSocket, so a message the agent posts through
+    band-mcp produces no event, and any "the room is provably unchanged"
+    argument built on the event stream silently loses exactly those messages.
+    """
+
+    newest_message_at: datetime
+
+
+@dataclass
+class ResumeCursor:
+    """Messages already delivered at one timestamp cursor."""
+
+    timestamp: datetime
+    message_ids: set[str]
+
+
+class RoomTranscriptService:
+    """Reads the agent-relevant room transcript."""
+
+    def __init__(
+        self,
+        tools: TranscriptTools,
+        *,
+        viewer: AgentIdentity | None = None,
+        events: RoomEventBroker | None = None,
+        transport: RelayStatus | None = None,
+        tuning: RoomViewTuning | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    ) -> None:
+        self._tools = tools
+        self._viewer = viewer
+        self._events = events
+        self._transport = transport or RelayStatus()
+        self.tuning = tuning or RoomViewTuning()
+        self._now = now
+        self._participants: dict[str, list[RoomParticipant]] = {}
+        self._announced_rooms: set[str] = set()
+        self._pulses: dict[str, ReadPulse] = {}
+        self._resume_cursors: dict[tuple[str, str | None], ResumeCursor] = {}
+        self.session = RoomSession(
+            self._now,
+            stale_grace_s=self.tuning.band_room_stale_grace_s,
+        )
+        self.host = HostProfile()
+
+    async def viewer(self) -> AgentIdentity:
+        """The Band agent identity Claude Desktop operates as."""
+        if self._viewer is None:
+            await self.refresh_viewer()
+        assert self._viewer is not None
+        return self._viewer
+
+    async def refresh_viewer(self) -> AgentIdentity:
+        """Refresh the connected agent identity from ``/api/v1/agent/me``."""
+        self._viewer = AgentIdentity.model_validate(
+            await self._tools.get_agent_profile()
+        )
+        return self._viewer
+
+    async def create_room(self, task_id: str | None = None) -> str:
+        """Create a room as the connected agent."""
+        return await self._tools.create_room(task_id)
+
+    async def resolve_room(self, room: str) -> str:
+        """The room ID a join argument names.
+
+        A UUID passes through untouched; anything else is matched against the
+        agent's rooms by exact ID, then by title. A miss raises with the full
+        room list so the model can offer the real options — or creating a room
+        — instead of failing dumbly.
+        """
+        query = room.strip()
+        if UUID_PATTERN.match(query):
+            return query
+        rooms = await self._tools.list_rooms()
+        if any(str(item.get("id")) == query for item in rooms):
+            return query
+        matches = [
+            item
+            for item in rooms
+            if query.lower() in str(item.get("title") or "").lower()
+        ]
+        if len(matches) == 1:
+            return str(matches[0]["id"])
+        if matches:
+            raise ValueError(
+                ambiguous_room_guidance(
+                    room,
+                    matches,
+                    limit=self.tuning.band_named_rooms_limit,
+                )
+            )
+        raise ValueError(
+            unknown_room_guidance(
+                room,
+                rooms,
+                limit=self.tuning.band_named_rooms_limit,
+            )
+        )
+
+    async def participants(
+        self,
+        chat_id: str,
+        *,
+        refresh: bool = False,
+    ) -> list[RoomParticipant]:
+        """The room roster Claude is told about, cached between polls."""
+        if refresh or chat_id not in self._participants:
+            try:
+                self._participants[chat_id] = [
+                    RoomParticipant.model_validate(item)
+                    for item in await self._tools.list_participants(chat_id)
+                ]
+            except Exception:
+                logger.warning("Could not read Band room participants", exc_info=True)
+                self._participants.setdefault(chat_id, [])
+        return self._participants[chat_id]
+
+    def capture_host(self, params: Any) -> None:
+        """Record the host's declared capabilities, once, from any tool call."""
+        if self.host.captured or params is None:
+            return
+        self.host = HostProfile.from_client_params(params)
+        logger.info("Desktop host capabilities: %s", self.host.model_dump())
+
+    def unannounced_rooms(self, current_chat_id: str) -> list[str]:
+        """Rooms the agent was added to that the agent has not been told about.
+
+        The room view watches one room per conversation, so this is not an
+        invitation to join them — it is so the agent can tell its user that
+        somewhere else now expects it.
+        """
+        fresh = [
+            room
+            for room in self._transport.rooms_added
+            if room != current_chat_id and room not in self._announced_rooms
+        ]
+        self._announced_rooms.update(fresh)
+        return fresh
+
+    async def _page(self, chat_id: str, number: int) -> list[dict[str, Any]]:
+        items, _ = await self._tools.list_agent_context(
+            chat_id,
+            page=number,
+            page_size=self.tuning.band_transcript_page_size,
+        )
+        return items
+
+    async def _messages_since(
+        self,
+        chat_id: str,
+        *,
+        after: datetime | None,
+        limit: int,
+    ) -> list[RoomMessage]:
+        """The agent-visible messages a caller resuming at ``after`` is owed.
+
+        The context API pages oldest first, so the newest messages sit on the
+        last page and this walks back from there, stopping as soon as the tail
+        reaches past the cursor. The timestamp cursor is inclusive, so this
+        must reach strictly before it to collect every tied message. Reading
+        only the newest page would silently
+        drop whatever a long absence buried behind it, while still advancing
+        the cursor past it. With no cursor there is nothing to reach back to,
+        so the newest ``limit`` messages are the whole read.
+        """
+        first, metadata = await self._tools.list_agent_context(
+            chat_id,
+            page=1,
+            page_size=self.tuning.band_transcript_page_size,
+        )
+        total_pages = max(int(metadata.get("total_pages") or 1), 1)
+        budget_stops_at = max(
+            1,
+            total_pages - self.tuning.band_max_transcript_pages + 1,
+        )
+
+        tail: list[RoomMessage] = []
+        for number in range(total_pages, budget_stops_at - 1, -1):
+            items = first if number == 1 else await self._page(chat_id, number)
+            tail = [RoomMessage.model_validate(item) for item in items] + tail
+            if covers(tail, after=after, limit=limit):
+                break
+        else:
+            if budget_stops_at > 1:
+                logger.warning(
+                    "Read of room %s stopped at its %d page budget; anything "
+                    "older than page %d was not read",
+                    chat_id,
+                    self.tuning.band_max_transcript_pages,
+                    budget_stops_at,
+                )
+        return tail if after is not None else tail[-limit:]
+
+    async def read(
+        self,
+        chat_id: str,
+        *,
+        since: str | None = None,
+        refresh_participants: bool = False,
+        cursor_consumer: str | None = None,
+    ) -> RoomTranscript:
+        """The agent-visible room state, newest last, annotated for the agent."""
+        viewer = await self.viewer()
+        roster = await self.participants(chat_id, refresh=refresh_participants)
+        after = parse_timestamp(since)
+        prior_cursor = self._resume_cursors.get((chat_id, cursor_consumer))
+        if prior_cursor is None and cursor_consumer is not None:
+            # Opening a room delivers its transcript to both the model and
+            # view. Each monitor loop begins from that shared receipt, then
+            # records independently so neither consumes the other's updates.
+            prior_cursor = self._resume_cursors.get((chat_id, None))
+        seen_at_cursor = (
+            prior_cursor.message_ids
+            if prior_cursor is not None and prior_cursor.timestamp == after
+            else set()
+        )
+
+        seen: set[str] = set()
+        messages: list[RoomMessage] = []
+        candidates = await self._messages_since(
+            chat_id,
+            after=after,
+            limit=self.tuning.band_initial_transcript_messages,
+        )
+        for message in candidates:
+            if message.id and message.id in seen:
+                continue
+            seen.add(message.id)
+            if after and (
+                message.at < after
+                or (message.at == after and message.id in seen_at_cursor)
+            ):
+                continue
+            # Addressing is read before the content is cut: a mention past the
+            # limit is still a mention, and the fallback that reads the
+            # `@[[id]]` marker out of the content only works while it is there.
+            message.addressed_to_viewer = message.addresses(viewer)
+            message.truncate(self.tuning.band_max_message_chars)
+            message.render_mentions(roster)
+            messages.append(message)
+        messages.sort(key=lambda message: (message.at, message.id))
+        next_since = messages[-1].at if messages else (after or EPOCH)
+        self._resume_cursors[(chat_id, cursor_consumer)] = ResumeCursor(
+            timestamp=next_since,
+            message_ids={
+                message.id
+                for message in candidates
+                if message.at == next_since and message.id
+            },
+        )
+
+        # Only the opening read needs the heuristic that the agent's last
+        # outbound message closes the asks before it. On a resumed read every
+        # message is newer than anything the agent has been shown, so a reply
+        # it sent to one peer cannot have answered another peer's ask.
+        answered_through = (
+            EPOCH
+            if after is not None
+            else max(
+                (message.at for message in messages if message.sender_id == viewer.id),
+                default=EPOCH,
+            )
+        )
+        transcript = RoomTranscript(
+            chat_id=chat_id,
+            viewer=viewer,
+            participants=roster,
+            # Only timestamps observed from Band may become the cursor. A
+            # quiet read repeats the caller's own rather than minting one from
+            # this machine's clock: a local clock ahead of the platform would
+            # advance the cursor past messages still committing, and the
+            # `<= after` filter above would then drop them on every later
+            # read — an addressed message silently never displayed.
+            next_since=next_since,
+            messages=messages,
+            pending_requests=[
+                message
+                for message in messages
+                if message.addressed_to_viewer
+                and message.sender_id != viewer.id
+                and message.at > answered_through
+                and message.is_text
+            ],
+        )
+        transcript.transport = self._transport
+        transcript.monitoring = self.session.monitoring(chat_id)
+        transcript.monitoring_notice = monitoring_notice(transcript.monitoring)
+        transcript.attention = self.session.mode(chat_id)
+        transcript.host = self.host
+        transcript.role_briefing = room_briefing(transcript)
+        return transcript
+
+    async def wait_for_room_event(
+        self,
+        chat_id: str,
+        *,
+        since: str | None,
+        timeout_seconds: int,
+        cursor_consumer: str | None = None,
+    ) -> RoomEvent:
+        """Wait on the SDK WebSocket, then hydrate the new agent context.
+
+        Every tick ends in a REST read. An event ends the wait early; a quiet
+        wait reads anyway, because the event stream is not complete: the
+        platform does not echo the agent's own messages back to its own
+        socket, so posts made through band-mcp arrive only by reading. A
+        caller already behind the newest message ever read is answered before
+        waiting at all.
+        """
+        if self._events is None:
+            raise RuntimeError("Room WebSocket events are not configured.")
+
+        version = self._events.version(chat_id)
+        after = parse_timestamp(since)
+
+        # A caller is answered before waiting unless it is provably caught up
+        # with the newest message ever read: a first call, or one resuming an
+        # old cursor, is owed its backlog now, not after a quantum of silence.
+        pulse = self._pulses.get(chat_id)
+        behind = pulse is None or after is None or after < pulse.newest_message_at
+        if behind:
+            transcript = await self._verified_read(
+                chat_id,
+                since=since,
+                cursor_consumer=cursor_consumer,
+            )
+            if transcript.messages:
+                return RoomEvent(**dict(transcript), event_received=True)
+
+        event_received = await self._events.wait(
+            chat_id,
+            after_version=version,
+            timeout_seconds=timeout_seconds,
+        )
+        transcript = await self._verified_read(
+            chat_id,
+            since=since,
+            refresh_participants=event_received,
+            cursor_consumer=cursor_consumer,
+        )
+        return RoomEvent(**dict(transcript), event_received=event_received)
+
+    async def _verified_read(
+        self,
+        chat_id: str,
+        *,
+        since: str | None,
+        refresh_participants: bool = False,
+        cursor_consumer: str | None = None,
+    ) -> RoomTranscript:
+        """Read, and record the watermark of what was seen."""
+        transcript = await self.read(
+            chat_id,
+            since=since,
+            refresh_participants=refresh_participants,
+            cursor_consumer=cursor_consumer,
+        )
+        previous = self._pulses.get(chat_id)
+        newest = max(
+            [message.at for message in transcript.messages]
+            + [previous.newest_message_at if previous else EPOCH]
+        )
+        self._pulses[chat_id] = ReadPulse(newest)
+        return transcript

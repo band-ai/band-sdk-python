@@ -8,14 +8,6 @@ from band.runtime.contact_tools import ContactTools
 
 
 @pytest.fixture
-def mock_rest_client():
-    """Mock AsyncRestClient for testing ContactTools."""
-    client = MagicMock()
-    client.agent_api_contacts = MagicMock()
-    return client
-
-
-@pytest.fixture
 def contact_tools(mock_rest_client):
     """Create ContactTools instance with mocked client."""
     return ContactTools(mock_rest_client)

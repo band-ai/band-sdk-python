@@ -6,9 +6,36 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class CodexItemType(StrEnum):
+    """``item/completed`` "type" values — the wire vocabulary the adapter
+    dispatches on for tool-like, thought-like, and message items.
+
+    Single source of truth so the gate sets, the per-type extractors, and the
+    approval-label helpers in ``CodexAdapter`` all reference the same names
+    instead of re-typing the protocol's literal strings.
+    """
+
+    COMMAND_EXECUTION = "commandExecution"
+    FILE_CHANGE = "fileChange"
+    MCP_TOOL_CALL = "mcpToolCall"
+    WEB_SEARCH = "webSearch"
+    IMAGE_VIEW = "imageView"
+    COLLAB_AGENT_TOOL_CALL = "collabAgentToolCall"
+    DYNAMIC_TOOL_CALL = "dynamicToolCall"
+    REASONING = "reasoning"
+    PLAN = "plan"
+    CONTEXT_COMPACTION = "contextCompaction"
+    ENTERED_REVIEW_MODE = "enteredReviewMode"
+    EXITED_REVIEW_MODE = "exitedReviewMode"
+    USER_MESSAGE = "userMessage"
+    AGENT_MESSAGE = "agentMessage"
+
 
 # Cap on free-form strings copied from Codex error payloads into structured
 # event metadata.  ``additionalDetails`` is attacker-influenceable (it echoes
@@ -18,16 +45,19 @@ logger = logging.getLogger(__name__)
 _MAX_ERROR_DETAIL_CHARS = 2048
 
 
-# Server-request methods that must never default to anything other than an
-# explicit ``decline`` when the adapter can't produce a real decision.
-# Shared between the adapter and the SDK bridge so a new approval method is
-# added in exactly one place.
-CODEX_APPROVAL_METHODS: frozenset[str] = frozenset(
-    {
-        "item/commandExecution/requestApproval",
-        "item/fileChange/requestApproval",
-    }
-)
+class CodexApprovalMethod(StrEnum):
+    """Server-request methods that must never default to anything other than
+    an explicit ``decline`` when the adapter can't produce a real decision.
+
+    Shared between the adapter and the SDK bridge so a new approval method is
+    added in exactly one place.
+    """
+
+    COMMAND_EXECUTION = "item/commandExecution/requestApproval"
+    FILE_CHANGE = "item/fileChange/requestApproval"
+
+
+CODEX_APPROVAL_METHODS: frozenset[CodexApprovalMethod] = frozenset(CodexApprovalMethod)
 
 
 @dataclass

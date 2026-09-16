@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bug Hunting via Example"
+  short_description: "Test examples and trace failures to root cause"
+  default_prompt: "Use $bug-hunting-via-example to validate these examples together and investigate any failures to root cause."

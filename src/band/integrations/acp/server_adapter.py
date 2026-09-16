@@ -17,11 +17,13 @@ from band.client.rest import (
     DEFAULT_REQUEST_OPTIONS,
 )
 from band.converters.acp_server import ACPServerHistoryConverter
+from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
 from band.integrations.acp.event_converter import EventConverter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
+from band.platform.posting import post_event, post_message
 
 if TYPE_CHECKING:
     from acp.interfaces import Client
@@ -58,40 +60,42 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     Example:
         from band import Agent
-        from band.integrations.acp import BandACPServerAdapter, ACPServer
-
-        adapter = BandACPServerAdapter(
-            rest_url="https://app.band.ai",
-            api_key="your-api-key",
+        from band.integrations.acp import (
+            ACPServer,
+            BandACPServerAdapter,
+            run_acp_server,
         )
+
+        adapter = BandACPServerAdapter()
         server = ACPServer(adapter)
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.start()
-        await run_agent(server)
+        await run_acp_server(server)
     """
 
     def __init__(
         self,
-        rest_url: str = "https://app.band.ai",
-        api_key: str = "",
+        rest_client: AsyncRestClient | None = None,
     ) -> None:
         """Initialize ACP server adapter.
 
         Args:
-            rest_url: Base URL for Band REST API.
-            api_key: API key for authentication.
+            rest_client: Optional ``AsyncRestClient`` injection seam (tests).
+                Normally the client is built at startup from the platform
+                connection the runtime injects — the credentials given to
+                ``Agent.create()`` are not repeated here.
         """
         super().__init__(history_converter=ACPServerHistoryConverter())
 
-        # Direct REST client for room/message operations
-        self._rest = AsyncRestClient(base_url=rest_url, api_key=api_key)
+        # Direct REST client for room/message operations; built at startup
+        # from the injected platform connection unless a seam is provided.
+        self._rest: AsyncRestClient | None = rest_client
 
         # Session state (all dicts guarded by _state_lock)
         self._session_to_room: dict[str, str] = {}  # ACP session_id -> room_id
         self._room_to_session: dict[str, str] = {}  # room_id -> session_id
         self._pending_prompts: dict[str, PendingACPPrompt] = {}  # room_id -> pending
         self._session_modes: dict[str, str] = {}  # session_id -> mode_id
-        self._session_models: dict[str, str] = {}  # session_id -> model_id
         self._session_cwd: dict[str, str] = {}  # session_id -> cwd
         self._session_mcp_servers: dict[
             str, list[Any]
@@ -152,14 +156,9 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """
         self._session_modes[session_id] = mode_id
 
-    def set_session_model(self, session_id: str, model_id: str) -> None:
-        """Record the model chosen by the editor.
-
-        Note: Called from sync ACP handlers. Safe because the single ACP
-        stdio connection serializes requests, so no concurrent callers.
-        """
-        self._session_models[session_id] = model_id
-        logger.debug("Session model set: session=%s, model=%s", session_id, model_id)
+    def get_session_mode(self, session_id: str) -> str | None:
+        """Return the mode last set for a session, or None if unset."""
+        return self._session_modes.get(session_id)
 
     def get_session_cwd(self, session_id: str) -> str:
         """Return the working directory for a session, or '.' if unknown."""
@@ -190,10 +189,15 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """Return the room_id for an ACP session, or None."""
         return self._session_to_room.get(session_id)
 
+    @property
+    def rest(self) -> AsyncRestClient:
+        """The adapter's REST client; raises before the agent starts."""
+        return self.require_rest_client(self._rest)
+
     async def verify_credentials(self) -> bool:
         """Validate API key by calling the Band identity endpoint."""
         try:
-            await self._rest.agent_api_identity.get_agent_me(
+            await self.rest.agent_api_identity.get_agent_me(
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             return True
@@ -211,7 +215,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         method. The ``hasattr`` guard prevents breakage if internals change.
         """
         try:
-            if hasattr(self._rest, "_client") and self._rest._client:
+            if self._rest is not None and getattr(self._rest, "_client", None):
                 await self._rest._client.aclose()
         except Exception:
             logger.exception("Error closing REST client")
@@ -244,9 +248,12 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """
         await super().on_started(agent_name, agent_description)
 
+        if self._rest is None:
+            self._rest = self.build_rest_client()
+
         # Fetch own agent ID for mention filtering
         try:
-            identity = await self._rest.agent_api_identity.get_agent_me(
+            identity = await self.rest.agent_api_identity.get_agent_me(
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             self._agent_id = identity.data.id
@@ -290,7 +297,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._sessions_in_flight += 1
 
         try:
-            response = await self._rest.agent_api_chats.create_agent_chat(
+            response = await self.rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -359,7 +366,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             self._pending_prompts[room_id] = pending
 
             # Read routing state while holding lock
-            current_mode = self._session_modes.get(session_id)
+            current_mode = self.get_session_mode(session_id)
 
         # Route via slash commands or session modes (no lock needed — pure)
         cleaned_text = text
@@ -370,7 +377,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
         # Get participants for mentions
         participants = (
-            await self._rest.agent_api_participants.list_agent_chat_participants(
+            await self.rest.agent_api_participants.list_agent_chat_participants(
                 chat_id=room_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -392,17 +399,24 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         mention_text = " ".join(f"@{m.name}" for m in mentions)
 
         try:
-            await self._rest.agent_api_messages.create_agent_chat_message(
-                chat_id=room_id,
-                message=ChatMessageRequest(
+            sent = await post_message(
+                rest=self.rest,
+                room_id=room_id,
+                request=ChatMessageRequest(
                     content=f"{mention_text} {prompt_text}".strip(),
                     mentions=mentions,
                 ),
-                request_options=DEFAULT_REQUEST_OPTIONS,
             )
         except Exception:
             await self._finish_pending_prompt(room_id, set_done=True)
             raise
+
+        if sent is None:
+            # post_message refused blank content instead of posting -- fail
+            # now rather than wait out the full timeout for a reply to a
+            # message that was never sent.
+            await self._finish_pending_prompt(room_id, set_done=True)
+            raise ValueError(BLANK_CONTENT_ERROR)
 
         logger.debug("Sent prompt to room %s, awaiting response", room_id)
 
@@ -492,7 +506,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             if session_id:
                 self._session_to_room.pop(session_id, None)
                 self._session_modes.pop(session_id, None)
-                self._session_models.pop(session_id, None)
                 self._session_cwd.pop(session_id, None)
                 self._session_mcp_servers.pop(session_id, None)
 
@@ -550,9 +563,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
             room_id: The room ID.
             session_id: The ACP session ID.
         """
-        await self._rest.agent_api_events.create_agent_chat_event(
-            chat_id=room_id,
-            event=ChatEventRequest(
+        await post_event(
+            rest=self.rest,
+            room_id=room_id,
+            request=ChatEventRequest(
                 content="ACP session context",
                 message_type="task",
                 metadata={
@@ -562,7 +576,6 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                     "acp_mcp_servers": self._session_mcp_servers.get(session_id, []),
                 },
             ),
-            request_options=DEFAULT_REQUEST_OPTIONS,
         )
 
     def _prepend_session_context(self, session_id: str, text: str) -> str:

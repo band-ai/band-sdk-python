@@ -10,6 +10,7 @@ from band.docker.launcher import (
     DEFAULT_REST_URL,
     DEFAULT_WS_URL,
     LaunchError,
+    PLACEHOLDER_AGENT_ID,
     load_workspace_config,
     resolve_launch,
 )
@@ -224,6 +225,17 @@ def test_missing_agent_id_rejected(workspace: Workspace) -> None:
     config["agent"]["id"] = ""
     write_config(workspace, config)
     with pytest.raises(LaunchError, match=r"\[config\].*agent id"):
+        resolve_launch(make_env(workspace))
+
+
+def test_placeholder_agent_id_rejected(workspace: Workspace) -> None:
+    """A workspace still carrying the starter kit's shipped placeholder has
+    never been provisioned, even though `agent.id` is non-empty -- must fail
+    with a clear pre-flight error, not a confusing downstream REST 401/404."""
+    config = default_config(workspace)
+    config["agent"]["id"] = PLACEHOLDER_AGENT_ID
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*placeholder"):
         resolve_launch(make_env(workspace))
 
 

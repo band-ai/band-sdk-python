@@ -5,9 +5,12 @@ This is a simple LangGraph that performs mathematical calculations.
 It can be imported and used as a tool in any agent.
 """
 
-from typing import TypedDict, Literal
-from langgraph.graph import StateGraph, START, END
+from typing import Literal, TypedDict
+
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
+
+from band import LogSettings
 
 
 class CalculatorState(TypedDict):
@@ -70,7 +73,7 @@ if __name__ == "__main__":
     import asyncio
     import logging
 
-    logging.basicConfig(level=logging.INFO)
+    LogSettings().for_application().configure()
     logger = logging.getLogger(__name__)
 
     async def test():

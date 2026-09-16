@@ -27,9 +27,11 @@ from typing import Any, Callable, Literal, Protocol, Union, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from typing_extensions import Unpack
 
 from band.converters.crewai_flow import (
     CrewAIFlowAmbiguousIdentityError,
+    CrewAIFlowBufferedSynthesis,
     CrewAIFlowDelegationState,
     CrewAIFlowDelegationStatus,
     CrewAIFlowError,
@@ -51,6 +53,7 @@ from band.core.types import (
     AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
 )
 from band.runtime.custom_tools import (
@@ -99,7 +102,7 @@ class CrewAIFlowStateSource(Protocol):
 # ---------------------------------------------------------------------------
 
 
-class _RoomCacheEntry:
+class RoomCacheEntry:
     __slots__ = ("events", "latest_inserted_at", "seen_event_ids")
 
     def __init__(self) -> None:
@@ -139,7 +142,7 @@ class RestCrewAIFlowStateSource:
         self._page_size = page_size
         self._cache_size = cache_size
         self._retry_attempts = max(0, retry_attempts)
-        self._cache: OrderedDict[tuple[str, str], _RoomCacheEntry] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str], RoomCacheEntry] = OrderedDict()
 
     async def load_task_events(
         self,
@@ -152,7 +155,7 @@ class RestCrewAIFlowStateSource:
         cache_key = (room_id, metadata_namespace)
         entry = self._cache.get(cache_key)
         if entry is None:
-            entry = _RoomCacheEntry()
+            entry = RoomCacheEntry()
             self._cache[cache_key] = entry
             self._evict_if_needed()
             return await self._full_fetch(
@@ -226,7 +229,7 @@ class RestCrewAIFlowStateSource:
         room_id: str,
         metadata_namespace: str,
         tools: AgentToolsProtocol,
-        entry: _RoomCacheEntry,
+        entry: RoomCacheEntry,
     ) -> list[dict[str, Any]]:
         page = 1
         collected: list[dict[str, Any]] = []
@@ -262,7 +265,7 @@ class RestCrewAIFlowStateSource:
         room_id: str,
         metadata_namespace: str,
         tools: AgentToolsProtocol,
-        entry: _RoomCacheEntry,
+        entry: RoomCacheEntry,
     ) -> list[dict[str, Any]]:
         new_events: list[dict[str, Any]] = []
         page = 1
@@ -513,7 +516,7 @@ def get_current_flow_runtime() -> "CrewAIFlowRuntimeTools | None":
     return _current_flow_runtime.get()
 
 
-class _RoomLockEntry:
+class RoomLockEntry:
     __slots__ = ("active", "cleanup_requested", "lock")
 
     def __init__(self) -> None:
@@ -532,11 +535,11 @@ class CrewAIFlowCustomTools:
         tools: AgentToolsProtocol,
         features: AdapterFeatures,
     ) -> None:
-        from band.integrations.crewai import EmitExecutionReporter
+        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
 
         self._custom_tools = custom_tools
         self._tools = tools
-        self._reporter = EmitExecutionReporter(features)
+        self._reporter = EmitToolCallsReporter(features)
 
     def __dir__(self) -> list[str]:
         return sorted({*super().__dir__(), *self._custom_tools})
@@ -756,7 +759,7 @@ class CrewAIFlowRuntimeTools:
         to call platform tools. The returned tools enforce the adapter's
         reserve-send-confirm sequence for visible writes.
         """
-        from band.integrations.crewai.tools import (
+        from band.integrations.crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
             CrewAIToolContext,
             build_band_crewai_tools,
         )
@@ -1308,8 +1311,6 @@ class SideEffectExecutor:
         ``buffered_syntheses`` entry. The converter merges entries by
         ``source_message_id``, so multiple turns accumulate into one list.
         """
-        from band.converters.crewai_flow import CrewAIFlowBufferedSynthesis
-
         envelope = self._envelope(
             status=CrewAIFlowRunStatus.WAITING,
             stage=CrewAIFlowStage.WAITING_FOR_REPLIES,
@@ -1481,7 +1482,7 @@ _VALID_TEXT_ONLY = {"error_event", "fallback_send"}
 _VALID_TAGGED_PEER = {"require_delegation_before_final", "off"}
 
 
-class _AmbiguousReply:
+class AmbiguousReply:
     def __init__(
         self,
         *,
@@ -1502,8 +1503,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     visible writes use reserve-send-confirm task events for idempotency.
     """
 
-    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
-    SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY, Capability.CONTACTS})
+    SUPPORTED_EMIT = frozenset({Emit.TOOL_CALLS})
+    SUPPORTED_CAPABILITIES = frozenset(
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
+    )
 
     def __init__(
         self,
@@ -1522,7 +1525,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         accept_agent_initiated: bool = False,
         history_converter: CrewAIFlowStateConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
+        **features: Unpack[FeatureKwargs],
     ) -> None:
         # ---- flow_factory -------------------------------------------------
         if not callable(flow_factory):
@@ -1639,7 +1642,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             max_run_age=max_run_age
         )
 
-        super().__init__(history_converter=converter, features=features)
+        super().__init__(history_converter=converter, **features)
 
         self._flow_factory = flow_factory
         self._state_source = state_source
@@ -1659,7 +1662,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         self._tool_loop: asyncio.AbstractEventLoop | None = None
 
         # Per-room async locks and transient caches. Cleared on on_cleanup.
-        self._room_locks: dict[str, _RoomLockEntry] = {}
+        self._room_locks: dict[str, RoomLockEntry] = {}
         self._room_locks_guard = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -1670,7 +1673,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
         if self._configured_metadata_namespace is None:
-            agent_id = getattr(self, "_band_agent_id", None) or agent_name
+            agent_id = self.platform.agent_id if self.platform else agent_name
             self.metadata_namespace = f"crewai_flow:{agent_id}"
         else:
             self.metadata_namespace = self._configured_metadata_namespace
@@ -1697,11 +1700,11 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         room_id: str,
         *,
         cleanup_requested: bool = False,
-    ) -> _RoomLockEntry:
+    ) -> RoomLockEntry:
         async with self._room_locks_guard:
             entry = self._room_locks.get(room_id)
             if entry is None:
-                entry = _RoomLockEntry()
+                entry = RoomLockEntry()
                 self._room_locks[room_id] = entry
             entry.active += 1
             entry.cleanup_requested = entry.cleanup_requested or cleanup_requested
@@ -1710,7 +1713,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     async def _release_room_lock_entry(
         self,
         room_id: str,
-        entry: _RoomLockEntry,
+        entry: RoomLockEntry,
     ) -> None:
         async with self._room_locks_guard:
             if entry.active > 0:
@@ -1850,7 +1853,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             state=state,
             participants=participants,
         )
-        if isinstance(matched, _AmbiguousReply):
+        if isinstance(matched, AmbiguousReply):
             ambiguous_executor = SideEffectExecutor(
                 tools=tools,
                 room_id=room_id,
@@ -2274,7 +2277,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         msg: PlatformMessage,
         state: CrewAIFlowSessionState,
         participants: list[CrewAIFlowParticipantSnapshot],
-    ) -> tuple[str, str, "CrewAIFlowMetadata"] | _AmbiguousReply | None:
+    ) -> tuple[str, str, "CrewAIFlowMetadata"] | AmbiguousReply | None:
         """Try to match an inbound message to a pending delegation.
 
         Returns ``(run_id, delegation_id, run_metadata)`` on a unique match.
@@ -2282,11 +2285,6 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         candidate set, ambiguous matches (which also record a
         ``reply_ambiguous`` event side-effect).
         """
-        from band.converters.crewai_flow import (
-            CrewAIFlowAmbiguousIdentityError,
-            normalize_participant_key,
-        )
-
         # Compute sender's normalized key against the participant snapshot.
         try:
             sender_key = normalize_participant_key(
@@ -2312,7 +2310,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                         CrewAIFlowDelegationStatus.PENDING,
                         CrewAIFlowDelegationStatus.RESERVED,
                     ):
-                        return _AmbiguousReply(
+                        return AmbiguousReply(
                             run_id=run_id,
                             parent_message_id=run.parent_message_id,
                             reason="ambiguous_sender_identity",
@@ -2352,7 +2350,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             if len(token_hits) == 1:
                 return token_hits[0]
             run_id, _delegation_id, run = candidates[0]
-            return _AmbiguousReply(
+            return AmbiguousReply(
                 run_id=run_id,
                 parent_message_id=run.parent_message_id,
                 reason="correlation_token_mismatch",
@@ -2368,7 +2366,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             len(candidates),
         )
         run_id, _delegation_id, run = candidates[0]
-        return _AmbiguousReply(
+        return AmbiguousReply(
             run_id=run_id,
             parent_message_id=run.parent_message_id,
             reason="multiple_pending_delegations",

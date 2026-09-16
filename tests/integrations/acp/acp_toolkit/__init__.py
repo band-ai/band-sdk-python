@@ -22,14 +22,15 @@ Example::
 
 from __future__ import annotations
 
-from .agent import FakeACPAgent, PromptHandler
-from .harness import (
+from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent, PromptHandler
+from tests.integrations.acp.acp_toolkit.harness import (
     AcpSession,
     FakeSpawn,
     Reply,
     RoomActivity,
     TranscriptTools,
     acp_adapter,
+    live_line,
     make_acp_connection,
 )
 
@@ -42,5 +43,6 @@ __all__ = [
     "RoomActivity",
     "TranscriptTools",
     "acp_adapter",
+    "live_line",
     "make_acp_connection",
 ]

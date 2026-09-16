@@ -22,6 +22,8 @@ from band.client.streaming import (
 )
 from band.runtime.presence import RoomPresence
 
+from tests.runtime.conftest import admit_room
+
 
 @pytest.fixture
 def mock_link():
@@ -131,7 +133,7 @@ class TestContactEventRouting:
         presence.on_contact_event = AsyncMock()  # Set up contact handler
 
         # Add a room to track
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         # Process contact event
         await presence._on_platform_event(sample_contact_added_event)
@@ -153,7 +155,7 @@ class TestContactEventRouting:
         presence.on_contact_event = contact_callback
 
         # Add room to track for message events
-        presence.rooms.add("room-123")
+        admit_room(presence, "room-123")
 
         # Process room added event
         await presence._on_platform_event(sample_room_added_event)

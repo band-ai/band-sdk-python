@@ -7,7 +7,11 @@ from typing import Any
 
 from band.core.protocols import HistoryConverter
 
-from .parsing import parse_tool_call, parse_tool_result
+from .parsing import (
+    INTERRUPTED_TOOL_TEXT,
+    parse_tool_call,
+    parse_tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +112,7 @@ def _patch_orphaned_tool_uses(messages: AnthropicMessages) -> None:
                 {
                     "type": "tool_result",
                     "tool_use_id": uid,
-                    "content": "Error: tool execution was interrupted",
+                    "content": INTERRUPTED_TOOL_TEXT,
                     "is_error": True,
                 }
                 for uid in sorted_ids

@@ -3,13 +3,43 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
+from urllib.parse import urlsplit
+
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.core.exceptions import BandConfigError
-from band.runtime.mcp_server import LOCAL_MCP_HOST
+from band.integrations.mcp.local_server import LOCAL_MCP_HOST
 
 MCPTransport = Literal["sse", "streamable_http"]
+
+# Single source of truth for the Letta Cloud endpoint: both the base_url
+# field default and self-hosted detection (org_scoped auto-detection, the
+# Cloud+org_scoped=True construction guard) read this constant.
+LETTA_CLOUD_BASE_URL = "https://api.letta.com"
+_LETTA_CLOUD_HOSTNAME = urlsplit(LETTA_CLOUD_BASE_URL).hostname
+
+
+def is_letta_cloud_url(base_url: str) -> bool:
+    """Whether ``base_url`` points at Letta Cloud rather than a self-hosted server.
+
+    Compares hostnames, not raw strings, so casing and a trailing slash never
+    cause a Cloud URL to be misclassified as self-hosted; ``.strip()`` closes
+    the same gap for incidental whitespace (e.g. an unquoted .env value).
+    ``urlsplit`` only parses a hostname out of a scheme-relative or absolute
+    URL, so a scheme-less value (e.g. a ``LETTA_BASE_URL`` config typo like
+    ``"api.letta.com"``) gets a synthetic ``//`` prefix first — otherwise its
+    hostname reads back ``None``, silently misclassifying Cloud as self-hosted.
+    """
+    url = base_url.strip()
+    if "://" not in url:
+        url = f"//{url}"
+    try:
+        return urlsplit(url).hostname == _LETTA_CLOUD_HOSTNAME
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -56,8 +86,7 @@ class LettaMCPConfig:
     transport: MCPTransport = "sse"
 
 
-@dataclass
-class LettaAdapterConfig:
+class LettaAdapterConfig(BaseSettings):
     """Configuration for the Letta adapter.
 
     Works with both Letta Cloud and self-hosted Letta.  For Letta Cloud
@@ -71,35 +100,68 @@ class LettaAdapterConfig:
     ``embedding`` is required by Letta's Docker server on agent create
     (e.g. ``"openai/text-embedding-3-small"``); Letta Cloud picks a default
     when omitted.
+
+    Most fields can also be set via a ``LETTA_``-prefixed environment
+    variable (e.g. ``LETTA_BASE_URL``, ``LETTA_MODEL``, ``LETTA_EMBEDDING``);
+    ``provider_key`` additionally accepts ``LETTA_API_KEY``, matching Letta
+    Cloud's own naming. An explicit constructor kwarg always wins over the
+    environment.
     """
+
+    # extra="forbid" (not the usual settings "ignore"): this config is
+    # commonly built with many explicit kwargs, so a typo'd field name
+    # must fail construction instead of silently vanishing.
+    # populate_by_name: an aliased field stays constructible by its field name
+    # and keeps its prefix-derived environment variable.
+    model_config = SettingsConfigDict(
+        env_prefix="LETTA_",
+        case_sensitive=False,
+        extra="forbid",
+        env_ignore_empty=True,
+        populate_by_name=True,
+    )
 
     agent_id: str | None = None
     model: str | None = None
-    provider_key: str | None = None  # Required for Letta Cloud; omit for self-hosted
-    api_key: str | None = None  # deprecated, use provider_key
-    base_url: str = "https://api.letta.com"
+    # A validation_alias names an environment variable verbatim (env_prefix is
+    # not applied), so it must be the full LETTA_* name — an unprefixed alias
+    # would read a bare env var and could swallow an unrelated secret.
+    provider_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("LETTA_API_KEY")
+    )  # Required for Letta Cloud; omit for self-hosted
+    base_url: str = LETTA_CLOUD_BASE_URL
     custom_section: str = ""
     include_base_instructions: bool = True
-    enable_execution_reporting: bool = False
-    enable_task_events: bool = True
-    enable_memory_tools: bool = False
     persona: str | None = None
     turn_timeout_s: float = 300.0
-    memory_blocks: list[dict[str, str]] = field(default_factory=list)
+    memory_blocks: list[dict[str, str]] = Field(default_factory=list)
     summary_max_length: int = 150
 
     # Letta Cloud project scoping (ignored for self-hosted)
     project: str | None = None
+
+    # Self-hosted only: provision a dedicated Letta organization + user per
+    # adapter instance so MCP tool storage never collides between instances
+    # sharing one server (Letta dedupes MCP-discovered Tool rows by
+    # (name, organization_id); with no scoping, a second instance silently
+    # re-points the first instance's tool to its own MCP server). None
+    # (default) auto-enables for a self-hosted base_url and stays off for
+    # Letta Cloud. Explicit False is the only meaningful override — it opts
+    # a self-hosted deployment back out. Explicit True against Letta Cloud
+    # raises BandConfigError at construction (see _reject_org_scoped_cloud
+    # below): Cloud does not expose the admin API this needs, so honoring it
+    # would fail deep inside on_started instead of failing loud up front.
+    org_scoped: bool | None = None
 
     # Embedding model passed on agent create. Letta's Docker server requires
     # one; Cloud picks its own default when None.
     embedding: str | None = None
 
     # MCP tool path configuration (see LettaMCPConfig).
-    mcp: LettaMCPConfig = field(default_factory=LettaMCPConfig)
+    mcp: LettaMCPConfig = Field(default_factory=LettaMCPConfig)
     # Deprecated compatibility shims for the pre-nested MCP config API.
-    mcp_server_url: str | None = field(default=None, kw_only=True)
-    mcp_server_name: str | None = field(default=None, kw_only=True)
+    mcp_server_url: str | None = None
+    mcp_server_name: str | None = None
 
     # Relay the agent's plain assistant text into the room when it did not
     # call the MCP send tool. Keeps the agent responsive when the model skips
@@ -124,18 +186,25 @@ class LettaAdapterConfig:
     # shared uses one agent with per-room Conversations for isolation.
     mode: Literal["per_room", "shared"] = "per_room"
 
-    def __post_init__(self) -> None:
-        if self.api_key is not None:
+    def __init__(self, **data: Any) -> None:
+        # Deprecated kwarg-only alias for provider_key, handled before field
+        # validation so it is never a model field: a field is exposed to the
+        # environment, and a bare "api_key" is too generic a name to read
+        # from the environment safely.
+        api_key = data.pop("api_key", None)
+        if api_key is not None:
             warnings.warn(
                 "api_key is deprecated on LettaAdapterConfig, use provider_key instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            if self.provider_key is not None:
+            if data.get("provider_key") is not None:
                 raise BandConfigError("Cannot pass both provider_key and api_key")
-            self.provider_key = self.api_key
-            self.api_key = None
+            data["provider_key"] = api_key
+        super().__init__(**data)
 
+    @model_validator(mode="after")
+    def _apply_deprecated_field_shims(self) -> LettaAdapterConfig:
         if self.mcp_server_url is not None or self.mcp_server_name is not None:
             warnings.warn(
                 "mcp_server_url and mcp_server_name are deprecated on "
@@ -161,3 +230,16 @@ class LettaAdapterConfig:
             )
             self.mcp_server_url = None
             self.mcp_server_name = None
+        return self
+
+    @model_validator(mode="after")
+    def _reject_org_scoped_cloud(self) -> LettaAdapterConfig:
+        if self.org_scoped and is_letta_cloud_url(self.base_url):
+            raise BandConfigError(
+                "org_scoped=True is not supported against Letta Cloud "
+                f"(base_url={self.base_url!r}) — it provisions organizations "
+                "and users via a self-hosted-only admin API that Letta Cloud "
+                "does not expose. Leave org_scoped unset (Cloud stays "
+                "unscoped) or set base_url to a self-hosted server."
+            )
+        return self

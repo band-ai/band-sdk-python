@@ -35,7 +35,7 @@ sandbox and calls Band tools through `band-mcp` on `127.0.0.1:3000`.
 
 - This is a local-sandbox deployment example, not a CI fixture.
 - The kit targets `https://app.band.ai`. For another Band deployment, update
-  `caps.network.allow`, `THENVOI_BASE_URL`, and the `--host` passed to
+  `caps.network.allow`, `BAND_BASE_URL`, and the `--host` passed to
   `sbx secret set-custom`.
 - `band-mcp` is one trusted Band identity. Keep it bound to loopback, as this kit
   does, unless you add your own network and auth controls.

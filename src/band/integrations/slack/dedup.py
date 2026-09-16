@@ -20,7 +20,7 @@ import collections
 DEFAULT_SEEN_EVENTS_CACHE_SIZE = 10_000
 
 
-class _SeenEvents:
+class SeenEvents:
     """LRU-bounded set of recently-seen Slack ``event_id`` values.
 
     Used to dedup Slack redeliveries: any event with an ``event_id`` we've

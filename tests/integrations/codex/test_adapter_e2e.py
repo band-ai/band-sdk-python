@@ -12,7 +12,13 @@ from typing import Any
 import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.types import (
+    AgentInput,
+    Capability,
+    Emit,
+    HistoryProvider,
+    PlatformMessage,
+)
 from band.integrations.codex import CodexJsonRpcError, RpcEvent
 from band.testing import FakeAgentTools
 
@@ -54,10 +60,9 @@ class _ToolSchemaFakeTools(FakeAgentTools):
     def get_openai_tool_schemas(
         self,
         *,
-        include_memory: bool = False,
-        include_contacts: bool = True,
+        capabilities: frozenset[Capability] | None = None,
     ) -> list[dict[str, Any]]:
-        del include_memory, include_contacts
+        del capabilities
         return [
             {
                 "type": "function",
@@ -537,12 +542,9 @@ async def test_item_completed_forwards_internal_operations() -> None:
         ]
     )
     adapter = CodexAdapter(
-        config=CodexAdapterConfig(
-            transport="ws",
-            enable_execution_reporting=True,
-            emit_thought_events=True,
-        ),
+        config=CodexAdapterConfig(transport="ws"),
         client_factory=lambda _cfg: fake_client,
+        emit=Emit.TOOL_CALLS | Emit.THOUGHTS,
     )
     await adapter.on_started("Codex Agent", "Integration test agent")
     await adapter.on_event(

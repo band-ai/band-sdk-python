@@ -24,7 +24,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from band.integrations.slack.dedup import _SeenEvents
+from band.integrations.slack.dedup import SeenEvents
 
 if TYPE_CHECKING:
     from slack_sdk.socket_mode.aiohttp import SocketModeClient
@@ -70,7 +70,7 @@ async def start_socket_listeners(
     client_factory: (
         Callable[[SlackApp, AsyncWebClient], SocketModeClient] | None
     ) = None,
-    seen_events: _SeenEvents | None = None,
+    seen_events: SeenEvents | None = None,
 ) -> list[SlackSocketListener]:
     """Open one Socket Mode websocket per ``SlackApp`` and start listening.
 
@@ -102,7 +102,7 @@ async def start_socket_listeners(
             triggered when ``transport="socket"``.
     """
     factory = client_factory or _default_client_factory
-    seen_events = seen_events or _SeenEvents()
+    seen_events = seen_events or SeenEvents()
     listeners: list[SlackSocketListener] = []
     for app in apps:
         web_client = web_client_factory(app)
@@ -125,7 +125,7 @@ def _default_client_factory(
     app: SlackApp, web_client: AsyncWebClient
 ) -> SocketModeClient:
     try:
-        from slack_sdk.socket_mode.aiohttp import SocketModeClient
+        from slack_sdk.socket_mode.aiohttp import SocketModeClient  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover — import-time guard
         raise ImportError(
             "Socket Mode requires aiohttp. Install with "
@@ -139,7 +139,7 @@ def _make_request_handler(
     *,
     app: SlackApp,
     dispatcher: SocketDispatcher,
-    seen_events: _SeenEvents,
+    seen_events: SeenEvents,
 ) -> Callable[[SocketModeClient, Any], Awaitable[None]]:
     """Build a per-app Socket Mode request listener.
 
@@ -149,7 +149,8 @@ def _make_request_handler(
     avoid retries. Redelivered events (same ``event_id``) are dropped via
     ``seen_events`` so a reconnect can't double-invoke the brain.
     """
-    from slack_sdk.socket_mode.response import SocketModeResponse
+    # slack extra kept out of this module's unconditional import surface
+    from slack_sdk.socket_mode.response import SocketModeResponse  # noqa: PLC0415
 
     async def handle(client: SocketModeClient, req: Any) -> None:
         envelope_id = getattr(req, "envelope_id", None)

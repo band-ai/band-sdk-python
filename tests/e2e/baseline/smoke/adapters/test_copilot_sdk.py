@@ -1,8 +1,8 @@
 """Copilot SDK showcase smokes — the toolkit driving the Copilot adapter live.
 
-Copilot SDK is a ``core``-lane matrix adapter (gated on the Anthropic BYOK key;
-its Copilot auth — a stored login or ``GITHUB_TOKEN`` — is out-of-band, see the
-builder in ``toolkit/builders.py``), so the generic matrix (``smoke/matrix/``)
+Copilot SDK is a ``core``-lane matrix adapter gated only on the Anthropic BYOK
+key (the singular provider replaces Copilot-hosted inference, so GitHub auth is
+not required; see ``toolkit/builders.py``). The generic matrix (``smoke/matrix/``)
 already runs the standard scenarios against it via the registry builder. These
 are Copilot-focused instead: ``ask_user`` routing (handler and room mode), recall
 when Copilot's *native* session resume misses, and one client shared across adapter
@@ -29,7 +29,12 @@ from typing import Any
 
 import pytest
 
-from band.adapters.copilot_sdk import ASK_USER_ROOM, _COPILOT_SDK_AVAILABLE
+from band.adapters.copilot_sdk import (
+    ASK_USER_ROOM,
+    _COPILOT_SDK_AVAILABLE,
+    CopilotSDKAdapter,
+    CopilotSDKAdapterConfig,
+)
 
 from tests.e2e.baseline.flaky import flaky_infra
 
@@ -57,9 +62,7 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
     bespoke tests don't re-derive it; ``overrides`` layers the one knob each
     test actually cares about (``ask_user=``, ``base_directory=``).
     """
-    from copilot import ProviderConfig
-
-    from band.adapters.copilot_sdk import CopilotSDKAdapterConfig
+    from copilot import ProviderConfig  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
 
     return CopilotSDKAdapterConfig(
         model=settings.llm_models.anthropic_model,
@@ -68,7 +71,7 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
             base_url="https://api.anthropic.com",
             api_key=settings.llm_credentials.anthropic_api_key,
         ),
-        github_token=settings.backends.github_token,
+        use_logged_in_user=False,
         custom_section=overrides.pop(
             "custom_section", "Keep responses short and concise."
         ),
@@ -99,7 +102,6 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     forwarding (without either, the model cannot ask and the handler never
     fires).
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
     operator_channel = f"channel-{uuid.uuid4().hex[:6]}"
     asked: list[dict[str, Any]] = []
@@ -167,7 +169,6 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
     reply containing it proves the answer flowed through the room round trip —
     not model invention.
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
     secret_channel = f"channel-{uuid.uuid4().hex[:6]}"
     adapter = CopilotSDKAdapter(
@@ -248,7 +249,6 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     replies are its only possible source (the regression case for one-sided
     injected history).
     """
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
 
     tracking_marker = f"MARKER_{uuid.uuid4().hex[:6]}"
     agent_fact = "blue"
@@ -331,9 +331,7 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
        still-running client — the borrowed client must survive an adapter's
        full cleanup (``owns_client=False`` contract).
     """
-    from copilot import CopilotClient
-
-    from band.adapters.copilot_sdk import CopilotSDKAdapter
+    from copilot import CopilotClient  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
 
     identity = await resource_manager.provision_agent("copilot-shared-client")
     room_a = await resource_manager.provision_room(
@@ -360,7 +358,7 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
         return CopilotSDKAdapter(_copilot_config(baseline_settings), client=client)
 
     # The test owns the client; adapters only borrow it.
-    client = CopilotClient(github_token=baseline_settings.backends.github_token)
+    client = CopilotClient(use_logged_in_user=False)
     try:
         async with running_agent(
             identity, make_shared_adapter(client), baseline_settings

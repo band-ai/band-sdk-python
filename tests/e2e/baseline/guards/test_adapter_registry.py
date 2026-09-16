@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from band.core.types import Capability
 from tests.e2e.baseline.requires import Dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
@@ -71,8 +72,6 @@ def test_ci_lanes_partition_is_complete_and_disjoint() -> None:
 
 def test_supports_filter_selects_memory_adapters() -> None:
     """The capability filter narrows the matrix (the 'memory matrix' use case)."""
-    from band.core.types import Capability
-
     memory_ids = {spec.id for spec in specs(supports={Capability.MEMORY})}
     assert memory_ids <= registered_ids()
     assert "anthropic" in memory_ids  # a known memory-tool-loop adapter

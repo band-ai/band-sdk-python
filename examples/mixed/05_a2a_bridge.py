@@ -28,29 +28,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from setup_logging import setup_logging
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import A2AAdapter
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
 
-def _load_platform_urls() -> tuple[str, str]:
-    """Load Band URLs, defaulting to the hosted platform."""
-    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
-
-    return ws_url, rest_url
-
-
-def _build_bridge_agent(
-    *,
-    config_name: str,
-    remote_url: str,
-    ws_url: str,
-    rest_url: str,
-) -> Agent:
+def _build_bridge_agent(*, config_name: str, remote_url: str) -> Agent:
     """Create one Band bridge agent for a remote A2A service."""
     adapter = A2AAdapter(remote_url=remote_url, streaming=True)
 
@@ -58,30 +43,23 @@ def _build_bridge_agent(
         config_name,
         config_path=CONFIG_PATH,
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
 
 async def main() -> None:
-    setup_logging()
+    configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
     load_dotenv()
 
-    ws_url, rest_url = _load_platform_urls()
     fact_url = os.getenv("MIXED_FACT_URL", "http://127.0.0.1:10121")
     risk_url = os.getenv("MIXED_RISK_URL", "http://127.0.0.1:10122")
 
     fact_bridge = _build_bridge_agent(
         config_name="mixed_fact_bridge_agent",
         remote_url=fact_url,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
     risk_bridge = _build_bridge_agent(
         config_name="mixed_risk_bridge_agent",
         remote_url=risk_url,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting mixed bridge for contract checker at %s", fact_url)

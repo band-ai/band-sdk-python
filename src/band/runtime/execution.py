@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
 from typing import (
@@ -28,8 +29,16 @@ from typing import (
     runtime_checkable,
 )
 
+from band_sdk_core import ClaimRegistry, ParticipantRoster, RetryTracker, is_self_echo
+
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band.client.streaming import DeliveryStatus
+from band.client.streaming import (
+    ControlMode,
+    DeliveryStatus,
+    MessageCreatedPayload,
+    MessageMetadata,
+)
+from band.logging_config import TRACE_CONTEXT
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -38,7 +47,7 @@ from band.platform.event import (
     ReconnectedEvent,
 )
 
-from .types import (
+from band.runtime.types import (
     ConversationContext,
     PlatformMessage,
     ParticipantAddedCallback,
@@ -47,9 +56,9 @@ from .types import (
     SYNTHETIC_SENDER_TYPE,
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
-from band.runtime.claims import MessageClaimRegistry
 from band.runtime.context_serialization import context_item_to_dict
-from band.runtime.retry_tracker import MessageRetryTracker
+from band.runtime.formatters import build_participants_message, format_history_for_llm
+from band.runtime.participants import log_roster_call, log_roster_error
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
@@ -58,7 +67,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _ResyncRequest:
+class ResyncRequest:
     """Sentinel pushed into the execution queue to trigger an immediate /next resync.
 
     Used by request_resync() so a reconnect signal wakes the Phase 2 loop
@@ -68,7 +77,7 @@ class _ResyncRequest:
     type: str = "_resync"  # Matches the .type attribute pattern of PlatformEvent
 
 
-class _BacklogProcessResult(Enum):
+class BacklogProcessResult(Enum):
     ADVANCED = "advanced"
     RETRY_LATER = "retry_later"
 
@@ -159,12 +168,15 @@ class Execution(Protocol):
         """
         ...
 
-    def interrupt(self, *, kind: str = "interrupt") -> bool:
+    def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
         """Abort the in-flight reasoning cycle for this room.
 
         Called preemptively from the WebSocket receive task on an ``interrupt``
         or ``stop`` control signal. ``AgentRuntime`` ``hasattr``-guards this, so
         custom ``Execution`` implementations that omit it degrade to a no-op.
+        ``kind`` keeps ``str`` in the union because ``Protocol`` signatures
+        aren't runtime-enforced and a custom implementation may still pass a
+        plain string.
         """
         ...
 
@@ -221,7 +233,7 @@ class ExecutionContext:
         on_participant_removed: ParticipantRemovedCallback | None = None,
         *,
         hub_room_id: str | None = None,
-        claim_registry: MessageClaimRegistry | None = None,
+        claim_registry: ClaimRegistry | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -271,10 +283,11 @@ class ExecutionContext:
         self._context_cache: ConversationContext | None = None
         self._context_hydrated = False
 
-        # Participant tracking (simplified from ParticipantTracker)
-        self._participants: list[dict[str, Any]] = []
+        # Participant tracking. The roster is the sole source of truth for
+        # membership/fields/change-detection (band_sdk_core.ParticipantRoster);
+        # no shadow list is kept alongside it.
+        self._roster = ParticipantRoster()
         self._participants_loaded = False
-        self._last_participants_sent: list[dict[str, Any]] | None = None
 
         # LLM context tracking
         self._llm_initialized = False
@@ -282,14 +295,15 @@ class ExecutionContext:
         # Message ownership ledger (in-flight claims, completed LRU, pending
         # acks) shared by /next and WebSocket processing. Runtime-provided so
         # all contexts of one agent coordinate; private otherwise.
-        self.claims = claim_registry or MessageClaimRegistry()
+        self.claims = claim_registry or ClaimRegistry()
 
-        # Crash recovery: sync point marker and retry tracking
+        # Crash recovery: sync point marker and retry tracking. Attempt and
+        # permanently-failed-id storage is bounded at RetryTracker's default
+        # max_tracked=10_000 (oldest-first eviction) -- an intentional shared
+        # memory-safety policy, not a promise to remember more than 10,000
+        # distinct message ids for the life of this context.
         self._first_ws_msg_id: str | None = None  # First WS message = sync point
-        self._retry_tracker = MessageRetryTracker(
-            max_retries=self.config.max_message_retries,
-            room_id=room_id,
-        )
+        self._retry_tracker = RetryTracker(max_retries=self.config.max_message_retries)
         self._sync_complete = False  # True after sync with /next completes
 
         # Graceful shutdown: event signaled when state becomes idle
@@ -306,7 +320,7 @@ class ExecutionContext:
         # task BEFORE cancelling the child, then read-and-cleared in the loop
         # coroutine's cancel handler so it can't leak across cycles.
         self._active_cycle_task: asyncio.Task[None] | None = None
-        self._interrupt_kind: str | None = None  # "interrupt" | "stop" | None
+        self._interrupt_kind: ControlMode | None = None
 
         # Signal that landed in the claim->cycle window, where a message is
         # claimed (mark_processing) and hydrating but the cancellable cycle task
@@ -316,7 +330,7 @@ class ExecutionContext:
         # cleared as the cycle starts and in the per-message ``finally``, so a
         # signal can never leak onto a later cycle.
         self._cycle_armed: bool = False
-        self._pending_interrupt: str | None = None
+        self._pending_interrupt: ControlMode | None = None
 
         # Durable stop (play to resume). Trigger suppression is
         # platform-authoritative (dispatch gated server-side, persists across
@@ -362,8 +376,8 @@ class ExecutionContext:
 
     @property
     def participants(self) -> list[dict[str, Any]]:
-        """Get current participants list (copy)."""
-        return self._participants.copy()
+        """Get current participants list (a fresh snapshot from the roster)."""
+        return self._roster.list()
 
     @property
     def agent_id(self) -> str | None:
@@ -455,6 +469,20 @@ class ExecutionContext:
             return True
 
         return False
+
+    @contextlib.contextmanager
+    def _claim_message(self, message_id: str) -> Iterator[bool]:
+        """Yield whether an in-flight claim was acquired; release iff acquired.
+
+        ``band_sdk_core`` has no context-manager equivalent by design, so
+        this is the sole SDK adapter over ``try_claim``/``.release``.
+        """
+        acquired = self.claims.try_claim(self.room_id, message_id)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                self.claims.release(self.room_id, message_id)
 
     # --- Execution protocol implementation ---
 
@@ -600,10 +628,10 @@ class ExecutionContext:
         and runs a /next catch-up without waiting for the idle timeout. Called
         by AgentRuntime after WebSocket reconnect.
         """
-        self.queue.put_nowait(_ResyncRequest())  # type: ignore[arg-type]  # Sentinel is intentionally not a PlatformEvent.
+        self.queue.put_nowait(ResyncRequest())  # type: ignore[arg-type]  # Sentinel is intentionally not a PlatformEvent.
         logger.debug("ExecutionContext %s: Resync sentinel enqueued", self.room_id)
 
-    def interrupt(self, *, kind: str = "interrupt") -> bool:
+    def interrupt(self, *, kind: ControlMode | str = ControlMode.INTERRUPT) -> bool:
         """Abort the in-flight reasoning cycle, if any.
 
         Called from the WebSocket receive task. The receive-side surface is
@@ -613,9 +641,10 @@ class ExecutionContext:
         not race on shared state.
 
         Args:
-            kind: ``"interrupt"`` (consume the message) or ``"stop"`` (leave it
-                actionable for replay on play). Distinguishes the two unwind
-                paths in ``_run_cycle``.
+            kind: ``ControlMode.INTERRUPT`` (consume the message) or
+                ``ControlMode.STOP`` (leave it actionable for replay on play).
+                Distinguishes the two unwind paths in ``_run_cycle``. A plain
+                matching string coerces; anything else raises ``ValueError``.
 
         Returns:
             True if the signal took effect — either a running cycle was
@@ -623,7 +652,16 @@ class ExecutionContext:
             (the claim->cycle window). Between cycles this is a clean no-op and
             does NOT set ``_interrupt_kind``/``_pending_interrupt`` (which would
             otherwise mis-flag the next cycle).
+
+        Raises:
+            ValueError: ``kind`` is not a valid ``ControlMode``, or is
+                ``ControlMode.PLAY`` — this method only ever implements
+                interrupt/stop; use ``resume_room()`` for play.
         """
+        kind = ControlMode(kind)
+        if kind is ControlMode.PLAY:
+            raise ValueError("interrupt() does not accept kind=PLAY; use resume_room()")
+
         task = self._active_cycle_task
         if task is not None and not task.done():
             self._interrupt_kind = kind
@@ -658,7 +696,7 @@ class ExecutionContext:
         via /next on play.
         """
         self._stopped = True
-        self.interrupt(kind="stop")
+        self.interrupt(kind=ControlMode.STOP)
 
     async def resume_room(self) -> None:
         """Resume a stopped room (play): clear the local stop flag and catch up
@@ -683,30 +721,33 @@ class ExecutionContext:
 
     # --- Participant management ---
 
-    def add_participant(self, participant: dict) -> bool:
+    def add_participant(self, participant: dict[str, Any]) -> bool:
         """
-        Add participant (from WebSocket event).
+        Add or refresh a participant (from a WebSocket event or a tool's
+        REST resync).
+
+        An existing id is merged field-by-field rather than skipped or
+        replaced: a field learned after the participant was first tracked
+        (e.g. a description that arrives via a later REST fetch) reaches the
+        roster, while a sparser source (e.g. a WS payload without description)
+        cannot erase what an earlier source already knew.
 
         Returns:
-            True if added, False if duplicate
-        """
-        if any(p.get("id") == participant.get("id") for p in self._participants):
-            return False
+            True if newly added, False if it already existed (and was refreshed)
 
-        self._participants.append(
-            {
-                "id": participant.get("id"),
-                "name": participant.get("name"),
-                "type": participant.get("type"),
-                "handle": participant.get("handle"),
-            }
-        )
-        logger.debug(
-            "ExecutionContext %s: Added participant %s",
-            self.room_id,
-            participant.get("name"),
-        )
-        return True
+        Raises:
+            TypeError: ``participant`` is not a mapping, its ``id`` is
+                missing/not a string, or another tracked field is not a
+                string or ``None`` (``band_sdk_core.ParticipantRoster.add``).
+        """
+        added = self._roster.add(participant)
+        if added:
+            logger.debug(
+                "ExecutionContext %s: Added participant %s",
+                self.room_id,
+                participant.get("name"),
+            )
+        return added
 
     def remove_participant(self, participant_id: str) -> bool:
         """
@@ -715,24 +756,37 @@ class ExecutionContext:
         Returns:
             True if removed, False if not found
         """
-        before = len(self._participants)
-        self._participants = [
-            p for p in self._participants if p.get("id") != participant_id
-        ]
-        return len(self._participants) < before
+        return self._roster.remove(participant_id)
+
+    def set_participants(self, participants: list[dict[str, Any]]) -> None:
+        """Replace the roster from an authoritative snapshot (a REST list).
+
+        Membership follows the snapshot exactly — stale entries drop out —
+        while fields merge per id, so a source that omits a field (e.g. the
+        participants list endpoint carries no description) cannot erase one
+        learned elsewhere.
+
+        Raises:
+            ValueError: ``participants`` names an id more than once
+                (``.issues``/``.trace_context`` attached); the roster is left
+                unchanged.
+        """
+        # TRACE_CONTEXT is set for the duration of the current turn (see
+        # logging_config.trace_context_scope); read fresh here rather than
+        # threaded in as a parameter so this always reflects whichever turn
+        # is actually calling set_participants right now. None outside a
+        # turn (e.g. bootstrap before any event has been processed).
+        self._roster.set_all(participants, trace_context=TRACE_CONTEXT.get())
 
     def participants_changed(self) -> bool:
-        """Check if participants changed since last mark_participants_sent()."""
-        if self._last_participants_sent is None:
-            return True
-
-        last_ids = {p.get("id") for p in self._last_participants_sent}
-        current_ids = {p.get("id") for p in self._participants}
-        return last_ids != current_ids
+        """Check if membership or any tracked field changed since the last
+        mark_participants_sent() — an id-only diff would miss a participant
+        refreshed in place (e.g. a description learned after it first joined)."""
+        return self._roster.changed()
 
     def mark_participants_sent(self) -> None:
         """Mark current participants as sent to LLM."""
-        self._last_participants_sent = self._participants.copy()
+        self._roster.mark_sent()
 
     def inject_system_message(self, message: str) -> None:
         """
@@ -765,31 +819,29 @@ class ExecutionContext:
     async def load_participants(self) -> list[dict[str, Any]]:
         """Load participants from API."""
         if self._participants_loaded:
-            return self._participants
+            return self._roster.list()
 
         try:
             response = await self.link.rest.agent_api_participants.list_agent_chat_participants(
                 chat_id=self.room_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-            if response.data:
-                self._participants = [
-                    {
-                        "id": p.id,
-                        "name": p.name,
-                        "type": p.type,
-                        "handle": getattr(p, "handle", None),
-                    }
-                    for p in response.data
-                ]
+            # `is not None`, not truthiness: an authoritative empty snapshot
+            # (`response.data == []`) must still clear the roster instead of
+            # being skipped as if nothing came back.
+            if response.data is not None:
+                self.set_participants([p.model_dump() for p in response.data])
             self._participants_loaded = True
         except Exception as e:
-            logger.warning(
-                "Failed to load participants for room %s: %s", self.room_id, e
+            # Catches both the REST call (any exception) and set_participants
+            # (ValueError on a duplicate id) -- band_sdk_core failures carry
+            # .issues/.trace_context, which a bare "%s" would only stringify.
+            log_roster_error(
+                logger, room_id=self.room_id, action="load participants", err=e
             )
             self._participants_loaded = True
 
-        return self._participants
+        return self._roster.list()
 
     # --- Context building ---
 
@@ -808,15 +860,17 @@ class ExecutionContext:
             return
 
         # Always load participants (lightweight, universally needed)
-        await self.load_participants()
+        participants = await self.load_participants()
 
         # Skip history hydration if disabled
         if not self.config.enable_context_hydration:
             logger.debug("History hydration disabled for room: %s", self.room_id)
+            # Reuses load_participants()'s own snapshot -- nothing awaited since
+            # that call returned, so the roster cannot have changed underneath it.
             self._context_cache = ConversationContext(
                 room_id=self.room_id,
                 messages=[],
-                participants=self._participants,
+                participants=participants,
                 hydrated_at=datetime.now(timezone.utc),
             )
             self._context_hydrated = True
@@ -841,7 +895,7 @@ class ExecutionContext:
             self._context_cache = ConversationContext(
                 room_id=self.room_id,
                 messages=messages,
-                participants=self._participants,
+                participants=self._roster.list(),
                 hydrated_at=datetime.now(timezone.utc),
             )
             self._context_hydrated = True
@@ -849,7 +903,7 @@ class ExecutionContext:
             logger.debug(
                 "Context hydrated: %s messages, %s participants",
                 len(messages),
-                len(self._participants),
+                len(self._context_cache.participants),
             )
 
         except Exception as e:
@@ -857,7 +911,7 @@ class ExecutionContext:
             self._context_cache = ConversationContext(
                 room_id=self.room_id,
                 messages=[],
-                participants=self._participants,
+                participants=self._roster.list(),
                 hydrated_at=datetime.now(timezone.utc),
             )
             self._context_hydrated = True
@@ -908,12 +962,18 @@ class ExecutionContext:
         """
         self._expire_context_cache_if_needed()
         if self._context_cache:
+            # Participants are not part of the TTL-governed cache: the roster
+            # is live SDK state (add_participant/remove_participant mutate it
+            # mid-cycle), so every call refreshes this field from the roster
+            # instead of returning whatever snapshot was baked in at hydrate
+            # time. messages/hydrated_at are unaffected -- no second REST call.
+            self._context_cache.participants = self._roster.list()
             return self._context_cache
 
         return ConversationContext(
             room_id=self.room_id,
             messages=[],
-            participants=self._participants,
+            participants=self._roster.list(),
             hydrated_at=datetime.now(timezone.utc),
         )
 
@@ -952,20 +1012,15 @@ class ExecutionContext:
         if not self._context_cache:
             return []
 
-        # Import here to avoid circular dependency
-        from band.runtime.formatters import format_history_for_llm
-
         return format_history_for_llm(
             self._context_cache.messages,
             exclude_id=exclude_message_id,
-            participants=self._participants,
+            participants=self._roster.list(),
         )
 
     def build_participants_message(self) -> str:
         """Build a system message with current participant list for LLM."""
-        from band.runtime.formatters import build_participants_message
-
-        return build_participants_message(self._participants)
+        return build_participants_message(self._roster.list())
 
     async def _notify_participant_added(self, event: ParticipantAddedEvent) -> None:
         """Fire optional participant-added callback without breaking execution."""
@@ -1059,7 +1114,7 @@ class ExecutionContext:
                     await self._wait_until_resync_complete()
                     continue
 
-                if isinstance(event, _ResyncRequest):
+                if isinstance(event, ResyncRequest):
                     if self._stopped:
                         # resume_room() clears _stopped before enqueuing its
                         # sentinel, so a sentinel seen while stopped is a stale
@@ -1124,8 +1179,9 @@ class ExecutionContext:
         )
 
         try:
-            # Recover messages stuck in 'processing' state from a previous crash.
-            # The /next endpoint skips these, so we must handle them explicitly.
+            # Recover messages stuck in 'processing' from a previous crash. /next
+            # returns these too (it excludes only 'processed'); this sweep just
+            # drains all of them up front instead of one-per-/next-poll.
             if not await self._recover_stale_processing_messages():
                 return False
             while True:  # Cancellation handles exit
@@ -1154,7 +1210,7 @@ class ExecutionContext:
                         next_msg.id,
                     )
                     result = await self._process_backlog_message(next_msg)
-                    if result == _BacklogProcessResult.ADVANCED:
+                    if result == BacklogProcessResult.ADVANCED:
                         # Remove all WS copies of the sync-point message while
                         # preserving the relative order of other queued events.
                         self._drain_duplicate_from_queue(next_msg.id)
@@ -1169,7 +1225,7 @@ class ExecutionContext:
                     next_msg.id,
                 )
                 result = await self._process_backlog_message(next_msg)
-                if result == _BacklogProcessResult.RETRY_LATER:
+                if result == BacklogProcessResult.RETRY_LATER:
                     return False
 
                 if self._stopped:
@@ -1207,9 +1263,9 @@ class ExecutionContext:
         Recover messages stuck in 'processing' state from a previous crash.
 
         When an agent crashes mid-processing, the message stays in 'processing'
-        state on the server. The /next endpoint skips these messages, so the
-        agent would never pick them up again. This method finds such messages
-        and re-processes them by calling mark_processing (creates a new attempt).
+        state on the server. The /next endpoint returns these messages one at a
+        time, while this sweep finds and re-processes all of them up front by
+        calling mark_processing (creates a new attempt).
 
         Skipped while stopped: the stop path deliberately leaves the interrupted
         message in 'processing', and a reconnect must not resurrect it through
@@ -1242,7 +1298,7 @@ class ExecutionContext:
             )
             try:
                 result = await self._process_backlog_message(msg)
-                if result == _BacklogProcessResult.RETRY_LATER:
+                if result == BacklogProcessResult.RETRY_LATER:
                     return False
             except Exception:
                 logger.exception(
@@ -1296,7 +1352,7 @@ class ExecutionContext:
                     next_msg.id,
                 )
                 result = await self._process_backlog_message(next_msg)
-                if result == _BacklogProcessResult.RETRY_LATER:
+                if result == BacklogProcessResult.RETRY_LATER:
                     return False
 
                 caught_up += 1
@@ -1346,7 +1402,7 @@ class ExecutionContext:
 
     async def _process_backlog_message(
         self, msg: PlatformMessage
-    ) -> _BacklogProcessResult:
+    ) -> BacklogProcessResult:
         """
         Process a backlog message from /next during sync.
 
@@ -1359,40 +1415,44 @@ class ExecutionContext:
         """
         msg_id = msg.id
 
-        # Skip messages from self (agent's own messages) to avoid infinite loops
-        if (
-            self._agent_id
-            and msg.sender_type == "Agent"
-            and msg.sender_id == self._agent_id
+        # Skip messages from self (agent's own messages) to avoid infinite loops.
+        # ``PlatformMessage`` declares these as ``str``, but it's a plain
+        # dataclass filled from Fern models -- a backend null reaches here as
+        # ``None`` and would otherwise raise ``TypeError`` from is_self_echo
+        # (a pyo3 extension with non-Optional ``str`` params).
+        if self._agent_id and is_self_echo(
+            sender_id=msg.sender_id or "",
+            sender_type=msg.sender_type or "",
+            agent_id=self._agent_id,
         ):
             logger.debug("Skipping self-message %s", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         # Skip permanently failed messages
         if self._retry_tracker.is_permanently_failed(msg_id):
             logger.debug("Skipping permanently failed message %s", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         # Skip if already processed (dedupe)
         if self.claims.is_completed(self.room_id, msg_id):
             logger.debug("Skipping duplicate backlog message: %s", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         if self.claims.is_ack_pending(self.room_id, msg_id):
             logger.debug("Retrying processed ack for backlog message: %s", msg_id)
             if await self._retry_processed_ack(msg_id):
-                return _BacklogProcessResult.ADVANCED
-            return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.RETRY_LATER
 
-        with self.claims.claim(self.room_id, msg_id) as acquired:
+        with self._claim_message(msg_id) as acquired:
             if not acquired:
                 logger.debug("Deferring in-flight backlog message: %s", msg_id)
-                return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.RETRY_LATER
             return await self._process_claimed_backlog_message(msg)
 
     async def _process_claimed_backlog_message(
         self, msg: PlatformMessage
-    ) -> _BacklogProcessResult:
+    ) -> BacklogProcessResult:
         """Process a backlog message while its in-flight claim is held."""
         msg_id = msg.id
         self._set_state(ExecutionState.PROCESSING)
@@ -1409,7 +1469,7 @@ class ExecutionContext:
                     self.room_id,
                 )
                 self.claims.remember_completed(self.room_id, msg_id)
-                return _BacklogProcessResult.ADVANCED
+                return BacklogProcessResult.ADVANCED
 
             # Track attempts - check if exceeded BEFORE processing
             attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
@@ -1417,7 +1477,7 @@ class ExecutionContext:
                 logger.warning(
                     "Message %s exceeded max retries (%s attempts)", msg_id, attempts
                 )
-                return _BacklogProcessResult.ADVANCED
+                return BacklogProcessResult.ADVANCED
 
             # Open the claim->cycle window: until _run_cycle creates the
             # cancellable task, an interrupt/stop has no task to cancel, so
@@ -1433,7 +1493,7 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-                return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.RETRY_LATER
 
             # Hydrate context on first message (loads participants always,
             # history only if enable_context_hydration is True)
@@ -1468,8 +1528,6 @@ class ExecutionContext:
                 metadata["status"] = "sent"
 
             # Create event from message for handler
-            from band.client.streaming import MessageCreatedPayload, MessageMetadata
-
             event = MessageEvent(
                 room_id=self.room_id,
                 payload=MessageCreatedPayload(
@@ -1492,24 +1550,29 @@ class ExecutionContext:
             # handled inside _run_cycle and we advance without sending
             # anything.
             if not await self._run_cycle(event, msg_id):
-                return _BacklogProcessResult.ADVANCED
+                return BacklogProcessResult.ADVANCED
 
-            # SUCCESS: Mark as processed on server
+            # SUCCESS: record ack-pending BEFORE the awaited mark_processed
+            # call, synchronously, so a cancellation landing inside that await
+            # (e.g. ExecutionContext.stop() cancelling this loop task) still
+            # leaves the message correctly ack-pending -- redelivery then
+            # retries only the ack via _retry_processed_ack, never re-running
+            # the handler. remember_completed clears this on success below.
+            self.claims.remember_ack_pending(self.room_id, msg_id)
             durable_processed = await self.link.mark_processed(self.room_id, msg_id)
             if durable_processed:
                 self._retry_tracker.mark_success(msg_id)
                 self.claims.remember_completed(self.room_id, msg_id)
             else:
-                self.claims.remember_ack_pending(self.room_id, msg_id)
                 logger.warning(
                     "ExecutionContext %s: Local execution completed but durable processed mark failed for backlog message %s",
                     self.room_id,
                     msg_id,
                 )
-                return _BacklogProcessResult.RETRY_LATER
+                return BacklogProcessResult.RETRY_LATER
 
             logger.debug("Message %s processed successfully", msg_id)
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         except Exception as e:
             # FAILURE: Mark as failed on server
@@ -1522,7 +1585,7 @@ class ExecutionContext:
                     self.room_id,
                     msg_id,
                 )
-            return _BacklogProcessResult.ADVANCED
+            return BacklogProcessResult.ADVANCED
 
         finally:
             # Close the claim->cycle window on every exit so a pending signal
@@ -1626,6 +1689,10 @@ class ExecutionContext:
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
             await self._active_cycle_task
+            # A handler may suppress CancelledError and return normally. In
+            # that case the control signal was consumed by this cycle and must
+            # not misclassify a later shutdown cancellation as an interrupt.
+            self._interrupt_kind = None
             return True
         except asyncio.CancelledError:
             # Read-and-clear is atomic here (no await between the two lines).
@@ -1642,13 +1709,14 @@ class ExecutionContext:
         finally:
             self._active_cycle_task = None
 
-    async def _abort_cycle(self, kind: str, msg_id: str | None) -> bool:
+    async def _abort_cycle(self, kind: ControlMode, msg_id: str | None) -> bool:
         """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
 
         Shared by the in-flight cancel path (``_run_cycle``'s ``CancelledError``
         handler) and the claim->cycle window where interrupt()/stop_room()
         landed before the cycle task existed. Returns False so the caller sends
-        nothing further.
+        nothing further. ``kind`` is only ever ``INTERRUPT``/``STOP`` here —
+        ``interrupt()`` rejects ``PLAY`` before either path can reach this.
         """
         # The handler never ran to completion, so uncharge the attempt
         # `record_attempt` already billed before this cycle started — otherwise
@@ -1657,7 +1725,7 @@ class ExecutionContext:
         if msg_id:
             self._retry_tracker.discard_attempt(msg_id)
         await self._clear_activity()
-        if kind == "interrupt" and msg_id:
+        if kind is ControlMode.INTERRUPT and msg_id:
             # Consume the message so the idle /next resync does not re-return it
             # (excludes-only-processed) and re-fire the cycle the user just
             # interrupted. Mirror the success-path bookkeeping.
@@ -1683,11 +1751,12 @@ class ExecutionContext:
         # (Chat.get_next_actionable_message) excluding ONLY 'processed' — a
         # 'processing' message must still be returned. If the platform ever also
         # excludes 'processing', stopped messages are silently dropped on play.
-        # Covered by the stop->play replay test.
+        # Guarded live by the /next-actionable-semantics baseline E2E; the unit
+        # replay test mocks /next and so cannot cover this cross-system half.
         logger.info(
             "ExecutionContext %s: cycle %s (message %s) — nothing sent",
             self.room_id,
-            "interrupted" if kind == "interrupt" else "stopped",
+            "interrupted" if kind is ControlMode.INTERRUPT else "stopped",
             msg_id,
         )
         return False
@@ -1745,11 +1814,15 @@ class ExecutionContext:
 
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
-            # Skip messages from self (agent's own messages) to avoid infinite loops
-            if (
-                self._agent_id
-                and payload.sender_type == "Agent"
-                and payload.sender_id == self._agent_id
+            # Skip messages from self (agent's own messages) to avoid infinite
+            # loops. ``payload`` is hydrated via ``model_construct``, which
+            # bypasses pydantic validation -- a null sender field would
+            # otherwise raise ``TypeError`` from is_self_echo's non-Optional
+            # ``str`` params.
+            if self._agent_id and is_self_echo(
+                sender_id=payload.sender_id or "",
+                sender_type=payload.sender_type or "",
+                agent_id=self._agent_id,
             ):
                 logger.debug("Skipping self-message %s", msg_id)
                 return True
@@ -1782,7 +1855,7 @@ class ExecutionContext:
                         return True
                     return False
 
-                with self.claims.claim(self.room_id, msg_id) as acquired:
+                with self._claim_message(msg_id) as acquired:
                     if not acquired:
                         # The resync safety net re-checks deferred work, so an
                         # owner failure never silently loses the message.
@@ -1856,12 +1929,25 @@ class ExecutionContext:
             # history only if enable_context_hydration is True)
             await self._ensure_fresh_context()
 
-            # Handle participant events internally
+            # Handle participant events internally; the callback below still
+            # fires either way since it reports the platform event, not roster state.
             if isinstance(event, ParticipantAddedEvent) and event.payload:
-                self.add_participant(event.payload.model_dump())
+                payload = event.payload
+                log_roster_call(
+                    logger,
+                    call=self.add_participant,
+                    arg=payload.model_dump(),
+                    room_id=self.room_id,
+                )
                 await self._notify_participant_added(event)
             elif isinstance(event, ParticipantRemovedEvent) and event.payload:
-                self.remove_participant(event.payload.id)
+                payload = event.payload
+                log_roster_call(
+                    logger,
+                    call=self.remove_participant,
+                    arg=payload.id,
+                    room_id=self.room_id,
+                )
                 await self._notify_participant_removed(event)
 
             # Call execution handler as a cancellable cycle. A control signal
@@ -1872,14 +1958,18 @@ class ExecutionContext:
             if not await self._run_cycle(event, msg_id):
                 return True
 
-            # For messages: mark as processed on server
+            # For messages: record ack-pending BEFORE the awaited mark_processed
+            # call, synchronously, so a cancellation landing inside that await
+            # still leaves the message correctly ack-pending -- redelivery then
+            # retries only the ack, never re-running the handler.
+            # remember_completed clears this on success below.
             if isinstance(event, MessageEvent) and msg_id:
+                self.claims.remember_ack_pending(self.room_id, msg_id)
                 durable_processed = await self.link.mark_processed(self.room_id, msg_id)
                 if durable_processed:
                     self._retry_tracker.mark_success(msg_id)
                     self.claims.remember_completed(self.room_id, msg_id)
                 else:
-                    self.claims.remember_ack_pending(self.room_id, msg_id)
                     logger.warning(
                         "ExecutionContext %s: Local execution completed but durable processed mark failed for message %s",
                         self.room_id,

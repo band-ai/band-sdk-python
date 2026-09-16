@@ -12,16 +12,18 @@ import warnings
 from typing import Any, ClassVar, cast
 
 from anthropic import AsyncAnthropic
-from anthropic.types import Message, MessageParam, ToolParam, ToolUseBlock
+from anthropic.types import Message, MessageParam, TextBlock, ToolParam, ToolUseBlock
+from typing_extensions import Unpack
 
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
-    AdapterFeatures,
     Capability,
     Emit,
+    FeatureKwargs,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
@@ -32,8 +34,32 @@ from band.runtime.custom_tools import (
     find_custom_tool,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import (
+    image_block_placeholder,
+    is_image_passthrough_result,
+    redact_tool_call_args,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _image_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """An image tool result as Anthropic ``ImageBlockParam`` dicts.
+
+    No media_type validation: Anthropic's accepted set is exactly
+    ``PREVIEWABLE_IMAGE_CONTENT_TYPES``, the only types read_room_file inlines.
+    """
+    return [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": block["mimeType"],
+                "data": block["data"],
+            },
+        }
+        for block in result["content"]
+    ]
 
 
 class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
@@ -47,18 +73,15 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         adapter = AnthropicAdapter(
             model="claude-sonnet-4-5-20250929",
             prompt="You are a helpful assistant.",
-            features=AdapterFeatures(
-                capabilities={Capability.MEMORY},
-                emit={Emit.EXECUTION},
-            ),
+            capabilities=Capability.MEMORY,
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.TOOL_CALLS, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
-        {Capability.MEMORY, Capability.CONTACTS}
+        {Capability.MEMORY, Capability.CONTACTS, Capability.TASKS, Capability.FILES}
     )
 
     def __init__(
@@ -70,14 +93,12 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         max_tokens: int = 4096,
         history_converter: AnthropicHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
-        features: AdapterFeatures | None = None,
         include_base_instructions: bool = True,
         # --- Deprecated (one release, then remove) ---
         api_key: str | None = None,
         anthropic_api_key: str | None = None,
         custom_section: str | None = None,
-        enable_execution_reporting: bool = False,
-        enable_memory_tools: bool = False,
+        **features: Unpack[FeatureKwargs],
     ):
         # --- Selective: provider_key rename ---
         if anthropic_api_key is not None:
@@ -113,30 +134,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 raise BandConfigError("Cannot pass both prompt and custom_section")
             prompt = custom_section
 
-        # --- Universal: boolean → AdapterFeatures migration ---
-        if enable_memory_tools or enable_execution_reporting:
-            if features is not None:
-                raise BandConfigError(
-                    "Cannot pass both features= and legacy boolean params "
-                    "(enable_memory_tools, enable_execution_reporting)"
-                )
-            warnings.warn(
-                "enable_memory_tools/enable_execution_reporting are deprecated, "
-                "use features=AdapterFeatures(...) instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            caps: frozenset[Capability] = frozenset()
-            emit: frozenset[Emit] = frozenset()
-            if enable_memory_tools:
-                caps = caps | frozenset({Capability.MEMORY})
-            if enable_execution_reporting:
-                emit = emit | frozenset({Emit.EXECUTION})
-            features = AdapterFeatures(capabilities=caps, emit=emit)
-
         super().__init__(
             history_converter=history_converter or AnthropicHistoryConverter(),
-            features=features,
+            **features,
         )
 
         self.model = model
@@ -257,11 +257,8 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         )
 
         # Get tool schemas in Anthropic format (typed helper)
-        include_memory = Capability.MEMORY in self.features.capabilities
-        include_contacts = Capability.CONTACTS in self.features.capabilities
         tool_schemas = tools.get_anthropic_tool_schemas(
-            include_memory=include_memory,
-            include_contacts=include_contacts,
+            capabilities=self.features.capabilities,
         )
         # Merge custom tool schemas
         if self._custom_tools:
@@ -385,8 +382,6 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     # --- Copied from BandAnthropicAgent._extract_text_content ---
     def _extract_text_content(self, content: list) -> str:
         """Extract text content from response content blocks."""
-        from anthropic.types import TextBlock
-
         texts = []
         for block in content:
             if isinstance(block, TextBlock) and block.text:
@@ -396,8 +391,6 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     # --- Copied from BandAnthropicAgent._serialize_content_blocks ---
     def _serialize_content_blocks(self, content: list) -> list[dict[str, Any]]:
         """Serialize content blocks to dict format for message history."""
-        from anthropic.types import TextBlock
-
         serialized = []
         for block in content:
             if isinstance(block, ToolUseBlock):
@@ -447,14 +440,16 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
             # Report tool call if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "args": tool_input,
-                                "tool_call_id": tool_use_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.ARGS: redact_tool_call_args(
+                                    tool_name, tool_input
+                                ),
+                                ToolEventKey.TOOL_CALL_ID: tool_use_id,
                             }
                         ),
                         message_type="tool_call",
@@ -472,27 +467,31 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     result = await execute_custom_tool(custom_tool, tool_input)
                 else:
                     result = await tools.execute_tool_call(tool_name, tool_input)
-                result_str = (
-                    json.dumps(result, default=str)
-                    if not isinstance(result, str)
-                    else result
-                )
+                if is_image_passthrough_result(tool_name, result):
+                    content = _image_tool_result_content(result)
+                    result_str = image_block_placeholder(len(content))
+                else:
+                    content = result_str = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                 is_error = False
             except Exception as e:
-                result_str = f"Error: {e}"
+                content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
 
             # Report tool result if enabled (JSON format with tool_call_id for linking)
             # Best-effort: event reporting must never crash tool execution
-            if Emit.EXECUTION in self.features.emit:
+            if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
                         content=json.dumps(
                             {
-                                "name": tool_name,
-                                "output": result_str,
-                                "tool_call_id": tool_use_id,
+                                ToolEventKey.NAME: tool_name,
+                                ToolEventKey.OUTPUT: result_str,
+                                ToolEventKey.TOOL_CALL_ID: tool_use_id,
                             }
                         ),
                         message_type="tool_result",
@@ -507,7 +506,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": result_str,
+                    "content": content,
                     "is_error": is_error,
                 }
             )

@@ -11,8 +11,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.toolkit.timeouts import (
     TIMEOUT_BACKSTOP_MARGIN_S,
+    backstop_timeout,
     effective_timeout,
 )
 
@@ -50,3 +54,15 @@ def test_extra_below_the_margin_never_drops_under_the_backstop_floor() -> None:
 def test_absolute_timeout_is_left_to_pytest_timeout_natively() -> None:
     # Positional @pytest.mark.timeout(n): honored natively, not rewritten.
     assert effective_timeout(_item(_marker(600)), BASE) is None
+
+
+@pytest.mark.parametrize("barriers", [1, 2, 3])
+def test_slow_turn_budget_keeps_the_backstop_above_every_barrier(barriers: int) -> None:
+    # The pairing that matters: a multi-barrier test's hard backstop must clear the
+    # SUM of its soft barriers (plus the margin), or the SIGALRM fires first and the
+    # failure names no phase.
+    budget = slow_turn_budget(BASE, barriers=barriers)
+    hard = effective_timeout(_item(_marker(extra=budget.extra_s)), BASE)
+    assert hard == backstop_timeout(BASE, extra_s=budget.extra_s)
+    assert hard is not None
+    assert hard - budget.deadline_s * barriers >= TIMEOUT_BACKSTOP_MARGIN_S
