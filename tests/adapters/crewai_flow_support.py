@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def _participant(
+def participant_seed(
     id: str, handle: str, name: str | None = None, *, type: str = "Agent"
 ) -> dict[str, Any]:
     """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""

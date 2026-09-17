@@ -32,7 +32,7 @@ from band.adapters.crewai_flow import (  # noqa: E402
 )
 from band.core.types import PlatformMessage  # noqa: E402
 from band.testing.fake_tools import FakeAgentTools  # noqa: E402
-from tests.adapters.crewai_flow_support import _participant  # noqa: E402
+from tests.adapters.crewai_flow_support import participant_seed  # noqa: E402
 
 
 def _msg(
@@ -89,7 +89,9 @@ class TestTaggedPeer:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[_participant("p-a", "@example/peer-a")])
+        tools = FakeAgentTools(
+            participants=[participant_seed("p-a", "@example/peer-a")]
+        )
         await adapter.on_started("router", "")
         await adapter.on_message(
             msg=_msg(content="please ask @example/peer-a about it"),
@@ -165,8 +167,8 @@ class TestSequentialChains:
         )
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a"),
-                _participant("p-b", "@example/peer-b"),
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
@@ -242,8 +244,8 @@ class TestSequentialChains:
         )
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a"),
-                _participant("p-b", "@example/peer-b"),
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
@@ -336,8 +338,8 @@ class TestBufferedSyntheses:
         )
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a"),
-                _participant("p-b", "@example/peer-b"),
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
@@ -447,8 +449,8 @@ class TestE2ETrace:
         )
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-b", "@example/peer-b", "Peer B"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await adapter.on_started("router", "")

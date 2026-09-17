@@ -30,7 +30,7 @@ from band.adapters.crewai_flow import (  # noqa: E402
 )
 from band.core.types import PlatformMessage  # noqa: E402
 from band.testing.fake_tools import FakeAgentTools  # noqa: E402
-from tests.adapters.crewai_flow_support import _participant  # noqa: E402
+from tests.adapters.crewai_flow_support import participant_seed  # noqa: E402
 
 NS_PREFIX = "crewai_flow:"
 
@@ -123,8 +123,8 @@ class TestDelegation:
         await _start(adapter)
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a"),
-                _participant("p-b", "@example/peer-b"),
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ]
         )
 
@@ -167,8 +167,8 @@ class TestDelegation:
         )
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-b", "@example/peer-b", "Peer B"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await _start(adapter)
@@ -231,8 +231,8 @@ class TestReplyMatching:
         }
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-b", "@example/peer-b", "Peer B"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ],
             room_context=[
                 {
@@ -311,8 +311,8 @@ class TestReplyMatching:
         }
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-b", "@example/peer-b", "Peer B"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ],
             room_context=[
                 {
@@ -383,7 +383,7 @@ class TestReplyMatching:
             ],
         }
         tools = FakeAgentTools(
-            participants=[_participant("p-a", "@example/peer-a", "Peer A")],
+            participants=[participant_seed("p-a", "@example/peer-a", "Peer A")],
             room_context=[
                 {
                     "id": "evt-prior",
@@ -459,7 +459,7 @@ class TestReplyMatching:
                 }
             )
         tools = FakeAgentTools(
-            participants=[_participant("p-a", "@example/peer-a", "Peer A")],
+            participants=[participant_seed("p-a", "@example/peer-a", "Peer A")],
             room_context=[
                 {
                     "id": f"evt-{idx}",
@@ -530,7 +530,7 @@ class TestReplyMatching:
             ],
         }
         tools = FakeAgentTools(
-            participants=[_participant("p-a", "@example/peer-a", "Peer A")],
+            participants=[participant_seed("p-a", "@example/peer-a", "Peer A")],
             room_context=[
                 {
                     "id": "evt-prior",
@@ -599,8 +599,8 @@ class TestReplyMatching:
         }
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-a2", "@other/peer-a", "Peer A2"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-a2", "@other/peer-a", "Peer A2"),
             ],
             room_context=[
                 {
@@ -649,7 +649,7 @@ class TestReplyMatching:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[_participant("p", "@example/x")])
+        tools = FakeAgentTools(participants=[participant_seed("p", "@example/x")])
         await _start(adapter)
         # Even with no pending state, a User-typed sender should start a new run.
         await _turn(adapter, tools, _msg(sender_type="User"))
@@ -688,7 +688,7 @@ class TestReplyMatching:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
             accept_agent_initiated=True,
         )
-        tools = FakeAgentTools(participants=[_participant("p", "@example/x")])
+        tools = FakeAgentTools(participants=[participant_seed("p", "@example/x")])
         await _start(adapter)
         await _turn(
             adapter,
@@ -725,7 +725,7 @@ class TestIndeterminate:
             "final_side_effect_key": "msg-1:final",
         }
         tools = FakeAgentTools(
-            participants=[_participant("p", "@example/peer")],
+            participants=[participant_seed("p", "@example/peer")],
             room_context=[
                 {
                     "id": "evt-prior",
@@ -830,8 +830,8 @@ class TestPersistedRunPolicy:
         }
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-b", "@example/peer-b", "Peer B"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ],
             room_context=[
                 {
@@ -899,8 +899,8 @@ class TestDelegationAmbiguity:
         )
         tools = FakeAgentTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-a2", "@other/peer-a", "Peer A2"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-a2", "@other/peer-a", "Peer A2"),
             ]
         )
         await _start(adapter, "router")
@@ -954,8 +954,8 @@ class TestDelegationAmbiguity:
         )
         tools = FirstSendFailsTools(
             participants=[
-                _participant("p-a", "@example/peer-a", "Peer A"),
-                _participant("p-b", "@example/peer-b", "Peer B"),
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await _start(adapter, "router")
