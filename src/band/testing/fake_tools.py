@@ -125,25 +125,34 @@ def _find_by_id_or_handle(
 ) -> dict[str, Any]:
     """Resolve a record by id, else by normalized handle, within one store.
 
-    An explicit ``id`` always takes precedence over ``handle`` -- checked as
-    its own full pass rather than interleaved per-record, so a handle match
-    earlier in the list can never shadow the record the caller actually
-    asked for by id. ``status``, when given, restricts both passes to
-    records currently in that status.
+    An explicit ``id`` always takes precedence over ``handle`` -- checked
+    against every record, unfiltered, before ``handle`` is tried at all, so
+    a handle match can never shadow the record the caller actually asked
+    for by id. When ``id`` names a real record whose status doesn't match
+    ``status``, that is a resolved-but-not-actionable record, not a missing
+    one: it fails the lookup immediately rather than falling through to a
+    handle match on some unrelated record with the same status.
+
+    ``status``, when given, restricts the ``handle`` pass -- and only the
+    ``handle`` pass -- to records currently in that status, since handle is
+    not a unique key and only a currently-actionable record should resolve
+    through it.
 
     Shared by every contact/request mutation that resolves its target this
     way (``remove_contact``, ``respond_contact_request``), so the lookup and
     its "no response data" failure -- the real tool's own wording when the
     backend can't find what it was asked to mutate -- stay defined once.
     """
-    candidates = (
-        records if status is None else [r for r in records if r["status"] == status]
-    )
     if id is not None:
-        for record in candidates:
+        for record in records:
             if record["id"] == id:
-                return record
+                if status is None or record["status"] == status:
+                    return record
+                raise RuntimeError(not_found_message)
     if handle is not None:
+        candidates = (
+            records if status is None else [r for r in records if r["status"] == status]
+        )
         normalized_handle = strip_handle_prefix(handle)
         for record in candidates:
             stored_handle = record.get(handle_field)
@@ -341,7 +350,7 @@ class FakeAgentTools:
                     status="already_in_room",
                 )
                 self.participants_added.append(result)
-                return result
+                return deepcopy(result)
 
         peer = next((p for p in self._peers if matches_identifier(p, identifier)), None)
         if peer is None:
@@ -365,7 +374,7 @@ class FakeAgentTools:
             id=participant["id"], name=participant_name, role=role, status="added"
         )
         self.participants_added.append(result)
-        return result
+        return deepcopy(result)
 
     async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
         participant = next(
@@ -381,7 +390,7 @@ class FakeAgentTools:
             status="removed",
         )
         self.participants_removed.append(result)
-        return result
+        return deepcopy(result)
 
     @property
     def participants(self) -> list[dict[str, Any]]:
@@ -458,11 +467,58 @@ class FakeAgentTools:
             ),
         )
 
+    def _promote_received_request_to_contact(self, request: dict[str, Any]) -> None:
+        """Append a contact record for a received request being approved.
+
+        Shared by ``respond_contact_request``'s approve branch and
+        ``add_contact``'s reciprocal auto-accept, so a promoted contact's
+        handle normalization and required-field check are defined once.
+
+        ReceivedContactRequest doesn't carry the requester's entity type;
+        extra="allow" lets a seed attach one, defaulting to User.
+        """
+        from_handle = request.get("from_handle")
+        if not from_handle:
+            raise ValueError(
+                "Failed to respond to contact request - malformed request has no from_handle"
+            )
+        self._contacts.append(
+            AgentContact(
+                id=str(uuid.uuid4()),
+                handle=strip_handle_prefix(from_handle),
+                name=request.get("from_name"),
+                type=request.get("type", "User"),
+                inserted_at=_FAKE_TIMESTAMP,
+            ).model_dump()
+        )
+
     async def add_contact(
         self, handle: str, message: str | None = None
     ) -> AddAgentContactResponseData:
-        """Create a pending outgoing request; ``list_contact_requests`` then
-        serves it from the sent-request store, mirroring the real handshake."""
+        """Create a pending outgoing request, unless the other party already
+        sent us a pending one -- mirroring the real handshake's reciprocal
+        auto-accept (see ``AddContactInput``'s docstring). Otherwise
+        ``list_contact_requests`` serves the new request from the
+        sent-request store."""
+        try:
+            reverse_request = _find_by_id_or_handle(
+                self._received_contact_requests,
+                handle_field="from_handle",
+                id=None,
+                handle=handle,
+                status=ContactRequestStatus.PENDING,
+                not_found_message="",
+            )
+        except RuntimeError:
+            reverse_request = None
+
+        if reverse_request is not None:
+            reverse_request["status"] = ContactRequestStatus.APPROVED
+            self._promote_received_request_to_contact(reverse_request)
+            return AddAgentContactResponseData(
+                id=reverse_request["id"], status=ContactRequestStatus.APPROVED
+            )
+
         request = SentContactRequest(
             id=str(uuid.uuid4()),
             inserted_at=_FAKE_TIMESTAMP,
@@ -565,22 +621,7 @@ class FakeAgentTools:
         )
         request["status"] = status
         if action == ContactRequestAction.APPROVE:
-            from_handle = request.get("from_handle")
-            if not from_handle:
-                raise ValueError(
-                    "Failed to respond to contact request - malformed request has no from_handle"
-                )
-            # ReceivedContactRequest doesn't carry the requester's entity
-            # type; extra="allow" lets a seed attach one, defaulting to User.
-            self._contacts.append(
-                AgentContact(
-                    id=str(uuid.uuid4()),
-                    handle=from_handle,
-                    name=request.get("from_name"),
-                    type=request.get("type", "User"),
-                    inserted_at=_FAKE_TIMESTAMP,
-                ).model_dump()
-            )
+            self._promote_received_request_to_contact(request)
         return RespondToAgentContactRequestResponseData(id=request["id"], status=status)
 
     async def list_memories(

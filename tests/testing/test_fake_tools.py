@@ -14,6 +14,9 @@ from band.testing import FakeAgentTools
 from tests.content import BLANK_CONTENT_CASES
 
 
+_SEED_INSERTED_AT = "2025-01-01T00:00:00Z"
+
+
 async def store_fact(tools: FakeAgentTools, content: str) -> None:
     """Store a memory with the platform-required fields filled in."""
     await tools.store_memory(
@@ -69,7 +72,7 @@ def seeded_contact(
         "handle": handle,
         "name": name,
         "type": type,
-        "inserted_at": "2025-01-01T00:00:00Z",
+        "inserted_at": _SEED_INSERTED_AT,
     }
 
 
@@ -81,7 +84,7 @@ def seeded_received_request(
         "id": id,
         "from_handle": from_handle,
         "status": status,
-        "inserted_at": "2025-01-01T00:00:00Z",
+        "inserted_at": _SEED_INSERTED_AT,
     }
 
 
@@ -93,7 +96,7 @@ def seeded_sent_request(
         "id": id,
         "to_handle": to_handle,
         "status": status,
-        "inserted_at": "2025-01-01T00:00:00Z",
+        "inserted_at": _SEED_INSERTED_AT,
     }
 
 
@@ -568,6 +571,30 @@ class TestContacts:
         listing = serialize_tool_result(await tools.list_contact_requests())
         assert [r["to_handle"] for r in listing["data"]["sent"]] == ["alice"]
 
+    async def test_add_contact_auto_accepts_an_existing_reverse_request(self) -> None:
+        """AddContactInput's own docstring: 'Returns approved when inverse
+        request existed and was auto-accepted' -- alice already asked to add
+        me, so my own add_contact(alice) must complete the handshake rather
+        than queue a second, redundant outgoing request."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        result = await tools.add_contact(handle="@alice")
+
+        assert result.status == "approved"
+        assert result.id == "req-1"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["alice"]
+        listing = serialize_tool_result(await tools.list_contact_requests())
+        assert listing["data"]["received"] == []
+        assert listing["data"]["sent"] == [], (
+            "the reverse request must be completed in place, not left "
+            "pending alongside a new redundant outgoing request"
+        )
+
     async def test_cancelling_a_sent_request_leaves_the_default_pending_listing(
         self,
     ) -> None:
@@ -660,6 +687,31 @@ class TestContacts:
             await tools.respond_contact_request(action="approve", request_id="req-1")
         contacts = serialize_tool_result(await tools.list_contacts())
         assert contacts["data"] == []
+
+    async def test_terminal_request_id_does_not_fall_back_to_an_unrelated_handle_match(
+        self,
+    ) -> None:
+        """A request_id naming an already-terminal record must fail the
+        lookup outright -- not silently fall through to mutate a different,
+        currently-pending record that merely shares its handle."""
+        tools = FakeAgentTools(
+            sent_contact_requests=[
+                seeded_sent_request("req-1", to_handle="frank", status="cancelled"),
+                seeded_sent_request("req-2", to_handle="frank", status="pending"),
+            ]
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to respond to contact request"):
+            await tools.respond_contact_request(
+                action="cancel", request_id="req-1", handle="frank"
+            )
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["status"] for r in everything["data"]["sent"]] == [
+            "cancelled",
+            "pending",
+        ], "req-2 must be untouched by a lookup that explicitly named req-1"
 
     async def test_request_id_takes_precedence_over_an_unrelated_handle_match(
         self,
