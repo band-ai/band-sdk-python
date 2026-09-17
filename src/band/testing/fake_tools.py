@@ -648,9 +648,9 @@ class FakeAgentTools:
             status=ContactRequestStatus.PENDING,
             not_found_message="Failed to respond to contact request - no response data",
         )
-        request["status"] = status
         if action == ContactRequestAction.APPROVE:
             self._promote_received_request_to_contact(request)
+        request["status"] = status
         return RespondToAgentContactRequestResponseData(id=request["id"], status=status)
 
     async def list_memories(

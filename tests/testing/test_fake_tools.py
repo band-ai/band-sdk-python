@@ -880,6 +880,8 @@ class TestContacts:
             await tools.respond_contact_request(action="approve", request_id="req-1")
         contacts = serialize_tool_result(await tools.list_contacts())
         assert contacts["data"] == []
+        pending = serialize_tool_result(await tools.list_contact_requests())
+        assert [request["id"] for request in pending["data"]["received"]] == ["req-1"]
 
     async def test_remove_contact_by_handle(self) -> None:
         tools = FakeAgentTools(
