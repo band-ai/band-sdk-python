@@ -95,22 +95,15 @@ def _mention_recipients(
     """
     recipients = []
     for mention in mentions or []:
-        if isinstance(mention, dict):
-            handle = strip_handle_prefix(
-                mention.get("handle") or mention.get("id") or ""
+        fields = mention if isinstance(mention, dict) else {"handle": mention}
+        handle = strip_handle_prefix(fields.get("handle") or fields.get("id") or "")
+        recipients.append(
+            MessageSentResponseRecipientsItem(
+                id=fields.get("id") or handle,
+                handle=handle,
+                name=fields.get("name"),
             )
-            recipients.append(
-                MessageSentResponseRecipientsItem(
-                    id=mention.get("id") or handle,
-                    handle=handle,
-                    name=mention.get("name"),
-                )
-            )
-        else:
-            handle = strip_handle_prefix(mention)
-            recipients.append(
-                MessageSentResponseRecipientsItem(id=handle, handle=handle)
-            )
+        )
     return recipients
 
 
@@ -497,6 +490,11 @@ class FakeAgentTools:
 
         ReceivedContactRequest doesn't carry the requester's entity type;
         extra="allow" lets a seed attach one, defaulting to User.
+
+        Also resolves any pending outgoing request to the same handle --
+        without this, a mutual handshake (both sides request each other
+        before either responds) leaves that request stuck pending forever
+        alongside the now-approved contact.
         """
         from_handle = request.get("from_handle")
         if not from_handle:
@@ -512,6 +510,14 @@ class FakeAgentTools:
                 inserted_at=_FAKE_TIMESTAMP,
             ).model_dump()
         )
+        reciprocal_sent = _find_by_handle(
+            self._sent_contact_requests,
+            handle_field="to_handle",
+            handle=from_handle,
+            status=ContactRequestStatus.PENDING,
+        )
+        if reciprocal_sent is not None:
+            reciprocal_sent["status"] = ContactRequestStatus.APPROVED
 
     async def add_contact(
         self, handle: str, message: str | None = None
