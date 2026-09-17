@@ -95,6 +95,11 @@ def test_core_checkout_uses_the_scoped_read_secret() -> None:
     assert "Generate GitHub App Token (scoped to band-sdk-core)" not in names
 
 
+def test_coverage_job_skips_dependabot_without_the_read_secret() -> None:
+    coverage = load_workflow()["jobs"]["coverage"]
+    assert coverage["if"] == "github.actor != 'dependabot[bot]'"
+
+
 def test_prerelease_guard_runs_before_the_cross_repo_checkout() -> None:
     steps = load_workflow()["jobs"]["coverage"]["steps"]
     names = [step.get("name") for step in steps]
@@ -121,11 +126,19 @@ def test_report_dir_is_a_single_source_of_truth() -> None:
     workflow = load_workflow()
     report_dir = workflow["jobs"]["coverage"]["env"]["REPORT_DIR"]
     summary_run = _step(workflow, "Write coverage summary")["run"]
+    stage_run = _step(workflow, "Stage coverage report")["run"]
     upload_paths = _step(workflow, "Upload coverage report")["with"]["path"]
     assert "$REPORT_DIR" in summary_run
-    assert "${{ env.REPORT_DIR }}" in upload_paths
+    assert "$REPORT_DIR" in stage_run
+    assert "$ARTIFACT_DIR" in stage_run
+    assert upload_paths == "${{ env.ARTIFACT_DIR }}"
     assert report_dir not in summary_run
-    assert report_dir not in upload_paths
+    assert report_dir not in stage_run
+
+
+def test_coverage_artifact_has_a_single_staging_root() -> None:
+    coverage = load_workflow()["jobs"]["coverage"]
+    assert coverage["env"]["ARTIFACT_DIR"] == "python-core-coverage-artifact"
 
 
 def test_write_coverage_summary_has_no_working_directory() -> None:
@@ -141,6 +154,14 @@ def test_write_coverage_summary_falls_back_when_missing() -> None:
     run_text = _step(load_workflow(), "Write coverage summary")["run"]
     assert "No coverage summary produced" in run_text
     assert '>> "$GITHUB_STEP_SUMMARY"' in run_text
+
+
+def test_download_artifact_uses_only_supported_inputs() -> None:
+    report_steps = load_workflow()["jobs"]["report-weekly"]["steps"]
+    step = next(
+        step for step in report_steps if step.get("name") == "Download coverage report"
+    )
+    assert "if-no-files-found" not in step["with"]
 
 
 def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> None:
@@ -239,3 +260,6 @@ def test_weekly_digest_identifies_low_and_completely_uncovered_files(
         in digest
     )
     assert "covered.rs" not in digest
+    assert module.format_line_ranges((1, 3, 5, 7, 9, 11, 13, 15, 17)) == (
+        "1, 3, 5, 7, 9, 11, 13, 15, … (1 more ranges)"
+    )
