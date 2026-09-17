@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from asyncio import timeout as asyncio_timeout
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from enum import Enum, StrEnum
@@ -65,6 +66,8 @@ if TYPE_CHECKING:
     from band.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
+
+CYCLE_CANCEL_GRACE_SECONDS = 1.0
 
 
 class ResyncRequest:
@@ -320,6 +323,7 @@ class ExecutionContext:
         # task BEFORE cancelling the child, then read-and-cleared in the loop
         # coroutine's cancel handler so it can't leak across cycles.
         self._active_cycle_task: asyncio.Task[None] | None = None
+        self._detached_cycle_tasks: set[asyncio.Task[None]] = set()
         self._interrupt_kind: ControlMode | None = None
 
         # Signal that landed in the claim->cycle window, where a message is
@@ -553,10 +557,10 @@ class ExecutionContext:
             pass
         self._process_loop_task = None
 
-        # Drain the (now cancelled) cycle task so it does not leak as pending.
+        # Drain cancellation cleanup for a bounded time so a non-cooperative
+        # handler cannot make stop() hang after the room loop has exited.
         if cycle_task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
-                await cycle_task
+            await self._drain_cancelled_cycle_task(cycle_task)
         self._active_cycle_task = None
 
         # Defensively clear any lingering working-state keep-alive so a removed
@@ -1656,6 +1660,61 @@ class ExecutionContext:
         finally:
             await self._working_reporter.stop()
 
+    def _take_interrupt_kind(self) -> ControlMode | None:
+        """Read-and-clear ``_interrupt_kind`` atomically (no ``await`` between
+        the read and the clear), so a consumed signal never leaks into a
+        later, unrelated cycle."""
+        kind = self._interrupt_kind
+        self._interrupt_kind = None
+        return kind
+
+    def _retain_detached_cycle_task(self, task: asyncio.Task[None]) -> None:
+        """Keep a non-cooperative cancelled cycle alive until it finishes."""
+        if task in self._detached_cycle_tasks:
+            return
+        self._detached_cycle_tasks.add(task)
+        task.add_done_callback(self._finish_detached_cycle_task)
+
+    def _finish_detached_cycle_task(self, task: asyncio.Task[None]) -> None:
+        """Release a detached cycle and retrieve any late exception."""
+        self._detached_cycle_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "ExecutionContext %s: detached cycle ended with error: %s",
+                self.room_id,
+                error,
+            )
+
+    async def _drain_cancelled_cycle_task(self, task: asyncio.Task[None]) -> None:
+        """Bound cancellation cleanup so a cycle cannot wedge its room loop."""
+        if task.done():
+            return
+
+        try:
+            async with asyncio_timeout(CYCLE_CANCEL_GRACE_SECONDS):
+                await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise
+        except TimeoutError:
+            if task.done():
+                return
+            self._retain_detached_cycle_task(task)
+            logger.warning(
+                "ExecutionContext %s: cancelled cycle did not finish cleanup "
+                "within %ss; detaching it",
+                self.room_id,
+                CYCLE_CANCEL_GRACE_SECONDS,
+            )
+        except Exception:
+            logger.exception(
+                "ExecutionContext %s: cancelled cycle cleanup failed",
+                self.room_id,
+            )
+
     async def _run_cycle(self, event: PlatformEvent, msg_id: str | None) -> bool:
         """Run the execution handler as a cancellable child task.
 
@@ -1675,6 +1734,11 @@ class ExecutionContext:
             bypasses the callers' ``except Exception`` and reaches the loop's
             ``except asyncio.CancelledError``; we only swallow it for an
             interrupt/stop, never for shutdown.
+            TimeoutError: when ``max_cycle_seconds`` is set and the cycle
+            genuinely exceeded it (not a handler's own coincidental
+            ``TimeoutError``, and not a racing interrupt/stop — both handled
+            separately). Propagates to the normal handler-error path
+            (``mark_failed`` + retry), same as any other handler exception.
         """
         # Honor a signal that landed in the claim->cycle window (interrupt()/
         # stop_room() with no cycle task to cancel yet). Reading/clearing the
@@ -1688,23 +1752,101 @@ class ExecutionContext:
 
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
-            await self._active_cycle_task
+            if self.config.max_cycle_seconds is not None:
+                # Bound outside the try: __aenter__ raising before this binds
+                # would otherwise leave it unset for the except clause below.
+                cycle_deadline: asyncio.Timeout | None = None
+                try:
+                    async with asyncio_timeout(
+                        self.config.max_cycle_seconds
+                    ) as cycle_deadline:
+                        await asyncio.shield(self._active_cycle_task)
+                        # A handler may catch the cancellation this deadline
+                        # triggers and return normally instead of re-raising
+                        # (same handler behavior the CancelledError branch
+                        # below already accounts for) -- expired() is the only
+                        # reliable way to tell the deadline passed regardless
+                        # of what the handler did with it. The bare raise here
+                        # is just a trigger; the except below gives it a
+                        # diagnosable message.
+                        if cycle_deadline.expired():
+                            raise TimeoutError
+                except TimeoutError as exc:
+                    # expired() also disambiguates a handler's own bare
+                    # TimeoutError (unrelated to this deadline, well inside
+                    # budget) from this deadline actually firing -- both raise
+                    # the same exception type, but only the timeout arms
+                    # cancellation, so only it flips expired() to True.
+                    if cycle_deadline is None or not cycle_deadline.expired():
+                        raise
+                    cycle_task = self._active_cycle_task
+                    if cycle_task is not None and cycle_task.done():
+                        # asyncio_timeout cancels the *outer* task, while
+                        # shield keeps the child untouched. If the child had
+                        # already completed in the same event-loop tick, the
+                        # deadline can still fabricate a CancelledError for
+                        # the outer task's resumption. Recover the child's real
+                        # outcome instead of reporting a timely cycle as a
+                        # watchdog failure.
+                        logger.debug(
+                            "ExecutionContext %s: cycle for message %s "
+                            "completed right at the max_cycle_seconds=%s "
+                            "deadline boundary; recovering its real result",
+                            self.room_id,
+                            msg_id,
+                            self.config.max_cycle_seconds,
+                        )
+                        cycle_task.result()
+                    else:
+                        if cycle_task is not None:
+                            cycle_task.cancel()
+                            await self._drain_cancelled_cycle_task(cycle_task)
+                        message = (
+                            f"cycle exceeded max_cycle_seconds="
+                            f"{self.config.max_cycle_seconds}"
+                        )
+                        # A concurrent interrupt()/stop() takes priority over
+                        # the watchdog's own (coincidental) expiry: it also
+                        # cancels this same task, so it can race in here
+                        # instead of the CancelledError branch below. Honor
+                        # its documented contract (mirrors that branch) rather
+                        # than reporting the user's own stop/interrupt as a
+                        # timeout failure.
+                        kind = self._take_interrupt_kind()
+                        if kind is not None:
+                            return await self._abort_cycle(kind, msg_id)
+                        # Replace whatever bare TimeoutError arrived
+                        # (asyncio.timeout's own conversion carries no
+                        # message) with one mark_failed can show the user,
+                        # instead of a bare "TimeoutError" label. The
+                        # caller's own except-Exception catch-all already
+                        # logs this (with traceback) -- logging it again
+                        # here would double-report every genuine trip.
+                        raise TimeoutError(message) from exc
+            else:
+                await self._active_cycle_task
             # A handler may suppress CancelledError and return normally. In
             # that case the control signal was consumed by this cycle and must
             # not misclassify a later shutdown cancellation as an interrupt.
             self._interrupt_kind = None
             return True
         except asyncio.CancelledError:
-            # Read-and-clear is atomic here (no await between the two lines).
             # If two control signals raced before this ran, last-writer-wins on
             # _interrupt_kind — benign, since re-cancelling a cancelling task is
             # a no-op and both signals wanted the cycle dead.
-            kind = self._interrupt_kind
-            self._interrupt_kind = None
+            cycle_task = self._active_cycle_task
+            if cycle_task is not None and not cycle_task.done():
+                cycle_task.cancel()
+            kind = self._take_interrupt_kind()
             if kind is None:
-                # Shutdown cancel of the loop task propagating through the child
-                # await — let it propagate so the loop exits.
+                # Shutdown cancel of the loop task must propagate so the loop
+                # exits. The child was cancelled above; retain it if cleanup
+                # is still pending after this task leaves.
+                if cycle_task is not None and not cycle_task.done():
+                    self._retain_detached_cycle_task(cycle_task)
                 raise
+            if cycle_task is not None:
+                await self._drain_cancelled_cycle_task(cycle_task)
             return await self._abort_cycle(kind, msg_id)
         finally:
             self._active_cycle_task = None
