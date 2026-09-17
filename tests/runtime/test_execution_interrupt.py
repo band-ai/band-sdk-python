@@ -810,7 +810,7 @@ class TestCycleWatchdog:
             # nothing was ever actually cancelled.
             yield _FakeExpiredDeadline()
 
-        with patch("band.runtime.execution.asyncio.timeout", fake_timeout):
+        with patch("band.runtime.execution.asyncio_timeout", fake_timeout):
             with caplog.at_level(logging.DEBUG, logger="band.runtime.execution"):
                 result = await ctx._process_event(make_message_event(msg_id="boundary"))
 
@@ -825,3 +825,42 @@ class TestCycleWatchdog:
             "deadline boundary; recovering its real result" in r.message
             for r in caplog.records
         )
+
+    async def test_watchdog_does_not_wait_for_stuck_cancellation_cleanup(
+        self, mock_link
+    ):
+        """A cycle whose cancellation cleanup wedges must not block the room."""
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+
+        async def blocks_during_cleanup(ctx, event):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleanup_finished.set()
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            blocks_during_cleanup,
+            agent_id="agent-123",
+            config=SessionConfig(max_cycle_seconds=_WATCHDOG_TEST_DEADLINE),
+        )
+
+        with patch("band.runtime.execution.CYCLE_CANCEL_GRACE_SECONDS", 0.01):
+            result = await asyncio.wait_for(
+                ctx._process_event(make_message_event(msg_id="stuck-cleanup")),
+                timeout=0.2,
+            )
+
+        assert result is True
+        assert cleanup_started.is_set()
+        mock_link.mark_processed.assert_not_awaited()
+        mock_link.mark_failed.assert_awaited_once()
+        assert "max_cycle_seconds" in mock_link.mark_failed.await_args.args[2]
+
+        release_cleanup.set()
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)

@@ -127,13 +127,14 @@ class SessionConfig:
     max_working_state_seconds: float | None = None
 
     # Upper bound on one reasoning cycle (the handler invoked by _run_cycle).
-    # Unlike max_working_state_seconds, exceeding this DOES cancel the cycle —
-    # it is the hang-killer: a handler stuck awaiting an external call (e.g. a
-    # wedged adapter subprocess) would otherwise leave the message in
-    # 'processing' forever. On expiry the cycle is cancelled and TimeoutError
-    # propagates through the normal handler-exception path (mark_failed +
-    # retry), the same as any other handler error. None = unbounded (default —
-    # matches prior behavior for callers that never opt in).
+    # Unlike max_working_state_seconds, exceeding this DOES cancel the cycle.
+    # This covers the handler cycle, not context hydration or message claim/ack
+    # calls. A handler stuck awaiting an external call (e.g. a wedged adapter
+    # subprocess) would otherwise leave its message in 'processing' forever.
+    # On expiry the cycle is cancelled and TimeoutError propagates through the
+    # normal handler-exception path (mark_failed + retry), the same as any
+    # other handler error. None = unbounded (default — matches prior behavior
+    # for callers that never opt in).
     max_cycle_seconds: float | None = None
 
     def __post_init__(self) -> None:
