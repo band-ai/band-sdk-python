@@ -706,6 +706,28 @@ class TestGatewayResponses:
         assert "sk-live-nested-secret" not in str(detail)
 
     @pytest.mark.asyncio
+    async def test_drops_non_dict_peer_failure_metadata(self) -> None:
+        """Malformed peer failure metadata must not cross the A2A boundary."""
+        adapter = A2AGatewayAdapter(rest_client=MagicMock())
+        queue = EventQueueLegacy()
+        pending = make_pending(queue)
+        secret = "password=peer-secret"
+
+        await adapter._publish_band_response(
+            pending,
+            make_platform_message(
+                secret,
+                message_type="error",
+                metadata={"failure": secret},
+            ),
+        )
+        event = await queue.dequeue_event()
+
+        assert event.status.state == TaskState.TASK_STATE_FAILED
+        assert "failure" not in event.metadata
+        assert secret not in event.status.message.parts[0].text
+
+    @pytest.mark.asyncio
     async def test_plain_error_message_without_failure_metadata_still_fails(
         self,
     ) -> None:

@@ -5230,6 +5230,78 @@ class TestReviewFixes:
             )
         assert len(reported_failures(tools)) == 1
 
+    @pytest.mark.asyncio
+    async def test_rpc_error_from_event_loop_keeps_curated_failure(self) -> None:
+        """RPC errors raised while receiving events keep their provider message."""
+        rpc_error = CodexJsonRpcError(code=-32000, message="model unavailable")
+
+        class RpcErrorClient(FakeCodexClient):
+            async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
+                raise rpc_error
+
+        rpc_error_client = RpcErrorClient()
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws"),
+            client_factory=lambda _config: rpc_error_client,
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(CodexJsonRpcError, match="model unavailable"):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == str(rpc_error)
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_emits_terminal_lifecycle_event(self) -> None:
+        """A reported failed turn still closes the lifecycle event pair."""
+        events = [
+            _event_notification(
+                "turn/completed",
+                {"turn": {"id": "turn-1", "status": "failed", "items": []}},
+            )
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(
+                transport="ws",
+                emit_turn_lifecycle_events=True,
+            ),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+        await adapter.on_started("Agent", "A coding agent")
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        lifecycle_events = [
+            event
+            for event in events_of_type(tools, "task")
+            if event["metadata"].get("codex_event_type") == "turn_lifecycle"
+        ]
+        assert [
+            event["metadata"]["codex_turn_status"] for event in lifecycle_events
+        ] == ["started", "failed"]
+
 
 # ===========================================================================
 # Gap fixes: acceptForSession, network_context, turn started, compaction,

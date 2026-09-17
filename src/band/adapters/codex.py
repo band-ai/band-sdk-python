@@ -717,6 +717,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     # without emitting a friendly _emit_turn_outcome reply or
                     # a generic "Internal error" fallback.
                     raise
+                except CodexJsonRpcError as error:
+                    result = TurnResult(
+                        turn_status="failed",
+                        turn_error=str(error),
+                    )
+                    await self._emit_failed_turn_outcome(
+                        tools=tools,
+                        msg=msg,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id or None,
+                        result=result,
+                        turn_start=_turn_start,
+                    )
+                    raise
                 except Exception:
                     logger.exception(
                         "Unexpected error during Codex turn event processing "
@@ -724,8 +739,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         thread_id,
                         turn_id,
                     )
+                    result = TurnResult(
+                        turn_status="failed",
+                        turn_error="Internal error during turn processing",
+                    )
                     await tools.send_failure(
                         AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
+                    )
+                    await self._emit_failed_turn_outcome(
+                        tools=tools,
+                        msg=msg,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id or None,
+                        result=result,
+                        turn_start=_turn_start,
                     )
                     raise TurnResultAlreadyReported(
                         "Internal error during turn processing"
@@ -764,6 +792,32 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     AgentFailure(CODEX_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
                 raise
+
+    async def _emit_failed_turn_outcome(
+        self,
+        *,
+        tools: AgentToolsProtocol,
+        msg: PlatformMessage,
+        room_id: str,
+        thread_id: str,
+        turn_id: str | None,
+        result: TurnResult,
+        turn_start: float,
+    ) -> None:
+        """Emit failure lifecycle events without posting a second reply."""
+        await self._emit_turn_outcome(
+            tools=tools,
+            msg=msg,
+            room_id=room_id,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            turn_status=result.turn_status,
+            turn_error=result.turn_error,
+            final_text=result.final_text,
+            saw_send_message_tool=result.saw_send_message_tool,
+            duration_s=_time.perf_counter() - turn_start,
+            include_reply=False,
+        )
 
     async def _process_turn_events(
         self,
@@ -1044,6 +1098,19 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             turn_id=turn_id,
                         )
                     raise TurnResultAlreadyReported(result.turn_error or "Turn failed")
+        except TurnResultAlreadyReported as error:
+            result.turn_status = "failed"
+            result.turn_error = str(error)
+            await self._emit_failed_turn_outcome(
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                result=result,
+                turn_start=turn_start,
+            )
+            raise
         except asyncio.TimeoutError:
             logger.error(
                 "Codex turn timed out after %ss (thread=%s, turn=%s)",
@@ -1068,6 +1135,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     f"Codex turn timed out after {self.config.turn_timeout_s}s",
                     FAILURE_CODE_TIMEOUT,
                 )
+            )
+            result.turn_status = "failed"
+            result.turn_error = (
+                f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
             raise TurnResultAlreadyReported("Turn timed out")
         return result
@@ -1696,6 +1767,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         final_text: str,
         saw_send_message_tool: bool,
         duration_s: float = 0.0,
+        include_reply: bool = True,
     ) -> None:
         # Look up token usage once for both marker and lifecycle events.
         usage = self._token_usage.get(thread_id)
@@ -1775,6 +1847,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 log_label="turn lifecycle event",
                 log_level=logging.DEBUG,
             )
+
+        if not include_reply:
+            return
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 

@@ -1496,6 +1496,37 @@ class TestColdBootSeeding:
         assert adapter._rooms["room-1"].pending_seed == []
 
     @pytest.mark.asyncio
+    async def test_reported_turn_consumes_delivered_seed(self) -> None:
+        """A completed provider call consumes its seed before response handling."""
+        adapter = LettaAdapter(config=LettaAdapterConfig(auto_relay=False))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test prompt"
+        adapter._mcp.server_id = "mcp-server-1"
+        adapter._mcp.tool_ids = []
+        room_ctx = RoomContext(
+            agent_id="agent-1", pending_seed=["[Alice]: Earlier context"]
+        )
+        adapter._rooms["room-1"] = room_ctx
+        mock_client.agents.messages.create.return_value = make_letta_response(
+            make_assistant_message("The response was not sent through the tool.")
+        )
+
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                FakeAgentTools(),
+                LettaSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+        assert room_ctx.pending_seed == []
+        assert room_ctx.last_interaction is not None
+
+    @pytest.mark.asyncio
     async def test_failed_first_turn_preserves_pending_seed(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:

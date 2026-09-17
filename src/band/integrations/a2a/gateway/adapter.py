@@ -627,6 +627,8 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             )
             if isinstance(failure, dict):
                 failure = _redact_credentials_deep(failure)
+            else:
+                failure = None
             await pending.fail(_redact_credentials(msg.content), failure=failure)
         elif msg.message_type in ("thought", "tool_call", "tool_result"):
             await pending.report_progress(msg.content)

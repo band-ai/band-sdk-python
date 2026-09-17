@@ -443,9 +443,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             )
             raise
         else:
-            if room_ctx.pending_seed:
-                room_ctx.pending_seed = []
-            room_ctx.last_interaction = datetime.now(timezone.utc)
             if final_text_parts:
                 room_ctx.summary = self._extract_summary(
                     final_text_parts, self.config.summary_max_length
@@ -484,6 +481,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     self._call_provider(agent_id, messages, room_ctx),
                     timeout=self.config.turn_timeout_s,
                 )
+                room_ctx.pending_seed = []
+                room_ctx.last_interaction = datetime.now(timezone.utc)
             except asyncio.TimeoutError:
                 # Caught and reported here, at the exact call this timeout
                 # bounds -- a TimeoutError surfacing from anywhere else in

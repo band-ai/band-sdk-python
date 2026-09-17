@@ -767,6 +767,62 @@ class TestACPClientAdapterOnMessage:
         assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
+    async def test_prompt_timeout_error_is_not_reported_as_adapter_timeout(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A provider-raised TimeoutError is not the adapter's deadline."""
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(
+            side_effect=TimeoutError("provider socket timeout")
+        )
+
+        tools = FakeAgentTools()
+
+        with pytest.raises(TimeoutError, match="provider socket timeout"):
+            await adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert failures[0]["code"] is None
+
+    @pytest.mark.asyncio
+    async def test_adapter_deadline_raises_already_reported_failure(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """The adapter's own deadline reports once and remains retryable."""
+        adapter_with_mocks._turn_timeout_s = 0.01
+
+        async def slow_prompt(**_: object) -> None:
+            await asyncio.sleep(1)
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=slow_prompt)
+
+        tools = FakeAgentTools()
+
+        with pytest.raises(TimeoutError):
+            await adapter_with_mocks.on_message(
+                make_platform_message("Hello", room_id="room-123"),
+                tools,
+                ACPClientSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-123",
+            )
+
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["code"] == "timeout"
+
+    @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:

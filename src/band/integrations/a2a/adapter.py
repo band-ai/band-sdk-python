@@ -39,6 +39,7 @@ from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
+    RETRYABLE_TASK_FAILURE_STATES,
     apply_task_stream_event,
     state_name,
     task_id_from_stream_event,
@@ -303,7 +304,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 "Task %s: peer A2A task ended in state %s", task.id, state_str
             )
             await tools.send_failure(AgentFailure(_PROVIDER, error_text, state_str))
-            raise TurnResultAlreadyReported(error_text)
+            if state in RETRYABLE_TASK_FAILURE_STATES:
+                raise TurnResultAlreadyReported(error_text)
 
     def _finalize_task(self, room_id: str, task_id: str) -> None:
         """Release a terminal task after its Band output and state are persisted."""
