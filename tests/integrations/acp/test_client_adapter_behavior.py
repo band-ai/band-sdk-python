@@ -800,12 +800,16 @@ async def test_replay_after_midrun_respawn() -> None:
         {
             "id": "m1",
             "message_type": "text",
+            "sender_id": "user-marco",
+            "sender_type": "User",
             "sender_name": "Marco",
             "content": "My favorite color is blue.",
         },
         {
             "id": "m2",
             "message_type": "text",
+            "sender_id": "fake-agent",
+            "sender_type": "Agent",
             "sender_name": "Fake Agent",
             "content": "I noted your favorite color.",
         },

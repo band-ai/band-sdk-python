@@ -6,11 +6,16 @@ from typing import Any
 
 import pytest
 
+from band.client.rest import ChatParticipant, MessageSentResponseRecipientsItem
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools
 from tests.content import BLANK_CONTENT_CASES
+from tests.testing.support import seeded_participant
+
+
+_SEED_INSERTED_AT = "2025-01-01T00:00:00Z"
 
 
 async def store_fact(tools: FakeAgentTools, content: str) -> None:
@@ -23,6 +28,57 @@ async def store_fact(tools: FakeAgentTools, content: str) -> None:
         thought="noted",
         scope="organization",
     )
+
+
+def seeded_peer(
+    id: str, *, handle: str, name: str, type: str = "User"
+) -> dict[str, Any]:
+    """A minimal valid ``Peer`` seed for ``FakeAgentTools(peers=...)``."""
+    return {
+        "id": id,
+        "handle": handle,
+        "name": name,
+        "type": type,
+        "is_contact": False,
+        "source": "registry",
+    }
+
+
+def seeded_contact(
+    id: str, *, handle: str, name: str, type: str = "User"
+) -> dict[str, Any]:
+    """A minimal valid ``AgentContact`` seed for ``FakeAgentTools(contacts=...)``."""
+    return {
+        "id": id,
+        "handle": handle,
+        "name": name,
+        "type": type,
+        "inserted_at": _SEED_INSERTED_AT,
+    }
+
+
+def seeded_received_request(
+    id: str, *, from_handle: str, status: str = "pending"
+) -> dict[str, Any]:
+    """A minimal valid ``ReceivedContactRequest`` seed."""
+    return {
+        "id": id,
+        "from_handle": from_handle,
+        "status": status,
+        "inserted_at": _SEED_INSERTED_AT,
+    }
+
+
+def seeded_sent_request(
+    id: str, *, to_handle: str, status: str = "pending"
+) -> dict[str, Any]:
+    """A minimal valid ``SentContactRequest`` seed."""
+    return {
+        "id": id,
+        "to_handle": to_handle,
+        "status": status,
+        "inserted_at": _SEED_INSERTED_AT,
+    }
 
 
 async def listing_seen_by_adapter(
@@ -142,20 +198,23 @@ class TestSendMessage:
     """Tests for send_message tracking."""
 
     async def test_tracks_sent_messages(self):
-        """Should track all sent messages."""
+        """Should track all sent messages and return the real Fern shape."""
         tools = FakeAgentTools()
 
         result = await tools.send_message(content="Hello!", mentions=["user-1"])
 
         assert len(tools.messages_sent) == 1
         assert tools.messages_sent[0]["content"] == "Hello!"
-        assert result["content"] == "Hello!"
+        assert result.id == tools.messages_sent[0]["id"]
+        assert result.success is True
 
     async def test_rejects_a_message_with_no_mentions(self):
         """The platform requires at least one mention, so the fake must too --
         otherwise a mention-less send passes every unit test and fails only
         against the real API."""
-        tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+        tools = FakeAgentTools(
+            participants=[seeded_participant("user-1", handle="@alice")]
+        )
 
         with pytest.raises(BandToolError, match="At least one mention is required"):
             await tools.send_message(content="Hello!")
@@ -164,7 +223,9 @@ class TestSendMessage:
 
     async def test_rejection_lists_the_handles_available_to_retry_with(self):
         """Same actionable hint the real tool returns, so an LLM can retry."""
-        tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+        tools = FakeAgentTools(
+            participants=[seeded_participant("user-1", handle="@alice")]
+        )
 
         with pytest.raises(BandToolError, match=r"Available handles: \['@alice'\]"):
             await tools.send_message(content="Hello!")
@@ -199,12 +260,44 @@ class TestSendMessage:
         assert result is None
         assert tools.messages_sent == []
 
+    async def test_string_and_dict_mentions_normalize_to_the_same_recipient(self):
+        """A string mention and an equivalent dict mention describe the same
+        logical mention, so both shapes must normalize their handle the same
+        way rather than the dict shape bypassing normalization."""
+        string_tools = FakeAgentTools()
+        dict_tools = FakeAgentTools()
+
+        string_result = await string_tools.send_message(
+            content="hi", mentions=["@Alice"]
+        )
+        dict_result = await dict_tools.send_message(
+            content="hi", mentions=[{"handle": "@Alice"}]
+        )
+
+        assert string_result.recipients == [
+            MessageSentResponseRecipientsItem(id="alice", handle="alice")
+        ]
+        assert dict_result.recipients == string_result.recipients
+
+    async def test_a_dict_mentions_explicit_id_wins_over_its_handle(self):
+        """An id-bearing dict mention (e.g. a message's own sender_id) must
+        keep that id rather than have it overwritten by the derived handle."""
+        tools = FakeAgentTools()
+
+        result = await tools.send_message(
+            content="hi", mentions=[{"id": "user-42", "handle": "@Alice"}]
+        )
+
+        assert result.recipients == [
+            MessageSentResponseRecipientsItem(id="user-42", handle="alice")
+        ]
+
 
 class TestSendEvent:
     """Tests for send_event tracking."""
 
     async def test_tracks_sent_events(self):
-        """Should track all sent events."""
+        """Should track all sent events and return the real Fern shape."""
         tools = FakeAgentTools()
 
         result = await tools.send_event(content="Thinking...", message_type="thought")
@@ -212,7 +305,9 @@ class TestSendEvent:
         assert len(tools.events_sent) == 1
         assert tools.events_sent[0]["content"] == "Thinking..."
         assert tools.events_sent[0]["message_type"] == "thought"
-        assert result["message_type"] == "thought"
+        assert result.id == tools.events_sent[0]["id"]
+        assert result.message_type == "thought"
+        assert result.success is True
 
     async def test_tracks_metadata(self):
         """Should track metadata in sent events."""
@@ -237,31 +332,74 @@ class TestSendEvent:
 
 
 class TestParticipantOperations:
-    """Tests for participant tracking."""
+    """Tests for participant resolution, mutation, and roster coherence."""
 
-    async def test_tracks_added_participants(self):
-        """Should track added participants."""
+    async def test_add_participant_resolves_a_seeded_peer(self):
+        """A successful add resolves against the peer directory, exactly as
+        the real tool does, and mutates the roster."""
+        tools = FakeAgentTools(peers=[seeded_peer("u1", handle="@alice", name="Alice")])
+
+        result = await tools.add_participant(identifier="@alice", role="admin")
+
+        assert result == {
+            "id": "u1",
+            "name": "Alice",
+            "role": "admin",
+            "status": "added",
+        }
+        assert tools.participants_added == [result]
+        assert [p["id"] for p in tools.participants] == ["u1"]
+
+    async def test_add_participant_is_idempotent_for_a_current_member(self):
+        """A current member is reported ``already_in_room`` with the
+        *requested* role, matching the real tool, and is not duplicated."""
+        tools = FakeAgentTools(
+            participants=[seeded_participant("u1", name="Alice", handle="@alice")]
+        )
+
+        result = await tools.add_participant(identifier="@alice", role="admin")
+
+        assert result == {
+            "id": "u1",
+            "name": "Alice",
+            "role": "admin",
+            "status": "already_in_room",
+        }
+        assert len(tools.participants) == 1, "Re-adding must not duplicate the roster"
+
+    async def test_add_participant_raises_for_an_unknown_identifier(self):
+        """Same actionable error category as the real tool: not a fake-only
+        error string, so an adapter's error-translation path stays exercised."""
         tools = FakeAgentTools()
 
-        result = await tools.add_participant(identifier="Alice", role="admin")
+        with pytest.raises(ValueError, match="Participant 'ghost' not found"):
+            await tools.add_participant(identifier="ghost")
 
-        assert len(tools.participants_added) == 1
-        assert tools.participants_added[0]["name"] == "Alice"
-        assert tools.participants_added[0]["role"] == "admin"
-        assert result["name"] == "Alice"
-        assert tools.participants == [
-            {"id": "p-Alice", "name": "Alice", "role": "admin", "handle": "Alice"}
-        ]
+    async def test_remove_participant_updates_the_roster_and_mention_hints(self):
+        """Removal must be visible to a later roster read and to the
+        mention-handle hint -- both derive from the same roster."""
+        tools = FakeAgentTools(
+            participants=[
+                seeded_participant("u1", name="Alice", handle="@alice"),
+                seeded_participant("u2", name="Bob", handle="@bob"),
+            ]
+        )
 
-    async def test_tracks_removed_participants(self):
-        """Should track removed participants."""
+        result = await tools.remove_participant(identifier="@alice")
+
+        assert result == {"id": "u1", "name": "Alice", "status": "removed"}
+        assert tools.participants_removed == [result]
+        assert [p["id"] for p in tools.participants] == ["u2"]
+        with pytest.raises(BandToolError, match=r"Available handles: \['@bob'\]"):
+            await tools.send_message(content="hi")
+
+    async def test_remove_participant_raises_when_not_in_room(self):
         tools = FakeAgentTools()
 
-        result = await tools.remove_participant(identifier="Bob")
-
-        assert len(tools.participants_removed) == 1
-        assert tools.participants_removed[0]["name"] == "Bob"
-        assert result["name"] == "Bob"
+        with pytest.raises(
+            ValueError, match="Participant 'Bob' not found in this room"
+        ):
+            await tools.remove_participant(identifier="Bob")
 
     async def test_get_participants_returns_empty(self):
         """Should return empty list by default."""
@@ -270,6 +408,15 @@ class TestParticipantOperations:
         result = await tools.get_participants()
 
         assert result == []
+
+    async def test_get_participants_returns_chat_participant_models(self):
+        """Matches ``AgentTools.get_participants``' real return type."""
+        seed = seeded_participant("u1", name="Alice", handle="@alice")
+        tools = FakeAgentTools(participants=[seed])
+
+        result = await tools.get_participants()
+
+        assert result == [ChatParticipant.model_validate(seed)]
 
 
 class TestLookupPeers:
@@ -317,6 +464,457 @@ class TestLookupPeers:
             "total_count": 3,
             "total_pages": 2,
         }
+
+
+class TestRoomContext:
+    """fetch_room_context must serve seeded/mutated context in the real
+    ``{data, meta}`` envelope, canonicalized through ``context_item_to_dict``."""
+
+    async def test_seeded_context_is_paginated(self) -> None:
+        seed = [
+            {
+                "id": f"msg-{i}",
+                "content": f"message {i}",
+                "sender_id": "user-1",
+                "sender_type": "User",
+                "message_type": "text",
+            }
+            for i in range(3)
+        ]
+        tools = FakeAgentTools(room_context=seed)
+
+        page = await tools.fetch_room_context(
+            room_id=tools.room_id, page=1, page_size=2
+        )
+
+        assert [item["content"] for item in page["data"]] == [
+            "message 0",
+            "message 1",
+        ]
+        assert page["meta"]["total_count"] == 3
+
+    async def test_set_room_context_replaces_and_canonicalizes(self) -> None:
+        tools = FakeAgentTools(
+            room_context=[
+                {
+                    "id": "msg-0",
+                    "content": "original",
+                    "sender_id": "user-1",
+                    "sender_type": "User",
+                    "message_type": "text",
+                }
+            ]
+        )
+
+        tools.set_room_context(
+            [
+                {
+                    "id": "msg-1",
+                    "content": "hello",
+                    "sender_id": "user-1",
+                    "sender_type": "User",
+                    "message_type": "text",
+                }
+            ]
+        )
+        page = await tools.fetch_room_context(room_id=tools.room_id)
+
+        assert [item["content"] for item in page["data"]] == ["hello"], (
+            "set_room_context must replace the prior context, not add to it"
+        )
+
+    async def test_append_room_context_adds_one_canonicalized_item(self) -> None:
+        tools = FakeAgentTools(
+            room_context=[
+                {
+                    "id": "msg-0",
+                    "content": "original",
+                    "sender_id": "user-1",
+                    "sender_type": "User",
+                    "message_type": "text",
+                }
+            ]
+        )
+
+        tools.append_room_context(
+            {
+                "id": "msg-1",
+                "content": "hello",
+                "sender_id": "user-1",
+                "sender_type": "User",
+                "message_type": "text",
+            }
+        )
+        page = await tools.fetch_room_context(room_id=tools.room_id)
+
+        assert [item["content"] for item in page["data"]] == ["original", "hello"], (
+            "append_room_context must keep the prior context and add after it"
+        )
+
+
+class TestContacts:
+    """Contact mutations must be stateful and coherent against one contact
+    store and one directional request store, in the real Fern shapes."""
+
+    async def test_add_contact_creates_a_pending_sent_request(self) -> None:
+        tools = FakeAgentTools()
+
+        result = await tools.add_contact(handle="@alice", message="hi")
+
+        assert result.status == "pending"
+        listing = serialize_tool_result(await tools.list_contact_requests())
+        assert [r["to_handle"] for r in listing["data"]["sent"]] == ["alice"]
+
+    async def test_add_contact_auto_accepts_an_existing_reverse_request(self) -> None:
+        """AddContactInput's own docstring: 'Returns approved when inverse
+        request existed and was auto-accepted' -- alice already asked to add
+        me, so my own add_contact(alice) must complete the handshake rather
+        than queue a second, redundant outgoing request. The seeded handle
+        also exercises _promote_received_request_to_contact's own
+        normalization, not just the lookup's."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="@Alice")
+            ]
+        )
+
+        result = await tools.add_contact(handle="@alice")
+
+        assert result.status == "approved"
+        assert result.id == "req-1"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["alice"]
+        listing = serialize_tool_result(await tools.list_contact_requests())
+        assert listing["data"]["received"] == []
+        assert listing["data"]["sent"] == [], (
+            "the reverse request must be completed in place, not left "
+            "pending alongside a new redundant outgoing request"
+        )
+
+    async def test_add_contact_reciprocal_accept_resolves_a_pending_outgoing_request(
+        self,
+    ) -> None:
+        """A prior add_contact(alice) already left a pending sent request.
+        Now alice's own request arrives and gets auto-accepted via the
+        reverse-request path -- the earlier sent request must not be left
+        dangling pending against someone who is now already a contact."""
+        tools = FakeAgentTools(
+            sent_contact_requests=[seeded_sent_request("s1", to_handle="alice")],
+            received_contact_requests=[
+                seeded_received_request("r1", from_handle="alice")
+            ],
+        )
+
+        await tools.add_contact(handle="alice")
+
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["alice"]
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["status"] for r in everything["data"]["sent"]] == ["approved"]
+
+    async def test_add_contact_does_not_auto_accept_a_terminal_reverse_request(
+        self,
+    ) -> None:
+        """Only a currently-pending reverse request is actionable -- a
+        rejected/cancelled one must not be resurrected into an approval."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("r1", from_handle="alice", status="rejected")
+            ]
+        )
+
+        result = await tools.add_contact(handle="alice")
+
+        assert result.status == "pending"
+        assert result.id != "r1"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
+
+    async def test_add_contact_is_a_no_op_for_an_existing_contact(self) -> None:
+        """No real contact system lets you hold an outstanding request
+        against someone already your contact -- add_contact must not mint
+        a new pending sent request for a handle that already resolved to a
+        contact, whether via a prior add_contact or a direct approval."""
+        tools = FakeAgentTools(
+            contacts=[seeded_contact("c1", handle="alice", name="Alice")]
+        )
+
+        result = await tools.add_contact(handle="@alice")
+
+        assert result.status == "approved"
+        assert result.id == "c1"
+        listing = serialize_tool_result(await tools.list_contact_requests())
+        assert listing["data"]["sent"] == []
+
+    async def test_cancelling_a_sent_request_leaves_the_default_pending_listing(
+        self,
+    ) -> None:
+        tools = FakeAgentTools(
+            sent_contact_requests=[seeded_sent_request("req-1", to_handle="alice")]
+        )
+
+        result = await tools.respond_contact_request(
+            action="cancel", request_id="req-1"
+        )
+
+        assert result.status == "cancelled"
+        pending = serialize_tool_result(await tools.list_contact_requests())
+        assert pending["data"]["sent"] == []
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["id"] for r in everything["data"]["sent"]] == ["req-1"]
+
+    async def test_approving_a_received_request_promotes_it_to_a_contact(self) -> None:
+        """The seeded handle carries an @ prefix and mixed case, exercising
+        _promote_received_request_to_contact's own normalization."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="@Alice")
+            ]
+        )
+
+        result = await tools.respond_contact_request(
+            action="approve", request_id="req-1"
+        )
+
+        assert result.status == "approved"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["alice"]
+        listing = serialize_tool_result(await tools.list_contact_requests())
+        assert listing["data"]["received"] == [], (
+            "An approved request is no longer pending, so it must drop out "
+            "of the received listing -- matching the real endpoint"
+        )
+
+    async def test_approving_a_received_request_propagates_name_and_type(self) -> None:
+        """``_promote_received_request_to_contact``'s from_name/type fields
+        must land on the resulting contact, not just its handle."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                {
+                    "id": "req-1",
+                    "from_handle": "alice",
+                    "from_name": "Alice",
+                    "type": "Agent",
+                    "status": "pending",
+                    "inserted_at": _SEED_INSERTED_AT,
+                }
+            ]
+        )
+
+        await tools.respond_contact_request(action="approve", request_id="req-1")
+
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"][0]["name"] == "Alice"
+        assert contacts["data"][0]["type"] == "Agent"
+
+    async def test_approving_a_received_request_defaults_type_to_user(self) -> None:
+        """``ReceivedContactRequest`` doesn't carry the requester's entity
+        type -- an unset ``type`` on the seed must default to User."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        await tools.respond_contact_request(action="approve", request_id="req-1")
+
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"][0]["type"] == "User"
+
+    async def test_approving_a_received_request_resolves_a_reciprocal_pending_sent_request(
+        self,
+    ) -> None:
+        """Both sides requested each other before either responded --
+        approving the received side must resolve the pre-existing outgoing
+        request too, not leave it pending against someone who is now
+        already a contact."""
+        tools = FakeAgentTools(
+            sent_contact_requests=[seeded_sent_request("s1", to_handle="alice")],
+            received_contact_requests=[
+                seeded_received_request("r1", from_handle="alice")
+            ],
+        )
+
+        await tools.respond_contact_request(action="approve", request_id="r1")
+
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["status"] for r in everything["data"]["sent"]] == ["approved"]
+
+    async def test_rejecting_a_received_request_does_not_create_a_contact(self) -> None:
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        result = await tools.respond_contact_request(
+            action="reject", request_id="req-1"
+        )
+
+        assert result.status == "rejected"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
+
+    async def test_respond_contact_request_requires_handle_or_id(self) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(ValueError, match="Either handle or request_id"):
+            await tools.respond_contact_request(action="approve")
+
+    async def test_respond_contact_request_raises_for_an_unresolvable_request(
+        self,
+    ) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(RuntimeError, match="Failed to respond to contact request"):
+            await tools.respond_contact_request(action="approve", request_id="nope")
+
+    async def test_respond_contact_request_raises_for_an_unknown_action(self) -> None:
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Unknown contact request action"):
+            await tools.respond_contact_request(action="bogus", request_id="req-1")
+
+    async def test_cannot_respond_to_an_already_terminal_request(self) -> None:
+        """Only a pending request is actionable -- a request already resolved
+        by a prior response must not be re-matched and flipped again."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+        await tools.respond_contact_request(action="reject", request_id="req-1")
+
+        with pytest.raises(RuntimeError, match="Failed to respond to contact request"):
+            await tools.respond_contact_request(action="approve", request_id="req-1")
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
+
+    async def test_terminal_request_id_does_not_fall_back_to_an_unrelated_handle_match(
+        self,
+    ) -> None:
+        """A request_id naming an already-terminal record must fail the
+        lookup outright -- not silently fall through to mutate a different,
+        currently-pending record that merely shares its handle."""
+        tools = FakeAgentTools(
+            sent_contact_requests=[
+                seeded_sent_request("req-1", to_handle="frank", status="cancelled"),
+                seeded_sent_request("req-2", to_handle="frank", status="pending"),
+            ]
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to respond to contact request"):
+            await tools.respond_contact_request(
+                action="cancel", request_id="req-1", handle="frank"
+            )
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["status"] for r in everything["data"]["sent"]] == [
+            "cancelled",
+            "pending",
+        ], "req-2 must be untouched by a lookup that explicitly named req-1"
+
+    async def test_request_id_takes_precedence_over_an_unrelated_handle_match(
+        self,
+    ) -> None:
+        """An explicit request_id must resolve to that exact record even when
+        a different record earlier in the store matches the given handle."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-B", from_handle="alice"),
+                seeded_received_request("req-A", from_handle="bob"),
+            ]
+        )
+
+        result = await tools.respond_contact_request(
+            action="approve", handle="alice", request_id="req-A"
+        )
+
+        assert result.id == "req-A"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["bob"]
+
+    async def test_an_unresolvable_request_id_falls_back_to_a_matching_handle(
+        self,
+    ) -> None:
+        """``_find_by_id_or_handle``'s documented contract: an id that
+        matches no record at all falls back to the handle, rather than
+        failing outright."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        result = await tools.respond_contact_request(
+            action="approve", request_id="totally-nonexistent", handle="alice"
+        )
+
+        assert result.id == "req-1"
+
+    async def test_approving_a_request_with_no_from_handle_raises(self) -> None:
+        """The real ``AgentContact.handle`` is a required str -- a fake-only
+        promotion path must not silently coerce a missing handle to ''."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                {
+                    "id": "req-1",
+                    "status": "pending",
+                    "inserted_at": _SEED_INSERTED_AT,
+                }
+            ]
+        )
+
+        with pytest.raises(ValueError, match="no from_handle"):
+            await tools.respond_contact_request(action="approve", request_id="req-1")
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
+        pending = serialize_tool_result(await tools.list_contact_requests())
+        assert [request["id"] for request in pending["data"]["received"]] == ["req-1"]
+
+    async def test_remove_contact_by_handle(self) -> None:
+        tools = FakeAgentTools(
+            contacts=[seeded_contact("c1", handle="alice", name="Alice")]
+        )
+
+        result = await tools.remove_contact(handle="alice")
+
+        assert result.status == "removed"
+        listing = serialize_tool_result(await tools.list_contacts())
+        assert listing["data"] == []
+
+    async def test_remove_contact_by_id(self) -> None:
+        tools = FakeAgentTools(
+            contacts=[seeded_contact("c1", handle="alice", name="Alice")]
+        )
+
+        await tools.remove_contact(contact_id="c1")
+
+        listing = serialize_tool_result(await tools.list_contacts())
+        assert listing["data"] == []
+
+    async def test_remove_contact_requires_handle_or_id(self) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(ValueError, match="Either handle or contact_id"):
+            await tools.remove_contact()
+
+    async def test_remove_contact_raises_for_an_unresolvable_contact(self) -> None:
+        tools = FakeAgentTools()
+
+        with pytest.raises(RuntimeError, match="Failed to remove contact"):
+            await tools.remove_contact(handle="ghost")
 
 
 class TestCreateChatroom:
