@@ -20,9 +20,10 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict
 from pydantic_ai import ModelRetry, RunContext, Tool
 from pydantic_ai.messages import BinaryContent
+from pydantic_core import SchemaValidator, core_schema
 
 from band.core.protocols import AgentToolsProtocol
-from band.core.tool_filter import filter_tool_schemas
+from band.core.tool_filter import filter_tool_schemas, sanitize_tool_schema
 from band.core.types import AdapterFeatures, MessageType
 from band.runtime.tools import (
     BandTool,
@@ -31,6 +32,7 @@ from band.runtime.tools import (
     get_band_tool_category,
     get_tool_description,
     is_image_passthrough_result,
+    is_terminal_success,
     iter_tool_definitions,
     platform_args_schema,
     serialize_tool_result,
@@ -68,7 +70,7 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     """
     schema = platform_args_schema(definition.name)
     strict_schema = _strict_schema(schema)
-    return Tool.from_schema(
+    tool = Tool.from_schema(
         _dispatcher(definition, strict_schema),
         # str(): ``ToolDefinition.name`` carries a ``BandTool`` member, and it
         # becomes a registry key pydantic-ai and its callers compare as a name.
@@ -81,10 +83,17 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
         # keyword ``adapters/gemini.py`` already has to strip for that
         # adapter. Strictness only needs to affect validation, not the text
         # shown to the model.
-        json_schema=schema.model_json_schema(),
+        json_schema=sanitize_tool_schema(
+            schema.model_json_schema(), drop_numeric_bounds=True
+        ),
         takes_ctx=True,
         args_validator=_arguments_validator(definition, strict_schema),
     )
+    # ``Tool.from_schema`` deliberately uses ``any_schema()`` because it skips
+    # schema validation. Replace it with an object-shape validator so malformed
+    # non-object payloads become ordinary validation retries.
+    tool.function_schema.validator = _object_schema_validator()
+    return tool
 
 
 def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
@@ -122,6 +131,12 @@ def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
             "model_json_schema": classmethod(_no_advertisement),
         },
     )
+
+
+def _object_schema_validator() -> SchemaValidator:
+    """Validate that a tool payload is an object before custom validation."""
+
+    return SchemaValidator(core_schema.dict_schema())
 
 
 def _validated_kwargs(
@@ -231,9 +246,17 @@ async def _dispatch_failed(
         error,
         exc_info=True,
     )
-    # The "Error " prefix is load-bearing: band_tool_errored reads it to
-    # tell a failed Band tool from productive work.
-    message = f"Error executing {definition.name}: {error}"
+    if notify_room or not is_terminal_success(definition.name, succeeded=True):
+        # The "Error " prefix is load-bearing: band_tool_errored reads it to
+        # tell a failed Band tool from productive work.
+        message = f"Error executing {definition.name}: {error}"
+    else:
+        # The method completed, so this must not look like a failed terminal
+        # action to the adapter even though the result could not be normalized.
+        message = (
+            f"{definition.name} executed, but its result could not be normalized: "
+            f"{error}"
+        )
     if notify_room and definition.name == BandTool.RESPOND_CONTACT_REQUEST:
         await _send_contact_request_error_event(ctx.deps, message)
     return message

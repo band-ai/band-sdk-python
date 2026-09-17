@@ -18,6 +18,7 @@ for individual names.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -40,12 +41,12 @@ from band.runtime.tools import (
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
 
-try:
+if importlib.util.find_spec("pydantic_ai") is None:
+    _HAS_PYDANTIC_AI = False
+else:
     from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 
     _HAS_PYDANTIC_AI = True
-except ImportError:  # pydantic-ai extra, absent from the dev-crewai/dev-parlant lanes
-    _HAS_PYDANTIC_AI = False
 
 from tests.paths import SRC_ROOT
 
