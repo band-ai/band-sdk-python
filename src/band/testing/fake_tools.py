@@ -495,23 +495,34 @@ class FakeAgentTools:
     async def add_contact(
         self, handle: str, message: str | None = None
     ) -> AddAgentContactResponseData:
-        """Create a pending outgoing request, unless the other party already
-        sent us a pending one -- mirroring the real handshake's reciprocal
-        auto-accept (see ``AddContactInput``'s docstring). Otherwise
-        ``list_contact_requests`` serves the new request from the
-        sent-request store."""
-        try:
-            reverse_request = _find_by_id_or_handle(
-                self._received_contact_requests,
-                handle_field="from_handle",
-                id=None,
-                handle=handle,
-                status=ContactRequestStatus.PENDING,
-                not_found_message="",
+        """Create a pending outgoing request, unless the other party is
+        already a contact or already sent us a pending request -- the
+        latter mirrors the real handshake's reciprocal auto-accept (see
+        ``AddContactInput``'s docstring). Otherwise ``list_contact_requests``
+        serves the new request from the sent-request store."""
+        normalized_handle = strip_handle_prefix(handle)
+        existing_contact = next(
+            (
+                c
+                for c in self._contacts
+                if strip_handle_prefix(c["handle"]) == normalized_handle
+            ),
+            None,
+        )
+        if existing_contact is not None:
+            return AddAgentContactResponseData(
+                id=existing_contact["id"], status=ContactRequestStatus.APPROVED
             )
-        except RuntimeError:
-            reverse_request = None
 
+        reverse_request = next(
+            (
+                r
+                for r in self._received_contact_requests
+                if r["status"] == ContactRequestStatus.PENDING
+                and strip_handle_prefix(r.get("from_handle") or "") == normalized_handle
+            ),
+            None,
+        )
         if reverse_request is not None:
             reverse_request["status"] = ContactRequestStatus.APPROVED
             self._promote_received_request_to_contact(reverse_request)
