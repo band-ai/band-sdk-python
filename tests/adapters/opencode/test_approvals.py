@@ -35,6 +35,16 @@ from tests.adapters.opencode.helpers import (
     wait_for,
 )
 
+#: A seeded participant these tests mention -- shared so a mention-handles
+#: assertion always resolves against the same roster entry.
+ALICE_PARTICIPANT = {
+    "id": "user-1",
+    "handle": "@alice",
+    "role": "member",
+    "status": "active",
+    "type": "User",
+}
+
 
 class BlockingReplyClient(FakeOpencodeClient):
     """Pause one reply request to deterministically interleave a new ask."""
@@ -157,7 +167,7 @@ async def test_concurrent_permission_asks_are_both_answerable() -> None:
     per-session list). A second ask must not evict the first, whose tool call
     would then block server-side until the turn timed out."""
     client = FakeOpencodeClient()
-    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    tools = FakeAgentTools(participants=[ALICE_PARTICIPANT])
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
@@ -181,7 +191,7 @@ async def test_unnamed_reply_asks_which_of_several_approvals() -> None:
     """A bare `approve` cannot pick between two pending asks. Naming them beats
     both guessing and forwarding the reply to the model as a fresh prompt."""
     client = FakeOpencodeClient()
-    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    tools = FakeAgentTools(participants=[ALICE_PARTICIPANT])
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
@@ -201,7 +211,7 @@ async def test_one_resolved_ask_keeps_the_other_parked() -> None:
     """The watcher must stay parked while a second ask still owes a reply,
     otherwise its human-wait time is charged to the compute budget."""
     client = FakeOpencodeClient()
-    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    tools = FakeAgentTools(participants=[ALICE_PARTICIPANT])
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(

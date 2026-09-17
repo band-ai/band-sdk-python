@@ -55,6 +55,20 @@ def _msg(
     )
 
 
+def _participant(
+    id: str, handle: str, name: str | None = None, *, type: str = "Agent"
+) -> dict[str, Any]:
+    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
+    return {
+        "id": id,
+        "handle": handle,
+        "name": name,
+        "role": "member",
+        "status": "active",
+        "type": type,
+    }
+
+
 def _flow(decisions: list[Any]):
     queue = list(decisions)
 
@@ -88,9 +102,7 @@ class TestTaggedPeer:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(
-            participants=[{"id": "p-a", "handle": "@example/peer-a"}]
-        )
+        tools = FakeAgentTools(participants=[_participant("p-a", "@example/peer-a")])
         await adapter.on_started("router", "")
         await adapter.on_message(
             msg=_msg(content="please ask @example/peer-a about it"),
@@ -166,14 +178,17 @@ class TestSequentialChains:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                _participant("p-a", "@example/peer-a"),
+                _participant("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
             ],
@@ -240,14 +255,17 @@ class TestSequentialChains:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                _participant("p-a", "@example/peer-a"),
+                _participant("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
             ],
@@ -331,14 +349,17 @@ class TestBufferedSyntheses:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                _participant("p-a", "@example/peer-a"),
+                _participant("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
             ],
@@ -424,6 +445,9 @@ class TestE2ETrace:
                         "id": event["id"],
                         "message_type": "task",
                         "inserted_at": datetime.now(UTC).isoformat(),
+                        "sender_id": "agent-1",
+                        "sender_type": "Agent",
+                        "content": "task event",
                         "metadata": event["metadata"],
                     }
                 )
@@ -436,8 +460,8 @@ class TestE2ETrace:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await adapter.on_started("router", "")

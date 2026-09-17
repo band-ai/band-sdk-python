@@ -17,11 +17,14 @@ from band.runtime.tools.agent import (
     PREVIEWABLE_IMAGE_CONTENT_TYPES,
     AgentTools,
     AttachmentCache,
+    ParticipantAddResult,
+    ParticipantRemoveResult,
     _matches_identifier,
     append_available_mention_handles,
     append_mention_handles_hint,
     available_mention_handles,
     iter_chat_pages,
+    normalize_handle,
 )
 from band.runtime.tools.human import HumanTools
 from band.runtime.tools.inputs import (
@@ -206,6 +209,8 @@ __all__ = [
     "ListTasksInput",
     "ListUserMemoriesInput",
     "LookupPeersInput",
+    "ParticipantAddResult",
+    "ParticipantRemoveResult",
     "ReadRoomFileInput",
     "RegisterMyAgentInput",
     "RejectContactRequestInput",
@@ -255,6 +260,7 @@ __all__ = [
     "iter_tool_definitions",
     "mcp_tool_names",
     "missing_reply_error",
+    "normalize_handle",
     "platform_args_schema",
     "platform_tool",
     "redact_tool_call_args",
