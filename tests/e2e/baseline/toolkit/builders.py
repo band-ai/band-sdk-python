@@ -23,6 +23,7 @@ from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
+from band import create_room_workspace_resolver
 from band.testing import feature_kwargs
 
 from tests.e2e.baseline.settings import BaselineSettings
@@ -337,7 +338,7 @@ def codex_config_kwargs(s: BaselineSettings, *, prompt: str | None) -> dict[str,
     value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
     """
     config_kwargs: dict[str, Any] = {
-        "cwd": s.backends.codex_cwd,
+        "workspace_for_room": create_room_workspace_resolver(s.backends.codex_cwd),
         "custom_section": prompt or "",
     }
     if s.backends.codex_model.strip():
@@ -474,7 +475,7 @@ def _build_copilot_acp(
 
     config_kwargs: dict[str, Any] = {
         "custom_section": prompt or "",
-        "cwd": sandbox,
+        "workspace_for_room": create_room_workspace_resolver(sandbox),
         "env": copilot_acp_env(s, copilot_home_dir(sandbox)),
     }
     if s.backends.copilot_command.strip():

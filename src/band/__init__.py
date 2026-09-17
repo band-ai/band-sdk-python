@@ -72,6 +72,7 @@ from .logging_config import (
 
 # Platform layer
 from .platform import BandLink, PlatformEvent
+from .workspaces import create_room_workspace_resolver
 
 # Runtime layer
 from .runtime import (
@@ -132,6 +133,7 @@ __all__ = [
     # Platform
     "BandLink",
     "PlatformEvent",
+    "create_room_workspace_resolver",
     # Runtime - Core
     "AgentRuntime",
     "RoomPresence",

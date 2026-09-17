@@ -855,12 +855,13 @@ class TestACPRuntime:
         """TCP transports pass command=[] — the runtime must forward no positional
         command args (host/port live in the injected spawn_process)."""
         transport = make_acp_transport()
-        runtime = ACPRuntime(command=[], spawn_process=transport)
+        runtime = ACPRuntime(command=[], cwd="/tmp/acp-room", spawn_process=transport)
 
         await runtime.start()
 
         args, kwargs = transport.last_call
         assert args == ()  # no executable/args splatted for a connect-only transport
+        assert kwargs["cwd"] == "/tmp/acp-room"
         assert kwargs["transport_kwargs"] == {"limit": ACP_STDIO_LIMIT_BYTES}
 
 
