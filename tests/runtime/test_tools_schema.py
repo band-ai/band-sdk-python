@@ -7,7 +7,11 @@ from typing import get_type_hints
 
 from pydantic import BaseModel
 
-from band.runtime.tools import platform_tool, serialize_tool_result
+from band.runtime.tools import (
+    get_tool_docstring_with_args,
+    platform_tool,
+    serialize_tool_result,
+)
 
 
 class _Sub(BaseModel):
@@ -98,4 +102,4 @@ class TestPlatformTool:
             """Original docstring, discarded."""
             return _Result(id=identifier)
 
-        assert band_example.__doc__ != "Original docstring, discarded."
+        assert band_example.__doc__ == get_tool_docstring_with_args("band_example")

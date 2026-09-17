@@ -64,6 +64,22 @@ from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
 
+async def agent_tool_functions(capabilities: Capability) -> dict[str, Any]:
+    """Every tool function on a real, started agent's toolset, by name.
+
+    Grabbed off the real function toolset rather than driven through a
+    mocked agent run, since the behavior under test is a wrapper's own
+    argument plumbing to AgentToolsProtocol -- not pydantic-ai's
+    tool-calling loop.
+    """
+    adapter = PydanticAIAdapter(model="test", capabilities=capabilities)
+    await adapter.on_started(agent_name="Probe", agent_description="probe")
+    return {
+        name: tool.function
+        for name, tool in adapter._agent._function_toolset.tools.items()
+    }
+
+
 def make_stream_events(
     result_messages: list | None = None,
     tool_calls: list[tuple[str, dict, str]] | None = None,
@@ -721,14 +737,6 @@ class TestFileTools:
         )
         return tools
 
-    async def _tool_functions(self) -> dict[str, Any]:
-        adapter = PydanticAIAdapter(model="test", capabilities=Capability.FILES)
-        await adapter.on_started(agent_name="Probe", agent_description="probe")
-        return {
-            name: tool.function
-            for name, tool in adapter._agent._function_toolset.tools.items()
-        }
-
     @pytest.mark.asyncio
     async def test_agent_has_file_tools_registered_only_with_capability(self):
         without_files = PydanticAIAdapter(model="test")
@@ -739,7 +747,7 @@ class TestFileTools:
         assert "band_read_room_file" not in names
         assert "band_send_room_file" not in names
 
-        with_files = await self._tool_functions()
+        with_files = await agent_tool_functions(Capability.FILES)
 
         assert "band_list_room_files" in with_files
         assert "band_read_room_file" in with_files
@@ -747,7 +755,7 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_list_room_files_forwards_cursor(self, file_tools):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_list_room_files"](
             SimpleNamespace(deps=file_tools), cursor="cursor-1"
@@ -759,7 +767,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_list_room_files_handles_exception(self, file_tools):
         file_tools.list_room_files.side_effect = Exception("backend unavailable")
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_list_room_files"](
             SimpleNamespace(deps=file_tools), cursor=None
@@ -770,7 +778,7 @@ class TestFileTools:
 
     @pytest.mark.asyncio
     async def test_read_room_file_forwards_file_id(self, file_tools):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_read_room_file"](
             SimpleNamespace(deps=file_tools), file_id="file-1"
@@ -788,7 +796,7 @@ class TestFileTools:
                 ]
             }
         )
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_read_room_file"](
             SimpleNamespace(deps=file_tools), file_id="file-1"
@@ -803,7 +811,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_read_room_file_handles_exception(self, file_tools):
         file_tools.read_room_file.side_effect = Exception("not found")
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_read_room_file"](
             SimpleNamespace(deps=file_tools), file_id="missing"
@@ -818,7 +826,7 @@ class TestFileTools:
         mentions, caption) differs from the positional order AgentToolsProtocol
         wants (content, filename, caption, mentions) -- assert the call site
         reorders correctly rather than passing mentions where caption goes."""
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_send_room_file"](
             SimpleNamespace(deps=file_tools),
@@ -836,7 +844,7 @@ class TestFileTools:
     @pytest.mark.asyncio
     async def test_send_room_file_handles_exception(self, file_tools):
         file_tools.send_room_file.side_effect = Exception("upload failed")
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.FILES)
 
         result = await functions["band_send_room_file"](
             SimpleNamespace(deps=file_tools),
@@ -859,17 +867,9 @@ class TestContactTools:
     not a no-op against an already-dict stub.
     """
 
-    async def _tool_functions(self) -> dict[str, Any]:
-        adapter = PydanticAIAdapter(model="test", capabilities=Capability.CONTACTS)
-        await adapter.on_started(agent_name="Probe", agent_description="probe")
-        return {
-            name: tool.function
-            for name, tool in adapter._agent._function_toolset.tools.items()
-        }
-
     @pytest.mark.asyncio
     async def test_add_contact_returns_a_plain_dict(self):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.CONTACTS)
         tools = FakeAgentTools()
 
         result = await functions["band_add_contact"](
@@ -881,7 +881,7 @@ class TestContactTools:
 
     @pytest.mark.asyncio
     async def test_remove_contact_returns_a_plain_dict(self):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.CONTACTS)
         tools = FakeAgentTools(
             contacts=[
                 {
@@ -903,7 +903,7 @@ class TestContactTools:
 
     @pytest.mark.asyncio
     async def test_respond_contact_request_returns_a_plain_dict(self):
-        functions = await self._tool_functions()
+        functions = await agent_tool_functions(Capability.CONTACTS)
         tools = FakeAgentTools(
             received_contact_requests=[
                 {
