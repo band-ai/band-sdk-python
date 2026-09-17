@@ -32,6 +32,7 @@ from band.adapters.crewai_flow import (
 )
 from band.core.types import PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
+from tests.adapters.crewai_flow_support import _participant
 
 
 def _msg(
@@ -53,20 +54,6 @@ def _msg(
         metadata={},
         created_at=datetime.now(UTC),
     )
-
-
-def _participant(
-    id: str, handle: str, name: str | None = None, *, type: str = "Agent"
-) -> dict[str, Any]:
-    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
-    return {
-        "id": id,
-        "handle": handle,
-        "name": name,
-        "role": "member",
-        "status": "active",
-        "type": type,
-    }
 
 
 def _flow(decisions: list[Any]):

@@ -59,20 +59,7 @@ from band.adapters.crewai_flow import (
 from band.converters.crewai_flow import CrewAIFlowStateConverter
 from band.core.types import Capability, Emit, PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
-
-
-def _participant(
-    id: str, handle: str, name: str | None = None, *, type: str = "Agent"
-) -> dict[str, Any]:
-    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
-    return {
-        "id": id,
-        "handle": handle,
-        "name": name,
-        "role": "member",
-        "status": "active",
-        "type": type,
-    }
+from tests.adapters.crewai_flow_support import _participant
 
 
 def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
