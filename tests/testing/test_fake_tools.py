@@ -595,6 +595,22 @@ class TestContacts:
             "pending alongside a new redundant outgoing request"
         )
 
+    async def test_add_contact_is_a_no_op_for_an_existing_contact(self) -> None:
+        """No real contact system lets you hold an outstanding request
+        against someone already your contact -- add_contact must not mint
+        a new pending sent request for a handle that already resolved to a
+        contact, whether via a prior add_contact or a direct approval."""
+        tools = FakeAgentTools(
+            contacts=[seeded_contact("c1", handle="alice", name="Alice")]
+        )
+
+        result = await tools.add_contact(handle="@alice")
+
+        assert result.status == "approved"
+        assert result.id == "c1"
+        listing = serialize_tool_result(await tools.list_contact_requests())
+        assert listing["data"]["sent"] == []
+
     async def test_cancelling_a_sent_request_leaves_the_default_pending_listing(
         self,
     ) -> None:
@@ -741,7 +757,7 @@ class TestContacts:
                 {
                     "id": "req-1",
                     "status": "pending",
-                    "inserted_at": "2025-01-01T00:00:00Z",
+                    "inserted_at": _SEED_INSERTED_AT,
                 }
             ]
         )
