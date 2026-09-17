@@ -61,6 +61,20 @@ from band.core.types import Capability, Emit, PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
 
 
+def _participant(
+    id: str, handle: str, name: str | None = None, *, type: str = "Agent"
+) -> dict[str, Any]:
+    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
+    return {
+        "id": id,
+        "handle": handle,
+        "name": name,
+        "role": "member",
+        "status": "active",
+        "type": type,
+    }
+
+
 def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
     return PlatformMessage(
         id=f"msg-{idx}",
@@ -141,17 +155,7 @@ class TestDirectResponse:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(
-            participants=[
-                {
-                    "id": "p1",
-                    "handle": "@example/peer",
-                    "role": "member",
-                    "status": "active",
-                    "type": "Agent",
-                }
-            ]
-        )
+        tools = FakeAgentTools(participants=[_participant("p1", "@example/peer")])
         await _run_one_turn(adapter, tools, _msg())
 
         assert len(tools.messages_sent) == 1
@@ -346,15 +350,7 @@ class TestNestAsyncioNotInvoked:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
         tools = FakeAgentTools(
-            participants=[
-                {
-                    "id": "user-1",
-                    "handle": "@pat",
-                    "role": "member",
-                    "status": "active",
-                    "type": "User",
-                }
-            ]
+            participants=[_participant("user-1", "@pat", type="User")]
         )
         await _run_one_turn(adapter, tools, _msg())
 
@@ -370,15 +366,7 @@ class TestNestAsyncioNotInvoked:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
         tools = FakeAgentTools(
-            participants=[
-                {
-                    "id": "user-1",
-                    "handle": "@pat",
-                    "role": "member",
-                    "status": "active",
-                    "type": "User",
-                }
-            ]
+            participants=[_participant("user-1", "@pat", type="User")]
         )
 
         await _run_one_turn(adapter, tools, _msg())
@@ -416,15 +404,7 @@ class TestIdempotentFinalization:
 
         ns = adapter.metadata_namespace
         tools = FakeAgentTools(
-            participants=[
-                {
-                    "id": "p1",
-                    "handle": "@example/peer",
-                    "role": "member",
-                    "status": "active",
-                    "type": "Agent",
-                }
-            ],
+            participants=[_participant("p1", "@example/peer")],
             room_context=[
                 {
                     "id": "evt-prior",
@@ -948,17 +928,7 @@ class TestRuntimeTools:
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = LoopCheckingTools(
-            participants=[
-                {
-                    "id": "p-a",
-                    "handle": "@example/peer",
-                    "role": "member",
-                    "status": "active",
-                    "type": "Agent",
-                }
-            ]
-        )
+        tools = LoopCheckingTools(participants=[_participant("p-a", "@example/peer")])
 
         await _run_one_turn(adapter, tools, _msg())
 

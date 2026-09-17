@@ -10,6 +10,15 @@ from band.core.exceptions import BandToolError
 from band.runtime.tools import serialize_tool_result
 from band.testing.fake_tools import FakeAgentTools
 
+ALICE_PARTICIPANT_SEED = {
+    "id": "p1",
+    "name": "Alice",
+    "handle": "@alice",
+    "role": "member",
+    "status": "active",
+    "type": "User",
+}
+
 
 class TestFakeAgentToolsSeededData:
     def test_default_empty_peers(self) -> None:
@@ -19,14 +28,7 @@ class TestFakeAgentToolsSeededData:
     def test_seeded_participants_are_canonicalized_through_chat_participant(
         self,
     ) -> None:
-        seed = {
-            "id": "p1",
-            "name": "Alice",
-            "handle": "@alice",
-            "role": "member",
-            "status": "active",
-            "type": "User",
-        }
+        seed = ALICE_PARTICIPANT_SEED
         tools = FakeAgentTools(participants=[seed])
         assert tools._participants == [
             ChatParticipant.model_validate(seed).model_dump()
@@ -86,14 +88,7 @@ class TestFakeAgentToolsSeededData:
     async def test_seeded_participants_returned_as_chat_participant_models(
         self,
     ) -> None:
-        seed = {
-            "id": "p1",
-            "name": "Alice",
-            "handle": "@alice",
-            "role": "member",
-            "status": "active",
-            "type": "User",
-        }
+        seed = ALICE_PARTICIPANT_SEED
         tools = FakeAgentTools(participants=[seed])
 
         result = await tools.get_participants()

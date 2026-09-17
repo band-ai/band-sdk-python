@@ -19,11 +19,11 @@ from band.runtime.tools.agent import (
     AttachmentCache,
     ParticipantAddResult,
     ParticipantRemoveResult,
-    _matches_identifier,
     append_available_mention_handles,
     append_mention_handles_hint,
     available_mention_handles,
     iter_chat_pages,
+    matches_identifier,
     normalize_handle,
 )
 from band.runtime.tools.human import HumanTools
@@ -236,7 +236,6 @@ __all__ = [
     "ToolFunc",
     "UpdateMyProfileInput",
     "UpdateTaskInput",
-    "_matches_identifier",
     "_resolve_mcp_tool_name",
     "append_available_mention_handles",
     "append_mention_handles_hint",
@@ -258,6 +257,7 @@ __all__ = [
     "is_terminal_success",
     "iter_chat_pages",
     "iter_tool_definitions",
+    "matches_identifier",
     "mcp_tool_names",
     "missing_reply_error",
     "normalize_handle",
