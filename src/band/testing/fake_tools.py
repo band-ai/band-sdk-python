@@ -6,7 +6,6 @@ import hashlib
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from enum import StrEnum
 from typing import Any, Literal
 
 from band.client.rest import (
@@ -46,7 +45,7 @@ from band.client.rest import (
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
-from band.core.types import Capability
+from band.core.types import Capability, ContactRequestAction, ContactRequestStatus
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
@@ -54,9 +53,9 @@ from band.runtime.tools import (
     ParticipantAddResult,
     ParticipantRemoveResult,
     ToolCallOutcome,
-    _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    matches_identifier,
     normalize_handle,
 )
 
@@ -65,23 +64,6 @@ from band.runtime.tools import (
 _FAKE_ACTOR = TaskActor(
     id="fake-agent", name="Fake Agent", type="Agent", handle="fake-agent"
 )
-
-
-class ContactRequestAction(StrEnum):
-    """``respond_contact_request``'s ``action`` vocabulary."""
-
-    APPROVE = "approve"
-    REJECT = "reject"
-    CANCEL = "cancel"
-
-
-class ContactRequestStatus(StrEnum):
-    """A contact request's lifecycle status."""
-
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    CANCELLED = "cancelled"
 
 
 def total_pages(total: int, page_size: int) -> int:
@@ -140,17 +122,24 @@ def _find_by_id_or_handle(
     its "no response data" failure -- the real tool's own wording when the
     backend can't find what it was asked to mutate -- stay defined once.
     """
+    normalized_handle = normalize_handle(handle) if handle is not None else None
     for record in records:
         if id is not None and record["id"] == id:
             return record
         stored_handle = record.get(handle_field)
         if (
-            handle is not None
+            normalized_handle is not None
             and stored_handle
-            and (normalize_handle(stored_handle) == normalize_handle(handle))
+            and normalize_handle(stored_handle) == normalized_handle
         ):
             return record
     raise RuntimeError(not_found_message)
+
+
+def _canonicalize_context_item(message: dict[str, Any]) -> dict[str, Any]:
+    """Validate a room-context seed as ``ChatMessage`` and project it through
+    the same canonicalization ``AgentTools.fetch_room_context`` applies."""
+    return context_item_to_dict(ChatMessage.model_validate(message))
 
 
 class FakeAgentTools:
@@ -198,8 +187,7 @@ class FakeAgentTools:
             ChatParticipant.model_validate(p).model_dump() for p in (participants or [])
         ]
         self._room_context: list[dict[str, Any]] = [
-            context_item_to_dict(ChatMessage.model_validate(item))
-            for item in (room_context or [])
+            _canonicalize_context_item(item) for item in (room_context or [])
         ]
         self._peers: list[dict[str, Any]] = [
             Peer.model_validate(peer).model_dump() for peer in (peers or [])
@@ -326,7 +314,7 @@ class FakeAgentTools:
         peer directory -- exactly as ``AgentTools.add_participant`` resolves
         against the platform's live roster and peer directory."""
         for cached in self._participants:
-            if _matches_identifier(cached, identifier):
+            if matches_identifier(cached, identifier):
                 result = ParticipantAddResult(
                     id=cached["id"],
                     name=cached.get("name", identifier),
@@ -336,9 +324,7 @@ class FakeAgentTools:
                 self.participants_added.append(result)
                 return result
 
-        peer = next(
-            (p for p in self._peers if _matches_identifier(p, identifier)), None
-        )
+        peer = next((p for p in self._peers if matches_identifier(p, identifier)), None)
         if peer is None:
             raise ValueError(
                 f"Participant '{identifier}' not found. "
@@ -364,14 +350,12 @@ class FakeAgentTools:
 
     async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
         participant = next(
-            (p for p in self._participants if _matches_identifier(p, identifier)), None
+            (p for p in self._participants if matches_identifier(p, identifier)), None
         )
         if participant is None:
             raise ValueError(f"Participant '{identifier}' not found in this room.")
 
-        self._participants = [
-            p for p in self._participants if p["id"] != participant["id"]
-        ]
+        self._participants.remove(participant)
         result = ParticipantRemoveResult(
             id=participant["id"],
             name=participant.get("name", identifier),
@@ -411,15 +395,12 @@ class FakeAgentTools:
         context mutated mid-test stays as faithful as one seeded up front.
         """
         self._room_context = [
-            context_item_to_dict(ChatMessage.model_validate(message))
-            for message in messages
+            _canonicalize_context_item(message) for message in messages
         ]
 
     def append_room_context(self, message: dict[str, Any]) -> None:
         """Append a single message dict to the room context."""
-        self._room_context.append(
-            context_item_to_dict(ChatMessage.model_validate(message))
-        )
+        self._room_context.append(_canonicalize_context_item(message))
 
     async def fetch_room_context(
         self,
@@ -537,17 +518,12 @@ class FakeAgentTools:
             raise ValueError("Either handle or request_id must be provided")
 
         match action:
-            case ContactRequestAction.APPROVE:
-                store, handle_field, status = (
-                    self._received_contact_requests,
-                    "from_handle",
-                    ContactRequestStatus.APPROVED,
-                )
-            case ContactRequestAction.REJECT:
-                store, handle_field, status = (
-                    self._received_contact_requests,
-                    "from_handle",
-                    ContactRequestStatus.REJECTED,
+            case ContactRequestAction.APPROVE | ContactRequestAction.REJECT:
+                store, handle_field = self._received_contact_requests, "from_handle"
+                status = (
+                    ContactRequestStatus.APPROVED
+                    if action == ContactRequestAction.APPROVE
+                    else ContactRequestStatus.REJECTED
                 )
             case ContactRequestAction.CANCEL:
                 store, handle_field, status = (

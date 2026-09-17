@@ -479,7 +479,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 message: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.add_contact(handle, message)
+                    return serialize_tool_result(
+                        await ctx.deps.add_contact(handle, message)
+                    )
                 except Exception as e:
                     return f"Error adding contact '{handle}': {e}"
 
@@ -492,7 +494,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 contact_id: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.remove_contact(handle, contact_id)
+                    return serialize_tool_result(
+                        await ctx.deps.remove_contact(handle, contact_id)
+                    )
                 except Exception as e:
                     return f"Error removing contact: {e}"
 
@@ -530,8 +534,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     request_id,
                 )
                 try:
-                    result = await ctx.deps.respond_contact_request(
-                        action, handle, request_id
+                    result = serialize_tool_result(
+                        await ctx.deps.respond_contact_request(
+                            action, handle, request_id
+                        )
                     )
                     logger.info("band_respond_contact_request result: %s", result)
                     return result

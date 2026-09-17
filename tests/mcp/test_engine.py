@@ -76,6 +76,17 @@ BOB_PEER = {
     "source": "registry",
 }
 
+#: A seeded participant mentionable via ``@alice`` -- shared by every test
+#: that just needs *some* real participant to send a message to.
+ALICE_PARTICIPANT = {
+    "id": "u1",
+    "name": "Alice",
+    "handle": "@alice",
+    "role": "member",
+    "status": "active",
+    "type": "User",
+}
+
 
 async def _direct_call(mcp: FastMCP, name: str, **kwargs: object) -> Any:
     """Dispatch straight through ``_tool_manager.call_tool`` -- the engine's
@@ -326,19 +337,7 @@ async def test_embedded_style_uniform_wrap_room_bound_dispatch(
 async def test_embedded_send_message_round_trip_and_participant_refresh(
     agent_session_factory,
 ) -> None:
-    fake = FakeAgentTools(
-        room_id="room-1",
-        participants=[
-            {
-                "id": "u1",
-                "name": "Alice",
-                "handle": "@alice",
-                "role": "member",
-                "status": "active",
-                "type": "User",
-            }
-        ],
-    )
+    fake = FakeAgentTools(room_id="room-1", participants=[ALICE_PARTICIPANT])
     mcp = await agent_session_factory(fake)
 
     async with create_connected_server_and_client_session(mcp) as session:
@@ -358,19 +357,7 @@ async def test_embedded_send_message_round_trip_and_participant_refresh(
 async def test_embedded_send_message_error_enriched_with_available_handles(
     agent_session_factory,
 ) -> None:
-    fake = FakeAgentTools(
-        room_id="room-1",
-        participants=[
-            {
-                "id": "u1",
-                "name": "Alice",
-                "handle": "@alice",
-                "role": "member",
-                "status": "active",
-                "type": "User",
-            }
-        ],
-    )
+    fake = FakeAgentTools(room_id="room-1", participants=[ALICE_PARTICIPANT])
     mcp = await agent_session_factory(fake)
 
     async with create_connected_server_and_client_session(mcp) as session:

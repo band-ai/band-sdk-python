@@ -121,7 +121,7 @@ def _entity_field(entity: dict[str, Any] | Any, field: str) -> str:
     return getattr(entity, field, None) or ""
 
 
-def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
+def matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     """Check if *identifier* matches an entity's handle, name, or ID (case-insensitive).
 
     Handles are compared after stripping the ``@`` prefix so that ``@alice``
@@ -549,7 +549,7 @@ class AgentTools(AgentToolsProtocol):
         await self.get_participants()
 
         for cached in self._participants:
-            if _matches_identifier(cached, identifier):
+            if matches_identifier(cached, identifier):
                 cached_id = cached.get("id")
                 if not cached_id:
                     raise ValueError(f"Participant '{identifier}' has no ID.")
@@ -632,7 +632,7 @@ class AgentTools(AgentToolsProtocol):
 
         participant: dict[str, Any] | None = None
         for cached in self._participants:
-            if _matches_identifier(cached, identifier):
+            if matches_identifier(cached, identifier):
                 participant = cached
                 break
 
@@ -1756,7 +1756,7 @@ class AgentTools(AgentToolsProtocol):
             result = await self.lookup_peers(page=page, page_size=100)
             peers = result.data or []
             for peer in peers:
-                if _matches_identifier(peer, identifier):
+                if matches_identifier(peer, identifier):
                     return peer
 
             # Stop when past the last page; a missing total_pages means one page

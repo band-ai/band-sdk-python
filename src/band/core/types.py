@@ -50,6 +50,28 @@ ContactRequestSentStatus = Literal[
 ]
 
 
+class ContactRequestAction(StrEnum):
+    """``respond_contact_request``'s ``action`` vocabulary.
+
+    Mirrors ``RespondContactRequestInput.action``
+    (``band.runtime.tools.inputs.contacts``).
+    """
+
+    APPROVE = "approve"
+    REJECT = "reject"
+    CANCEL = "cancel"
+
+
+class ContactRequestStatus(StrEnum):
+    """A single contact request's lifecycle status -- the non-``"all"`` subset
+    of ``ContactRequestSentStatus``."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
 class _FlagEnum(StrEnum):
     """A StrEnum whose members combine with ``|`` into a ``frozenset``.
 
