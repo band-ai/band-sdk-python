@@ -12,6 +12,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
 from band.testing import FakeAgentTools
 from tests.content import BLANK_CONTENT_CASES
+from tests.testing.support import seeded_participant
 
 
 _SEED_INSERTED_AT = "2025-01-01T00:00:00Z"
@@ -27,26 +28,6 @@ async def store_fact(tools: FakeAgentTools, content: str) -> None:
         thought="noted",
         scope="organization",
     )
-
-
-def seeded_participant(
-    id: str,
-    *,
-    handle: str | None = None,
-    name: str | None = None,
-    role: str = "member",
-    status: str = "active",
-    type: str = "User",
-) -> dict[str, Any]:
-    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
-    return {
-        "id": id,
-        "handle": handle,
-        "name": name,
-        "role": role,
-        "status": status,
-        "type": type,
-    }
 
 
 def seeded_peer(
@@ -297,6 +278,19 @@ class TestSendMessage:
             MessageSentResponseRecipientsItem(id="alice", handle="alice")
         ]
         assert dict_result.recipients == string_result.recipients
+
+    async def test_a_dict_mentions_explicit_id_wins_over_its_handle(self):
+        """An id-bearing dict mention (e.g. a message's own sender_id) must
+        keep that id rather than have it overwritten by the derived handle."""
+        tools = FakeAgentTools()
+
+        result = await tools.send_message(
+            content="hi", mentions=[{"id": "user-42", "handle": "@Alice"}]
+        )
+
+        assert result.recipients == [
+            MessageSentResponseRecipientsItem(id="user-42", handle="alice")
+        ]
 
 
 class TestSendEvent:
@@ -597,6 +591,47 @@ class TestContacts:
             "pending alongside a new redundant outgoing request"
         )
 
+    async def test_add_contact_reciprocal_accept_resolves_a_pending_outgoing_request(
+        self,
+    ) -> None:
+        """A prior add_contact(alice) already left a pending sent request.
+        Now alice's own request arrives and gets auto-accepted via the
+        reverse-request path -- the earlier sent request must not be left
+        dangling pending against someone who is now already a contact."""
+        tools = FakeAgentTools(
+            sent_contact_requests=[seeded_sent_request("s1", to_handle="alice")],
+            received_contact_requests=[
+                seeded_received_request("r1", from_handle="alice")
+            ],
+        )
+
+        await tools.add_contact(handle="alice")
+
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["alice"]
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["status"] for r in everything["data"]["sent"]] == ["approved"]
+
+    async def test_add_contact_does_not_auto_accept_a_terminal_reverse_request(
+        self,
+    ) -> None:
+        """Only a currently-pending reverse request is actionable -- a
+        rejected/cancelled one must not be resurrected into an approval."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("r1", from_handle="alice", status="rejected")
+            ]
+        )
+
+        result = await tools.add_contact(handle="alice")
+
+        assert result.status == "pending"
+        assert result.id != "r1"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
+
     async def test_add_contact_is_a_no_op_for_an_existing_contact(self) -> None:
         """No real contact system lets you hold an outstanding request
         against someone already your contact -- add_contact must not mint
@@ -653,6 +688,63 @@ class TestContacts:
             "An approved request is no longer pending, so it must drop out "
             "of the received listing -- matching the real endpoint"
         )
+
+    async def test_approving_a_received_request_propagates_name_and_type(self) -> None:
+        """``_promote_received_request_to_contact``'s from_name/type fields
+        must land on the resulting contact, not just its handle."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                {
+                    "id": "req-1",
+                    "from_handle": "alice",
+                    "from_name": "Alice",
+                    "type": "Agent",
+                    "status": "pending",
+                    "inserted_at": _SEED_INSERTED_AT,
+                }
+            ]
+        )
+
+        await tools.respond_contact_request(action="approve", request_id="req-1")
+
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"][0]["name"] == "Alice"
+        assert contacts["data"][0]["type"] == "Agent"
+
+    async def test_approving_a_received_request_defaults_type_to_user(self) -> None:
+        """``ReceivedContactRequest`` doesn't carry the requester's entity
+        type -- an unset ``type`` on the seed must default to User."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        await tools.respond_contact_request(action="approve", request_id="req-1")
+
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"][0]["type"] == "User"
+
+    async def test_approving_a_received_request_resolves_a_reciprocal_pending_sent_request(
+        self,
+    ) -> None:
+        """Both sides requested each other before either responded --
+        approving the received side must resolve the pre-existing outgoing
+        request too, not leave it pending against someone who is now
+        already a contact."""
+        tools = FakeAgentTools(
+            sent_contact_requests=[seeded_sent_request("s1", to_handle="alice")],
+            received_contact_requests=[
+                seeded_received_request("r1", from_handle="alice")
+            ],
+        )
+
+        await tools.respond_contact_request(action="approve", request_id="r1")
+
+        everything = serialize_tool_result(
+            await tools.list_contact_requests(sent_status="all")
+        )
+        assert [r["status"] for r in everything["data"]["sent"]] == ["approved"]
 
     async def test_rejecting_a_received_request_does_not_create_a_contact(self) -> None:
         tools = FakeAgentTools(
@@ -752,6 +844,24 @@ class TestContacts:
         assert result.id == "req-A"
         contacts = serialize_tool_result(await tools.list_contacts())
         assert [c["handle"] for c in contacts["data"]] == ["bob"]
+
+    async def test_an_unresolvable_request_id_falls_back_to_a_matching_handle(
+        self,
+    ) -> None:
+        """``_find_by_id_or_handle``'s documented contract: an id that
+        matches no record at all falls back to the handle, rather than
+        failing outright."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        result = await tools.respond_contact_request(
+            action="approve", request_id="totally-nonexistent", handle="alice"
+        )
+
+        assert result.id == "req-1"
 
     async def test_approving_a_request_with_no_from_handle_raises(self) -> None:
         """The real ``AgentContact.handle`` is a required str -- a fake-only
