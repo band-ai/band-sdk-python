@@ -56,7 +56,7 @@ from band.runtime.tools import (
     append_mention_handles_hint,
     available_mention_handles,
     matches_identifier,
-    normalize_handle,
+    strip_handle_prefix,
 )
 
 # Synthetic identity FakeAgentTools uses for the "joins you to the task on
@@ -64,6 +64,9 @@ from band.runtime.tools import (
 _FAKE_ACTOR = TaskActor(
     id="fake-agent", name="Fake Agent", type="Agent", handle="fake-agent"
 )
+
+# Sentinel creation/update timestamp for every record this fake mints.
+_FAKE_TIMESTAMP = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 
 def total_pages(total: int, page_size: int) -> int:
@@ -85,13 +88,17 @@ def _mention_recipients(
     """Project raw mentions into the real send's recipients shape.
 
     Handle *resolution* is deliberately not mirrored here either (see
-    ``send_message``'s docstring), so an id-less string mention becomes its
-    own handle/id rather than a resolved participant identity.
+    ``send_message``'s docstring), so an id-less mention becomes its own
+    handle/id rather than a resolved participant identity. Both mention
+    shapes normalize their handle the same way, so the same logical mention
+    produces the same recipient regardless of which shape the caller used.
     """
     recipients = []
     for mention in mentions or []:
         if isinstance(mention, dict):
-            handle = mention.get("handle") or mention.get("id") or ""
+            handle = strip_handle_prefix(
+                mention.get("handle") or mention.get("id") or ""
+            )
             recipients.append(
                 MessageSentResponseRecipientsItem(
                     id=mention.get("id") or handle,
@@ -100,7 +107,7 @@ def _mention_recipients(
                 )
             )
         else:
-            handle = normalize_handle(mention)
+            handle = strip_handle_prefix(mention)
             recipients.append(
                 MessageSentResponseRecipientsItem(id=handle, handle=handle)
             )
@@ -114,25 +121,37 @@ def _find_by_id_or_handle(
     id: str | None,
     handle: str | None,
     not_found_message: str,
+    status: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve a record by id or normalized handle within one store.
+    """Resolve a record by id, else by normalized handle, within one store.
+
+    An explicit ``id`` always takes precedence over ``handle`` -- checked as
+    its own full pass rather than interleaved per-record, so a handle match
+    earlier in the list can never shadow the record the caller actually
+    asked for by id. ``status``, when given, restricts both passes to
+    records currently in that status.
 
     Shared by every contact/request mutation that resolves its target this
     way (``remove_contact``, ``respond_contact_request``), so the lookup and
     its "no response data" failure -- the real tool's own wording when the
     backend can't find what it was asked to mutate -- stay defined once.
     """
-    normalized_handle = normalize_handle(handle) if handle is not None else None
-    for record in records:
-        if id is not None and record["id"] == id:
-            return record
-        stored_handle = record.get(handle_field)
-        if (
-            normalized_handle is not None
-            and stored_handle
-            and normalize_handle(stored_handle) == normalized_handle
-        ):
-            return record
+    candidates = (
+        records if status is None else [r for r in records if r["status"] == status]
+    )
+    if id is not None:
+        for record in candidates:
+            if record["id"] == id:
+                return record
+    if handle is not None:
+        normalized_handle = strip_handle_prefix(handle)
+        for record in candidates:
+            stored_handle = record.get(handle_field)
+            if (
+                stored_handle
+                and strip_handle_prefix(stored_handle) == normalized_handle
+            ):
+                return record
     raise RuntimeError(not_found_message)
 
 
@@ -446,10 +465,10 @@ class FakeAgentTools:
         serves it from the sent-request store, mirroring the real handshake."""
         request = SentContactRequest(
             id=str(uuid.uuid4()),
-            inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            inserted_at=_FAKE_TIMESTAMP,
             message=message,
             status=ContactRequestStatus.PENDING,
-            to_handle=normalize_handle(handle),
+            to_handle=strip_handle_prefix(handle),
         ).model_dump()
         self._sent_contact_requests.append(request)
         return AddAgentContactResponseData(
@@ -512,8 +531,10 @@ class FakeAgentTools:
         self, action: str, handle: str | None = None, request_id: str | None = None
     ) -> RespondToAgentContactRequestResponseData:
         """Approve/reject a request you received, or cancel one you sent --
-        matching the real tool's two-store dispatch. Approval promotes the
-        request into the contact store; rejection and cancellation do not."""
+        matching the real tool's two-store dispatch. Only a pending request is
+        actionable, mirroring ``list_contact_requests``'s own pending-only
+        filter for received requests. Approval promotes the request into the
+        contact store; rejection and cancellation do not."""
         if handle is None and request_id is None:
             raise ValueError("Either handle or request_id must be provided")
 
@@ -539,19 +560,25 @@ class FakeAgentTools:
             handle_field=handle_field,
             id=request_id,
             handle=handle,
+            status=ContactRequestStatus.PENDING,
             not_found_message="Failed to respond to contact request - no response data",
         )
         request["status"] = status
         if action == ContactRequestAction.APPROVE:
+            from_handle = request.get("from_handle")
+            if not from_handle:
+                raise ValueError(
+                    "Failed to respond to contact request - malformed request has no from_handle"
+                )
             # ReceivedContactRequest doesn't carry the requester's entity
             # type; extra="allow" lets a seed attach one, defaulting to User.
             self._contacts.append(
                 AgentContact(
                     id=str(uuid.uuid4()),
-                    handle=request.get("from_handle") or "",
+                    handle=from_handle,
                     name=request.get("from_name"),
                     type=request.get("type", "User"),
-                    inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    inserted_at=_FAKE_TIMESTAMP,
                 ).model_dump()
             )
         return RespondToAgentContactRequestResponseData(id=request["id"], status=status)
@@ -604,7 +631,7 @@ class FakeAgentTools:
             thought=thought,
             subject_id=subject_id,
             metadata=metadata,
-            inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            inserted_at=_FAKE_TIMESTAMP,
         ).model_dump()
         self.memories.append(memory)
         return deepcopy(memory)
@@ -729,7 +756,7 @@ class FakeAgentTools:
         points its ``superseded_by_id`` at the new task, like the real API.
         """
         self._task_seq += 1
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = _FAKE_TIMESTAMP
         new_id = str(uuid.uuid4())
         task = Task(
             id=new_id,
@@ -769,7 +796,7 @@ class FakeAgentTools:
         """Apply the given fields to the stored task, joining the fake actor's
         assignment on first status/active_form write, like the real tool."""
         task = self._find_task(id)
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = _FAKE_TIMESTAMP
         if subject is not None:
             task["subject"] = subject
         if detail is not None:
@@ -823,7 +850,7 @@ class FakeAgentTools:
     async def set_board(
         self, goal_title: str | None = None, goal_summary: str | None = None
     ) -> dict[str, Any]:
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = _FAKE_TIMESTAMP
         if goal_title is not None:
             self.board["goal_title"] = goal_title
         if goal_summary is not None:

@@ -24,7 +24,7 @@ from band.runtime.tools.agent import (
     available_mention_handles,
     iter_chat_pages,
     matches_identifier,
-    normalize_handle,
+    strip_handle_prefix,
 )
 from band.runtime.tools.human import HumanTools
 from band.runtime.tools.inputs import (
@@ -260,12 +260,12 @@ __all__ = [
     "matches_identifier",
     "mcp_tool_names",
     "missing_reply_error",
-    "normalize_handle",
     "platform_args_schema",
     "platform_tool",
     "redact_tool_call_args",
     "resolve_capabilities",
     "resolve_tool_model",
     "serialize_tool_result",
+    "strip_handle_prefix",
     "validate_tool_arguments",
 ]

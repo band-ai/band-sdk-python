@@ -109,7 +109,7 @@ async def iter_chat_pages(
     )
 
 
-def normalize_handle(value: str) -> str:
+def strip_handle_prefix(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
     return value.lstrip("@").lower()
 
@@ -131,7 +131,7 @@ def matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     """
     # Handle comparison — normalize both sides
     entity_handle = _entity_field(entity, "handle")
-    if entity_handle and normalize_handle(entity_handle) == normalize_handle(
+    if entity_handle and strip_handle_prefix(entity_handle) == strip_handle_prefix(
         identifier
     ):
         return True

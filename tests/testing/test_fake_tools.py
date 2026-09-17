@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from band.client.rest import ChatParticipant
+from band.client.rest import ChatParticipant, MessageSentResponseRecipientsItem
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import DEFAULT_FILE_CAPTION, serialize_tool_result
@@ -276,6 +276,25 @@ class TestSendMessage:
         assert result is None
         assert tools.messages_sent == []
 
+    async def test_string_and_dict_mentions_normalize_to_the_same_recipient(self):
+        """A string mention and an equivalent dict mention describe the same
+        logical mention, so both shapes must normalize their handle the same
+        way rather than the dict shape bypassing normalization."""
+        string_tools = FakeAgentTools()
+        dict_tools = FakeAgentTools()
+
+        string_result = await string_tools.send_message(
+            content="hi", mentions=["@Alice"]
+        )
+        dict_result = await dict_tools.send_message(
+            content="hi", mentions=[{"handle": "@Alice"}]
+        )
+
+        assert string_result.recipients == [
+            MessageSentResponseRecipientsItem(id="alice", handle="alice")
+        ]
+        assert dict_result.recipients == string_result.recipients
+
 
 class TestSendEvent:
     """Tests for send_event tracking."""
@@ -478,7 +497,17 @@ class TestRoomContext:
         assert page["meta"]["total_count"] == 3
 
     async def test_set_room_context_replaces_and_canonicalizes(self) -> None:
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(
+            room_context=[
+                {
+                    "id": "msg-0",
+                    "content": "original",
+                    "sender_id": "user-1",
+                    "sender_type": "User",
+                    "message_type": "text",
+                }
+            ]
+        )
 
         tools.set_room_context(
             [
@@ -493,10 +522,22 @@ class TestRoomContext:
         )
         page = await tools.fetch_room_context(room_id=tools.room_id)
 
-        assert [item["content"] for item in page["data"]] == ["hello"]
+        assert [item["content"] for item in page["data"]] == ["hello"], (
+            "set_room_context must replace the prior context, not add to it"
+        )
 
     async def test_append_room_context_adds_one_canonicalized_item(self) -> None:
-        tools = FakeAgentTools()
+        tools = FakeAgentTools(
+            room_context=[
+                {
+                    "id": "msg-0",
+                    "content": "original",
+                    "sender_id": "user-1",
+                    "sender_type": "User",
+                    "message_type": "text",
+                }
+            ]
+        )
 
         tools.append_room_context(
             {
@@ -509,7 +550,9 @@ class TestRoomContext:
         )
         page = await tools.fetch_room_context(room_id=tools.room_id)
 
-        assert [item["content"] for item in page["data"]] == ["hello"]
+        assert [item["content"] for item in page["data"]] == ["original", "hello"], (
+            "append_room_context must keep the prior context and add after it"
+        )
 
 
 class TestContacts:
@@ -592,6 +635,69 @@ class TestContacts:
 
         with pytest.raises(RuntimeError, match="Failed to respond to contact request"):
             await tools.respond_contact_request(action="approve", request_id="nope")
+
+    async def test_respond_contact_request_raises_for_an_unknown_action(self) -> None:
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Unknown contact request action"):
+            await tools.respond_contact_request(action="bogus", request_id="req-1")
+
+    async def test_cannot_respond_to_an_already_terminal_request(self) -> None:
+        """Only a pending request is actionable -- a request already resolved
+        by a prior response must not be re-matched and flipped again."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-1", from_handle="alice")
+            ]
+        )
+        await tools.respond_contact_request(action="reject", request_id="req-1")
+
+        with pytest.raises(RuntimeError, match="Failed to respond to contact request"):
+            await tools.respond_contact_request(action="approve", request_id="req-1")
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
+
+    async def test_request_id_takes_precedence_over_an_unrelated_handle_match(
+        self,
+    ) -> None:
+        """An explicit request_id must resolve to that exact record even when
+        a different record earlier in the store matches the given handle."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                seeded_received_request("req-B", from_handle="alice"),
+                seeded_received_request("req-A", from_handle="bob"),
+            ]
+        )
+
+        result = await tools.respond_contact_request(
+            action="approve", handle="alice", request_id="req-A"
+        )
+
+        assert result.id == "req-A"
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert [c["handle"] for c in contacts["data"]] == ["bob"]
+
+    async def test_approving_a_request_with_no_from_handle_raises(self) -> None:
+        """The real ``AgentContact.handle`` is a required str -- a fake-only
+        promotion path must not silently coerce a missing handle to ''."""
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                {
+                    "id": "req-1",
+                    "status": "pending",
+                    "inserted_at": "2025-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        with pytest.raises(ValueError, match="no from_handle"):
+            await tools.respond_contact_request(action="approve", request_id="req-1")
+        contacts = serialize_tool_result(await tools.list_contacts())
+        assert contacts["data"] == []
 
     async def test_remove_contact_by_handle(self) -> None:
         tools = FakeAgentTools(
