@@ -9,6 +9,7 @@ client suite (tests/integrations/acp/), so these are construction-level tests.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
@@ -40,6 +41,11 @@ class TestCopilotACPAdapterConstruction:
             CopilotACPAdapterConfig(command=("copilot", "--acp", "--yolo"))
         )
         assert adapter._command == ["copilot", "--acp", "--yolo"]
+
+    def test_cwd_becomes_a_room_workspace_root(self, tmp_path: Path) -> None:
+        adapter = CopilotACPAdapter(CopilotACPAdapterConfig(cwd=str(tmp_path)))
+
+        assert adapter._workspace("room-a") == str(tmp_path / "room-a")
 
     def test_no_profile_uses_default_noop(self) -> None:
         # Copilot speaks vanilla ACP; the base adapter leaves profile unset and the

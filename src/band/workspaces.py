@@ -19,7 +19,9 @@ def resolve_room_workspace(
         workspace = workspace_for_room(room_id)
         if not isinstance(workspace, str) or not os.path.isabs(workspace):
             raise ValueError("workspace_for_room must return an absolute path")
-        return os.path.realpath(workspace)
+        resolved_workspace = os.path.realpath(workspace)
+        Path(resolved_workspace).mkdir(parents=True, exist_ok=True)
+        return resolved_workspace
 
     return create_room_workspace_resolver(Path.cwd() / _DEFAULT_WORKSPACE_DIRECTORY)(
         room_id
