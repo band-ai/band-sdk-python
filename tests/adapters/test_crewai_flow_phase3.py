@@ -59,7 +59,7 @@ from band.adapters.crewai_flow import (
 from band.converters.crewai_flow import CrewAIFlowStateConverter
 from band.core.types import Capability, Emit, PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
-from tests.adapters.crewai_flow_support import _participant
+from tests.adapters.crewai_flow_support import participant_seed
 
 
 def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
@@ -142,7 +142,7 @@ class TestDirectResponse:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[_participant("p1", "@example/peer")])
+        tools = FakeAgentTools(participants=[participant_seed("p1", "@example/peer")])
         await _run_one_turn(adapter, tools, _msg())
 
         assert len(tools.messages_sent) == 1
@@ -337,7 +337,7 @@ class TestNestAsyncioNotInvoked:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
         tools = FakeAgentTools(
-            participants=[_participant("user-1", "@pat", type="User")]
+            participants=[participant_seed("user-1", "@pat", type="User")]
         )
         await _run_one_turn(adapter, tools, _msg())
 
@@ -353,7 +353,7 @@ class TestNestAsyncioNotInvoked:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
         tools = FakeAgentTools(
-            participants=[_participant("user-1", "@pat", type="User")]
+            participants=[participant_seed("user-1", "@pat", type="User")]
         )
 
         await _run_one_turn(adapter, tools, _msg())
@@ -391,7 +391,7 @@ class TestIdempotentFinalization:
 
         ns = adapter.metadata_namespace
         tools = FakeAgentTools(
-            participants=[_participant("p1", "@example/peer")],
+            participants=[participant_seed("p1", "@example/peer")],
             room_context=[
                 {
                     "id": "evt-prior",
@@ -915,7 +915,9 @@ class TestRuntimeTools:
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = LoopCheckingTools(participants=[_participant("p-a", "@example/peer")])
+        tools = LoopCheckingTools(
+            participants=[participant_seed("p-a", "@example/peer")]
+        )
 
         await _run_one_turn(adapter, tools, _msg())
 
