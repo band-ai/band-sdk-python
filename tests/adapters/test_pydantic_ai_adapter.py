@@ -46,7 +46,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from band.adapters.pydantic_ai import (
@@ -58,6 +58,7 @@ from band.adapters.pydantic_ai import (
     _is_replayable_history_message,
 )
 from band.core.protocols import AgentToolsProtocol
+from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
     ALL_CAPABILITIES,
     Capability,
@@ -697,7 +698,7 @@ class TestOnStarted:
             assert tool in tool_names, f"Tool {tool} not found"
 
 
-def _scripted_tool_calls(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
+def _scripted_tool_calls(*calls: tuple[str, Any]) -> FunctionModel:
     """A model that makes ``calls``, one per turn, then answers in plain text.
 
     A rejected call brings the model straight back here with nothing left
@@ -727,7 +728,7 @@ def _registered_names(adapter: PydanticAIAdapter) -> set[str]:
 
 
 async def _call_tool(
-    adapter: PydanticAIAdapter, deps: Any, name: str, args: dict[str, Any]
+    adapter: PydanticAIAdapter, deps: Any, name: str, args: Any
 ) -> Any:
     """Drive one built-in tool call through pydantic-ai's own execution path.
 
@@ -756,7 +757,7 @@ class TestAdvertisedToolSchemas:
     """Per-argument text fidelity is asserted in test_tool_text_drift.
 
     What is pydantic-ai-specific, and checked here, is that the master model's
-    own description and JSON schema are what reaches the framework — nothing
+    own description and provider-safe JSON schema reach the framework — nothing
     is re-derived from a hand-written function signature any more.
     """
 
@@ -779,7 +780,11 @@ class TestAdvertisedToolSchemas:
 
         assert schemas, "no tools registered, so nothing was actually checked"
         assert schemas == {
-            name: platform_args_schema(name).model_json_schema() for name in schemas
+            name: sanitize_tool_schema(
+                platform_args_schema(name).model_json_schema(),
+                drop_numeric_bounds=True,
+            )
+            for name in schemas
         }
 
     @pytest.mark.asyncio
@@ -867,10 +872,8 @@ class TestBuiltinToolRegistration:
 class TestBuiltinToolExecution:
     """Argument handling through pydantic-ai's real tool-calling loop.
 
-    ``Tool.from_schema`` advertises the master schema but installs a
-    pass-through validator, so none of this is guaranteed by pydantic-ai
-    itself — every check here is on the integration's own validate/normalize
-    step.
+    The integration supplies pydantic-ai with the master schema and a validator
+    that preserves its normalized kwargs and retry behavior.
     """
 
     @pytest.mark.asyncio
@@ -907,6 +910,26 @@ class TestBuiltinToolExecution:
 
         (retry,) = _parts(result, RetryPromptPart)
         assert "unexpected" in str(retry.content)
+        deps.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "arguments", [["hi"], '"hi"', 123], ids=["list", "string", "number"]
+    )
+    async def test_non_object_arguments_retry_without_dispatching(self, arguments):
+        """Valid JSON with a non-object shape is a model retry, not a crash."""
+        deps = MagicMock()
+        deps.send_message = AsyncMock(return_value={"status": "sent"})
+        adapter = await _started_adapter()
+
+        result = await _call_tool(
+            adapter,
+            deps,
+            BandTool.SEND_MESSAGE,
+            arguments,
+        )
+
+        (retry,) = _parts(result, RetryPromptPart)
         deps.send_message.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1158,6 +1181,52 @@ class TestBuiltinToolResults:
         )
         (content,) = _tool_returns(result)
         assert "boom during serialization" in content
+        deps.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_normalization_failure_counts_as_completed_work(
+        self, sample_message
+    ):
+        """A posted message is terminal even when its response cannot serialize."""
+        calls_pending = True
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            nonlocal calls_pending
+            if calls_pending:
+                calls_pending = False
+                yield {
+                    0: DeltaToolCall(
+                        name=BandTool.SEND_MESSAGE,
+                        json_args=json.dumps({"content": "hi", "mentions": []}),
+                        tool_call_id="call-1",
+                    )
+                }
+            else:
+                yield "done"
+
+        adapter = PydanticAIAdapter(model="test", emit=())
+        await adapter.on_started("Probe", "probe")
+        adapter._agent.model = FunctionModel(stream_function=stream)
+
+        deps = MagicMock()
+        result = MagicMock()
+        result.model_dump.side_effect = TypeError("boom during serialization")
+        deps.send_message = AsyncMock(return_value=result)
+        deps.send_event = AsyncMock()
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=deps,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        deps.send_message.assert_called_once_with(content="hi", mentions=[])
         deps.send_event.assert_not_called()
 
 
