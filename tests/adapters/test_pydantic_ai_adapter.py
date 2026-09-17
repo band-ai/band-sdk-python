@@ -59,6 +59,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.types import Capability, Emit, PlatformMessage, TurnUsage
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import get_tool_description
+from band.testing import FakeAgentTools
 from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
@@ -846,6 +847,80 @@ class TestFileTools:
 
         assert "Error sending room file 'notes.txt'" in result
         assert "upload failed" in result
+
+
+class TestContactTools:
+    """band_add_contact/band_remove_contact/band_respond_contact_request,
+    gated behind Capability.CONTACTS.
+
+    Driven by a real ``FakeAgentTools`` rather than a mock returning plain
+    dicts, so the ``@platform_tool``-applied ``serialize_tool_result()``
+    conversion from a real Fern model to a plain dict is actually exercised,
+    not a no-op against an already-dict stub.
+    """
+
+    async def _tool_functions(self) -> dict[str, Any]:
+        adapter = PydanticAIAdapter(model="test", capabilities=Capability.CONTACTS)
+        await adapter.on_started(agent_name="Probe", agent_description="probe")
+        return {
+            name: tool.function
+            for name, tool in adapter._agent._function_toolset.tools.items()
+        }
+
+    @pytest.mark.asyncio
+    async def test_add_contact_returns_a_plain_dict(self):
+        functions = await self._tool_functions()
+        tools = FakeAgentTools()
+
+        result = await functions["band_add_contact"](
+            SimpleNamespace(deps=tools), handle="@alice", message="hi"
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_remove_contact_returns_a_plain_dict(self):
+        functions = await self._tool_functions()
+        tools = FakeAgentTools(
+            contacts=[
+                {
+                    "id": "c1",
+                    "handle": "alice",
+                    "name": "Alice",
+                    "type": "User",
+                    "inserted_at": "2025-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        result = await functions["band_remove_contact"](
+            SimpleNamespace(deps=tools), handle="alice"
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "removed"
+
+    @pytest.mark.asyncio
+    async def test_respond_contact_request_returns_a_plain_dict(self):
+        functions = await self._tool_functions()
+        tools = FakeAgentTools(
+            received_contact_requests=[
+                {
+                    "id": "req-1",
+                    "from_handle": "alice",
+                    "status": "pending",
+                    "inserted_at": "2025-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+        result = await functions["band_respond_contact_request"](
+            SimpleNamespace(deps=tools), action="approve", request_id="req-1"
+        )
+
+        assert isinstance(result, dict)
+        assert result["status"] == "approved"
 
 
 class TestOnMessage:
