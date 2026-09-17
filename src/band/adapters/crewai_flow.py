@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Protocol, Union, runtime_checkable
 from uuid import UUID
 
+from band_sdk_core import AgentFailure
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from typing_extensions import Unpack
 
@@ -937,15 +938,17 @@ class SideEffectExecutor:
         )
 
     async def record_failed(self, error: CrewAIFlowError) -> None:
-        # Best-effort error event for visibility, then the task event.
-        try:
-            await self._tools.send_event(
-                content=f"flow error: {error.code}: {error.message}"[:500],
-                message_type="error",
-                metadata={"error": error.model_dump()},
-            )
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to emit error event", exc_info=True)
+        # Best-effort failure event for visibility, then the task event. The
+        # room-visible message is capped like every other room post in this
+        # file (e.g. record_waiting) -- error.message can embed an unbounded
+        # value (e.g. a full participant-id list from an ambiguous-identity
+        # error) -- so the untruncated text is preserved in detail for
+        # structured consumers reading the "error"-typed event.
+        message = error.message[:500]
+        detail = error.message if message != error.message else None
+        await self._tools.send_failure(
+            AgentFailure("crewai_flow", message, error.code, detail)
+        )
         await self._send_event(
             content=f"failed:{error.code}",
             message_type="task",

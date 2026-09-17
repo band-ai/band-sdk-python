@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
 
@@ -75,6 +76,7 @@ def mock_tools():
     )
     tools.send_message = AsyncMock(return_value={"status": "sent"})
     tools.send_event = AsyncMock(return_value={"status": "sent"})
+    tools.send_failure = AsyncMock(return_value={"status": "sent"})
     tools.execute_tool_call = AsyncMock(return_value={"status": "success"})
     return tools
 
@@ -957,9 +959,39 @@ class TestErrorHandling:
                     room_id="room-123",
                 )
 
-            mock_tools.send_event.assert_called()
+            mock_tools.send_failure.assert_called_once()
+            failure = mock_tools.send_failure.call_args.args[0]
+            assert failure.provider == "google_adk"
+            assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
             # Runner should be closed even on error (via finally)
             mock_runner.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reports_error_when_runner_construction_itself_fails(
+        self, sample_message, mock_tools
+    ):
+        """A runner-construction failure must be reported, not escape uncaught."""
+        adapter = GoogleADKAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+
+        with patch.object(
+            adapter, "_create_runner", side_effect=RuntimeError("bad tool schema")
+        ):
+            with pytest.raises(RuntimeError, match="bad tool schema"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_tools.send_failure.assert_called_once()
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "google_adk"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
 
 class TestHistoryTranscript:
@@ -1407,19 +1439,6 @@ class TestFinalResponseCapture:
 
         result = GoogleADKAdapter._extract_event_text(mock_event)
         assert result == ""
-
-
-class TestReportErrorFailure:
-    """Tests for _report_error own failure handling."""
-
-    @pytest.mark.asyncio
-    async def test_report_error_handles_own_failure(self, mock_tools):
-        """Should not raise when _report_error itself fails."""
-        adapter = GoogleADKAdapter()
-        mock_tools.send_event = AsyncMock(side_effect=Exception("Network down"))
-
-        # Should not raise
-        await adapter._report_error(mock_tools, "some error")
 
 
 class TestConcurrentMessages:

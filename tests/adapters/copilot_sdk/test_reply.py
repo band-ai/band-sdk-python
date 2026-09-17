@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.runtime.tools import CHAT_ID_FIELD_NAME, ToolCallOutcome
+from band.testing import reported_failures
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
     FakeCopilotSession,
@@ -77,8 +79,9 @@ class TestReply:
 
         session = client.sessions[0]
         assert session.aborted and session.disconnected
-        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert error_events and "boom" in error_events[0]["content"]
+        failures = reported_failures(tools)
+        assert failures and failures[0]["provider"] == "copilot_sdk"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_fallback_send_suppressed_when_band_send_message_fired(self):

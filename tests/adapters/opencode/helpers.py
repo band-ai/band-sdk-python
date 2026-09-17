@@ -19,7 +19,7 @@ from band.core.types import (
     PlatformMessage,
 )
 from band.integrations.opencode.types import OpencodeSessionState
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type as events_of_type
 
 RawOpencodeEvent: TypeAlias = dict[str, Any]
 
