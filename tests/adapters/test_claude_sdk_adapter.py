@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,6 +26,7 @@ from band.adapters.claude_sdk import (
     _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
+    _NATIVE_TOOL_MATCHER,
     PendingApproval,
     _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
@@ -325,6 +327,27 @@ class TestOnStarted:
             sdk_options = mock_manager_class.call_args[0][0]
             assert sdk_options.model == "opus"
             assert sdk_options.fallback_model == "sonnet"
+
+    @pytest.mark.asyncio
+    async def test_approval_hook_matches_native_tools_only(self):
+        """Manual approval must not intercept the adapter's own MCP tools."""
+        adapter = ClaudeSDKAdapter(approval_mode="manual")
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            [matcher] = sdk_options.hooks["PreToolUse"]
+
+            assert matcher.matcher == _NATIVE_TOOL_MATCHER
+            assert re.fullmatch(matcher.matcher, "Bash")
+            assert not re.fullmatch(matcher.matcher, "mcp__band__band_send_message")
 
 
 class TestOnMessage:
@@ -687,6 +710,44 @@ class TestOnCleanup:
         assert "room-123" not in adapter._room_tools
 
     @pytest.mark.asyncio
+    async def test_cancels_turn_before_cleaning_up_session(self, mock_tools):
+        """Room cleanup must stop a detached turn before closing its client."""
+        adapter = ClaudeSDKAdapter()
+        response_started = asyncio.Event()
+        continue_response = asyncio.Event()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        async def wait_for_response(*_args):
+            response_started.set()
+            await continue_response.wait()
+
+        adapter._session_manager = AsyncMock()
+        turn_task = asyncio.create_task(
+            adapter._run_turn(
+                client,
+                "room-123",
+                mock_tools,
+                "message",
+                "message-id",
+                asyncio.get_running_loop().create_future(),
+            )
+        )
+        adapter._turn_tasks["room-123"] = turn_task
+
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            await response_started.wait()
+            cleanup_saw_completed = []
+
+            async def cleanup_session(_room_id):
+                cleanup_saw_completed.append(turn_task.done())
+
+            adapter._session_manager.cleanup_session.side_effect = cleanup_session
+            await adapter.on_cleanup("room-123")
+
+        assert cleanup_saw_completed == [True]
+
+    @pytest.mark.asyncio
     async def test_cleanup_without_session_manager_is_safe(self):
         """Should handle cleanup when session manager not initialized."""
         adapter = ClaudeSDKAdapter()
@@ -733,6 +794,92 @@ class TestOnCleanup:
 
         assert not rejoined_release.done()
 
+    @pytest.mark.asyncio
+    async def test_turn_releases_its_future_after_room_state_is_removed(
+        self, mock_tools
+    ):
+        """Cleanup cannot strand the caller waiting on its captured release future."""
+        adapter = ClaudeSDKAdapter()
+        release_future = asyncio.get_running_loop().create_future()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        with patch.object(adapter, "_process_response", new_callable=AsyncMock):
+            await adapter._run_turn(
+                client,
+                "room-123",
+                mock_tools,
+                "message",
+                "message-id",
+                release_future,
+            )
+
+        assert release_future.done()
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_drops_its_task(self, mock_tools):
+        """A completed turn must not retain its client and prompt in the room map."""
+        adapter = ClaudeSDKAdapter()
+        release_future = asyncio.get_running_loop().create_future()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        with patch.object(adapter, "_process_response", new_callable=AsyncMock):
+            turn_task = asyncio.create_task(
+                adapter._run_turn(
+                    client,
+                    "room-123",
+                    mock_tools,
+                    "message",
+                    "message-id",
+                    release_future,
+                )
+            )
+            adapter._turn_tasks["room-123"] = turn_task
+            await turn_task
+
+        assert "room-123" not in adapter._turn_tasks
+
+    @pytest.mark.asyncio
+    async def test_cancelled_message_cancels_detached_turn(
+        self, sample_message, mock_tools
+    ):
+        """Cancelling the runtime callback must stop its detached Claude turn."""
+        adapter = ClaudeSDKAdapter()
+        response_started = asyncio.Event()
+        continue_response = asyncio.Event()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+        adapter._session_manager = mock_manager
+
+        async def wait_for_response(*_args):
+            response_started.set()
+            await continue_response.wait()
+
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            message_task = asyncio.create_task(
+                adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+            )
+            await response_started.wait()
+            turn_task = adapter._turn_tasks["room-123"]
+            message_task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await message_task
+
+        assert turn_task.cancelled()
+        assert "room-123" not in adapter._turn_tasks
+
 
 class TestCleanupAll:
     """Tests for cleanup_all() method."""
@@ -751,6 +898,44 @@ class TestCleanupAll:
 
         mock_session_manager.stop.assert_awaited_once()
         assert len(adapter._room_tools) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancels_turns_before_stopping_session_manager(self, mock_tools):
+        """Adapter shutdown must stop detached turns before closing all sessions."""
+        adapter = ClaudeSDKAdapter()
+        response_started = asyncio.Event()
+        continue_response = asyncio.Event()
+        client = MagicMock()
+        client.query = AsyncMock()
+
+        async def wait_for_response(*_args):
+            response_started.set()
+            await continue_response.wait()
+
+        adapter._session_manager = AsyncMock()
+        turn_task = asyncio.create_task(
+            adapter._run_turn(
+                client,
+                "room-123",
+                mock_tools,
+                "message",
+                "message-id",
+                asyncio.get_running_loop().create_future(),
+            )
+        )
+        adapter._turn_tasks["room-123"] = turn_task
+
+        with patch.object(adapter, "_process_response", side_effect=wait_for_response):
+            await response_started.wait()
+            stop_saw_completed = []
+
+            async def stop():
+                stop_saw_completed.append(turn_task.done())
+
+            adapter._session_manager.stop.side_effect = stop
+            await adapter.cleanup_all()
+
+        assert stop_saw_completed == [True]
 
 
 class TestBandTools:

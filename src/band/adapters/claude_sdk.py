@@ -146,6 +146,10 @@ APPROVAL_RESOLVED_TEMPLATE = "Approval `{token}` resolved as **{decision}**."
 _APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
 _LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
 
+# Band's MCP tools are intentionally always available; approval_mode only gates
+# Claude Code's native tools.
+_NATIVE_TOOL_MATCHER = r"^(?!mcp__band__).+"
+
 # A pending approval's future, force-resolved by eviction or room teardown
 # rather than a genuine /decline reply — distinct from the "decline" string
 # _handle_approval_command sets, since only that path posts a room-visible
@@ -484,12 +488,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             sdk_options.cwd = self.cwd
 
         # When approval_mode is set, add a PreToolUse hook that returns
-        # {"continue_": True} so the SDK delegates to can_use_tool instead
-        # of auto-resolving permissions via the permission_mode.
+        # "ask" for native tools so the SDK delegates to can_use_tool instead
+        # of auto-resolving permissions via the permission_mode. Band's MCP
+        # tools remain outside this matcher and keep their normal bypass.
         if self.approval_mode is not None:
             sdk_options.hooks = {
                 "PreToolUse": [
                     HookMatcher(
+                        matcher=_NATIVE_TOOL_MATCHER,
                         hooks=[_pre_tool_use_continue_hook],
                     ),
                 ],
@@ -740,14 +746,17 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         turn_task.add_done_callback(self._log_turn_task_exception)
         try:
             await release_future
+            if turn_task.done():
+                # The turn finished before release fired (the common, no-approval
+                # case) -- await it so a failure still propagates through
+                # on_message exactly as it did before this turn ran detached.
+                await turn_task
+        except asyncio.CancelledError:
+            await self._cancel_turn(room_id)
+            raise
         finally:
             if self._turn_release.get(room_id) is release_future:
                 del self._turn_release[room_id]
-        if turn_task.done():
-            # The turn finished before release fired (the common, no-approval
-            # case) -- await it so a failure still propagates through
-            # on_message exactly as it did before this turn ran detached.
-            await turn_task
 
     async def _run_turn(
         self,
@@ -788,6 +797,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             logger.debug("Message %s processed successfully", msg_id)
         finally:
             self._release_turn(room_id, release_future)
+            if self._turn_tasks.get(room_id) is asyncio.current_task():
+                del self._turn_tasks[room_id]
 
     def _release_turn(
         self, room_id: str, release_future: asyncio.Future[None] | None = None
@@ -799,11 +810,26 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         completion (see _run_turn's finally) must release it too when
         nothing ever blocked on a human.
         """
-        current_release = self._turn_release.get(room_id)
-        if current_release is None or current_release.done():
+        release = (
+            release_future
+            if release_future is not None
+            else self._turn_release.get(room_id)
+        )
+        if release is not None and not release.done():
+            release.set_result(None)
+
+    async def _cancel_turn(self, room_id: str) -> None:
+        """Cancel and await a detached turn before its session is closed."""
+        turn_task = self._turn_tasks.get(room_id)
+        if turn_task is None or turn_task.done():
             return
-        if release_future is None or current_release is release_future:
-            current_release.set_result(None)
+        turn_task.cancel()
+        try:
+            await turn_task
+        except asyncio.CancelledError:
+            pass
+        if self._turn_tasks.get(room_id) is turn_task:
+            del self._turn_tasks[room_id]
 
     def _log_turn_task_exception(self, task: asyncio.Task[None]) -> None:
         """Retrieve a turn task's exception so asyncio doesn't log it as
@@ -1227,6 +1253,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up Claude SDK session and stored tools when agent leaves a room."""
         self._clear_pending_approvals_for_room(room_id)
+        await self._cancel_turn(room_id)
         if self._session_manager:
             await self._session_manager.cleanup_session(room_id)
         self._room_tools.pop(room_id, None)
@@ -1236,9 +1263,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._notified_declines.pop(room_id, None)
         self._pending_tool_names.pop(room_id, None)
         self._turn_release.pop(room_id, None)
-        turn_task = self._turn_tasks.pop(room_id, None)
-        if turn_task is not None:
-            turn_task.cancel()
         logger.debug("Room %s: Cleaned up Claude SDK session", room_id)
 
     # --- Copied from BaseFrameworkAgent._report_error ---
@@ -1254,6 +1278,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Decline all pending approvals across rooms
         for room_id in list(self._pending_approvals):
             self._clear_pending_approvals_for_room(room_id)
+        for room_id in list(self._turn_tasks):
+            await self._cancel_turn(room_id)
         if self._session_manager:
             await self._session_manager.stop()
         if self._mcp_backend:
@@ -1266,8 +1292,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self._room_last_sender.clear()
         self._notified_declines.clear()
         self._pending_tool_names.clear()
-        for turn_task in self._turn_tasks.values():
-            turn_task.cancel()
         self._turn_release.clear()
         self._turn_tasks.clear()
 
