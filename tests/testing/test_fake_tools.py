@@ -575,10 +575,12 @@ class TestContacts:
         """AddContactInput's own docstring: 'Returns approved when inverse
         request existed and was auto-accepted' -- alice already asked to add
         me, so my own add_contact(alice) must complete the handshake rather
-        than queue a second, redundant outgoing request."""
+        than queue a second, redundant outgoing request. The seeded handle
+        also exercises _promote_received_request_to_contact's own
+        normalization, not just the lookup's."""
         tools = FakeAgentTools(
             received_contact_requests=[
-                seeded_received_request("req-1", from_handle="alice")
+                seeded_received_request("req-1", from_handle="@Alice")
             ]
         )
 
@@ -631,9 +633,11 @@ class TestContacts:
         assert [r["id"] for r in everything["data"]["sent"]] == ["req-1"]
 
     async def test_approving_a_received_request_promotes_it_to_a_contact(self) -> None:
+        """The seeded handle carries an @ prefix and mixed case, exercising
+        _promote_received_request_to_contact's own normalization."""
         tools = FakeAgentTools(
             received_contact_requests=[
-                seeded_received_request("req-1", from_handle="alice")
+                seeded_received_request("req-1", from_handle="@Alice")
             ]
         )
 
