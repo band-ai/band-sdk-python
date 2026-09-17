@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -163,6 +164,23 @@ class TestACPClientAdapterTransport:
         assert runtime._conn is transport.conn
         args, _ = transport.last_call
         assert args == ("codex",)
+
+    @pytest.mark.asyncio
+    async def test_room_workspace_is_used_for_initial_spawn(
+        self, make_acp_transport, tmp_path: Path
+    ) -> None:
+        transport = make_acp_transport()
+        workspace = tmp_path / "acp-room"
+        adapter = ACPClientAdapter(
+            command="codex",
+            workspace_for_room=lambda _room_id: str(workspace),
+        )
+        inject_acp_spawn(adapter, transport)
+        await adapter.on_started("", "")
+        runtime = await adapter._runtime_for("room-1")
+        await adapter._ensure_connection(runtime)
+
+        assert transport.last_kwargs["cwd"] == str(workspace)
 
 
 class TestACPClientAdapterShutdown:
@@ -789,22 +807,13 @@ class TestACPClientAdapterOnMessage:
         assert "Agent crashed" in error_events[0]["content"]
 
     @pytest.mark.asyncio
-    async def test_on_message_not_initialized_raises(self) -> None:
-        """Should raise RuntimeError if not initialized."""
+    async def test_runtime_rejects_calls_when_respawn_is_disabled(self) -> None:
+        """A runtime only rejects an unstarted connection when respawn is disabled."""
         adapter = ACPClientAdapter(command="codex")
-        tools = FakeAgentTools()
-        msg = make_platform_message("Hello", room_id="room-123")
+        runtime = await adapter._runtime_for("room-123")
 
         with pytest.raises(RuntimeError, match="ACP client not initialized"):
-            await adapter.on_message(
-                msg,
-                tools,
-                ACPClientSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="room-123",
-            )
+            await runtime.ensure_connection(can_respawn=False)
 
 
 class TestACPClientAdapterPermissionHandler:

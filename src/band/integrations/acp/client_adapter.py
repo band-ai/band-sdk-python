@@ -45,7 +45,11 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.types import ACPToolCall
-from band.workspaces import claim_room_workspace, resolve_room_workspace
+from band.workspaces import (
+    WorkspaceResolver,
+    claim_room_workspace,
+    resolve_room_workspace,
+)
 from band.runtime.prompts import render_system_prompt
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
@@ -107,10 +111,9 @@ HISTORY_REPLAY_HEADER = (
 
 # The transport seam: a callable matching ACPRuntime's spawn_process contract —
 # ``(client, *command, env=..., transport_kwargs=...) -> async CM yielding (conn, _)``.
-# stdio and TCP are the built-in transports; injecting one (e.g. docker exec / ssh,
-# or a fake in tests) is the supported extension point.
+# The adapter validates the transport boundary, while ACPRuntime retains this seam
+# for lower-level runtime tests and direct runtime consumers.
 SpawnProcess = Callable[..., object]
-WorkspaceResolver = Callable[[str], str]
 
 
 def _resolve_launcher(command: list[str]) -> list[str]:
@@ -253,10 +256,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         )
         return definitions, names
 
-    def _build_runtime(self) -> ACPRuntime:
+    def _build_runtime(self, workspace: str | None = None) -> ACPRuntime:
         return ACPRuntime(
             command=_resolve_launcher(self._command),
             env=self._env,
+            cwd=workspace,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(
                 profile=self._profile,
@@ -274,7 +278,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if runtime is None:
                 workspace = self._workspace(room_id)
                 claim_room_workspace(room_id, workspace, self._workspace_rooms)
-                runtime = self._build_runtime()
+                runtime = self._build_runtime(workspace)
                 self._runtimes[room_id] = runtime
                 self._room_workspaces[room_id] = workspace
             return runtime
@@ -771,5 +775,5 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     async def _ensure_connection(self, runtime: ACPRuntime) -> ACPConnectionProtocol:
         return await runtime.ensure_connection(
-            can_respawn=bool(self.agent_name),
+            can_respawn=True,
         )

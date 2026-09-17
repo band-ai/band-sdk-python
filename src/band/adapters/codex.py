@@ -251,6 +251,7 @@ class RoomCodexClient:
     workspace: str
     client: CodexClientProtocol | None = None
     initialized: bool = False
+    model_override: str | None = None
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
@@ -481,6 +482,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             claim_room_workspace(room_id, workspace, self._workspace_rooms)
             room = RoomCodexClient(workspace=workspace)
             self._room_clients[room_id] = room
+        else:
+            claim_room_workspace(room_id, room.workspace, self._workspace_rooms)
         return room
 
     def _active_client_state(self) -> RoomCodexClient | None:
@@ -562,6 +565,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         def _handle_set_model(inp: SetModelInput) -> str:
             if not adapter._rpc_lock.locked():
                 raise RuntimeError("_handle_set_model must run under _rpc_lock")
+            adapter._require_active_client_state().model_override = inp.model
             adapter._selected_model = inp.model
             return f"Model changed to {inp.model} for subsequent turns."
 
@@ -1158,9 +1162,18 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
     async def cleanup_all(self) -> None:
         """Close every room-owned Codex process during agent shutdown."""
-        await asyncio.gather(
-            *(self.on_cleanup(room_id) for room_id in list(self._room_clients))
+        room_ids = list(self._room_clients)
+        results = await asyncio.gather(
+            *(self.on_cleanup(room_id) for room_id in room_ids),
+            return_exceptions=True,
         )
+        for room_id, result in zip(room_ids, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Failed to clean up Codex client for room %s: %s",
+                    room_id,
+                    result,
+                )
 
     async def _ensure_client_ready(self) -> None:
         if self._client is None:
@@ -1184,13 +1197,19 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         except Exception:
             if self._client is client:
                 self._client = None
+                closed_cleanly = True
                 try:
                     await client.close()
                 except Exception:
+                    closed_cleanly = False
                     logger.debug(
                         "Failed to close unsuccessfully initialized Codex client",
                         exc_info=True,
                     )
+                if closed_cleanly:
+                    state = self._active_client_state()
+                    if state is not None:
+                        self._workspace_rooms.pop(state.workspace, None)
             raise
 
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:
@@ -1204,6 +1223,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         )
 
     async def _select_model(self) -> str:
+        state = self._require_active_client_state()
+        if state.model_override:
+            return state.model_override
         if self.config.model:
             return self.config.model
 
@@ -2732,6 +2754,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 return True
 
             # Model selection belongs to the room's process, never adapter-wide config.
+            state = self._require_active_client_state()
+            state.model_override = model_arg
             self._selected_model = model_arg
             await tools.send_message(
                 f"Model override set to `{model_arg}` for subsequent turns.",

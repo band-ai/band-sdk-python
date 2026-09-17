@@ -21,7 +21,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/server.py` | `ACPServer` — handles ACP JSON-RPC methods, does not subclass `acp.Agent`; `run_acp_server` — runs it with `use_unstable_protocol` (required for `session/fork`, `session/resume`, `session/close`) |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
 | `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a room-owned ACP agent over stdio |
-| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
+| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (room-owned stdio lifecycle) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink) |
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
@@ -135,11 +135,8 @@ with a single turn; it reads `GITHUB_TOKEN` and skips when unset. Excluded from
 framework-conformance as a bridge.
 
 - stdio example: `examples/acp/clients/copilot.py`.
-- Copilot-in-a-container over TCP + Band tools via a `band-mcp` (SSE) server:
-  `examples/acp/copilot_docker/compose/` (separate services) and
-  `examples/acp/copilot_docker/colocated/` (single container). Both use
-  `inject_band_tools=False` + an explicit `mcp_servers` SSE URL, since a remote Copilot
-  can't reach the SDK host's loopback `LocalMCPServer`.
+- Remote Copilot ACP over TCP is not supported by this adapter because one remote
+  process cannot be proven to be owned by one Band room.
 - Copilot in a Docker **microVM sandbox** ([`sbx`](https://docs.docker.com/ai/sandboxes/))
   over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
   isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary

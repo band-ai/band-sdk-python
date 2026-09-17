@@ -43,7 +43,7 @@ import shlex
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging
+from band import Agent, configure_logging, create_room_workspace_resolver
 from band.adapters import ACPClientAdapter
 from band.config import load_agent_config
 
@@ -77,9 +77,10 @@ async def main() -> None:
     # Command to spawn the remote ACP agent
     acp_command = shlex.split(settings.acp_agent_command)
 
-    # Create adapter pointing to remote ACP agent
+    # Create an adapter that starts the local ACP agent per Band room.
     adapter = ACPClientAdapter(
         command=acp_command,
+        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
     )
 
     logger.info(

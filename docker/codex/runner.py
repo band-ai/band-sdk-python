@@ -31,7 +31,7 @@ from typing import Any, Literal
 
 import yaml
 
-from band import Agent
+from band import Agent, create_room_workspace_resolver
 from band.adapters import CodexAdapter
 from band.adapters.codex import CodexAdapterConfig
 from band.config.loader import load_agent_config
@@ -245,7 +245,7 @@ async def main() -> None:
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,
-            cwd=codex_cwd,
+            workspace_for_room=create_room_workspace_resolver(codex_cwd),
             model=codex_model,
             personality="pragmatic",
             approval_policy="never",

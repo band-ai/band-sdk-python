@@ -36,7 +36,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging
+from band import Agent, configure_logging, create_room_workspace_resolver
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.types import Emit
 
@@ -60,6 +60,7 @@ class Settings(BaseSettings):
 
     agent_key: str = "darter"
     codex_role: str = ""
+    codex_workspace_root: str = ".band-workspaces"
 
 
 async def main() -> None:
@@ -86,6 +87,9 @@ async def main() -> None:
     # docstring) when omitted here.
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
+            workspace_for_room=create_room_workspace_resolver(
+                settings.codex_workspace_root
+            ),
             personality="pragmatic",
             custom_section=custom_section,
             include_base_instructions=True,

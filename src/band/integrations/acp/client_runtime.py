@@ -684,12 +684,14 @@ class ACPRuntime:
         *,
         command: list[str],
         env: dict[str, str] | None = None,
+        cwd: str | None = None,
         auth_method: str | None = None,
         client_factory: Callable[[], ACPCollectingClient] | None = None,
         spawn_process: Callable[..., object] | None = None,
     ) -> None:
         self._command = list(command)
         self._env = env
+        self._cwd = cwd
         self._auth_method = auth_method
         self._client_factory = client_factory or ACPCollectingClient
         self._spawn_process = spawn_process or spawn_agent_process
@@ -720,6 +722,7 @@ class ACPRuntime:
                 # injected spawn_process closure) and receives no positional args.
                 *self._command,
                 env=self._env,
+                cwd=self._cwd,
                 transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
             ),
         )
@@ -749,7 +752,7 @@ class ACPRuntime:
         async with self._stop_lock:
             if self._conn is None:
                 if self._ctx is None and can_respawn:
-                    await self.start(respawn=True)
+                    await self.start(respawn=False)
                 else:
                     raise RuntimeError(
                         "ACP client not initialized. Call on_started first."

@@ -109,7 +109,7 @@ class FakeSpawn:
     so tests exercise the real transport seam by dependency injection instead of
     patching module globals. The instance *is* the callable and returns an async
     context manager, matching the runtime's contract:
-    ``spawn(client, *command, env=..., transport_kwargs=...) -> CM yielding (conn, proc)``.
+    ``spawn(client, *command, env=..., cwd=..., transport_kwargs=...) -> CM yielding (conn, proc)``.
     """
 
     conn: Any = field(default_factory=make_acp_connection)
@@ -137,10 +137,11 @@ def inject_acp_spawn(
 ) -> None:
     """Patch ``adapter._build_runtime`` so each room runtime uses ``spawn``."""
 
-    def _build_runtime() -> ACPRuntime:
+    def _build_runtime(workspace: str | None = None) -> ACPRuntime:
         return ACPRuntime(
             command=_resolve_launcher(adapter._command),
             env=adapter._env,
+            cwd=workspace,
             auth_method=adapter._auth_method,
             client_factory=lambda: BandACPClient(
                 profile=adapter._profile,
@@ -305,9 +306,13 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
 
     @asynccontextmanager
     async def _spawn(
-        client: Any, *args: Any, env: Any = None, transport_kwargs: Any = None
+        client: Any,
+        *args: Any,
+        env: Any = None,
+        cwd: Any = None,
+        transport_kwargs: Any = None,
     ) -> AsyncIterator[tuple[Any, Any]]:
-        del args, env, transport_kwargs
+        del args, env, cwd, transport_kwargs
         client_sock, agent_sock = socket.socketpair()
         reader_c, writer_c = await asyncio.open_connection(sock=client_sock)
         reader_a, writer_a = await asyncio.open_connection(sock=agent_sock)
