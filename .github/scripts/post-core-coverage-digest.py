@@ -53,7 +53,7 @@ def format_line_ranges(numbers: tuple[int, ...]) -> str:
     return (
         shown
         if len(ranges) <= MAX_MISSED_LINE_RANGES
-        else f"{shown}, … ({len(numbers)} missed)"
+        else f"{shown}, … ({len(ranges) - MAX_MISSED_LINE_RANGES} more ranges)"
     )
 
 
