@@ -59,20 +59,7 @@ from band.adapters.crewai_flow import (  # noqa: E402
 from band.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
 from band.core.types import Capability, Emit, PlatformMessage  # noqa: E402
 from band.testing.fake_tools import FakeAgentTools  # noqa: E402
-
-
-def _participant(
-    id: str, handle: str, name: str | None = None, *, type: str = "Agent"
-) -> dict[str, Any]:
-    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
-    return {
-        "id": id,
-        "handle": handle,
-        "name": name,
-        "role": "member",
-        "status": "active",
-        "type": type,
-    }
+from tests.adapters.crewai_flow_support import _participant  # noqa: E402
 
 
 def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
