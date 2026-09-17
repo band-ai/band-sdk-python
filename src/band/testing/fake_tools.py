@@ -6,13 +6,18 @@ import hashlib
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any, Literal
 
 from band.client.rest import (
+    AddAgentContactResponseData,
     AgentContact,
     AgentMemory,
     Attachment,
     Board,
+    ChatMessage,
+    ChatParticipant,
+    EventCreatedResponse,
     GetChatTaskHistoryResponse,
     GetChatTaskHistoryResponseMetadata,
     ListAgentContactRequestsResponse,
@@ -28,7 +33,13 @@ from band.client.rest import (
     ListAgentPeersResponseMetadata,
     ListChatTasksResponse,
     ListChatTasksResponseMetadata,
+    MessageSentResponse,
+    MessageSentResponseRecipientsItem,
     Peer,
+    ReceivedContactRequest,
+    RemoveAgentContactResponseData,
+    RespondToAgentContactRequestResponseData,
+    SentContactRequest,
     Task,
     TaskActor,
 )
@@ -36,12 +47,17 @@ from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
 from band.core.task_types import TaskAssignmentStatus, TaskLifecycleState, TaskListState
 from band.core.types import Capability
+from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
+    ParticipantAddResult,
+    ParticipantRemoveResult,
     ToolCallOutcome,
+    _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    normalize_handle,
 )
 
 # Synthetic identity FakeAgentTools uses for the "joins you to the task on
@@ -49,6 +65,23 @@ from band.runtime.tools import (
 _FAKE_ACTOR = TaskActor(
     id="fake-agent", name="Fake Agent", type="Agent", handle="fake-agent"
 )
+
+
+class ContactRequestAction(StrEnum):
+    """``respond_contact_request``'s ``action`` vocabulary."""
+
+    APPROVE = "approve"
+    REJECT = "reject"
+    CANCEL = "cancel"
+
+
+class ContactRequestStatus(StrEnum):
+    """A contact request's lifecycle status."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
 
 
 def total_pages(total: int, page_size: int) -> int:
@@ -62,6 +95,62 @@ def page_slice(
     """The 1-indexed page of ``items`` the platform would serve."""
     start = (page - 1) * page_size
     return items[start : start + page_size]
+
+
+def _mention_recipients(
+    mentions: list[str] | list[dict[str, str]] | None,
+) -> list[MessageSentResponseRecipientsItem]:
+    """Project raw mentions into the real send's recipients shape.
+
+    Handle *resolution* is deliberately not mirrored here either (see
+    ``send_message``'s docstring), so an id-less string mention becomes its
+    own handle/id rather than a resolved participant identity.
+    """
+    recipients = []
+    for mention in mentions or []:
+        if isinstance(mention, dict):
+            handle = mention.get("handle") or mention.get("id") or ""
+            recipients.append(
+                MessageSentResponseRecipientsItem(
+                    id=mention.get("id") or handle,
+                    handle=handle,
+                    name=mention.get("name"),
+                )
+            )
+        else:
+            handle = normalize_handle(mention)
+            recipients.append(
+                MessageSentResponseRecipientsItem(id=handle, handle=handle)
+            )
+    return recipients
+
+
+def _find_by_id_or_handle(
+    records: list[dict[str, Any]],
+    *,
+    handle_field: str,
+    id: str | None,
+    handle: str | None,
+    not_found_message: str,
+) -> dict[str, Any]:
+    """Resolve a record by id or normalized handle within one store.
+
+    Shared by every contact/request mutation that resolves its target this
+    way (``remove_contact``, ``respond_contact_request``), so the lookup and
+    its "no response data" failure -- the real tool's own wording when the
+    backend can't find what it was asked to mutate -- stay defined once.
+    """
+    for record in records:
+        if id is not None and record["id"] == id:
+            return record
+        stored_handle = record.get(handle_field)
+        if (
+            handle is not None
+            and stored_handle
+            and (normalize_handle(stored_handle) == normalize_handle(handle))
+        ):
+            return record
+    raise RuntimeError(not_found_message)
 
 
 class FakeAgentTools:
@@ -96,21 +185,36 @@ class FakeAgentTools:
         files: list[dict[str, Any]] | None = None,
         tasks: list[dict[str, Any]] | None = None,
         board: dict[str, Any] | None = None,
+        received_contact_requests: list[dict[str, Any]] | None = None,
+        sent_contact_requests: list[dict[str, Any]] | None = None,
     ):
         self.room_id = room_id
         self._hub_room_id = hub_room_id
         self.messages_sent: list[dict[str, Any]] = []
         self.events_sent: list[dict[str, Any]] = []
-        self._participants: list[dict[str, Any]] = participants or []
-        self._room_context: list[dict[str, Any]] = list(room_context or [])
         # Seeds are validated and canonicalized at seed time (not list time),
         # so every stored record carries the real serialized Fern model shape.
+        self._participants: list[dict[str, Any]] = [
+            ChatParticipant.model_validate(p).model_dump() for p in (participants or [])
+        ]
+        self._room_context: list[dict[str, Any]] = [
+            context_item_to_dict(ChatMessage.model_validate(item))
+            for item in (room_context or [])
+        ]
         self._peers: list[dict[str, Any]] = [
             Peer.model_validate(peer).model_dump() for peer in (peers or [])
         ]
         self._contacts: list[dict[str, Any]] = [
             AgentContact.model_validate(contact).model_dump()
             for contact in (contacts or [])
+        ]
+        self._received_contact_requests: list[dict[str, Any]] = [
+            ReceivedContactRequest.model_validate(request).model_dump()
+            for request in (received_contact_requests or [])
+        ]
+        self._sent_contact_requests: list[dict[str, Any]] = [
+            SentContactRequest.model_validate(request).model_dump()
+            for request in (sent_contact_requests or [])
         ]
         self.memories: list[dict[str, Any]] = [
             AgentMemory.model_validate(memory).model_dump()
@@ -128,8 +232,8 @@ class FakeAgentTools:
             if board is not None
             else Board(chat_room_id=self.room_id).model_dump()
         )
-        self.participants_added: list[dict[str, Any]] = []
-        self.participants_removed: list[dict[str, Any]] = []
+        self.participants_added: list[ParticipantAddResult] = []
+        self.participants_removed: list[ParticipantRemoveResult] = []
         self.tool_calls: list[dict[str, Any]] = []
         self.context_calls: list[dict[str, Any]] = []
 
@@ -145,7 +249,7 @@ class FakeAgentTools:
 
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
-    ) -> dict[str, Any] | None:
+    ) -> MessageSentResponse | None:
         """Record a sent message, enforcing the platform's mention and
         visible-content requirements.
 
@@ -178,21 +282,23 @@ class FakeAgentTools:
 
     def _record_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None
-    ) -> dict[str, Any]:
-        msg = {
-            "id": f"msg-{len(self.messages_sent)}",
-            "content": content,
-            "mentions": mentions or [],
-        }
-        self.messages_sent.append(msg)
-        return msg
+    ) -> MessageSentResponse:
+        message = MessageSentResponse(
+            id=f"msg-{len(self.messages_sent)}",
+            recipients=_mention_recipients(mentions),
+            success=True,
+        )
+        self.messages_sent.append(
+            {"id": message.id, "content": content, "mentions": mentions or []}
+        )
+        return message
 
     async def send_event(
         self,
         content: str,
         message_type: str,
         metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> EventCreatedResponse | None:
         """Record a sent event, refusing content with no visible characters.
 
         Same fidelity rationale as ``send_message``: the real send returns
@@ -200,44 +306,86 @@ class FakeAgentTools:
         """
         if not has_visible_content(content):
             return None
-        event = {
-            "id": f"evt-{len(self.events_sent)}",
-            "content": content,
-            "message_type": message_type,
-            "metadata": metadata or {},
-        }
-        self.events_sent.append(event)
+        event = EventCreatedResponse(
+            id=f"evt-{len(self.events_sent)}", message_type=message_type, success=True
+        )
+        self.events_sent.append(
+            {
+                "id": event.id,
+                "content": content,
+                "message_type": message_type,
+                "metadata": metadata or {},
+            }
+        )
         return event
 
     async def add_participant(
         self, identifier: str, role: str = "member"
-    ) -> dict[str, Any]:
-        try:
-            participant_id = str(uuid.UUID(identifier))
-        except ValueError:
-            participant_id = f"p-{identifier}"
-        participant = {
-            "id": participant_id,
-            "name": identifier,
-            "role": role,
-            "handle": identifier,
-        }
-        self.participants_added.append(participant)
-        if not any(p.get("id") == participant["id"] for p in self._participants):
-            self._participants.append(participant)
-        return participant
+    ) -> ParticipantAddResult:
+        """Resolve ``identifier`` against the current roster, then the seeded
+        peer directory -- exactly as ``AgentTools.add_participant`` resolves
+        against the platform's live roster and peer directory."""
+        for cached in self._participants:
+            if _matches_identifier(cached, identifier):
+                result = ParticipantAddResult(
+                    id=cached["id"],
+                    name=cached.get("name", identifier),
+                    role=role,
+                    status="already_in_room",
+                )
+                self.participants_added.append(result)
+                return result
 
-    async def remove_participant(self, identifier: str) -> dict[str, Any]:
-        participant = {"id": f"p-{identifier}", "name": identifier}
-        self.participants_removed.append(participant)
-        return participant
+        peer = next(
+            (p for p in self._peers if _matches_identifier(p, identifier)), None
+        )
+        if peer is None:
+            raise ValueError(
+                f"Participant '{identifier}' not found. "
+                "Use band_lookup_peers to find available peers."
+            )
+
+        participant_name = peer.get("name") or identifier
+        participant = ChatParticipant(
+            id=peer["id"],
+            name=participant_name,
+            handle=peer.get("handle"),
+            role=role,
+            status="active",
+            type=peer["type"],
+        ).model_dump()
+        self._participants.append(participant)
+
+        result = ParticipantAddResult(
+            id=participant["id"], name=participant_name, role=role, status="added"
+        )
+        self.participants_added.append(result)
+        return result
+
+    async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
+        participant = next(
+            (p for p in self._participants if _matches_identifier(p, identifier)), None
+        )
+        if participant is None:
+            raise ValueError(f"Participant '{identifier}' not found in this room.")
+
+        self._participants = [
+            p for p in self._participants if p["id"] != participant["id"]
+        ]
+        result = ParticipantRemoveResult(
+            id=participant["id"],
+            name=participant.get("name", identifier),
+            status="removed",
+        )
+        self.participants_removed.append(result)
+        return result
 
     @property
     def participants(self) -> list[dict[str, Any]]:
         return list(self._participants)
 
-    async def get_participants(self) -> list[dict[str, Any]]:
-        return list(self._participants)
+    async def get_participants(self) -> list[ChatParticipant]:
+        return [ChatParticipant.model_validate(p) for p in self._participants]
 
     async def lookup_peers(
         self, page: int = 1, page_size: int = 50
@@ -257,12 +405,21 @@ class FakeAgentTools:
         return f"room-{uuid.uuid4()}"
 
     def set_room_context(self, messages: list[dict[str, Any]]) -> None:
-        """Replace the in-memory room context the fake paginates over."""
-        self._room_context = list(messages)
+        """Replace the in-memory room context the fake paginates over.
+
+        Validated and canonicalized the same way constructor seeds are, so a
+        context mutated mid-test stays as faithful as one seeded up front.
+        """
+        self._room_context = [
+            context_item_to_dict(ChatMessage.model_validate(message))
+            for message in messages
+        ]
 
     def append_room_context(self, message: dict[str, Any]) -> None:
         """Append a single message dict to the room context."""
-        self._room_context.append(message)
+        self._room_context.append(
+            context_item_to_dict(ChatMessage.model_validate(message))
+        )
 
     async def fetch_room_context(
         self,
@@ -303,45 +460,125 @@ class FakeAgentTools:
 
     async def add_contact(
         self, handle: str, message: str | None = None
-    ) -> dict[str, Any]:
-        return {"id": str(uuid.uuid4()), "status": "pending"}
+    ) -> AddAgentContactResponseData:
+        """Create a pending outgoing request; ``list_contact_requests`` then
+        serves it from the sent-request store, mirroring the real handshake."""
+        request = SentContactRequest(
+            id=str(uuid.uuid4()),
+            inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            message=message,
+            status=ContactRequestStatus.PENDING,
+            to_handle=normalize_handle(handle),
+        ).model_dump()
+        self._sent_contact_requests.append(request)
+        return AddAgentContactResponseData(
+            id=request["id"], status=ContactRequestStatus.PENDING
+        )
 
     async def remove_contact(
         self, handle: str | None = None, contact_id: str | None = None
-    ) -> dict[str, Any]:
-        return {"status": "removed"}
+    ) -> RemoveAgentContactResponseData:
+        if handle is None and contact_id is None:
+            raise ValueError("Either handle or contact_id must be provided")
+        contact = _find_by_id_or_handle(
+            self._contacts,
+            handle_field="handle",
+            id=contact_id,
+            handle=handle,
+            not_found_message="Failed to remove contact - no response data",
+        )
+        self._contacts.remove(contact)
+        return RemoveAgentContactResponseData()
 
     async def list_contact_requests(
         self, page: int = 1, page_size: int = 50, sent_status: str = "pending"
     ) -> ListAgentContactRequestsResponse:
-        """Return the real SDK's Fern envelope; the fake tracks no request
-        state, so both directions list empty."""
+        """Return the real SDK's Fern envelope from the request stores.
+
+        Received requests are always filtered to pending status, matching the
+        real endpoint; sent requests are filtered by ``sent_status`` (``"all"``
+        bypasses the filter).
+        """
+        received = [
+            r
+            for r in self._received_contact_requests
+            if r["status"] == ContactRequestStatus.PENDING
+        ]
+        sent = (
+            list(self._sent_contact_requests)
+            if sent_status == "all"
+            else [r for r in self._sent_contact_requests if r["status"] == sent_status]
+        )
         return ListAgentContactRequestsResponse(
-            data=ListAgentContactRequestsResponseData(received=[], sent=[]),
+            data=ListAgentContactRequestsResponseData(
+                received=page_slice(received, page, page_size),
+                sent=page_slice(sent, page, page_size),
+            ),
             metadata=ListAgentContactRequestsResponseMetadata(
                 page=page,
                 page_size=page_size,
                 received=ListAgentContactRequestsResponseMetadataReceived(
-                    total=0, total_pages=0
+                    total=len(received),
+                    total_pages=total_pages(len(received), page_size),
                 ),
                 sent=ListAgentContactRequestsResponseMetadataSent(
-                    total=0, total_pages=0
+                    total=len(sent), total_pages=total_pages(len(sent), page_size)
                 ),
             ),
         )
 
     async def respond_contact_request(
         self, action: str, handle: str | None = None, request_id: str | None = None
-    ) -> dict[str, Any]:
-        status_map = {
-            "approve": "approved",
-            "reject": "rejected",
-            "cancel": "cancelled",
-        }
-        return {
-            "id": request_id or str(uuid.uuid4()),
-            "status": status_map.get(action, action),
-        }
+    ) -> RespondToAgentContactRequestResponseData:
+        """Approve/reject a request you received, or cancel one you sent --
+        matching the real tool's two-store dispatch. Approval promotes the
+        request into the contact store; rejection and cancellation do not."""
+        if handle is None and request_id is None:
+            raise ValueError("Either handle or request_id must be provided")
+
+        match action:
+            case ContactRequestAction.APPROVE:
+                store, handle_field, status = (
+                    self._received_contact_requests,
+                    "from_handle",
+                    ContactRequestStatus.APPROVED,
+                )
+            case ContactRequestAction.REJECT:
+                store, handle_field, status = (
+                    self._received_contact_requests,
+                    "from_handle",
+                    ContactRequestStatus.REJECTED,
+                )
+            case ContactRequestAction.CANCEL:
+                store, handle_field, status = (
+                    self._sent_contact_requests,
+                    "to_handle",
+                    ContactRequestStatus.CANCELLED,
+                )
+            case _:
+                raise ValueError(f"Unknown contact request action: {action!r}")
+
+        request = _find_by_id_or_handle(
+            store,
+            handle_field=handle_field,
+            id=request_id,
+            handle=handle,
+            not_found_message="Failed to respond to contact request - no response data",
+        )
+        request["status"] = status
+        if action == ContactRequestAction.APPROVE:
+            # ReceivedContactRequest doesn't carry the requester's entity
+            # type; extra="allow" lets a seed attach one, defaulting to User.
+            self._contacts.append(
+                AgentContact(
+                    id=str(uuid.uuid4()),
+                    handle=request.get("from_handle") or "",
+                    name=request.get("from_name"),
+                    type=request.get("type", "User"),
+                    inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                ).model_dump()
+            )
+        return RespondToAgentContactRequestResponseData(id=request["id"], status=status)
 
     async def list_memories(
         self,
@@ -468,7 +705,7 @@ class FakeAgentTools:
         ).model_dump()
         message = self._record_message(caption, mentions)
         self.files.append(attachment)
-        return {"attachment": deepcopy(attachment), "message_id": message["id"]}
+        return {"attachment": deepcopy(attachment), "message_id": message.id}
 
     def _find_task(self, id: str) -> dict[str, Any]:
         task = next(

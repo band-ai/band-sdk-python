@@ -34,6 +34,20 @@ from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 NS_PREFIX = "crewai_flow:"
 
 
+def _participant(
+    id: str, handle: str, name: str | None = None, *, type: str = "Agent"
+) -> dict[str, Any]:
+    """A minimal valid ``ChatParticipant`` seed for ``FakeAgentTools(participants=...)``."""
+    return {
+        "id": id,
+        "handle": handle,
+        "name": name,
+        "role": "member",
+        "status": "active",
+        "type": type,
+    }
+
+
 def _msg(
     *,
     id: str = "msg-1",
@@ -122,8 +136,8 @@ class TestDelegation:
         await _start(adapter)
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                _participant("p-a", "@example/peer-a"),
+                _participant("p-b", "@example/peer-b"),
             ]
         )
 
@@ -166,8 +180,8 @@ class TestDelegation:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await _start(adapter)
@@ -230,14 +244,17 @@ class TestReplyMatching:
         }
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-b", "@example/peer-b", "Peer B"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -307,14 +324,17 @@ class TestReplyMatching:
         }
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-b", "@example/peer-b", "Peer B"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -376,12 +396,15 @@ class TestReplyMatching:
             ],
         }
         tools = FakeAgentTools(
-            participants=[{"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"}],
+            participants=[_participant("p-a", "@example/peer-a", "Peer A")],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -449,12 +472,15 @@ class TestReplyMatching:
                 }
             )
         tools = FakeAgentTools(
-            participants=[{"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"}],
+            participants=[_participant("p-a", "@example/peer-a", "Peer A")],
             room_context=[
                 {
                     "id": f"evt-{idx}",
                     "message_type": "task",
                     "inserted_at": event_time,
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
                 for idx, payload in enumerate(run_payloads)
@@ -517,12 +543,15 @@ class TestReplyMatching:
             ],
         }
         tools = FakeAgentTools(
-            participants=[{"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"}],
+            participants=[_participant("p-a", "@example/peer-a", "Peer A")],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -583,14 +612,17 @@ class TestReplyMatching:
         }
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-a2", "handle": "@other/peer-a", "name": "Peer A2"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-a2", "@other/peer-a", "Peer A2"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -630,7 +662,7 @@ class TestReplyMatching:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[{"id": "p", "handle": "@example/x"}])
+        tools = FakeAgentTools(participants=[_participant("p", "@example/x")])
         await _start(adapter)
         # Even with no pending state, a User-typed sender should start a new run.
         await _turn(adapter, tools, _msg(sender_type="User"))
@@ -669,7 +701,7 @@ class TestReplyMatching:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
             accept_agent_initiated=True,
         )
-        tools = FakeAgentTools(participants=[{"id": "p", "handle": "@example/x"}])
+        tools = FakeAgentTools(participants=[_participant("p", "@example/x")])
         await _start(adapter)
         await _turn(
             adapter,
@@ -706,12 +738,15 @@ class TestIndeterminate:
             "final_side_effect_key": "msg-1:final",
         }
         tools = FakeAgentTools(
-            participants=[{"id": "p", "handle": "@example/peer"}],
+            participants=[_participant("p", "@example/peer")],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: reservation_payload},
                 }
             ],
@@ -808,14 +843,17 @@ class TestPersistedRunPolicy:
         }
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-b", "@example/peer-b", "Peer B"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -874,8 +912,8 @@ class TestDelegationAmbiguity:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-a2", "handle": "@other/peer-a", "name": "Peer A2"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-a2", "@other/peer-a", "Peer A2"),
             ]
         )
         await _start(adapter, "router")
@@ -929,8 +967,8 @@ class TestDelegationAmbiguity:
         )
         tools = FirstSendFailsTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                _participant("p-a", "@example/peer-a", "Peer A"),
+                _participant("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await _start(adapter, "router")

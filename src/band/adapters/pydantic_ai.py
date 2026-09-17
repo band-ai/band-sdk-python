@@ -394,7 +394,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             role: str = "member",
         ) -> dict[str, Any] | str:
             try:
-                return await ctx.deps.add_participant(identifier, role)
+                return serialize_tool_result(
+                    await ctx.deps.add_participant(identifier, role)
+                )
             except Exception as e:
                 return f"Error adding participant '{identifier}': {e}"
 
@@ -406,7 +408,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             identifier: str,
         ) -> dict[str, Any] | str:
             try:
-                return await ctx.deps.remove_participant(identifier)
+                return serialize_tool_result(
+                    await ctx.deps.remove_participant(identifier)
+                )
             except Exception as e:
                 return f"Error removing participant '{identifier}': {e}"
 
@@ -432,7 +436,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ctx: RunContext[AgentToolsProtocol],
         ) -> list[dict[str, Any]] | str:
             try:
-                return await ctx.deps.get_participants()
+                return serialize_tool_result(await ctx.deps.get_participants())
             except Exception as e:
                 return f"Error getting participants: {e}"
 

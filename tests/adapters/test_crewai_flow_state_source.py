@@ -26,6 +26,9 @@ def _task_event(
     return {
         "id": id,
         "message_type": "task",
+        "sender_id": "agent-1",
+        "sender_type": "Agent",
+        "content": "task event",
         "inserted_at": inserted_at.isoformat(),
         "metadata": {namespace: payload or {"run_id": id}},
     }
@@ -46,6 +49,9 @@ class TestRestStateSourceFullFetch:
                 {
                     "id": "e2",
                     "message_type": "text",
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "not a task event",
                     "inserted_at": t.isoformat(),
                     "metadata": {NS: {"x": 1}},
                 },
@@ -183,16 +189,22 @@ class TestRestStateSourceCache:
 
     @pytest.mark.asyncio
     async def test_cache_refresh_keeps_distinct_events_without_ids(self) -> None:
+        """``_event_cache_key``'s id-less fallback guards against a room-context
+        item with neither ``id`` nor ``message_id`` -- a shape the real Fern
+        ``ChatMessage`` (and so ``FakeAgentTools``'s validated seed API) no
+        longer allows, since ``id`` is required there. Exercise the fallback
+        by writing straight to the fake's internal store, bypassing seed
+        validation on purpose, rather than fabricating an id that would
+        defeat the point of this test."""
         inserted_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        tools = FakeAgentTools(
-            room_context=[
-                {
-                    "message_type": "task",
-                    "inserted_at": inserted_at.isoformat(),
-                    "metadata": {NS: {"run_id": "run-1"}},
-                }
-            ]
-        )
+        tools = FakeAgentTools()
+        tools._room_context = [
+            {
+                "message_type": "task",
+                "inserted_at": inserted_at.isoformat(),
+                "metadata": {NS: {"run_id": "run-1"}},
+            }
+        ]
         source = RestCrewAIFlowStateSource(page_size=10)
         first = await source.load_task_events(
             room_id="room-1",
@@ -202,7 +214,7 @@ class TestRestStateSourceCache:
         )
         assert [e["metadata"][NS]["run_id"] for e in first] == ["run-1"]
 
-        tools.append_room_context(
+        tools._room_context.append(
             {
                 "message_type": "task",
                 "inserted_at": inserted_at.isoformat(),

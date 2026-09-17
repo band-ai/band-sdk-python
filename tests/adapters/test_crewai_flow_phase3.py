@@ -141,7 +141,17 @@ class TestDirectResponse:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[{"id": "p1", "handle": "@example/peer"}])
+        tools = FakeAgentTools(
+            participants=[
+                {
+                    "id": "p1",
+                    "handle": "@example/peer",
+                    "role": "member",
+                    "status": "active",
+                    "type": "Agent",
+                }
+            ]
+        )
         await _run_one_turn(adapter, tools, _msg())
 
         assert len(tools.messages_sent) == 1
@@ -335,7 +345,17 @@ class TestNestAsyncioNotInvoked:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@pat"}])
+        tools = FakeAgentTools(
+            participants=[
+                {
+                    "id": "user-1",
+                    "handle": "@pat",
+                    "role": "member",
+                    "status": "active",
+                    "type": "User",
+                }
+            ]
+        )
         await _run_one_turn(adapter, tools, _msg())
 
         apply_mock.assert_not_called()
@@ -349,7 +369,17 @@ class TestNestAsyncioNotInvoked:
             flow_factory=lambda: flow,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@pat"}])
+        tools = FakeAgentTools(
+            participants=[
+                {
+                    "id": "user-1",
+                    "handle": "@pat",
+                    "role": "member",
+                    "status": "active",
+                    "type": "User",
+                }
+            ]
+        )
 
         await _run_one_turn(adapter, tools, _msg())
 
@@ -386,11 +416,22 @@ class TestIdempotentFinalization:
 
         ns = adapter.metadata_namespace
         tools = FakeAgentTools(
-            participants=[{"id": "p1", "handle": "@example/peer"}],
+            participants=[
+                {
+                    "id": "p1",
+                    "handle": "@example/peer",
+                    "role": "member",
+                    "status": "active",
+                    "type": "Agent",
+                }
+            ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "finalized",
                     "inserted_at": "2026-01-01T00:00:00+00:00",
                     "metadata": {ns: finalized_payload},
                 }
@@ -647,16 +688,27 @@ class TestRuntimeTools:
             flow_factory=factory,
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
-        tools = FakeAgentTools()
+        participant_id = "12345678-1234-1234-1234-123456789abc"
+        tools = FakeAgentTools(
+            peers=[
+                {
+                    "id": participant_id,
+                    "handle": "peer-handle",
+                    "name": "Peer",
+                    "type": "User",
+                    "is_contact": False,
+                    "source": "registry",
+                }
+            ]
+        )
         await _run_one_turn(adapter, tools, _msg())
 
-        participant_id = "12345678-1234-1234-1234-123456789abc"
         assert tools.participants_added == [
             {
                 "id": participant_id,
-                "name": participant_id,
+                "name": "Peer",
                 "role": "member",
-                "handle": participant_id,
+                "status": "added",
             }
         ]
         assert tools.messages_sent == [
@@ -837,6 +889,9 @@ class TestRuntimeTools:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "waiting for replies",
                     "inserted_at": datetime.now(timezone.utc).isoformat(),
                     "metadata": {ns: prior_payload},
                 }
@@ -894,7 +949,15 @@ class TestRuntimeTools:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
         tools = LoopCheckingTools(
-            participants=[{"id": "p-a", "handle": "@example/peer"}]
+            participants=[
+                {
+                    "id": "p-a",
+                    "handle": "@example/peer",
+                    "role": "member",
+                    "status": "active",
+                    "type": "Agent",
+                }
+            ]
         )
 
         await _run_one_turn(adapter, tools, _msg())

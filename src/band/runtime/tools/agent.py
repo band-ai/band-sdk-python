@@ -14,7 +14,7 @@ import re
 import warnings
 from datetime import datetime, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import band_sdk_core
 from async_lru import alru_cache
@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     from band.client.rest import (
         AsyncRestClient,
         Attachment,
+        ChatParticipant,
         GetChatTaskHistoryResponse,
         ListAgentContactRequestsResponse,
         ListAgentContactsResponse,
@@ -108,7 +109,7 @@ async def iter_chat_pages(
     )
 
 
-def _normalize_handle(value: str) -> str:
+def normalize_handle(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
     return value.lstrip("@").lower()
 
@@ -130,7 +131,7 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     """
     # Handle comparison — normalize both sides
     entity_handle = _entity_field(entity, "handle")
-    if entity_handle and _normalize_handle(entity_handle) == _normalize_handle(
+    if entity_handle and normalize_handle(entity_handle) == normalize_handle(
         identifier
     ):
         return True
@@ -186,6 +187,24 @@ def append_available_mention_handles(
     return append_mention_handles_hint(
         error, available_mention_handles(participants, agent_id)
     )
+
+
+class ParticipantAddResult(TypedDict):
+    """``band_add_participant``'s result shape -- one definition shared by
+    ``AgentTools`` and ``FakeAgentTools`` so the two can't drift apart."""
+
+    id: str
+    name: str
+    role: str
+    status: Literal["already_in_room", "added"]
+
+
+class ParticipantRemoveResult(TypedDict):
+    """``band_remove_participant``'s result shape -- see ``ParticipantAddResult``."""
+
+    id: str
+    name: str
+    status: Literal["removed"]
 
 
 # band_send_room_file: the largest LLM-authored text file this tool accepts,
@@ -503,7 +522,7 @@ class AgentTools(AgentToolsProtocol):
 
     async def add_participant(
         self, identifier: str, role: str = "member"
-    ) -> dict[str, Any]:
+    ) -> ParticipantAddResult:
         """
         Add a participant to the current room.
 
@@ -591,7 +610,7 @@ class AgentTools(AgentToolsProtocol):
             "status": "added",
         }
 
-    async def remove_participant(self, identifier: str) -> dict[str, Any]:
+    async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
         """
         Remove a participant from the current room.
 
@@ -680,7 +699,7 @@ class AgentTools(AgentToolsProtocol):
 
         return response
 
-    async def get_participants(self) -> Any:
+    async def get_participants(self) -> list["ChatParticipant"]:
         """
         Get participants in the current room.
 
