@@ -114,6 +114,38 @@ def _mention_recipients(
     return recipients
 
 
+def _find_by_handle(
+    records: list[dict[str, Any]],
+    *,
+    handle_field: str,
+    handle: str,
+    status: str | None = None,
+) -> dict[str, Any] | None:
+    """The record in ``records`` whose normalized ``handle_field`` matches
+    ``handle``, or ``None``. ``status``, when given, restricts the scan to
+    records currently in that status, since handle is not a unique key and
+    only a currently-actionable record should resolve through it.
+
+    Shared by ``_find_by_id_or_handle``'s handle pass and every other
+    handle-only existence check in this file (``add_contact``'s
+    already-a-contact and reciprocal-pending-request lookups), so the
+    normalize-both-sides comparison has one definition.
+    """
+    candidates = (
+        records if status is None else [r for r in records if r["status"] == status]
+    )
+    normalized_handle = strip_handle_prefix(handle)
+    return next(
+        (
+            record
+            for record in candidates
+            if (stored := record.get(handle_field))
+            and strip_handle_prefix(stored) == normalized_handle
+        ),
+        None,
+    )
+
+
 def _find_by_id_or_handle(
     records: list[dict[str, Any]],
     *,
@@ -133,11 +165,6 @@ def _find_by_id_or_handle(
     one: it fails the lookup immediately rather than falling through to a
     handle match on some unrelated record with the same status.
 
-    ``status``, when given, restricts the ``handle`` pass -- and only the
-    ``handle`` pass -- to records currently in that status, since handle is
-    not a unique key and only a currently-actionable record should resolve
-    through it.
-
     Shared by every contact/request mutation that resolves its target this
     way (``remove_contact``, ``respond_contact_request``), so the lookup and
     its "no response data" failure -- the real tool's own wording when the
@@ -150,17 +177,11 @@ def _find_by_id_or_handle(
                     return record
                 raise RuntimeError(not_found_message)
     if handle is not None:
-        candidates = (
-            records if status is None else [r for r in records if r["status"] == status]
+        match = _find_by_handle(
+            records, handle_field=handle_field, handle=handle, status=status
         )
-        normalized_handle = strip_handle_prefix(handle)
-        for record in candidates:
-            stored_handle = record.get(handle_field)
-            if (
-                stored_handle
-                and strip_handle_prefix(stored_handle) == normalized_handle
-            ):
-                return record
+        if match is not None:
+            return match
     raise RuntimeError(not_found_message)
 
 
@@ -500,28 +521,19 @@ class FakeAgentTools:
         latter mirrors the real handshake's reciprocal auto-accept (see
         ``AddContactInput``'s docstring). Otherwise ``list_contact_requests``
         serves the new request from the sent-request store."""
-        normalized_handle = strip_handle_prefix(handle)
-        existing_contact = next(
-            (
-                c
-                for c in self._contacts
-                if strip_handle_prefix(c["handle"]) == normalized_handle
-            ),
-            None,
+        existing_contact = _find_by_handle(
+            self._contacts, handle_field="handle", handle=handle
         )
         if existing_contact is not None:
             return AddAgentContactResponseData(
                 id=existing_contact["id"], status=ContactRequestStatus.APPROVED
             )
 
-        reverse_request = next(
-            (
-                r
-                for r in self._received_contact_requests
-                if r["status"] == ContactRequestStatus.PENDING
-                and strip_handle_prefix(r.get("from_handle") or "") == normalized_handle
-            ),
-            None,
+        reverse_request = _find_by_handle(
+            self._received_contact_requests,
+            handle_field="from_handle",
+            handle=handle,
+            status=ContactRequestStatus.PENDING,
         )
         if reverse_request is not None:
             reverse_request["status"] = ContactRequestStatus.APPROVED
