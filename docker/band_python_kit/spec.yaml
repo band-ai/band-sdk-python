@@ -17,11 +17,11 @@ sandbox:
   #
   # This only runs once something attaches (`sbx run --name <name>`) — `sbx
   # create` alone leaves the sandbox idle. `sbx` v0.43.0 auto-stops an idle,
-  # unattached sandbox within ~60-90s regardless of what's running inside it
-  # (verified live: a backgrounded launcher does not count as activity), so
-  # keeping this agent up requires a host-side process holding that attach
-  # open with a real pty (e.g. a systemd/launchd unit or tmux session running
-  # `sbx run`) — see the kit README's "How the launch works" section.
+  # unattached sandbox within ~60-90s regardless of what's running inside it —
+  # a backgrounded launcher does not count as activity — so keeping this
+  # agent up requires a host-side process holding that attach open with a
+  # real pty (e.g. a systemd/launchd unit or tmux session running `sbx run`)
+  # — see the kit README's "How the launch works" section.
   entrypoint:
     - /usr/local/bin/band-entrypoint.sh
     - /opt/band/venv/bin/python

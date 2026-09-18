@@ -133,8 +133,8 @@ packages — republish those with the override below.
 ## Supported `sbx` version
 
 Targets **`sbx` v0.43.0** — the current latest stable release, and the first
-version confirmed (live, during the v1→v2 field migration) to actually enforce
-the kit-spec v2 schema rather than silently accepting v1-era field names.
+version whose validator actually enforces the kit-spec v2 schema rather than
+silently accepting v1-era field names.
 `sbx kit validate` passes clean on the repo `spec.yaml` under 0.43.0; run the
 full push → pull → OCI-consume roundtrip below at the next release cut. The
 kit surface of `sbx` is experimental and has moved between releases (v0.35.0

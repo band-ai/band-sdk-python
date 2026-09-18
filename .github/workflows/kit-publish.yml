@@ -14,8 +14,8 @@
 # (login-action@v4 / build-push-action@v7 multi-registry pattern — see
 # https://docs.docker.com/build/ci/github-actions/push-multi-registries/).
 #
-# The kit targets sbx v0.43.0 (the first version confirmed to actually
-# enforce the kit-spec v2 field shape); `sbx kit validate` passes under it.
+# The kit targets sbx v0.43.0 (the first version whose validator enforces
+# the kit-spec v2 field shape); `sbx kit validate` passes under it.
 # The ORAS-assembled OCI v2 shape and the GHCR pull -> `sbx create --kit`
 # roundtrip still need re-validating under 0.43.0 (last run under v0.34.0) —
 # see RELEASING.md. Revalidate on every sbx upgrade; the kit surface is

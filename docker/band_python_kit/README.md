@@ -259,8 +259,8 @@ attach open for as long as you want the agent running — a `systemd`/`launchd`
 unit or a `tmux`/`screen` session running `sbx run --name <name>`, not a bare
 `sbx create`. Automating the attach yourself (rather than watching a
 terminal) needs a real pty, not a plain backgrounded process piped to a file
-or `/dev/null` — verified live: that fails after about 30 seconds with `sbx`
-reporting `inspect exec: context deadline exceeded`. Python's stdlib `pty`
+or `/dev/null` — that fails after about 30 seconds with `sbx` reporting
+`inspect exec: context deadline exceeded`. Python's stdlib `pty`
 module (`pty.openpty()` + `subprocess.Popen` wired to the child fd) is one
 way to do this; `tests/docker/toolkit/sbx_cli.py`'s `Sandbox.create` is a
 worked example.

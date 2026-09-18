@@ -1,9 +1,11 @@
 """Self-registration demo: `band-kit provision`, end to end.
 
 Demonstrates the self-registration flow with no pre-provisioned Band
-agent: registers a fresh agent on the host with only a user key, boots it
-into a real Docker Sandbox, sends it a message, checks the echo reply, then
-tears every provisioned resource back down.
+agent: registers a fresh agent on the host with only a user key, creates a
+real Docker Sandbox for it, attaches to actually launch the agent (the
+kit's `sandbox.entrypoint` only runs once something attaches — `sbx create`
+alone leaves it idle), sends it a message, checks the echo reply, then tears
+every provisioned resource back down.
 
 Like ``examples/sandbox/staging-smoke/probe.py``, this is not a regular
 customer-facing example: it drives a real ``sbx`` sandbox and needs a
@@ -57,6 +59,8 @@ from tests.docker.toolkit.sbx_cli import (
     allow_network_for_hosts,
     remove_custom_secret_command,
     sandbox_name,
+    spawn_attached_run,
+    stop_attached_run,
 )
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import Replies, reply_capture
@@ -219,13 +223,16 @@ async def run(kit: str) -> None:
 
     room_id: str | None = None
     agent_id: str | None = None
+    attach: tuple[subprocess.Popen[bytes], int] | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="band-selfreg-demo-") as tmp_dir:
             workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
             hosts = _deployment_hosts(settings.endpoints)
 
             with allow_network_for_hosts(hosts, kit=kit):
-                logger.info("Step 1/4: band-kit provision --create (registers + boots)")
+                logger.info(
+                    "Step 1/5: band-kit provision --create (registers + creates the sandbox)"
+                )
                 agent_id = _band_kit_provision(
                     name=name,
                     workspace=workspace,
@@ -234,13 +241,19 @@ async def run(kit: str) -> None:
                     create=True,
                 )
                 assert read_agent_id(workspace) == agent_id
-                logger.info("Registered and booted agent: %s", agent_id)
+                logger.info("Registered agent: %s", agent_id)
 
-                logger.info("Step 2/4: creating room and adding the agent")
+                logger.info(
+                    "Step 2/5: attaching to launch the agent "
+                    "(sandbox.entrypoint only runs once something attaches)"
+                )
+                attach = spawn_attached_run(name)
+
+                logger.info("Step 3/5: creating room and adding the agent")
                 room_id = await resource_manager.provision_room(participants=[agent_id])
 
                 logger.info(
-                    "Step 3/4: sending a room message and awaiting the echo reply"
+                    "Step 4/5: sending a room message and awaiting the echo reply"
                 )
                 replies = await _ping_and_await_echo(
                     resource_manager,
@@ -252,7 +265,7 @@ async def run(kit: str) -> None:
                 replies.assert_contains_any(["echo:"])
                 logger.info("Got a reply containing 'echo:'")
 
-                logger.info("Step 4/4: re-running provision to prove idempotency")
+                logger.info("Step 5/5: re-running provision to prove idempotency")
                 rerun_id = _band_kit_provision(
                     name=name, workspace=workspace, create=False
                 )
@@ -265,6 +278,8 @@ async def run(kit: str) -> None:
         logger.info("Success: agent %s self-registered and round-tripped.", agent_id)
     finally:
         logger.info("Cleaning up...")
+        if attach:
+            stop_attached_run(*attach)
         _teardown_sbx(name)
         if room_id:
             await resource_manager.reap_room(room_id)

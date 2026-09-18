@@ -275,7 +275,7 @@ def allow_network_for_hosts(hosts: Iterable[str], *, kit: Path | str) -> Iterato
         yield
 
 
-def _spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
+def spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
     """Start `sbx run --name <name>` attached to a real pty, held open for the
     sandbox's lifetime.
 
@@ -283,9 +283,11 @@ def _spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
     something attaches — `sbx create` alone leaves the sandbox idle, and `sbx`
     v0.43.0 auto-stops an idle, unattached sandbox within ~60-90s regardless of
     what's running inside it. A backgrounded `sbx run` without a real pty fails
-    after ~30s with `inspect exec: context deadline exceeded` (verified live),
-    so this allocates one via the stdlib `pty` module rather than redirecting
-    to a pipe or `/dev/null`.
+    after ~30s with `inspect exec: context deadline exceeded`, so this
+    allocates one via the stdlib `pty` module rather than redirecting to a
+    pipe or `/dev/null`. Public: both `Sandbox.create` and any caller that
+    drives `sbx create`/`band-kit provision` directly (e.g. a demo script)
+    need to hold this open the same way.
     """
     controller_fd, sandbox_fd = pty.openpty()
     process = subprocess.Popen(
@@ -299,8 +301,8 @@ def _spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
     return process, controller_fd
 
 
-def _stop_attached_run(process: subprocess.Popen[bytes], controller_fd: int) -> None:
-    """Tear down a `_spawn_attached_run` session before `sbx rm`."""
+def stop_attached_run(process: subprocess.Popen[bytes], controller_fd: int) -> None:
+    """Tear down a `spawn_attached_run` session before `sbx rm`."""
     if process.poll() is None:
         process.terminate()
         try:
@@ -364,11 +366,11 @@ class Sandbox:
             check=True,
             timeout=CREATE_TIMEOUT_S,
         )
-        attach_process, attach_fd = _spawn_attached_run(name)
+        attach_process, attach_fd = spawn_attached_run(name)
         try:
             yield cls(name)
         finally:
-            _stop_attached_run(attach_process, attach_fd)
+            stop_attached_run(attach_process, attach_fd)
             subprocess.run(
                 [SBX, "rm", "-f", name],
                 capture_output=True,
