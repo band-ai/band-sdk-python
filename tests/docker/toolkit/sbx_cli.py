@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import os
-import pty
 import shlex
 import shutil
 import subprocess
@@ -288,7 +287,15 @@ def spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
     pipe or `/dev/null`. Public: both `Sandbox.create` and any caller that
     drives `sbx create`/`band-kit provision` directly (e.g. a demo script)
     need to hold this open the same way.
+
+    `pty` is POSIX-only (no `termios` on Windows) and imported here rather
+    than at module level, so this module still imports cleanly for
+    collection on Windows CI — every sandbox-marked test that reaches this
+    function is already gated behind `sbx_available()`/`SANDBOX_TESTS_ENABLED`
+    and never runs there.
     """
+    import pty  # noqa: PLC0415 -- POSIX-only, deferred so this module still collects on Windows
+
     controller_fd, sandbox_fd = pty.openpty()
     process = subprocess.Popen(
         [SBX, "run", "--name", name],
