@@ -16,6 +16,8 @@ the proxy cert probe in ``tests/docker/test_sbx_cli.py``.
 from __future__ import annotations
 
 import logging
+import os
+import pty
 import shlex
 import shutil
 import subprocess
@@ -37,6 +39,9 @@ SBX = "sbx"
 # docker image build ceiling in docker_cli.
 CREATE_TIMEOUT_S = 600
 EXEC_TIMEOUT_S = 120
+# How long to wait for an attached `sbx run` to exit cleanly after `terminate()`
+# before escalating to `kill()`.
+ATTACH_STOP_TIMEOUT_S = 10
 
 # The issuer a credential-injected (MITM) TLS connection presents inside a
 # sandbox — the never-in-VM proof asserts the Band host's cert shows this,
@@ -95,15 +100,15 @@ def kit_agent_name(kit: Path | str) -> str:
 
 
 def kit_baseline_hosts(kit: Path | str) -> frozenset[str]:
-    """The hosts the kit reaches out of the box (``caps.network.allow``).
+    """The hosts the kit reaches out of the box (``permissions.network.allow``).
 
     The sandbox proxy denies every other host by default, so a Band deployment
     outside this set (any non-prod target) needs an explicit ``allow_network``
     before the agent can connect. Read from the kit's own spec so the two never
     drift.
     """
-    caps = _kit_spec(kit).get("caps") or {}
-    network = caps.get("network") or {}
+    permissions = _kit_spec(kit).get("permissions") or {}
+    network = permissions.get("network") or {}
     return frozenset(network.get("allow") or [])
 
 
@@ -270,6 +275,42 @@ def allow_network_for_hosts(hosts: Iterable[str], *, kit: Path | str) -> Iterato
         yield
 
 
+def _spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
+    """Start `sbx run --name <name>` attached to a real pty, held open for the
+    sandbox's lifetime.
+
+    The kit's agent runs on `sandbox.entrypoint`, which only launches once
+    something attaches — `sbx create` alone leaves the sandbox idle, and `sbx`
+    v0.43.0 auto-stops an idle, unattached sandbox within ~60-90s regardless of
+    what's running inside it. A backgrounded `sbx run` without a real pty fails
+    after ~30s with `inspect exec: context deadline exceeded` (verified live),
+    so this allocates one via the stdlib `pty` module rather than redirecting
+    to a pipe or `/dev/null`.
+    """
+    controller_fd, sandbox_fd = pty.openpty()
+    process = subprocess.Popen(
+        [SBX, "run", "--name", name],
+        stdin=sandbox_fd,
+        stdout=sandbox_fd,
+        stderr=sandbox_fd,
+        close_fds=True,
+    )
+    os.close(sandbox_fd)
+    return process, controller_fd
+
+
+def _stop_attached_run(process: subprocess.Popen[bytes], controller_fd: int) -> None:
+    """Tear down a `_spawn_attached_run` session before `sbx rm`."""
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=ATTACH_STOP_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=ATTACH_STOP_TIMEOUT_S)
+    os.close(controller_fd)
+
+
 NAME_PREFIX = "band-nevervm"
 
 
@@ -302,7 +343,9 @@ class Sandbox:
         name: str | None = None,
         agent: str | None = None,
     ) -> Iterator[Sandbox]:
-        """`sbx create --kit <kit> <agent> <workspace>`; yield it, then remove.
+        """`sbx create --kit <kit> <agent> <workspace>`, then hold an attached
+        `sbx run` open for the kit's `sandbox.entrypoint` to actually launch;
+        yield it, then remove.
 
         Pass ``name`` when it was allocated up front (so a scoped secret could be
         provisioned before creation); otherwise a unique one is generated. For an
@@ -321,9 +364,11 @@ class Sandbox:
             check=True,
             timeout=CREATE_TIMEOUT_S,
         )
+        attach_process, attach_fd = _spawn_attached_run(name)
         try:
             yield cls(name)
         finally:
+            _stop_attached_run(attach_process, attach_fd)
             subprocess.run(
                 [SBX, "rm", "-f", name],
                 capture_output=True,
