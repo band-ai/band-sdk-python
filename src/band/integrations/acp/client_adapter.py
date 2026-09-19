@@ -11,7 +11,11 @@ from typing import Any, ClassVar
 from uuid import uuid4
 
 from acp import spawn_agent_process
-from acp.schema import HttpMcpServer, SseMcpServer
+from acp.schema import (
+    HttpMcpServer,
+    SetSessionConfigOptionResponse,
+    SseMcpServer,
+)
 from typing_extensions import Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
@@ -44,6 +48,13 @@ from band.integrations.mcp.backends import (
     create_band_mcp_backend,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
+from band.integrations.acp.session_config import (
+    ACPConfigError,
+    ACPConfigRequest,
+    SessionConfigOption,
+    SessionConfigResolver,
+    apply_session_config_selections,
+)
 from band.integrations.acp.types import ACPToolCall
 from band.runtime.prompts import render_system_prompt
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
@@ -110,6 +121,16 @@ HISTORY_REPLAY_HEADER = (
 SpawnProcess = Callable[..., object]
 
 
+def session_config_options(response: object) -> list[SessionConfigOption] | None:
+    """The provider's valid select/boolean catalog, if it advertised one."""
+    options = getattr(response, "config_options", None)
+    if not isinstance(options, list) or not all(
+        isinstance(option, SessionConfigOption) for option in options
+    ):
+        return None
+    return options
+
+
 def _resolve_launcher(command: list[str]) -> list[str]:
     """Resolve the launcher to its full path so the subprocess spawns on Windows.
 
@@ -149,6 +170,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         inject_band_tools: bool = True,
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
+        resolve_session_config: SessionConfigResolver | None = None,
         # Transport + advanced knobs are keyword-only: this preserves the original
         # positional order (command, env, cwd, …) for existing callers, and TCP /
         # custom-transport wiring reads clearly at the call site.
@@ -173,6 +195,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
+        self._resolve_session_config = resolve_session_config
         self._custom_section = custom_section
         self._runtime = self._build_runtime(spawn_process)
 
@@ -306,10 +329,14 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             async with self._session_lock:
                 self._room_tools[room_id] = tools
 
-        if is_session_bootstrap and history:
-            await self._load_persisted_session(room_id, history)
+        try:
+            if is_session_bootstrap and history:
+                await self._load_persisted_session(room_id, history)
 
-        session_id, created = await self._get_or_create_session(room_id)
+            session_id, created = await self._get_or_create_session(room_id)
+        except ACPConfigError as error:
+            await self._report_config_error(tools, error)
+            return
         self._runtime.reset_session(session_id)
 
         # A just-created session holds no remote context (a restored one does),
@@ -566,9 +593,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
             mcp_servers = await self._session_mcp_servers()
 
-            session_id = await self._runtime.create_session(
+            session = await self._runtime.create_session_response(
                 cwd=self._cwd,
                 mcp_servers=mcp_servers,
+            )
+            session_id = session.session_id
+            await self._configure_session(
+                room_id, session_id, session_config_options(session)
             )
             self._room_to_session[room_id] = session_id
             logger.info(
@@ -585,6 +616,78 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if self._inject_band_tools:
             mcp_servers.append(await self._get_or_start_band_mcp_server())
         return mcp_servers
+
+    async def _configure_session(
+        self,
+        room_id: str,
+        session_id: str,
+        config_options: list[SessionConfigOption] | None,
+    ) -> None:
+        """Apply caller-selected values from the session's live ACP catalog."""
+        if self._resolve_session_config is None:
+            return
+
+        if not config_options:
+            return
+
+        catalog = tuple(config_options)
+        try:
+            selections = await self._resolve_session_config(
+                ACPConfigRequest(
+                    room_id=room_id,
+                    session_id=session_id,
+                    config_options=catalog,
+                )
+            )
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        except Exception as error:
+            raise ACPConfigError(
+                session_id=session_id,
+                option_id="resolver",
+                selected_value="",
+                message=f"ACP session configuration resolver failed: {error}",
+            ) from error
+        if not selections:
+            return
+
+        await apply_session_config_selections(
+            session_id=session_id,
+            config_options=catalog,
+            selections=selections,
+            set_option=self._set_session_config_option,
+        )
+
+    async def _set_session_config_option(
+        self,
+        session_id: str,
+        option_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse | None:
+        return await self._runtime.set_config_option(
+            session_id=session_id,
+            config_id=option_id,
+            value=value,
+        )
+
+    async def _report_config_error(
+        self,
+        tools: AgentToolsProtocol,
+        error: ACPConfigError,
+    ) -> None:
+        logger.warning("ACP session configuration failed: %s", error)
+        await tools.send_event(
+            content=f"ACP session configuration failed: {error}",
+            message_type="error",
+            metadata={
+                "acp_error": str(error),
+                "acp_session_config": {
+                    "session_id": error.session_id,
+                    "option_id": error.option_id,
+                    "selected_value": error.selected_value,
+                },
+            },
+        )
 
     def _claim_session_bootstrap(self, session_id: str) -> bool:
         """True exactly once per session — the caller owns the bootstrap prompt.
@@ -730,12 +833,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         if session_id is None:
             return
 
-        loaded = await self._runtime.load_session(
+        loaded = await self._runtime.load_session_response(
             cwd=self._cwd,
             session_id=session_id,
             mcp_servers=await self._session_mcp_servers(),
         )
-        if not loaded:
+        if loaded is None:
             logger.info(
                 "Persisted ACP session %s is unavailable for room %s; using a new session",
                 session_id,
@@ -744,13 +847,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             return
 
         async with self._session_lock:
-            # setdefault keeps a mapping raced in by a concurrent turn; a
-            # discarded load leaves that mapping's own created/replay decision
-            # in force.
-            retained = (
-                self._room_to_session.setdefault(room_id, session_id) == session_id
+            if room_id in self._room_to_session:
+                return
+            await self._configure_session(
+                room_id, session_id, session_config_options(loaded)
             )
-        if retained:
+            self._room_to_session[room_id] = session_id
             logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
 
     async def _fetch_replay(
