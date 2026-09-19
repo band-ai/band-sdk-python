@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from acp.helpers import update_agent_message_text
+from acp.schema import (
+    NewSessionResponse,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
+    SetSessionConfigOptionResponse,
+)
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.types import Capability
+from band.integrations.acp import client_adapter
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
@@ -604,6 +612,54 @@ class TestACPClientAdapterOnMessage:
         assert adapter_with_mocks._room_to_session["room-123"] == "acp-session-123"
 
     @pytest.mark.asyncio
+    async def test_on_message_applies_selected_session_configuration(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        effort = SessionConfigOptionSelect(
+            id="reasoning_effort",
+            name="Reasoning effort",
+            type="select",
+            current_value="medium",
+            options=[
+                SessionConfigSelectOption(value="medium", name="Medium"),
+                SessionConfigSelectOption(value="high", name="High"),
+            ],
+        )
+        adapter_with_mocks._runtime._conn.new_session = AsyncMock(
+            return_value=NewSessionResponse(
+                session_id="acp-session-123", config_options=[effort]
+            )
+        )
+        adapter_with_mocks._runtime._conn.set_config_option = AsyncMock(
+            return_value=SetSessionConfigOptionResponse(
+                config_options=[effort.model_copy(update={"current_value": "high"})]
+            )
+        )
+        resolver = AsyncMock(return_value={"reasoning_effort": "high"})
+        adapter_with_mocks._resolve_session_config = resolver
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        resolver.assert_awaited_once()
+        request = resolver.await_args.args[0]
+        assert request.config_options == (effort,)
+        adapter_with_mocks._runtime._conn.set_config_option.assert_awaited_once_with(
+            session_id="acp-session-123",
+            config_id="reasoning_effort",
+            value="high",
+        )
+
+    @pytest.mark.asyncio
     async def test_on_message_reuses_session(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
@@ -1126,6 +1182,63 @@ class TestACPClientAdapterCleanup:
         await adapter.on_cleanup("room-123")
 
         assert "room-123" not in adapter._room_to_session
+
+    @pytest.mark.asyncio
+    async def test_fresh_session_cleanup_times_out(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        adapter = ACPClientAdapter(command="codex")
+        blocked_close = asyncio.Event()
+
+        async def wait_to_close(_: str) -> None:
+            await blocked_close.wait()
+
+        adapter._runtime.close_session = AsyncMock(wraps=wait_to_close)
+        monkeypatch.setattr(client_adapter, "SESSION_CLOSE_TIMEOUT_SECONDS", 0.01)
+
+        with caplog.at_level(logging.WARNING):
+            await adapter._close_fresh_session("session-1")
+
+        adapter._runtime.close_session.assert_awaited_once_with("session-1")
+        assert caplog.messages == [
+            "Timed out closing unconfigured ACP session session-1 after 0.01 seconds"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_cancelled_fresh_session_does_not_wait_to_close(self) -> None:
+        adapter = ACPClientAdapter(command="codex")
+        initialization_started = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        close_finished = asyncio.Event()
+        adapter._runtime.create_session_response = AsyncMock(
+            return_value=NewSessionResponse(session_id="session-1")
+        )
+
+        async def wait_to_close(_: str) -> None:
+            close_started.set()
+            await release_close.wait()
+            close_finished.set()
+
+        adapter._runtime.close_session = AsyncMock(wraps=wait_to_close)
+
+        async def initialize() -> None:
+            async with adapter._fresh_session([]):
+                initialization_started.set()
+                await asyncio.Event().wait()
+
+        initializing = asyncio.create_task(initialize())
+        await initialization_started.wait()
+        initializing.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(initializing, timeout=0.1)
+
+        await close_started.wait()
+        release_close.set()
+        await close_finished.wait()
 
 
 class TestACPClientAdapterStop:

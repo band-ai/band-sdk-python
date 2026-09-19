@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from acp.agent.connection import AgentSideConnection
@@ -25,13 +25,21 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PromptResponse,
+    SessionCapabilities,
+    SessionCloseCapabilities,
+    SessionConfigOptionSelect,
+    SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
+from band.integrations.acp.session_config import SessionConfigOption
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
+ConfigOptionHandler = Callable[
+    ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
+]
 
 
 class FakeACPAgent:
@@ -49,6 +57,7 @@ class FakeACPAgent:
         http: bool = True,
         sse: bool = False,
         supports_session_load: bool = False,
+        config_options: Sequence[SessionConfigOption] = (),
     ) -> None:
         self._http = http
         self._sse = sse
@@ -58,12 +67,16 @@ class FakeACPAgent:
         self._conn: AgentSideConnection | None = None
         self._script: list[PromptHandler] = []
         self._custom: PromptHandler | None = None
+        self._config_options = list(config_options)
+        self._config_option_handler: ConfigOptionHandler | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
         self.prompts: list[dict[str, Any]] = []
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
+        self.config_option_requests: list[tuple[str, str, str]] = []
+        self.closed_sessions: list[str] = []
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -75,6 +88,11 @@ class FakeACPAgent:
         a normal decorator.
         """
         self._custom = handler
+        return handler
+
+    def on_config_option(self, handler: ConfigOptionHandler) -> ConfigOptionHandler:
+        """Set dynamic behavior for every ``session/set_config_option`` call."""
+        self._config_option_handler = handler
         return handler
 
     def will_say(self, text: str) -> FakeACPAgent:
@@ -313,6 +331,9 @@ class FakeACPAgent:
             agent_capabilities=AgentCapabilities(
                 load_session=self._supports_session_load,
                 mcp_capabilities=McpCapabilities(http=self._http, sse=self._sse),
+                session_capabilities=SessionCapabilities(
+                    close=SessionCloseCapabilities()
+                ),
             ),
         )
 
@@ -325,7 +346,7 @@ class FakeACPAgent:
             raise self._session_load_error
         if session_id not in self._persisted_sessions:
             raise RequestError.resource_not_found()
-        return LoadSessionResponse()
+        return LoadSessionResponse(config_options=self._config_options)
 
     async def new_session(
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
@@ -336,7 +357,37 @@ class FakeACPAgent:
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}
         )
         self._mcp_servers_by_session[sid] = list(mcp_servers or [])
-        return NewSessionResponse(session_id=sid)
+        return NewSessionResponse(session_id=sid, config_options=self._config_options)
+
+    async def set_config_option(
+        self,
+        config_id: str,
+        session_id: str,
+        value: str,
+        **kwargs: Any,
+    ) -> SetSessionConfigOptionResponse:
+        """Apply one advertised select option and return the full live catalog."""
+        del kwargs
+        self.config_option_requests.append((session_id, config_id, value))
+        if self._config_option_handler is not None:
+            self._config_options = list(
+                await self._config_option_handler(self, session_id, config_id, value)
+            )
+            return SetSessionConfigOptionResponse(config_options=self._config_options)
+
+        updated: list[SessionConfigOption] = []
+        for option in self._config_options:
+            if option.id == config_id and isinstance(option, SessionConfigOptionSelect):
+                updated.append(option.model_copy(update={"current_value": value}))
+            else:
+                updated.append(option)
+        self._config_options = updated
+        return SetSessionConfigOptionResponse(config_options=self._config_options)
+
+    async def close_session(self, session_id: str, **kwargs: Any) -> None:
+        """Record that the client closed a session before prompting it."""
+        del kwargs
+        self.closed_sessions.append(session_id)
 
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""
@@ -348,6 +399,10 @@ class FakeACPAgent:
             )
             for received in self.prompts
         ]
+
+    def session_ids(self) -> list[str]:
+        """Each created session id, in creation order."""
+        return [session["session_id"] for session in self.sessions]
 
     async def prompt(
         self, prompt: Any, session_id: str, message_id: str | None = None, **kwargs: Any
