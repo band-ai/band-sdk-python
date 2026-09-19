@@ -110,9 +110,16 @@ async def choose_session_config(
     logger.info("ACP session '%s' config options: %s", request.session_id, catalog)
 
     for option_id, selected_value in preferences.items():
-        if selected_value in catalog.get(option_id, ()):
+        values = catalog.get(option_id)
+        if values is None:
+            logger.warning(
+                "ACP session '%s' does not advertise config option '%s'.",
+                request.session_id,
+                option_id,
+            )
+        elif selected_value in values:
             return {option_id: selected_value}
-        if option_id in catalog:
+        else:
             logger.warning(
                 "ACP session '%s' does not offer '%s' for '%s'.",
                 request.session_id,
