@@ -20,7 +20,7 @@ backend via `ACPClientAdapter`.
 
 | File | What it shows |
 |------|---------------|
-| `generic.py` | Generic/Codex ACP client (command from env) |
+| `generic.py` | Generic/Codex ACP client with advertised model/reasoning selection |
 | `rich_streaming.py` | Rich streaming of tool calls / plans / text |
 | `cursor.py` | Cursor CLI with a vendor profile + auth |
 | `bridge_architecture.py` | Fully env-driven bridge configuration |
