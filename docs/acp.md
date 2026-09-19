@@ -99,6 +99,46 @@ Narrated names are canonical: an ACP runtime that prefixes MCP tool names (Copil
 
 Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
 
+## Dynamic model and reasoning configuration (Client Adapter)
+
+Remote ACP agents can advertise a live `configOptions` catalog for each session. Pass
+an async `resolve_session_config` callback to choose from the agent's actual select
+options; this supports model lists, reasoning effort, and future provider-specific
+selectors without a Band-maintained vocabulary.
+
+The behavior is owned by `ACPClientAdapter`, so every transport and profile gets it:
+stdio, TCP, custom transports, and `CopilotACPAdapter` through its
+`CopilotACPAdapterConfig.resolve_session_config` field. The in-process ACP test
+harness implements the same wire method, keeping the protocol path proven without
+provider-specific test doubles.
+
+```python notest
+from band.integrations.acp import ACPClientAdapter
+
+
+async def choose_config(request):
+    available = {option.id: option for option in request.config_options}
+    selections = {}
+    if "reasoning_effort" in available:
+        selections["reasoning_effort"] = "high"
+    if "model" in available:
+        selections["model"] = "preferred-model-id"
+    return selections
+
+
+adapter = ACPClientAdapter(
+    command="codex-acp",
+    resolve_session_config=choose_config,
+)
+```
+
+The callback is called once after each new or restored session is established and
+before its first prompt. Selections apply in mapping order. Each successful
+`session/set_config_option` response replaces the catalog used to validate the next
+selection, because choosing a model can change the available reasoning levels. An
+invalid selection, rejection, timeout, or malformed response fails that room turn
+visibly instead of silently falling back to a different setting.
+
 ## Optional Dependency
 
 ```toml

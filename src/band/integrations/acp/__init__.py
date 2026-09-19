@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from band.integrations.acp.client_adapter import ACPClientAdapter
+    from band.integrations.acp.session_config import ACPConfigRequest
     from band.integrations.acp.client_types import (
         ACPClientSessionState,
         BandACPClient,
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ACPClientAdapter",
+    "ACPConfigRequest",
     "ACPClientSessionState",
     "ACPPushHandler",
     "ACPServer",
@@ -77,6 +79,7 @@ __all__ = [
 
 _IMPORT_MAP: dict[str, tuple[str, str]] = {
     "ACPClientAdapter": ("band.integrations.acp.client_adapter", "ACPClientAdapter"),
+    "ACPConfigRequest": ("band.integrations.acp.session_config", "ACPConfigRequest"),
     "ACPClientSessionState": (
         "band.integrations.acp.client_types",
         "ACPClientSessionState",

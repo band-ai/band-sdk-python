@@ -12,6 +12,11 @@ from typing import Literal, Protocol, cast
 from acp import connect_to_agent, spawn_agent_process, text_block
 from acp.exceptions import RequestError
 from acp.interfaces import Client
+from acp.schema import (
+    LoadSessionResponse,
+    NewSessionResponse,
+    SetSessionConfigOptionResponse,
+)
 
 from band.integrations.acp.client_profiles import (
     ACPClientProfile,
@@ -220,7 +225,9 @@ class ACPConnectionProtocol(Protocol):
 
     async def authenticate(self, *, method_id: str) -> object: ...
 
-    async def new_session(self, *, cwd: str, mcp_servers: list[object]) -> object: ...
+    async def new_session(
+        self, *, cwd: str, mcp_servers: list[object]
+    ) -> NewSessionResponse: ...
 
     async def load_session(
         self,
@@ -228,9 +235,17 @@ class ACPConnectionProtocol(Protocol):
         cwd: str,
         session_id: str,
         mcp_servers: list[object],
-    ) -> object: ...
+    ) -> LoadSessionResponse | None: ...
 
     async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
+
+    async def set_config_option(
+        self,
+        *,
+        config_id: str,
+        session_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse | None: ...
 
 
 class ACPSpawnContextProtocol(Protocol):
@@ -239,12 +254,6 @@ class ACPSpawnContextProtocol(Protocol):
     async def __aenter__(self) -> tuple[ACPConnectionProtocol, object]: ...
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> object: ...
-
-
-class ACPNewSessionProtocol(Protocol):
-    """Protocol for ACP session creation responses."""
-
-    session_id: str
 
 
 class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optional methods treated as abstract by pyrefly
@@ -762,12 +771,17 @@ class ACPRuntime:
         return conn
 
     async def create_session(self, *, cwd: str, mcp_servers: list[object]) -> str:
+        session = await self.create_session_response(cwd=cwd, mcp_servers=mcp_servers)
+        return session.session_id
+
+    async def create_session_response(
+        self, *, cwd: str, mcp_servers: list[object]
+    ) -> NewSessionResponse:
         conn = await self.ensure_connection(can_respawn=False)
-        session = cast(
-            ACPNewSessionProtocol,
+        return cast(
+            NewSessionResponse,
             await conn.new_session(cwd=cwd, mcp_servers=mcp_servers),
         )
-        return session.session_id
 
     async def load_session(
         self,
@@ -776,16 +790,31 @@ class ACPRuntime:
         session_id: str,
         mcp_servers: list[object],
     ) -> bool:
+        return (
+            await self.load_session_response(
+                cwd=cwd,
+                session_id=session_id,
+                mcp_servers=mcp_servers,
+            )
+        ) is not None
+
+    async def load_session_response(
+        self,
+        *,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[object],
+    ) -> LoadSessionResponse | None:
         """Load a persisted ACP session when the connected agent supports it.
 
         ACP session IDs are meaningful only to the agent process that owns them.
         A successful ``session/load`` is therefore the boundary where a persisted ID
         becomes usable on this connection. An unsupported, unavailable, slow, or
-        erroring load returns ``False`` so callers can create a fresh session
+        erroring load returns ``None`` so callers can create a fresh session
         without blocking a turn.
         """
         if not self._agent_supports_session_load:
-            return False
+            return None
 
         conn = await self.ensure_connection(can_respawn=False)
         try:
@@ -803,7 +832,7 @@ class ACPRuntime:
                 session_id,
                 ACP_SESSION_LOAD_TIMEOUT_SECONDS,
             )
-            return False
+            return None
         except RequestError as error:
             # Any load failure is equally recoverable: the caller falls back to
             # a fresh session (with history replay) rather than letting a remote
@@ -816,8 +845,23 @@ class ACPRuntime:
                     session_id,
                     error,
                 )
-            return False
-        return response is not None
+            return None
+        return response
+
+    async def set_config_option(
+        self,
+        *,
+        session_id: str,
+        config_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse | None:
+        """Set one advertised select option and return the refreshed catalog."""
+        conn = await self.ensure_connection(can_respawn=False)
+        return await conn.set_config_option(
+            session_id=session_id,
+            config_id=config_id,
+            value=value,
+        )
 
     async def prompt(
         self,

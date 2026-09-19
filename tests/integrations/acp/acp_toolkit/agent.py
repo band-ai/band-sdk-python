@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from acp import RequestError
@@ -25,12 +25,19 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PromptResponse,
+    SessionConfigOptionBoolean,
+    SessionConfigOptionSelect,
+    SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
+SessionConfigOption = SessionConfigOptionSelect | SessionConfigOptionBoolean
+ConfigOptionHandler = Callable[
+    ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
+]
 
 
 class FakeACPAgent:
@@ -48,6 +55,7 @@ class FakeACPAgent:
         http: bool = True,
         sse: bool = False,
         supports_session_load: bool = False,
+        config_options: Sequence[SessionConfigOption] = (),
     ) -> None:
         self._http = http
         self._sse = sse
@@ -57,12 +65,15 @@ class FakeACPAgent:
         self._conn: AgentSideConnection | None = None
         self._script: list[PromptHandler] = []
         self._custom: PromptHandler | None = None
+        self._config_options = list(config_options)
+        self._config_option_handler: ConfigOptionHandler | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
         self.prompts: list[dict[str, Any]] = []
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
+        self.config_option_requests: list[tuple[str, str, str]] = []
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -74,6 +85,11 @@ class FakeACPAgent:
         a normal decorator.
         """
         self._custom = handler
+        return handler
+
+    def on_config_option(self, handler: ConfigOptionHandler) -> ConfigOptionHandler:
+        """Set dynamic behavior for the next ``session/set_config_option`` call."""
+        self._config_option_handler = handler
         return handler
 
     def will_say(self, text: str) -> FakeACPAgent:
@@ -326,7 +342,7 @@ class FakeACPAgent:
             raise self._session_load_error
         if session_id not in self._persisted_sessions:
             raise RequestError.resource_not_found()
-        return LoadSessionResponse()
+        return LoadSessionResponse(config_options=self._config_options)
 
     async def new_session(
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
@@ -337,7 +353,32 @@ class FakeACPAgent:
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}
         )
         self._mcp_servers_by_session[sid] = list(mcp_servers or [])
-        return NewSessionResponse(session_id=sid)
+        return NewSessionResponse(session_id=sid, config_options=self._config_options)
+
+    async def set_config_option(
+        self,
+        config_id: str,
+        session_id: str,
+        value: str,
+        **kwargs: Any,
+    ) -> SetSessionConfigOptionResponse:
+        """Apply one advertised select option and return the full live catalog."""
+        del kwargs
+        self.config_option_requests.append((session_id, config_id, value))
+        if self._config_option_handler is not None:
+            self._config_options = list(
+                await self._config_option_handler(self, session_id, config_id, value)
+            )
+            return SetSessionConfigOptionResponse(config_options=self._config_options)
+
+        updated: list[SessionConfigOption] = []
+        for option in self._config_options:
+            if option.id == config_id and isinstance(option, SessionConfigOptionSelect):
+                updated.append(option.model_copy(update={"current_value": value}))
+            else:
+                updated.append(option)
+        self._config_options = updated
+        return SetSessionConfigOptionResponse(config_options=self._config_options)
 
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""
