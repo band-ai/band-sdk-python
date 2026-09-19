@@ -25,6 +25,7 @@ SessionConfigResolver: TypeAlias = Callable[
 ]
 
 SESSION_CONFIG_TIMEOUT_SECONDS = 10.0
+RESOLVER_CONFIG_OPTION_ID = "resolver"
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,16 @@ def flatten_select_options(
     return tuple(flattened)
 
 
+def session_config_options(response: object) -> tuple[SessionConfigOption, ...] | None:
+    """Return a response's complete, typed ACP configuration catalog."""
+    options = getattr(response, "config_options", None)
+    if not isinstance(options, list) or not all(
+        isinstance(option, SessionConfigOption) for option in options
+    ):
+        return None
+    return tuple(options)
+
+
 async def apply_session_config_selections(
     *,
     session_id: str,
@@ -78,7 +89,7 @@ async def apply_session_config_selections(
     if not isinstance(selections, Mapping):
         raise ACPConfigError(
             session_id=session_id,
-            option_id="resolver",
+            option_id=RESOLVER_CONFIG_OPTION_ID,
             selected_value="",
             message="ACP session configuration resolver must return a mapping.",
         )
@@ -173,8 +184,8 @@ def refreshed_catalog(
                 f'ACP config option "{option_id}" did not return a refreshed catalog.'
             ),
         )
-    catalog = tuple(response.config_options)
-    if not all(isinstance(entry, SessionConfigOption) for entry in catalog):
+    catalog = session_config_options(response)
+    if catalog is None:
         raise ACPConfigError(
             session_id=session_id,
             option_id=option_id,

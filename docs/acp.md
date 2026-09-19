@@ -136,8 +136,9 @@ The callback is called once after each new or restored session is established an
 before its first prompt. Selections apply in mapping order. Each successful
 `session/set_config_option` response replaces the catalog used to validate the next
 selection, because choosing a model can change the available reasoning levels. An
-invalid selection, rejection, timeout, or malformed response fails that room turn
-visibly instead of silently falling back to a different setting.
+invalid selection, rejection, timeout, or malformed `session/set_config_option`
+response fails that room turn visibly instead of silently falling back to a different
+setting.
 
 ## Optional Dependency
 

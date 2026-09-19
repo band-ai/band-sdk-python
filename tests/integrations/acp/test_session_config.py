@@ -18,6 +18,7 @@ from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import (
     ACPConfigRequest,
     ACPConfigError,
+    RESOLVER_CONFIG_OPTION_ID,
     SessionConfigOption,
     apply_session_config_selections,
 )
@@ -259,7 +260,7 @@ class TestACPConfigurationHarness:
             reply,
             {
                 "session_id": "fake-session-1",
-                "option_id": "resolver",
+                "option_id": RESOLVER_CONFIG_OPTION_ID,
                 "selected_value": "",
             },
         )
