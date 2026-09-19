@@ -101,14 +101,13 @@ async def test_example_warns_when_a_preference_has_no_matching_option(
         ),
     )
 
-    selections = await generic_acp.choose_session_config(
-        request,
-        preferences={"model": "large", "reasoning_effort": "high"},
-    )
+    with caplog.at_level(logging.WARNING, logger=generic_acp.logger.name):
+        selections = await generic_acp.choose_session_config(
+            request,
+            preferences={"model": "large", "reasoning_effort": "high"},
+        )
 
     assert selections == {"reasoning_effort": "high"}
-    assert [
-        record.getMessage()
-        for record in caplog.records
-        if record.levelno == logging.WARNING
-    ] == ["ACP session 'session-1' does not advertise config option 'model'."]
+    assert caplog.messages == [
+        "ACP session 'session-1' does not advertise config option 'model'."
+    ]
