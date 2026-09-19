@@ -247,6 +247,8 @@ class ACPConnectionProtocol(Protocol):
         value: str,
     ) -> SetSessionConfigOptionResponse | None: ...
 
+    async def cancel(self, session_id: str) -> None: ...
+
 
 class ACPSpawnContextProtocol(Protocol):
     """Protocol for the spawn_agent_process async context manager."""
@@ -862,6 +864,11 @@ class ACPRuntime:
             config_id=config_id,
             value=value,
         )
+
+    async def cancel_session(self, session_id: str) -> None:
+        """Tell the agent to abandon a session before its first prompt."""
+        conn = await self.ensure_connection(can_respawn=False)
+        await conn.cancel(session_id)
 
     async def prompt(
         self,

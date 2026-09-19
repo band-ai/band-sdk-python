@@ -25,16 +25,15 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PromptResponse,
-    SessionConfigOptionBoolean,
     SessionConfigOptionSelect,
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
+from band.integrations.acp.session_config import SessionConfigOption
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
-SessionConfigOption = SessionConfigOptionSelect | SessionConfigOptionBoolean
 ConfigOptionHandler = Callable[
     ["FakeACPAgent", str, str, str], Awaitable[Sequence[SessionConfigOption]]
 ]
@@ -74,6 +73,7 @@ class FakeACPAgent:
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
+        self.cancelled_sessions: list[str] = []
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -88,7 +88,7 @@ class FakeACPAgent:
         return handler
 
     def on_config_option(self, handler: ConfigOptionHandler) -> ConfigOptionHandler:
-        """Set dynamic behavior for the next ``session/set_config_option`` call."""
+        """Set dynamic behavior for every ``session/set_config_option`` call."""
         self._config_option_handler = handler
         return handler
 
@@ -379,6 +379,11 @@ class FakeACPAgent:
                 updated.append(option)
         self._config_options = updated
         return SetSessionConfigOptionResponse(config_options=self._config_options)
+
+    async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        """Record that the client cancelled a session before prompting it."""
+        del kwargs
+        self.cancelled_sessions.append(session_id)
 
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""
