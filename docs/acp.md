@@ -112,25 +112,11 @@ stdio, TCP, custom transports, and `CopilotACPAdapter` through its
 harness implements the same wire method, keeping the protocol path proven without
 provider-specific test doubles.
 
-```python notest
-from band.integrations.acp import ACPClientAdapter
-
-
-async def choose_config(request):
-    available = {option.id: option for option in request.config_options}
-    selections = {}
-    if "reasoning_effort" in available:
-        selections["reasoning_effort"] = "high"
-    if "model" in available:
-        selections["model"] = "preferred-model-id"
-    return selections
-
-
-adapter = ACPClientAdapter(
-    command="codex-acp",
-    resolve_session_config=choose_config,
-)
-```
+[`examples/acp/clients/generic.py`](../examples/acp/clients/generic.py) is a
+runnable bridge example. Leave `ACP_MODEL` and `ACP_REASONING_EFFORT` unset to
+log each session's advertised values, then set one to an exact advertised value.
+The example ignores unavailable values and makes only one selection per new
+session: selecting a model can replace the effort catalog.
 
 The callback is called once after each new or restored session is established and
 before its first prompt. Selections apply in mapping order. Each successful

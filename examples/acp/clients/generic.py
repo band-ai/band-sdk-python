@@ -27,8 +27,15 @@ Prerequisites:
        - BAND_REST_URL: REST API URL
        - ACP_AGENT_COMMAND: Command to spawn the ACP agent
          (default: "npx @zed-industries/codex-acp")
+       - ACP_MODEL: An advertised model id to select for each new session
+       - ACP_REASONING_EFFORT: An advertised reasoning effort to select when
+         ACP_MODEL is unset
 
     2. Have the remote ACP agent installed and available in PATH
+
+    Leave ACP_MODEL and ACP_REASONING_EFFORT unset for the first run. The
+    bridge logs the model, reasoning, and provider-specific select values that
+    the remote ACP agent offers for each session.
 
 Run with:
     uv run examples/acp/clients/generic.py
@@ -39,13 +46,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import shlex
+from collections.abc import Mapping
+from functools import partial
 
+from acp.schema import SessionConfigOptionSelect
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import ACPClientAdapter
+from band.adapters import ACPConfigRequest, ACPClientAdapter
 from band.config import load_agent_config
+from band.integrations.acp.session_config import flatten_select_options
 
 configure_logging(
     level=logging.INFO,
@@ -65,6 +76,53 @@ class Settings(BaseSettings):
 
     acp_agent_command: str = "npx @zed-industries/codex-acp"
     acp_agent_cwd: str = "."
+    acp_model: str = ""
+    acp_reasoning_effort: str = ""
+
+    @property
+    def session_config_preferences(self) -> dict[str, str]:
+        """Return configured ACP preferences, omitting unset values."""
+        return {
+            option_id: value
+            for option_id, value in (
+                ("model", self.acp_model),
+                ("reasoning_effort", self.acp_reasoning_effort),
+            )
+            if value
+        }
+
+
+def advertised_config_values(request: ACPConfigRequest) -> dict[str, tuple[str, ...]]:
+    """Project an ACP session's select catalog into option ids and values."""
+    return {
+        option.id: tuple(
+            entry.value for entry in flatten_select_options(option.options)
+        )
+        for option in request.config_options
+        if isinstance(option, SessionConfigOptionSelect)
+    }
+
+
+async def choose_session_config(
+    request: ACPConfigRequest,
+    *,
+    preferences: Mapping[str, str],
+) -> dict[str, str]:
+    """Choose the first configured value that this session advertises."""
+    catalog = advertised_config_values(request)
+    logger.info("ACP session '%s' config options: %s", request.session_id, catalog)
+
+    for option_id, selected_value in preferences.items():
+        if selected_value in catalog.get(option_id, ()):
+            return {option_id: selected_value}
+        if option_id in catalog:
+            logger.warning(
+                "ACP session '%s' does not offer '%s' for '%s'.",
+                request.session_id,
+                selected_value,
+                option_id,
+            )
+    return {}
 
 
 async def main() -> None:
@@ -84,6 +142,10 @@ async def main() -> None:
     adapter = ACPClientAdapter(
         command=acp_command,
         cwd=acp_cwd,
+        resolve_session_config=partial(
+            choose_session_config,
+            preferences=settings.session_config_preferences,
+        ),
     )
 
     logger.info(
