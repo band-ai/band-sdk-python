@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from band.core.types import MessageType
 from band.integrations.acp.client_runtime import select_allow_option_id
 
 from tests.e2e.baseline.agents import Lane, lane
@@ -16,7 +15,7 @@ from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT_SYSTEM_PROMPT,
-    emit_event_instruction,
+    invite_instruction,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.builders import (
@@ -57,12 +56,12 @@ async def test_omp_acp_reuses_a_session_and_narrates_band_mcp(
     reply_capture: CaptureFactory,
     tmp_path: Path,
 ) -> None:
-    """Two turns reuse one ACP session and a real Band MCP call stays correlated."""
+    """Two turns reuse one ACP session and a real Band roster change stays correlated."""
     from band.adapters.omp_acp import OmpACPAdapter  # noqa: PLC0415 -- the ACP extra is optional outside this backend lane
 
     reply_marker = unique_marker("omp-reply")
-    event_marker = unique_marker("omp-event")
     identity = await resource_manager.provision_agent("omp-acp")
+    helper = await resource_manager.provision_agent("omp-acp-helper")
     room_id = await resource_manager.provision_room(
         title="e2e-omp-acp", participants=[identity.id]
     )
@@ -81,25 +80,24 @@ async def test_omp_acp_reuses_a_session_and_narrates_band_mcp(
 
             second = await user_ops.send_message(
                 room_id,
-                emit_event_instruction(MessageType.THOUGHT, event_marker),
+                invite_instruction(helper.name, helper.id),
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
             await capture.wait_for_processed(second, identity.id)
-            thoughts = await capture.thoughts(sender_id=identity.id)
             calls = await capture.tool_calls(sender_id=identity.id)
             results = await capture.tool_results(sender_id=identity.id)
             tasks = await capture.tasks(sender_id=identity.id)
 
-    thoughts.assert_contains_any([event_marker])
-    band_calls = calls.named("band_send_event")
-    band_calls.assert_fired("band_send_event")
-    call = next(call for call in band_calls if event_marker in str(call.args))
+    band_calls = calls.named("band_add_participant")
+    band_calls.assert_fired("band_add_participant")
+    call = next(call for call in band_calls if helper.id in str(call.args))
     assert call.tool_call_id
     assert any(
         result.tool_call_id == call.tool_call_id and not result.is_error
-        for result in results.named("band_send_event")
+        for result in results.named("band_add_participant")
     )
+    assert helper.id in await user_ops.list_participant_ids(room_id)
     session_ids = {
         getattr(task.metadata, "get", lambda _key: None)("acp_client_session_id")
         for task in tasks

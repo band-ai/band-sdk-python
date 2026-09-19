@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band.integrations.omp import DEFAULT_OMP_MODEL
 from tests.paths import ENV_TEST_FILE
 
 # Load .env.test into os.environ (idempotent, non-overriding) — the single
@@ -164,10 +165,10 @@ class Backends(BaseSettings):
     # BYOK (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder.
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
 
-    # Oh My P.I. over ACP. The process gets its Gemini Developer key only through
-    # the child environment assembled by the OMP builder.
+    # Oh My P.I. over ACP. The process receives only the selected provider's key
+    # through the child environment assembled by the OMP builder.
     omp_command: str = ""  # OMP_COMMAND (override the `omp` binary + args)
-    omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
+    omp_model: str = DEFAULT_OMP_MODEL  # OMP_MODEL
 
     # Copilot-hosted auth for the single non-BYOK smoke
     # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix

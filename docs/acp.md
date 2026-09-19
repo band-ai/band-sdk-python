@@ -178,18 +178,18 @@ framework-conformance as a bridge.
 
 `OmpACPAdapter` (`src/band/adapters/omp_acp.py`) starts OMP's native `omp acp`
 stdio server through the same generic ACP client. Install `band-sdk[acp]`, Bun
-(>=1.3.14), and `@oh-my-pi/pi-coding-agent`, then pass a direct Gemini Developer
-API key only through `OmpACPAdapterConfig.env` as `GEMINI_API_KEY` (the existing
-`GOOGLE_API_KEY` can supply that value). Use command and cwd overrides when the
-CLI is not on the default path.
+(>=1.3.14), and `@oh-my-pi/pi-coding-agent`, then pass the selected provider's
+key only through `OmpACPAdapterConfig.env` — for example `OPENAI_API_KEY` with
+`--model openai/gpt-5.4-mini`, or `GEMINI_API_KEY` with a Google model. Use command
+and cwd overrides when the CLI is not on the default path.
 
 OMP receives Band tools through the normal ACP `mcpServers` injection. The client
-does not advertise ACP filesystem, terminal, terminal-authentication, or
-elicitation capabilities because it has no host implementation for those RPCs.
-Keep the process in a permission-gated mode such as `--approval-mode always-ask`;
-`--yolo` and auto-approve modes bypass the resolver. Automated runs should use a
-fresh `PI_CODING_AGENT_DIR` and a disposable cwd so local OMP state cannot affect
-the test or session.
+does not advertise ACP filesystem, terminal, or terminal-authentication capabilities.
+It advertises form elicitation because OMP uses it for `always-ask` tool approvals;
+only OMP's exact Approve/Deny form is routed through the adapter's permission
+resolver, and every other form is declined. `--yolo` and auto-approve modes bypass
+that resolver. Automated runs should use a fresh `PI_CODING_AGENT_DIR` and a
+disposable cwd so local OMP state cannot affect the test or session.
 - Copilot in a Docker **microVM sandbox** ([`sbx`](https://docs.docker.com/ai/sandboxes/))
   over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
   isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary

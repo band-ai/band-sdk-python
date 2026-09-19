@@ -14,12 +14,14 @@ from uuid import uuid4
 
 from acp import spawn_agent_process
 from acp.schema import (
+    ClientCapabilities,
     HttpMcpServer,
     NewSessionResponse,
     PermissionOption,
     SetSessionConfigOptionResponse,
     SseMcpServer,
 )
+from pydantic import JsonValue
 from typing_extensions import Unpack
 
 from band.converters.acp_client import ACPClientHistoryConverter
@@ -37,6 +39,7 @@ from band.integrations.acp.client_profiles import ACPClientProfile
 from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
+    ElicitationHandler,
     PermissionHandler,
     allow_permission,
     cancel_permission,
@@ -61,7 +64,7 @@ from band.integrations.acp.session_config import (
     apply_session_config_selections,
     session_config_options,
 )
-from band.integrations.acp.types import ACPToolCall
+from band.integrations.acp.types import ACPToolCall, PermissionOutcome
 from band.runtime.prompts import render_system_prompt
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
@@ -201,6 +204,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         port: int | None = None,
         custom_section: str = "",
         spawn_process: SpawnProcess | None = None,
+        client_capabilities: ClientCapabilities | None = None,
+        use_unstable_protocol: bool = False,
         **features: Unpack[FeatureKwargs],
     ) -> None:
         super().__init__(
@@ -219,6 +224,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._profile = profile
         self._resolve_session_config = resolve_session_config
         self._resolve_permission = resolve_permission
+        self._client_capabilities = client_capabilities
+        self._use_unstable_protocol = use_unstable_protocol
         self._custom_section = custom_section
         self._runtime = self._build_runtime(spawn_process)
 
@@ -316,9 +323,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
+            client_capabilities=self._client_capabilities,
+            use_unstable_protocol=self._use_unstable_protocol,
             client_factory=lambda: BandACPClient(
                 profile=self._profile,
                 canonicalize_tool_name=self._canonical_tool_name,
+                normalize_tool_call=self._normalize_acp_tool_call,
             ),
             spawn_process=self._select_transport(spawn_process, self._host, self._port),
         )
@@ -403,6 +413,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     session_id,
                     self._make_permission_handler(emitter, room_id),
                 )
+                self._runtime.set_elicitation_handler(
+                    session_id,
+                    self._make_elicitation_handler(emitter, room_id),
+                )
                 await self._runtime.prompt(
                     session_id=session_id,
                     prompt_text=prompt_text,
@@ -459,11 +473,28 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await emitter.open_permission(
                 call=call,
                 session_id=session_id,
-                outcome="cancelled",
+                outcome=PermissionOutcome.CANCELLED,
             )
             return cancel_permission()
 
         return handler
+
+    def _make_elicitation_handler(
+        self,
+        emitter: RoomTurnEmitter,
+        room_id: str,
+    ) -> ElicitationHandler | None:
+        """Return a runtime-specific form handler, when the bridge supports one."""
+        del emitter, room_id
+        return None
+
+    def _normalize_acp_tool_call(
+        self,
+        tool_call: object,
+    ) -> tuple[str, dict[str, JsonValue]] | None:
+        """Return a runtime-specific ACP tool projection, when one is needed."""
+        del tool_call
+        return None
 
     async def _resolve_permission_option(
         self,

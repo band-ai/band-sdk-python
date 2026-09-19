@@ -36,6 +36,11 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
+from band.integrations.omp import (
+    OMP_BINARY,
+    OMP_GEMINI_API_KEY_ENV,
+    OMP_OPENAI_API_KEY_ENV,
+)
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.paths import REPO_ROOT
 
@@ -153,7 +158,7 @@ class Dep(Enum):
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
-    OMP = "omp"  # OMP CLI, its Bun runtime, and a Gemini Developer API key
+    OMP = "omp"  # OMP CLI, its Bun runtime, and the selected model's API key
 
 
 @dataclass(frozen=True)
@@ -170,6 +175,21 @@ class DepSpec:
     reason: str
     lane: Lane = DEFAULT_LANE
     preflight: Callable[[BaselineSettings], str | None] | None = None
+
+
+class OmpProvider(StrEnum):
+    """OMP model providers supported by the baseline's hermetic spawn."""
+
+    OPENAI = "openai"
+    GOOGLE = "google"
+    GEMINI = "gemini"
+
+
+_OMP_PROVIDER_ENV: dict[OmpProvider, str] = {
+    OmpProvider.OPENAI: OMP_OPENAI_API_KEY_ENV,
+    OmpProvider.GOOGLE: OMP_GEMINI_API_KEY_ENV,
+    OmpProvider.GEMINI: OMP_GEMINI_API_KEY_ENV,
+}
 
 
 def _google_available(settings: BaselineSettings) -> bool:
@@ -200,15 +220,32 @@ def _copilot_cli_available(settings: BaselineSettings) -> bool:
 
 def _omp_command(settings: BaselineSettings) -> list[str]:
     """The configured OMP command, or its native executable."""
-    return shlex.split(settings.backends.omp_command) or ["omp"]
+    return shlex.split(settings.backends.omp_command) or [OMP_BINARY]
+
+
+def omp_provider_credential(settings: BaselineSettings) -> tuple[str, str] | None:
+    """Credential OMP needs for its explicitly-selected model provider."""
+    credentials = settings.llm_credentials
+    provider_name = settings.backends.omp_model.partition("/")[0].lower()
+    try:
+        provider = OmpProvider(provider_name)
+    except ValueError:
+        return None
+    match provider:
+        case OmpProvider.OPENAI:
+            return (_OMP_PROVIDER_ENV[provider], credentials.openai_api_key)
+        case OmpProvider.GOOGLE | OmpProvider.GEMINI:
+            return (
+                _OMP_PROVIDER_ENV[provider],
+                credentials.gemini_api_key or credentials.google_api_key,
+            )
 
 
 def _omp_available(settings: BaselineSettings) -> bool:
-    """Whether OMP and a direct Gemini Developer credential are configured."""
-    credentials = settings.llm_credentials
+    """Whether OMP and the selected model provider's direct credential exist."""
+    credential = omp_provider_credential(settings)
     return bool(
-        shutil.which(_omp_command(settings)[0])
-        and (credentials.gemini_api_key or credentials.google_api_key)
+        shutil.which(_omp_command(settings)[0]) and credential and credential[1]
     )
 
 
@@ -314,7 +351,8 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.OMP: DepSpec(
         _omp_available,
-        "OMP_COMMAND/`omp` must be on PATH and GOOGLE_API_KEY or GEMINI_API_KEY must be set",
+        "OMP_COMMAND/`omp` must be on PATH and OMP_MODEL must name a supported "
+        "provider with its matching API key configured",
         lane=Lane.BACKENDS,
         preflight=_omp_preflight,
     ),

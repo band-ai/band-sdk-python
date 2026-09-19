@@ -62,6 +62,12 @@ class ToolStatus(StrEnum):
     FAILED = "failed"
 
 
+class PermissionOutcome(StrEnum):
+    """The permission decision vocabulary shared by ACP bridge emitters."""
+
+    CANCELLED = "cancelled"
+
+
 @dataclass(frozen=True)
 class ACPToolCall:
     """One ACP tool invocation, normalized for room persistence."""
@@ -75,6 +81,8 @@ class ACPToolCall:
         cls,
         tool_call: object,
         canonicalize: Callable[[str], str] | None = None,
+        tool_name: str | None = None,
+        arguments: dict[str, JsonValue] | None = None,
     ) -> ACPToolCall:
         """Normalize an ACP tool-call model into the room lifecycle shape.
 
@@ -82,7 +90,7 @@ class ACPToolCall:
         (e.g. Copilot's ``band-band_send_message``) at construction, so the
         canonical name is the only one the object ever carries.
         """
-        name = str(
+        name = tool_name or str(
             getattr(tool_call, "title", None) or getattr(tool_call, "name", "unknown")
         )
         if canonicalize is not None:
@@ -91,7 +99,9 @@ class ACPToolCall:
         return cls(
             tool_call_id=str(getattr(tool_call, "tool_call_id", "")),
             name=name,
-            arguments=(
+            arguments=arguments
+            if arguments is not None
+            else (
                 cast(dict[str, JsonValue], raw_input)
                 if isinstance(raw_input, dict)
                 else {}

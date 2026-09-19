@@ -7,16 +7,22 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from acp import connect_to_agent, spawn_agent_process, text_block
 from acp.exceptions import RequestError
 from acp.interfaces import Client
 from acp.schema import (
+    AcceptElicitationResponse,
+    ClientCapabilities,
+    CreateElicitationResponse,
+    DeclineElicitationResponse,
+    ElicitationMode,
     LoadSessionResponse,
     NewSessionResponse,
     SetSessionConfigOptionResponse,
 )
+from pydantic import JsonValue
 
 from band.integrations.acp.client_profiles import (
     ACPClientProfile,
@@ -35,6 +41,8 @@ logger = logging.getLogger(__name__)
 ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
 PermissionHandler = Callable[..., Awaitable[dict[str, object]]]
+ElicitationHandler = Callable[..., Awaitable[CreateElicitationResponse]]
+ToolCallNormalizer = Callable[[object], tuple[str, dict[str, JsonValue]] | None]
 ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
 MCPTransportKind = Literal["http", "sse"]
 
@@ -44,7 +52,10 @@ MCPTransportKind = Literal["http", "sse"]
 # ``{"outcome": {"outcome": "cancelled"}}`` (see ``acp.schema`` AllowedOutcome /
 # DeniedOutcome). There is no ``"allowed"`` literal — emitting one makes a
 # spec-strict agent (e.g. codex-acp) fail to parse the response and abort the turn.
-_ALLOW_OPTION_KINDS = ("allow_once", "allow_always")
+ACP_PERMISSION_ALLOW_ONCE = "allow_once"
+ACP_PERMISSION_ALLOW_ALWAYS = "allow_always"
+ACP_PERMISSION_REJECT_ONCE = "reject_once"
+_ALLOW_OPTION_KINDS = (ACP_PERMISSION_ALLOW_ONCE, ACP_PERMISSION_ALLOW_ALWAYS)
 
 
 def select_allow_option_id(options: object) -> str | None:
@@ -89,6 +100,16 @@ def allow_permission(option_id: str) -> dict[str, object]:
 def cancel_permission() -> dict[str, object]:
     """An ACP ``RequestPermissionResponse`` cancelling the request."""
     return {"outcome": {"outcome": "cancelled"}}
+
+
+def accept_elicitation(content: dict[str, object]) -> AcceptElicitationResponse:
+    """An ACP form-elicitation response carrying the accepted values."""
+    return AcceptElicitationResponse(action="accept", content=content)
+
+
+def decline_elicitation() -> DeclineElicitationResponse:
+    """An ACP form-elicitation response that declines the request."""
+    return DeclineElicitationResponse(action="decline")
 
 
 def _strict_json_equal(a: object, b: object) -> bool:
@@ -178,6 +199,7 @@ def tcp_spawn_process(
     port: int,
     *,
     limit: int = ACP_STDIO_LIMIT_BYTES,
+    use_unstable_protocol: bool = False,
 ) -> Callable[..., AbstractAsyncContextManager[tuple[object, object]]]:
     """Build a ``spawn_process`` callable that connects to an ACP server over TCP.
 
@@ -195,6 +217,7 @@ def tcp_spawn_process(
         *_command: object,
         env: dict[str, str] | None = None,
         transport_kwargs: dict[str, object] | None = None,
+        use_unstable_protocol: bool = use_unstable_protocol,
     ) -> AsyncIterator[tuple[object, object]]:
         del _command, env, transport_kwargs  # subprocess-only; unused for TCP
         reader, writer = await asyncio.open_connection(host, port, limit=limit)
@@ -202,7 +225,12 @@ def tcp_spawn_process(
         # output_stream=reader) and it type-guards writer: StreamWriter /
         # reader: StreamReader. Unlike spawn_agent_process it does no cleanup,
         # so we close the connection and transport ourselves.
-        conn = connect_to_agent(client, writer, reader)
+        conn = connect_to_agent(
+            client,
+            writer,
+            reader,
+            use_unstable_protocol=use_unstable_protocol,
+        )
         try:
             yield conn, writer
         finally:
@@ -221,7 +249,12 @@ def tcp_spawn_process(
 class ACPConnectionProtocol(Protocol):
     """Protocol for the ACP agent connection returned by spawn_agent_process."""
 
-    async def initialize(self, *, protocol_version: int) -> object: ...
+    async def initialize(
+        self,
+        *,
+        protocol_version: int,
+        client_capabilities: ClientCapabilities | None = None,
+    ) -> object: ...
 
     async def authenticate(self, *, method_id: str) -> object: ...
 
@@ -272,6 +305,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self,
         profile: ACPClientProfile | None = None,
         canonicalize_tool_name: Callable[[str], str] | None = None,
+        normalize_tool_call: ToolCallNormalizer | None = None,
     ) -> None:
         self._profile = profile or NoopACPClientProfile()
         # Rewrites a runtime's MCP spelling of a tool name (e.g. Copilot's
@@ -279,8 +313,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         # single point where tool-call chunks are born, so every downstream
         # consumer (room narration, reply suppression) sees one vocabulary.
         self._canonicalize_tool_name = canonicalize_tool_name or (lambda name: name)
+        self._normalize_tool_call = normalize_tool_call
         self._session_chunks: dict[str, list[CollectedChunk]] = {}
         self._permission_handlers: dict[str, PermissionHandler] = {}
+        self._elicitation_handlers: dict[str, ElicitationHandler] = {}
         # Per session, the canonical tool_result chunk for each tool_call_id, so a
         # call's stream of tool_call_updates folds into one result, finalized once
         # when the call reaches a terminal status (see _ingest_tool_result). Reset
@@ -344,7 +380,17 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
     def _tool_call_chunk(self, update: object) -> CollectedChunk:
         raw_input = getattr(update, "raw_input", None)
-        call = ACPToolCall.from_acp(update, canonicalize=self._canonicalize_tool_name)
+        normalized = (
+            self._normalize_tool_call(update)
+            if self._normalize_tool_call is not None
+            else None
+        )
+        call = ACPToolCall.from_acp(
+            update,
+            canonicalize=self._canonicalize_tool_name,
+            tool_name=normalized[0] if normalized is not None else None,
+            arguments=normalized[1] if normalized is not None else None,
+        )
         metadata = {
             "tool_call_id": call.tool_call_id,
             "raw_input": raw_input,
@@ -589,6 +635,21 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         logger.debug("Auto-cancelling permission request for session %s", session_id)
         return cancel_permission()
 
+    async def create_elicitation(
+        self,
+        message: str,
+        mode: ElicitationMode,
+        **kwargs: Any,
+    ) -> CreateElicitationResponse:
+        """Route a form elicitation to the handler for its ACP session."""
+        session_id = getattr(getattr(mode, "root", mode), "session_id", None)
+        handler = self._elicitation_handlers.get(str(session_id))
+        if handler is None:
+            logger.debug("Declining elicitation without a session handler")
+            return decline_elicitation()
+        async with self._session_lock(str(session_id)):
+            return await handler(message=message, mode=mode, **kwargs)
+
     def set_permission_handler(
         self,
         session_id: str,
@@ -599,9 +660,20 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         else:
             self._permission_handlers[session_id] = handler
 
+    def set_elicitation_handler(
+        self,
+        session_id: str,
+        handler: ElicitationHandler | None,
+    ) -> None:
+        if handler is None:
+            self._elicitation_handlers.pop(session_id, None)
+        else:
+            self._elicitation_handlers[session_id] = handler
+
     def reset_session(self, session_id: str) -> None:
         self._session_chunks.pop(session_id, None)
         self._permission_handlers.pop(session_id, None)
+        self._elicitation_handlers.pop(session_id, None)
         self._result_chunks.pop(session_id, None)
         self._tool_calls.pop(session_id, None)
         self._emitted_results.pop(session_id, None)
@@ -696,12 +768,16 @@ class ACPRuntime:
         command: list[str],
         env: dict[str, str] | None = None,
         auth_method: str | None = None,
+        client_capabilities: ClientCapabilities | None = None,
+        use_unstable_protocol: bool = False,
         client_factory: Callable[[], ACPCollectingClient] | None = None,
         spawn_process: Callable[..., object] | None = None,
     ) -> None:
         self._command = list(command)
         self._env = env
         self._auth_method = auth_method
+        self._client_capabilities = client_capabilities
+        self._use_unstable_protocol = use_unstable_protocol
         self._client_factory = client_factory or ACPCollectingClient
         self._spawn_process = spawn_process or spawn_agent_process
 
@@ -733,12 +809,20 @@ class ACPRuntime:
                 *self._command,
                 env=self._env,
                 transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+                use_unstable_protocol=self._use_unstable_protocol,
             ),
         )
         self._ctx = ctx
         try:
             self._conn, _ = await ctx.__aenter__()
-            init_response = await self._conn.initialize(protocol_version=1)
+            init_response = (
+                await self._conn.initialize(protocol_version=1)
+                if self._client_capabilities is None
+                else await self._conn.initialize(
+                    protocol_version=1,
+                    client_capabilities=self._client_capabilities,
+                )
+            )
             self._agent_mcp_transport = self._select_mcp_transport(init_response)
             self._agent_supports_session_load = self._select_session_load(init_response)
             self._agent_supports_session_close = self._select_session_close(
@@ -906,6 +990,14 @@ class ACPRuntime:
     ) -> None:
         if self._client is not None:
             self._client.set_permission_handler(session_id, handler)
+
+    def set_elicitation_handler(
+        self,
+        session_id: str,
+        handler: ElicitationHandler | None,
+    ) -> None:
+        if self._client is not None:
+            self._client.set_elicitation_handler(session_id, handler)
 
     def get_collected_chunks(self, session_id: str) -> list[CollectedChunk]:
         if self._client is None:

@@ -25,7 +25,7 @@ backend via `ACPClientAdapter`.
 | `cursor.py` | Cursor CLI with a vendor profile + auth |
 | `bridge_architecture.py` | Fully env-driven bridge configuration |
 | `copilot.py` | GitHub Copilot CLI (`copilot --acp`), stdio or TCP |
-| `omp.py` | Oh My P.I. (`omp acp`), stdio with Gemini Developer API auth |
+| `omp.py` | Oh My P.I. (`omp acp`), stdio with OpenAI API auth |
 
 ## `copilot_docker/` — Copilot-in-a-container deployments
 
@@ -56,9 +56,9 @@ uv run examples/acp/clients/copilot.py
 ### OMP
 
 OMP's native ACP server runs over stdio. Install Bun (version 1.3.14 or newer),
-then install `@oh-my-pi/pi-coding-agent` so `omp` is on `PATH`. Set a Gemini
-Developer API key as `GEMINI_API_KEY` or `GOOGLE_API_KEY`; `omp.py` passes it to
-the child process as `GEMINI_API_KEY`. For automated runs, use a fresh
-`PI_CODING_AGENT_DIR` and disposable working directory. Keep OMP in a permission-
-gated approval mode such as `always-ask`: `--yolo` / auto-approve modes bypass the
-resolver that protects tool calls.
+then install `@oh-my-pi/pi-coding-agent` so `omp` is on `PATH`. Set
+`OPENAI_API_KEY`; `omp.py` passes it to the child process with the
+`openai/gpt-5.4-mini` model. For automated runs, use a fresh
+`PI_CODING_AGENT_DIR` and disposable working directory. Keep OMP in a
+permission-gated approval mode such as `always-ask`: `--yolo` / auto-approve modes
+bypass the resolver that protects tool calls.

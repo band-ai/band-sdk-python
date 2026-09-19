@@ -10,6 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.client.connection import ClientSideConnection
 from acp.exceptions import RequestError
+from acp.schema import (
+    ClientCapabilities,
+    ElicitationCapabilities,
+    ElicitationFormCapabilities,
+)
 
 from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
@@ -131,6 +136,30 @@ class TestACPCollectingClientCoalescing:
             "tool_call",
             "text",
         ]  # runs on either side stay distinct
+
+    @pytest.mark.asyncio
+    async def test_tool_call_normalizer_replaces_the_agent_title_and_arguments(
+        self,
+    ) -> None:
+        normalized_name = "band_add_participant"
+        normalized_arguments = {"participant_ids": ["agent-123"]}
+        client = ACPCollectingClient(
+            normalize_tool_call=lambda _update: (normalized_name, normalized_arguments)
+        )
+        update = MagicMock(
+            session_update="tool_call",
+            title="Calling the requested tool",
+            tool_call_id="tool-1",
+            raw_input={"path": "xd://mcp__band_band_add_participant"},
+            status="in_progress",
+        )
+
+        await client.session_update("s1", update)
+
+        call = client.get_collected_chunks("s1")[0].tool
+        assert call is not None
+        assert call.name == normalized_name
+        assert call.arguments == normalized_arguments
 
     @pytest.mark.asyncio
     async def test_tool_result_falls_back_to_content_blocks_when_raw_output_unset(
@@ -677,6 +706,29 @@ class TestACPRuntime:
         assert runtime._agent_supports_session_load
         mock_conn.initialize.assert_awaited_once_with(protocol_version=1)
         mock_conn.authenticate.assert_awaited_once_with(method_id="cursor_login")
+
+    @pytest.mark.asyncio
+    async def test_start_forwards_elicitation_capabilities_to_an_unstable_agent(
+        self, make_acp_transport
+    ) -> None:
+        transport = make_acp_transport()
+        capabilities = ClientCapabilities(
+            elicitation=ElicitationCapabilities(form=ElicitationFormCapabilities())
+        )
+        runtime = ACPRuntime(
+            command=["omp", "acp"],
+            client_capabilities=capabilities,
+            use_unstable_protocol=True,
+            spawn_process=transport,
+        )
+
+        await runtime.start()
+
+        transport.conn.initialize.assert_awaited_once_with(
+            protocol_version=1,
+            client_capabilities=capabilities,
+        )
+        assert transport.last_kwargs["use_unstable_protocol"] is True
 
     @pytest.mark.asyncio
     async def test_create_session_and_prompt_use_active_connection(self) -> None:

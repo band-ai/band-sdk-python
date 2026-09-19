@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
+from acp.schema import (
+    AcceptElicitationResponse,
+    DeclineElicitationResponse,
+    ElicitationFormSessionMode,
+)
 from pydantic import BaseModel
+from unittest.mock import AsyncMock, MagicMock
 
 from band.adapters.omp_acp import (
     DEFAULT_OMP_ACP_COMMAND,
@@ -12,6 +21,33 @@ from band.adapters.omp_acp import (
 )
 from band.integrations.acp.client_adapter import ACPClientAdapter, ACPPermissionRequest
 from band.integrations.acp.session_config import ACPConfigRequest
+from band.integrations.omp import (
+    OMP_ALWAYS_ASK_APPROVAL_MODE,
+    OMP_ACP_SUBCOMMAND,
+    OMP_APPROVAL_MODE_ARGUMENT,
+    OMP_AUTO_APPROVE_ARGUMENT,
+    OMP_BINARY,
+    OMP_ELICITATION_APPROVE_OPTION,
+    OMP_ELICITATION_DENY_OPTION,
+    OMP_ELICITATION_FIELD,
+    OMP_ELICITATION_MESSAGE_FIELD,
+    OMP_GEMINI_API_KEY_ENV,
+    OMP_MCP_CONTENT_FIELD,
+    OMP_MCP_DEVICE_PREFIX,
+    OMP_MCP_PATH_FIELD,
+    OMP_OPENAI_API_KEY_ENV,
+    OMP_STATE_DIRECTORY_ENV,
+    OMP_YOLO_APPROVAL_MODE,
+    OMP_YOLO_ARGUMENT,
+)
+from band.runtime.tools import BandTool
+from tests.e2e.baseline.settings import (
+    DEFAULT_OMP_MODEL,
+    Backends,
+    BaselineSettings,
+    LLMCredentials,
+)
+from tests.e2e.baseline.toolkit.builders import omp_acp_env
 
 
 class TestOmpACPAdapterConstruction:
@@ -24,6 +60,10 @@ class TestOmpACPAdapterConstruction:
         assert adapter._command == list(DEFAULT_OMP_ACP_COMMAND)
         assert adapter._host is None
         assert adapter._port is None
+        assert adapter._runtime._use_unstable_protocol
+        assert adapter._runtime._client_capabilities is not None
+        assert adapter._runtime._client_capabilities.elicitation is not None
+        assert adapter._runtime._client_capabilities.elicitation.form is not None
 
     def test_config_forwards_shared_acp_options(self) -> None:
         async def session_resolver(request: ACPConfigRequest) -> dict[str, str]:
@@ -36,9 +76,14 @@ class TestOmpACPAdapterConstruction:
 
         adapter = OmpACPAdapter(
             OmpACPAdapterConfig(
-                command=("custom-omp", "acp", "--approval-mode", "always-ask"),
+                command=(
+                    "custom-omp",
+                    OMP_ACP_SUBCOMMAND,
+                    OMP_APPROVAL_MODE_ARGUMENT,
+                    OMP_ALWAYS_ASK_APPROVAL_MODE,
+                ),
                 cwd="/tmp/omp",
-                env={"GEMINI_API_KEY": "key"},
+                env={OMP_GEMINI_API_KEY_ENV: "key"},
                 custom_section="Use concise replies.",
                 inject_band_tools=False,
                 mcp_servers=[{"name": "existing"}],
@@ -49,12 +94,12 @@ class TestOmpACPAdapterConstruction:
 
         assert adapter._command == [
             "custom-omp",
-            "acp",
-            "--approval-mode",
-            "always-ask",
+            OMP_ACP_SUBCOMMAND,
+            OMP_APPROVAL_MODE_ARGUMENT,
+            OMP_ALWAYS_ASK_APPROVAL_MODE,
         ]
         assert adapter._cwd == "/tmp/omp"
-        assert adapter._env == {"GEMINI_API_KEY": "key"}
+        assert adapter._env == {OMP_GEMINI_API_KEY_ENV: "key"}
         assert adapter._custom_section == "Use concise replies."
         assert adapter._inject_band_tools is False
         assert adapter._mcp_servers == [{"name": "existing"}]
@@ -74,13 +119,150 @@ class TestOmpACPAdapterConstruction:
         assert adapter._custom_tools == [tool]
 
     @pytest.mark.parametrize(
+        ("model", "credentials", "expected_env"),
+        [
+            (
+                DEFAULT_OMP_MODEL,
+                LLMCredentials(openai_api_key="openai-key"),
+                {OMP_OPENAI_API_KEY_ENV: "openai-key"},
+            ),
+            (
+                "google/gemini-2.5-flash",
+                LLMCredentials(gemini_api_key="gemini-key"),
+                {OMP_GEMINI_API_KEY_ENV: "gemini-key"},
+            ),
+        ],
+    )
+    def test_e2e_spawn_uses_the_selected_model_provider_key(
+        self,
+        model: str,
+        credentials: LLMCredentials,
+        expected_env: dict[str, str],
+    ) -> None:
+        settings = BaselineSettings(
+            llm_credentials=credentials,
+            backends=Backends(omp_model=model),
+        )
+
+        env = omp_acp_env(settings, "/tmp/omp-state")
+
+        assert env == {**expected_env, OMP_STATE_DIRECTORY_ENV: "/tmp/omp-state"}
+
+    @pytest.mark.parametrize(
         "command",
         [
-            ("omp", "acp", "--yolo"),
-            ("omp", "acp", "--auto-approve"),
-            ("omp", "acp", "--approval-mode", "yolo"),
+            (OMP_BINARY, OMP_ACP_SUBCOMMAND, OMP_YOLO_ARGUMENT),
+            (OMP_BINARY, OMP_ACP_SUBCOMMAND, OMP_AUTO_APPROVE_ARGUMENT),
+            (
+                OMP_BINARY,
+                OMP_ACP_SUBCOMMAND,
+                OMP_APPROVAL_MODE_ARGUMENT,
+                OMP_YOLO_APPROVAL_MODE,
+            ),
         ],
     )
     def test_rejects_auto_approval_modes(self, command: tuple[str, ...]) -> None:
         with pytest.raises(ValueError, match="bypass Band permission resolution"):
             OmpACPAdapter(OmpACPAdapterConfig(command=command))
+
+    def test_decodes_its_band_mcp_device_call(self) -> None:
+        adapter = OmpACPAdapter()
+        participant_id = "agent-123"
+        raw_input = {
+            OMP_MCP_PATH_FIELD: (f"{OMP_MCP_DEVICE_PREFIX}{BandTool.ADD_PARTICIPANT}"),
+            OMP_MCP_CONTENT_FIELD: json.dumps({"participant_ids": [participant_id]}),
+        }
+
+        normalized = adapter._normalize_acp_tool_call(
+            SimpleNamespace(raw_input=raw_input)
+        )
+
+        assert normalized == (
+            BandTool.ADD_PARTICIPANT,
+            {"participant_ids": [participant_id]},
+        )
+
+    def test_leaves_a_foreign_mcp_device_call_unattributed(self) -> None:
+        adapter = OmpACPAdapter()
+        raw_input = {
+            OMP_MCP_PATH_FIELD: f"{OMP_MCP_DEVICE_PREFIX}other_{BandTool.ADD_PARTICIPANT}",
+            OMP_MCP_CONTENT_FIELD: json.dumps({}),
+        }
+
+        assert (
+            adapter._normalize_acp_tool_call(SimpleNamespace(raw_input=raw_input))
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_approval_elicitation_uses_the_shared_permission_resolver(
+        self,
+    ) -> None:
+        observed_requests: list[ACPPermissionRequest] = []
+
+        async def approve(request: ACPPermissionRequest) -> str | None:
+            observed_requests.append(request)
+            return OMP_ELICITATION_APPROVE_OPTION
+
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(resolve_permission=approve))
+        emitter = MagicMock()
+        emitter.open_permission = AsyncMock()
+        message = "Allow tool: write\nPath: /tmp/guarded.txt"
+        response = await adapter._make_elicitation_handler(emitter, "room-1")(
+            message=message,
+            mode=_omp_approval_form("session-1"),
+        )
+
+        assert isinstance(response, AcceptElicitationResponse)
+        assert response.content == {
+            OMP_ELICITATION_FIELD: OMP_ELICITATION_APPROVE_OPTION
+        }
+        assert observed_requests[0].room_id == "room-1"
+        assert observed_requests[0].tool_call.arguments == {
+            OMP_ELICITATION_MESSAGE_FIELD: message
+        }
+        emitter.open_permission.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_elicitation_form_is_declined(self) -> None:
+        adapter = OmpACPAdapter()
+        emitter = MagicMock()
+        emitter.open_permission = AsyncMock()
+        response = await adapter._make_elicitation_handler(emitter, "room-1")(
+            message="Choose a model",
+            mode=ElicitationFormSessionMode(
+                session_id="session-1",
+                requested_schema={
+                    "type": "object",
+                    "properties": {
+                        OMP_ELICITATION_FIELD: {
+                            "type": "string",
+                            "enum": [OMP_ELICITATION_APPROVE_OPTION],
+                        }
+                    },
+                },
+            ),
+        )
+
+        assert isinstance(response, DeclineElicitationResponse)
+        emitter.open_permission.assert_not_awaited()
+
+
+def _omp_approval_form(session_id: str) -> ElicitationFormSessionMode:
+    """The OMP approval form contract exercised by the adapter."""
+    return ElicitationFormSessionMode(
+        session_id=session_id,
+        requested_schema={
+            "type": "object",
+            "properties": {
+                OMP_ELICITATION_FIELD: {
+                    "type": "string",
+                    "enum": [
+                        OMP_ELICITATION_APPROVE_OPTION,
+                        OMP_ELICITATION_DENY_OPTION,
+                    ],
+                }
+            },
+            "required": [OMP_ELICITATION_FIELD],
+        },
+    )

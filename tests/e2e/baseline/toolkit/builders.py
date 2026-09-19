@@ -24,6 +24,14 @@ from typing import Any
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
+from band.integrations.omp import (
+    OMP_ACP_SUBCOMMAND,
+    OMP_ALWAYS_ASK_APPROVAL_MODE,
+    OMP_APPROVAL_MODE_ARGUMENT,
+    OMP_BINARY,
+    OMP_MODEL_ARGUMENT,
+    OMP_STATE_DIRECTORY_ENV,
+)
 from band.testing import feature_kwargs
 
 from tests.e2e.baseline.settings import BaselineSettings
@@ -33,7 +41,7 @@ from tests.e2e.baseline.toolkit.adapters import (
     _reject_tools,
     adapter,
 )
-from tests.e2e.baseline.toolkit.deps import Dep
+from tests.e2e.baseline.toolkit.deps import Dep, omp_provider_credential
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 # Spelled out rather than derived from the Capability enum: an adapter's
@@ -445,21 +453,24 @@ def omp_state_dir(work_dir: str) -> str:
 
 
 def omp_acp_env(s: BaselineSettings, state_dir: str) -> dict[str, str]:
-    """Environment for a hermetic OMP ACP spawn using Gemini Developer auth."""
-    api_key = s.llm_credentials.gemini_api_key or s.llm_credentials.google_api_key
-    return {"GEMINI_API_KEY": api_key, "PI_CODING_AGENT_DIR": state_dir}
+    """Environment for a hermetic OMP ACP spawn using its selected provider."""
+    credential = omp_provider_credential(s)
+    if credential is None:
+        raise ValueError("OMP_MODEL must name a supported provider-qualified model")
+    key_name, api_key = credential
+    return {key_name: api_key, OMP_STATE_DIRECTORY_ENV: state_dir}
 
 
 def omp_acp_command(s: BaselineSettings) -> tuple[str, ...]:
     """The explicit non-yolo OMP ACP command for one baseline cell."""
-    command = tuple(shlex.split(s.backends.omp_command)) or ("omp",)
+    command = tuple(shlex.split(s.backends.omp_command)) or (OMP_BINARY,)
     return (
         *command,
-        "acp",
-        "--model",
+        OMP_ACP_SUBCOMMAND,
+        OMP_MODEL_ARGUMENT,
         s.backends.omp_model,
-        "--approval-mode",
-        "always-ask",
+        OMP_APPROVAL_MODE_ARGUMENT,
+        OMP_ALWAYS_ASK_APPROVAL_MODE,
     )
 
 
