@@ -25,6 +25,8 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PromptResponse,
+    SessionCapabilities,
+    SessionCloseCapabilities,
     SessionConfigOptionSelect,
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
@@ -74,7 +76,7 @@ class FakeACPAgent:
         self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
         self.config_option_requests: list[tuple[str, str, str]] = []
-        self.cancelled_sessions: list[str] = []
+        self.closed_sessions: list[str] = []
         self.approved: bool | None = None
 
     # -- scripting ---------------------------------------------------------------
@@ -329,6 +331,9 @@ class FakeACPAgent:
             agent_capabilities=AgentCapabilities(
                 load_session=self._supports_session_load,
                 mcp_capabilities=McpCapabilities(http=self._http, sse=self._sse),
+                session_capabilities=SessionCapabilities(
+                    close=SessionCloseCapabilities()
+                ),
             ),
         )
 
@@ -379,10 +384,10 @@ class FakeACPAgent:
         self._config_options = updated
         return SetSessionConfigOptionResponse(config_options=self._config_options)
 
-    async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        """Record that the client cancelled a session before prompting it."""
+    async def close_session(self, session_id: str, **kwargs: Any) -> None:
+        """Record that the client closed a session before prompting it."""
         del kwargs
-        self.cancelled_sessions.append(session_id)
+        self.closed_sessions.append(session_id)
 
     def prompt_texts(self) -> list[str]:
         """Each received prompt's text, one string per prompt, in arrival order."""

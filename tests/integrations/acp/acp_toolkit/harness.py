@@ -291,7 +291,12 @@ def _pair_in_process(agent: FakeACPAgent) -> Callable[..., Any]:
         reader_c, writer_c = await asyncio.open_connection(sock=client_sock)
         reader_a, writer_a = await asyncio.open_connection(sock=agent_sock)
         # listening=True starts the agent's receive loop and fires agent.on_connect.
-        agent_conn = AgentSideConnection(agent, writer_a, reader_a)
+        agent_conn = AgentSideConnection(
+            agent,
+            writer_a,
+            reader_a,
+            use_unstable_protocol=True,
+        )
         conn = connect_to_agent(client, writer_c, reader_c)
         try:
             yield conn, agent_conn
