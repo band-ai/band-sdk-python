@@ -399,7 +399,7 @@ class TestACPConfigurationHarness:
             reply = await session.send("Retry")
 
         assert reply.texts == ["Configured"]
-        assert [item["session_id"] for item in agent.sessions] == [
+        assert agent.session_ids() == [
             "fake-session-1",
             "fake-session-2",
         ]
