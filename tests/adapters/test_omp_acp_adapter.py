@@ -30,6 +30,7 @@ from band.integrations.omp import (
     OMP_AUTO_APPROVAL_MODES,
     OMP_BINARY,
     OMP_ELICITATION_APPROVE_OPTION,
+    OMP_ELICITATION_CALL_ID_PREFIX,
     OMP_ELICITATION_DENY_OPTION,
     OMP_ELICITATION_FIELD,
     OMP_ELICITATION_MESSAGE_FIELD,
@@ -233,6 +234,34 @@ class TestOmpACPAdapterConstruction:
             OMP_ELICITATION_MESSAGE_FIELD: message
         }
         emitter.open_permission.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_denied_approvals_in_one_session_have_distinct_call_ids(self) -> None:
+        async def deny(request: ACPPermissionRequest) -> str | None:
+            del request
+            return OMP_ELICITATION_DENY_OPTION
+
+        adapter = OmpACPAdapter(OmpACPAdapterConfig(resolve_permission=deny))
+        emitter = MagicMock()
+        emitter.open_permission = AsyncMock()
+        handler = adapter._make_elicitation_handler(emitter, "room-1")
+
+        for message in ("Allow tool: write", "Allow tool: bash"):
+            response = await handler(
+                message=message,
+                mode=_omp_approval_form("session-1"),
+            )
+            assert isinstance(response, DeclineElicitationResponse)
+
+        denied_calls = [
+            call.kwargs["call"] for call in emitter.open_permission.await_args_list
+        ]
+        denied_call_ids = {call.tool_call_id for call in denied_calls}
+        assert len(denied_call_ids) == 2
+        assert all(
+            call_id.startswith(f"{OMP_ELICITATION_CALL_ID_PREFIX}:session-1:")
+            for call_id in denied_call_ids
+        )
 
     @pytest.mark.asyncio
     async def test_unknown_elicitation_form_is_declined(self) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from acp.schema import (
     ClientCapabilities,
@@ -123,7 +124,9 @@ class OmpACPAdapter(ACPClientAdapter):
                 return decline_elicitation()
 
             call = ACPToolCall(
-                tool_call_id=f"{OMP_ELICITATION_CALL_ID_PREFIX}:{session_id}",
+                tool_call_id=(
+                    f"{OMP_ELICITATION_CALL_ID_PREFIX}:{session_id}:{uuid4().hex}"
+                ),
                 name=OMP_ELICITATION_TOOL_NAME,
                 arguments={OMP_ELICITATION_MESSAGE_FIELD: message},
             )
