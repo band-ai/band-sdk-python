@@ -8,6 +8,7 @@ import os
 import shutil
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, ClassVar
 from uuid import uuid4
 
@@ -72,6 +73,15 @@ from band.runtime.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SessionInitializer:
+    """One room's shared, not-yet-published session setup."""
+
+    task: asyncio.Task[tuple[str, bool]]
+    waiters: int = 0
+
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 
@@ -202,7 +212,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._runtime = self._build_runtime(spawn_process)
 
         self._room_to_session: dict[str, str] = {}
-        self._session_initializers: dict[str, asyncio.Task[tuple[str, bool]]] = {}
+        self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
         self._band_mcp_backend: BandMCPBackend | None = None
         self._bootstrapped_sessions: set[str] = set()
@@ -596,19 +606,37 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 return self._room_to_session[room_id], False
             initializer = self._session_initializers.get(room_id)
             if initializer is None:
-                initializer = asyncio.create_task(
-                    self._initialize_session(room_id, history),
-                    name=f"acp-session:{room_id}",
+                initializer = SessionInitializer(
+                    task=asyncio.create_task(
+                        self._initialize_session(room_id, history),
+                        name=f"acp-session:{room_id}",
+                    )
                 )
                 self._session_initializers[room_id] = initializer
+            initializer.waiters += 1
 
         try:
-            return await asyncio.shield(initializer)
+            return await asyncio.shield(initializer.task)
         finally:
-            if initializer.done():
-                async with self._session_lock:
-                    if self._session_initializers.get(room_id) is initializer:
-                        self._session_initializers.pop(room_id)
+            await self._release_session_initializer(room_id, initializer)
+
+    async def _release_session_initializer(
+        self,
+        room_id: str,
+        initializer: SessionInitializer,
+    ) -> None:
+        """Drop a completed setup or cancel one no turn is still awaiting."""
+        async with self._session_lock:
+            if self._session_initializers.get(room_id) is not initializer:
+                return
+            initializer.waiters -= 1
+            if initializer.waiters:
+                return
+            self._session_initializers.pop(room_id)
+
+        if not initializer.task.done():
+            initializer.task.cancel()
+            await asyncio.gather(initializer.task, return_exceptions=True)
 
     async def _initialize_session(
         self,
@@ -683,7 +711,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self,
         mcp_servers: list[object],
     ) -> AsyncIterator[NewSessionResponse]:
-        """Yield a new session, cancelling it unless initialization completes."""
+        """Yield a new session, closing it unless initialization completes."""
         session = await self._runtime.create_session_response(
             cwd=self._cwd,
             mcp_servers=mcp_servers,
@@ -691,7 +719,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         try:
             yield session
         except BaseException:
-            await self._cancel_fresh_session(session.session_id)
+            await self._close_fresh_session(session.session_id)
             raise
 
     async def _record_session(self, room_id: str, session_id: str) -> None:
@@ -699,15 +727,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         async with self._session_lock:
             self._room_to_session[room_id] = session_id
 
-    async def _cancel_fresh_session(self, session_id: str) -> None:
+    async def _close_fresh_session(self, session_id: str) -> None:
         """Best-effort cleanup when configuration prevented first use."""
         try:
-            await self._runtime.cancel_session(session_id)
+            await self._runtime.close_session(session_id)
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except Exception:
             logger.warning(
-                "Could not cancel unconfigured ACP session %s",
+                "Could not close unconfigured ACP session %s",
                 session_id,
                 exc_info=True,
             )
@@ -922,10 +950,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     async def _cancel_session_initializers(
         self,
-        *initializers: asyncio.Task[tuple[str, bool]] | None,
+        *initializers: SessionInitializer | None,
     ) -> None:
         """Cancel in-flight setup before its runtime can be torn down."""
-        pending = tuple(task for task in initializers if task is not None)
+        pending = tuple(
+            initializer.task for initializer in initializers if initializer is not None
+        )
         for task in pending:
             task.cancel()
         if pending:

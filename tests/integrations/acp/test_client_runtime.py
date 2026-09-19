@@ -697,14 +697,17 @@ class TestACPRuntime:
         mock_conn.prompt.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_cancel_session_uses_the_active_connection(self) -> None:
+    async def test_close_session_uses_the_active_connection_when_supported(
+        self,
+    ) -> None:
         mock_conn = AsyncMock()
         runtime = ACPRuntime(command=["codex"])
         runtime._conn = mock_conn
+        runtime._agent_supports_session_close = True
 
-        await runtime.cancel_session("sess-1")
+        await runtime.close_session("sess-1")
 
-        mock_conn.cancel.assert_awaited_once_with("sess-1")
+        mock_conn.close_session.assert_awaited_once_with("sess-1")
 
     @pytest.mark.asyncio
     async def test_load_session_uses_only_a_declared_capability(self) -> None:

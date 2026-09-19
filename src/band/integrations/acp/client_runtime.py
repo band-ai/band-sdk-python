@@ -247,7 +247,7 @@ class ACPConnectionProtocol(Protocol):
         value: str,
     ) -> SetSessionConfigOptionResponse | None: ...
 
-    async def cancel(self, session_id: str) -> None: ...
+    async def close_session(self, session_id: str) -> object: ...
 
 
 class ACPSpawnContextProtocol(Protocol):
@@ -713,6 +713,7 @@ class ACPRuntime:
         self._stop_lock = asyncio.Lock()
         self._agent_mcp_transport: MCPTransportKind = "http"
         self._agent_supports_session_load = False
+        self._agent_supports_session_close = False
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -740,6 +741,9 @@ class ACPRuntime:
             init_response = await self._conn.initialize(protocol_version=1)
             self._agent_mcp_transport = self._select_mcp_transport(init_response)
             self._agent_supports_session_load = self._select_session_load(init_response)
+            self._agent_supports_session_close = self._select_session_close(
+                init_response
+            )
             if self._auth_method:
                 await self._conn.authenticate(method_id=self._auth_method)
                 logger.info("Authenticated with method: %s", self._auth_method)
@@ -865,10 +869,12 @@ class ACPRuntime:
             value=value,
         )
 
-    async def cancel_session(self, session_id: str) -> None:
-        """Tell the agent to abandon a session before its first prompt."""
+    async def close_session(self, session_id: str) -> None:
+        """Close a session when the agent advertised lifecycle support."""
+        if not self._agent_supports_session_close:
+            return
         conn = await self.ensure_connection(can_respawn=False)
-        await conn.cancel(session_id)
+        await conn.close_session(session_id)
 
     async def prompt(
         self,
@@ -926,6 +932,7 @@ class ACPRuntime:
             self._conn = None
             self._client = None
             self._agent_supports_session_load = False
+            self._agent_supports_session_close = False
         if ctx is None:
             return
         try:
@@ -945,6 +952,7 @@ class ACPRuntime:
         self._ctx = None
         self._conn = None
         self._agent_supports_session_load = False
+        self._agent_supports_session_close = False
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> MCPTransportKind:
@@ -962,6 +970,12 @@ class ACPRuntime:
     def _select_session_load(init_response: object) -> bool:
         capabilities = getattr(init_response, "agent_capabilities", None)
         return getattr(capabilities, "load_session", False) is True
+
+    @staticmethod
+    def _select_session_close(init_response: object) -> bool:
+        capabilities = getattr(init_response, "agent_capabilities", None)
+        session_capabilities = getattr(capabilities, "session_capabilities", None)
+        return getattr(session_capabilities, "close", None) is not None
 
     @staticmethod
     def _is_missing_session_error(error: RequestError) -> bool:
