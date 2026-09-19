@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,7 +20,7 @@ from band.integrations.acp.session_config import (
     ACPConfigError,
     apply_session_config_selections,
 )
-from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter
+from tests.integrations.acp.acp_toolkit import FakeACPAgent, Reply, acp_adapter
 
 
 def select_option(
@@ -37,6 +39,17 @@ def select_option(
             for value in values
         ],
     )
+
+
+def malformed_catalog_response() -> SimpleNamespace:
+    """A transport seam response whose catalog is not ACP schema data."""
+    return SimpleNamespace(config_options=["not-an-acp-option"])
+
+
+def assert_config_error(reply: Reply, expected: dict[str, str]) -> None:
+    """Assert the observable failure contract for one rejected configuration."""
+    assert reply.outline == ["error"]
+    assert reply.events[0]["metadata"]["acp_session_config"] == expected
 
 
 class TestApplySessionConfigSelections:
@@ -93,7 +106,11 @@ class TestApplySessionConfigSelections:
             ],
         )
         set_option = AsyncMock(
-            return_value=SetSessionConfigOptionResponse(config_options=[grouped_model])
+            return_value=SetSessionConfigOptionResponse(
+                config_options=[
+                    grouped_model.model_copy(update={"current_value": "large"})
+                ]
+            )
         )
 
         await apply_session_config_selections(
@@ -127,12 +144,65 @@ class TestApplySessionConfigSelections:
 
         set_option.assert_awaited_once_with("session-1", "model", "auto")
 
+    @pytest.mark.asyncio
+    async def test_rejects_a_malformed_refreshed_catalog(self) -> None:
+        effort = select_option("reasoning_effort", "medium", ["medium", "high"])
+        set_option = AsyncMock(return_value=malformed_catalog_response())
+
+        with pytest.raises(ACPConfigError, match="malformed catalog"):
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[effort],
+                selections={"reasoning_effort": "high"},
+                set_option=set_option,
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_a_malformed_catalog_before_a_later_selection(self) -> None:
+        model = select_option("model", "small", ["small", "large"])
+        effort = select_option("reasoning_effort", "medium", ["medium", "high"])
+        set_option = AsyncMock(return_value=malformed_catalog_response())
+
+        with pytest.raises(ACPConfigError, match="malformed catalog"):
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[model, effort],
+                selections={"model": "large", "reasoning_effort": "high"},
+                set_option=set_option,
+            )
+
+        set_option.assert_awaited_once_with("session-1", "model", "large")
+
+    @pytest.mark.asyncio
+    async def test_requires_the_refreshed_catalog_to_acknowledge_the_selection(
+        self,
+    ) -> None:
+        effort = select_option("reasoning_effort", "medium", ["medium", "high"])
+        set_option = AsyncMock(
+            return_value=SetSessionConfigOptionResponse(config_options=[effort])
+        )
+
+        with pytest.raises(ACPConfigError, match='did not apply value "high"'):
+            await apply_session_config_selections(
+                session_id="session-1",
+                config_options=[effort],
+                selections={"reasoning_effort": "high"},
+                set_option=set_option,
+            )
+
 
 class TestACPConfigurationHarness:
     @pytest.mark.asyncio
     async def test_generic_harness_applies_the_remote_effort_catalog(self) -> None:
         effort = select_option("reasoning_effort", "medium", ["medium", "high"])
-        agent = FakeACPAgent(config_options=[effort]).will_say("Configured")
+        agent = FakeACPAgent(config_options=[effort])
+
+        @agent.on_prompt
+        async def configured_prompt(fake: FakeACPAgent, session_id: str) -> None:
+            assert fake.config_option_requests == [
+                (session_id, "reasoning_effort", "high")
+            ]
+            await fake.say(session_id, "Configured")
 
         async def resolve_config(request: ACPConfigRequest) -> dict[str, str]:
             assert request.config_options == (effort,)
@@ -158,14 +228,104 @@ class TestACPConfigurationHarness:
         async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
             reply = await session.send("Configure the session")
 
-        assert reply.messages == []
-        assert reply.events[0]["message_type"] == "error"
-        assert reply.events[0]["metadata"]["acp_session_config"] == {
-            "session_id": "fake-session-1",
-            "option_id": "reasoning_effort",
-            "selected_value": "unsupported",
-        }
-        assert agent.prompts == []
+        assert reply.texts == []
+        assert_config_error(
+            reply,
+            {
+                "session_id": "fake-session-1",
+                "option_id": "reasoning_effort",
+                "selected_value": "unsupported",
+            },
+        )
+        assert agent.prompt_texts() == []
+        assert agent.cancelled_sessions == ["fake-session-1"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_falsy_resolver_result_is_reported_without_prompting(
+        self,
+    ) -> None:
+        effort = select_option("reasoning_effort", "medium", ["medium", "high"])
+        agent = FakeACPAgent(config_options=[effort])
+
+        async with acp_adapter(
+            agent,
+            resolve_session_config=AsyncMock(return_value=[]),
+        ) as session:
+            reply = await session.send("Configure the session")
+
+        assert reply.texts == []
+        assert_config_error(
+            reply,
+            {
+                "session_id": "fake-session-1",
+                "option_id": "resolver",
+                "selected_value": "",
+            },
+        )
+        assert agent.prompt_texts() == []
+        assert agent.cancelled_sessions == ["fake-session-1"]
+
+    @pytest.mark.asyncio
+    async def test_independent_rooms_configure_without_waiting_for_each_other(
+        self,
+    ) -> None:
+        effort = select_option("reasoning_effort", "medium", ["medium", "high"])
+        agent = FakeACPAgent(config_options=[effort]).will_say("Configured")
+        first_resolver_started = asyncio.Event()
+        second_resolver_started = asyncio.Event()
+        release_first_resolver = asyncio.Event()
+
+        async def resolve_config(request: ACPConfigRequest) -> None:
+            match request.room_id:
+                case "room-1":
+                    first_resolver_started.set()
+                    await release_first_resolver.wait()
+                case "room-2":
+                    second_resolver_started.set()
+                case room_id:
+                    raise AssertionError(f"Unexpected room: {room_id}")
+            return None
+
+        async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
+            first_turn = asyncio.create_task(session.send("First", room="room-1"))
+            await first_resolver_started.wait()
+            second_turn = asyncio.create_task(session.send("Second", room="room-2"))
+            await asyncio.wait_for(second_resolver_started.wait(), timeout=1)
+
+            assert len(agent.sessions) == 2
+
+            release_first_resolver.set()
+            first_reply, second_reply = await asyncio.gather(first_turn, second_turn)
+
+        assert first_reply.messages[0]["content"] == "Configured"
+        assert second_reply.messages[0]["content"] == "Configured"
+
+    @pytest.mark.asyncio
+    async def test_same_room_shares_one_inflight_configuration(self) -> None:
+        effort = select_option("reasoning_effort", "medium", ["medium", "high"])
+        agent = FakeACPAgent(config_options=[effort]).will_say("Configured")
+        resolver_started = asyncio.Event()
+        release_resolver = asyncio.Event()
+
+        async def resolve_config(request: ACPConfigRequest) -> None:
+            assert request.room_id == "room-1"
+            resolver_started.set()
+            await release_resolver.wait()
+            return None
+
+        async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
+            first_turn = asyncio.create_task(session.send("First"))
+            await resolver_started.wait()
+            second_turn = asyncio.create_task(session.send("Second"))
+            await asyncio.sleep(0)
+
+            assert len(agent.sessions) == 1
+
+            release_resolver.set()
+            await asyncio.gather(first_turn, second_turn)
+
+        assert len(agent.sessions) == 1
+        assert len(agent.prompt_texts()) == 2
 
     @pytest.mark.asyncio
     async def test_restored_session_uses_the_same_configuration_path(self) -> None:

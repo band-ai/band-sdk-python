@@ -146,16 +146,60 @@ async def apply_session_config_selections(
                 message=str(error),
             ) from error
 
-        if response is None or not isinstance(response.config_options, list):
-            raise ACPConfigError(
-                session_id=session_id,
-                option_id=option_id,
-                selected_value=selected_value,
-                message=(
-                    f'ACP config option "{option_id}" did not return a refreshed '
-                    "catalog."
-                ),
-            )
-        catalog = tuple(response.config_options)
+        catalog = refreshed_catalog(
+            response=response,
+            session_id=session_id,
+            option_id=option_id,
+            selected_value=selected_value,
+        )
 
+    return catalog
+
+
+def refreshed_catalog(
+    *,
+    response: SetSessionConfigOptionResponse | None,
+    session_id: str,
+    option_id: str,
+    selected_value: str,
+) -> tuple[SessionConfigOption, ...]:
+    """Validate one setter acknowledgement and return its complete catalog."""
+    if response is None or not isinstance(response.config_options, list):
+        raise ACPConfigError(
+            session_id=session_id,
+            option_id=option_id,
+            selected_value=selected_value,
+            message=(
+                f'ACP config option "{option_id}" did not return a refreshed catalog.'
+            ),
+        )
+    catalog = tuple(response.config_options)
+    if not all(isinstance(entry, SessionConfigOption) for entry in catalog):
+        raise ACPConfigError(
+            session_id=session_id,
+            option_id=option_id,
+            selected_value=selected_value,
+            message=f'ACP config option "{option_id}" returned a malformed catalog.',
+        )
+    selected_option = next((entry for entry in catalog if entry.id == option_id), None)
+    if not isinstance(selected_option, SessionConfigOptionSelect):
+        raise ACPConfigError(
+            session_id=session_id,
+            option_id=option_id,
+            selected_value=selected_value,
+            message=(
+                f'ACP config option "{option_id}" was not returned in the refreshed '
+                "catalog."
+            ),
+        )
+    if selected_option.current_value != selected_value:
+        raise ACPConfigError(
+            session_id=session_id,
+            option_id=option_id,
+            selected_value=selected_value,
+            message=(
+                f'ACP config option "{option_id}" did not apply value '
+                f'"{selected_value}".'
+            ),
+        )
     return catalog
