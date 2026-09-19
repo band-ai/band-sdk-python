@@ -20,6 +20,7 @@ class Adapter(StrEnum):
     CLAUDE_SDK = "claude_sdk"
     COPILOT_SDK = "copilot_sdk"
     COPILOT_ACP = "copilot_acp"
+    OMP_ACP = "omp_acp"
     LANGGRAPH = "langgraph"
     PYDANTIC_AI = "pydantic_ai"
     GEMINI = "gemini"

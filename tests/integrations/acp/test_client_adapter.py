@@ -1013,6 +1013,117 @@ class TestACPClientAdapterPermissionHandler:
         }
 
     @pytest.mark.asyncio
+    async def test_permission_resolver_selects_an_offered_option(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+        requests = []
+
+        async def resolver(request):
+            requests.append(request)
+            return "p-reject"
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "write_file"
+            tool_call.tool_call_id = "tc-write"
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "p-allow", "name": "Allow", "kind": "allow_once"},
+                    {"optionId": "p-reject", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            assert result == {
+                "outcome": {"outcome": "selected", "optionId": "p-reject"}
+            }
+
+        adapter_with_mocks._resolve_permission = resolver
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert len(requests) == 1
+        request = requests[0]
+        assert request.room_id == "room-123"
+        assert request.session_id == "acp-session-123"
+        assert request.tool_call.tool_call_id == "tc-write"
+        assert [option["optionId"] for option in request.options] == [
+            "p-allow",
+            "p-reject",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_permission_resolver_cancellation_posts_denied_pair(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        async def resolver(request):
+            del request
+            return None
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "rm_rf"
+            tool_call.tool_call_id = "tc-danger"
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "p-reject", "name": "Reject", "kind": "reject_once"}
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            assert result == {"outcome": {"outcome": "cancelled"}}
+
+        adapter_with_mocks._resolve_permission = resolver
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert event_types(permission_events(tools)) == ["tool_call", "tool_result"]
+
+    @pytest.mark.asyncio
+    async def test_permission_resolver_rejects_unknown_option(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        async def resolver(request):
+            del request
+            return "stale-option"
+
+        adapter_with_mocks._resolve_permission = resolver
+        call = ACPToolCall(tool_call_id="tc-1", name="write_file", arguments={})
+
+        with pytest.raises(ValueError, match="unavailable option"):
+            await adapter_with_mocks._resolve_permission_option(
+                call=call,
+                options=[
+                    {"optionId": "p-allow", "name": "Allow", "kind": "allow_once"}
+                ],
+                room_id="room-123",
+                session_id="session-123",
+            )
+
+    @pytest.mark.asyncio
     async def test_permission_handler_cancels_without_allow_option(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:

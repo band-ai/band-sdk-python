@@ -18,7 +18,7 @@ from band.adapters.copilot_acp import (
     CopilotACPAdapter,
     CopilotACPAdapterConfig,
 )
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import ACPClientAdapter, ACPPermissionRequest
 from band.integrations.acp.client_profiles import NoopACPClientProfile
 from band.integrations.acp.session_config import ACPConfigRequest
 
@@ -118,6 +118,17 @@ class TestCopilotACPAdapterConstruction:
         )
 
         assert adapter._resolve_session_config is resolver
+
+    def test_permission_resolver_is_forwarded(self) -> None:
+        async def resolver(request: ACPPermissionRequest) -> str | None:
+            del request
+            return None
+
+        adapter = CopilotACPAdapter(
+            CopilotACPAdapterConfig(resolve_permission=resolver)
+        )
+
+        assert adapter._resolve_permission is resolver
 
 
 class TestCopilotACPAdapterTcpTransport:

@@ -24,6 +24,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
 | `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
+| `src/band/adapters/omp_acp.py` | `OmpACPAdapter` — thin `ACPClientAdapter` for Oh My P.I. |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -172,6 +173,23 @@ framework-conformance as a bridge.
   `examples/acp/copilot_docker/colocated/` (single container). Both use
   `inject_band_tools=False` + an explicit `mcp_servers` SSE URL, since a remote Copilot
   can't reach the SDK host's loopback `LocalMCPServer`.
+
+## Oh My P.I. backend
+
+`OmpACPAdapter` (`src/band/adapters/omp_acp.py`) starts OMP's native `omp acp`
+stdio server through the same generic ACP client. Install `band-sdk[acp]`, Bun
+(>=1.3.14), and `@oh-my-pi/pi-coding-agent`, then pass a direct Gemini Developer
+API key only through `OmpACPAdapterConfig.env` as `GEMINI_API_KEY` (the existing
+`GOOGLE_API_KEY` can supply that value). Use command and cwd overrides when the
+CLI is not on the default path.
+
+OMP receives Band tools through the normal ACP `mcpServers` injection. The client
+does not advertise ACP filesystem, terminal, terminal-authentication, or
+elicitation capabilities because it has no host implementation for those RPCs.
+Keep the process in a permission-gated mode such as `--approval-mode always-ask`;
+`--yolo` and auto-approve modes bypass the resolver. Automated runs should use a
+fresh `PI_CODING_AGENT_DIR` and a disposable cwd so local OMP state cannot affect
+the test or session.
 - Copilot in a Docker **microVM sandbox** ([`sbx`](https://docs.docker.com/ai/sandboxes/))
   over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
   isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary

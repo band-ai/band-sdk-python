@@ -27,7 +27,9 @@ in ``..requires``; this module just reports availability.
 from __future__ import annotations
 
 import importlib.util
+import shlex
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, StrEnum
@@ -151,6 +153,7 @@ class Dep(Enum):
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
+    OMP = "omp"  # OMP CLI, its Bun runtime, and a Gemini Developer API key
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,7 @@ class DepSpec:
     available: Callable[[BaselineSettings], bool]
     reason: str
     lane: Lane = DEFAULT_LANE
+    preflight: Callable[[BaselineSettings], str | None] | None = None
 
 
 def _google_available(settings: BaselineSettings) -> bool:
@@ -192,6 +196,40 @@ def _codex_cli_available(settings: BaselineSettings) -> bool:
 def _copilot_cli_available(settings: BaselineSettings) -> bool:
     """The Copilot CLI (or the binary named by ``COPILOT_COMMAND``) is on PATH."""
     return _cli_on_path(settings.backends.copilot_command, "copilot")
+
+
+def _omp_command(settings: BaselineSettings) -> list[str]:
+    """The configured OMP command, or its native executable."""
+    return shlex.split(settings.backends.omp_command) or ["omp"]
+
+
+def _omp_available(settings: BaselineSettings) -> bool:
+    """Whether OMP and a direct Gemini Developer credential are configured."""
+    credentials = settings.llm_credentials
+    return bool(
+        shutil.which(_omp_command(settings)[0])
+        and (credentials.gemini_api_key or credentials.google_api_key)
+    )
+
+
+def _omp_preflight(settings: BaselineSettings) -> str | None:
+    """Exercise OMP so an unusable Bun shebang fails before a live turn."""
+    command = _omp_command(settings)
+    try:
+        result = subprocess.run(
+            [command[0], "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"OMP preflight failed while running {command[0]} --version: {error}"
+    if result.returncode:
+        return (
+            f"OMP preflight failed: {command[0]} --version exited {result.returncode}"
+        )
+    return None
 
 
 def _codex_cwd_available(settings: BaselineSettings) -> bool:
@@ -274,6 +312,12 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.COPILOT_CLI: DepSpec(
         _copilot_cli_available, "Copilot CLI not found on PATH", lane=Lane.BACKENDS
     ),
+    Dep.OMP: DepSpec(
+        _omp_available,
+        "OMP_COMMAND/`omp` must be on PATH and GOOGLE_API_KEY or GEMINI_API_KEY must be set",
+        lane=Lane.BACKENDS,
+        preflight=_omp_preflight,
+    ),
     Dep.CODEX_CWD: DepSpec(
         _codex_cwd_available,
         "CODEX_CWD must be an existing disposable dir outside the repo "
@@ -323,7 +367,9 @@ def lane_extra(lane: Lane) -> Extra:
 def requirement_reason(dep: Dep, settings: BaselineSettings) -> str | None:
     """Return why ``dep`` is unavailable, or ``None`` when it is satisfied."""
     spec = _DEPS[dep]
-    return None if spec.available(settings) else spec.reason
+    if not spec.available(settings):
+        return spec.reason
+    return spec.preflight(settings) if spec.preflight else None
 
 
 def validate_dep_tables() -> None:

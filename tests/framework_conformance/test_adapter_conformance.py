@@ -274,6 +274,11 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
         "wraps the ACP client adapter, which shares the same MCP engine fix; "
         "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
     ),
+    ExcludedAdapter(
+        Adapter.OMP_ACP,
+        "wraps the ACP client adapter, which shares the same MCP engine fix; "
+        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
+    ),
 )
 
 # parlant is absent from the Adapter enum entirely (NON_AGENT_ADAPTERS), so it

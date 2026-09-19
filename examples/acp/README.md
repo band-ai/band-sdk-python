@@ -15,7 +15,7 @@ An editor (Zed, Cursor, JetBrains, Neovim) connects to Band as a custom ACP agen
 
 ## `clients/` — Band → remote ACP agent
 
-Band drives a remote ACP agent (Codex, Cursor, Claude Code, GitHub Copilot, …) as a
+Band drives a remote ACP agent (Codex, Cursor, Claude Code, GitHub Copilot, OMP, …) as a
 backend via `ACPClientAdapter`.
 
 | File | What it shows |
@@ -25,6 +25,7 @@ backend via `ACPClientAdapter`.
 | `cursor.py` | Cursor CLI with a vendor profile + auth |
 | `bridge_architecture.py` | Fully env-driven bridge configuration |
 | `copilot.py` | GitHub Copilot CLI (`copilot --acp`), stdio or TCP |
+| `omp.py` | Oh My P.I. (`omp acp`), stdio with Gemini Developer API auth |
 
 ## `copilot_docker/` — Copilot-in-a-container deployments
 
@@ -51,3 +52,13 @@ Each `.py` example is a standalone PEP 723 script:
 ```bash
 uv run examples/acp/clients/copilot.py
 ```
+
+### OMP
+
+OMP's native ACP server runs over stdio. Install Bun (version 1.3.14 or newer),
+then install `@oh-my-pi/pi-coding-agent` so `omp` is on `PATH`. Set a Gemini
+Developer API key as `GEMINI_API_KEY` or `GOOGLE_API_KEY`; `omp.py` passes it to
+the child process as `GEMINI_API_KEY`. For automated runs, use a fresh
+`PI_CODING_AGENT_DIR` and disposable working directory. Keep OMP in a permission-
+gated approval mode such as `always-ask`: `--yolo` / auto-approve modes bypass the
+resolver that protects tool calls.

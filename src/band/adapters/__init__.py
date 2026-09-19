@@ -40,6 +40,10 @@ if TYPE_CHECKING:
         CopilotACPAdapter as CopilotACPAdapter,
         CopilotACPAdapterConfig as CopilotACPAdapterConfig,
     )
+    from band.adapters.omp_acp import (
+        OmpACPAdapter as OmpACPAdapter,
+        OmpACPAdapterConfig as OmpACPAdapterConfig,
+    )
     from band.adapters.parlant import ParlantAdapter as ParlantAdapter
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapter
     from band.adapters.crewai_flow import CrewAIFlowAdapter as CrewAIFlowAdapter
@@ -84,6 +88,7 @@ __all__, __getattr__ = lazy_exports(
     claude_sdk=["ClaudeSDKAdapter"],
     copilot_sdk=["CopilotSDKAdapter", "CopilotSDKAdapterConfig"],
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
+    omp_acp=["OmpACPAdapter", "OmpACPAdapterConfig"],
     parlant=["ParlantAdapter"],
     crewai=["CrewAIAdapter"],
     crewai_flow=["CrewAIFlowAdapter"],

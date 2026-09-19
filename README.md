@@ -472,7 +472,7 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | ------------ | ------------- | ------------------------------------ | --------------------------------------------- |
 | A2A bridge   | `a2a`         | `A2AAdapter`                         | [examples](examples/a2a_bridge/)              |
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
-| ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
+| ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `OmpACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
 | Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
 
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).

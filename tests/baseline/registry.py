@@ -39,6 +39,10 @@ SUPPORT: tuple[AdapterSupport, ...] = (
         reason="external Copilot ACP process is outside isolated adapter execution",
     ),
     AdapterSupport(
+        Adapter.OMP_ACP,
+        reason="external OMP ACP process is outside isolated adapter execution",
+    ),
+    AdapterSupport(
         Adapter.LANGGRAPH, reason="requires a graph-model decision translator"
     ),
     AdapterSupport(

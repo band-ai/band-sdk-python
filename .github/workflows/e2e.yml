@@ -227,7 +227,7 @@ jobs:
       uses: ./.github/actions/setup-e2e
 
     # --- Backend setup: each step is gated to the lane whose server/CLI it stands
-    # up (the `backends` lane co-runs codex, opencode, and copilot_acp; letta is its
+# up (the `backends` lane co-runs codex, opencode, copilot_acp, and omp_acp; letta is its
     # own lane). ---
 
     - name: Set up Node (codex, opencode)
@@ -235,6 +235,12 @@ jobs:
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         node-version: '20'
+
+    - name: Set up Bun (omp_acp)
+      if: matrix.lane == 'backends'
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version: '1.3.14'
 
     # Each setup script installs its backend and exports the env it discovered
     # (CODEX_CWD / OPENCODE_BASE_URL / LETTA_BASE_URL) via $GITHUB_ENV. See
@@ -251,6 +257,10 @@ jobs:
     - name: Install the GitHub Copilot CLI (copilot_acp)
       if: matrix.lane == 'backends'
       run: bash .github/scripts/setup-copilot.sh
+
+    - name: Install Oh My P.I. (omp_acp)
+      if: matrix.lane == 'backends'
+      run: bash .github/scripts/setup-omp.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'

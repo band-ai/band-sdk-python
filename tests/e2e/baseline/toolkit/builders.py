@@ -18,6 +18,7 @@ a decorated builder here (see ``adapters`` module docstring for the full recipe)
 from __future__ import annotations
 
 import os
+import shlex
 import tempfile
 from typing import Any
 
@@ -436,6 +437,32 @@ def copilot_acp_env(s: BaselineSettings, copilot_home: str) -> dict[str, str]:
     }
 
 
+def omp_state_dir(work_dir: str) -> str:
+    """Create an isolated OMP state directory under one test workspace."""
+    state_dir = os.path.join(work_dir, "omp-state")
+    os.makedirs(state_dir, exist_ok=True)
+    return state_dir
+
+
+def omp_acp_env(s: BaselineSettings, state_dir: str) -> dict[str, str]:
+    """Environment for a hermetic OMP ACP spawn using Gemini Developer auth."""
+    api_key = s.llm_credentials.gemini_api_key or s.llm_credentials.google_api_key
+    return {"GEMINI_API_KEY": api_key, "PI_CODING_AGENT_DIR": state_dir}
+
+
+def omp_acp_command(s: BaselineSettings) -> tuple[str, ...]:
+    """The explicit non-yolo OMP ACP command for one baseline cell."""
+    command = tuple(shlex.split(s.backends.omp_command)) or ("omp",)
+    return (
+        *command,
+        "acp",
+        "--model",
+        s.backends.omp_model,
+        "--approval-mode",
+        "always-ask",
+    )
+
+
 @adapter(
     Adapter.COPILOT_ACP,
     requires=[Dep.COPILOT_CLI, Dep.ANTHROPIC],
@@ -492,6 +519,38 @@ def _build_copilot_acp(
 
     return CopilotACPAdapter(
         config=CopilotACPAdapterConfig(**config_kwargs),
+        additional_tools=_custom_tool_defs(tools),
+        **built_features,
+    )
+
+
+@adapter(
+    Adapter.OMP_ACP,
+    requires=[Dep.OMP],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+)
+def _build_omp_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.omp_acp import OmpACPAdapter, OmpACPAdapterConfig  # noqa: PLC0415 -- isolates the acp extra from lanes that do not install it
+
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-omp-acp-")
+    built_features = feature_kwargs(features)
+    if "emit" in built_features:
+        built_features["emit"] &= OmpACPAdapter.SUPPORTED_EMIT
+
+    return OmpACPAdapter(
+        OmpACPAdapterConfig(
+            command=omp_acp_command(s),
+            cwd=sandbox,
+            env=omp_acp_env(s, omp_state_dir(sandbox)),
+            custom_section=prompt or "",
+        ),
         additional_tools=_custom_tool_defs(tools),
         **built_features,
     )
