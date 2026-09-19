@@ -68,30 +68,28 @@ def called_tool(tool_calls: list[CollectedChunk], tool_name: str) -> bool:
     )
 
 
-def non_current_config_selections(
+def non_current_config_selection(
     config_options: Sequence[SessionConfigOption],
+    option_id: str,
 ) -> dict[str, str]:
-    """Choose one advertised non-current value for each exercised catalog."""
+    """Choose one advertised non-current value from one live catalog entry."""
     catalog = {option.id: option for option in config_options}
-    selections: dict[str, str] = {}
-    for option_id in _DYNAMIC_CONFIG_OPTION_IDS:
-        option = catalog.get(option_id)
-        assert isinstance(option, SessionConfigOptionSelect), (
-            f"codex-acp did not advertise selectable {option_id!r} configuration"
-        )
-        selected_value = next(
-            (
-                entry.value
-                for entry in flatten_select_options(option.options)
-                if entry.value != option.current_value
-            ),
-            None,
-        )
-        assert selected_value is not None, (
-            f"codex-acp did not advertise an alternative {option_id!r} value"
-        )
-        selections[option_id] = selected_value
-    return selections
+    option = catalog.get(option_id)
+    assert isinstance(option, SessionConfigOptionSelect), (
+        f"codex-acp did not advertise selectable {option_id!r} configuration"
+    )
+    selected_value = next(
+        (
+            entry.value
+            for entry in flatten_select_options(option.options)
+            if entry.value != option.current_value
+        ),
+        None,
+    )
+    assert selected_value is not None, (
+        f"codex-acp did not advertise an alternative {option_id!r} value"
+    )
+    return {option_id: selected_value}
 
 
 # These are real E2E tests: each spawns `codex-acp` as a
@@ -256,8 +254,10 @@ async def test_codex_acp_prompt_and_collect(acp_runtime: ACPRuntime) -> None:
 
 
 @pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.parametrize("option_id", _DYNAMIC_CONFIG_OPTION_IDS)
 async def test_codex_acp_dynamic_configuration_survives_two_turns(
     acp_runtime: ACPRuntime,
+    option_id: str,
 ) -> None:
     """Apply live catalog selections before proving the configured session continues."""
     assert acp_runtime.client is not None
@@ -282,7 +282,7 @@ async def test_codex_acp_dynamic_configuration_survives_two_turns(
     await apply_session_config_selections(
         session_id=session.session_id,
         config_options=config_options,
-        selections=non_current_config_selections(config_options),
+        selections=non_current_config_selection(config_options, option_id),
         set_option=set_option,
     )
 

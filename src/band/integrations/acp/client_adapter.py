@@ -51,9 +51,11 @@ from band.integrations.acp.types import ACPToolCall
 from band.integrations.acp.session_config import (
     ACPConfigError,
     ACPConfigRequest,
+    RESOLVER_CONFIG_OPTION_ID,
     SessionConfigOption,
     SessionConfigResolver,
     apply_session_config_selections,
+    session_config_options,
 )
 from band.integrations.mcp.backends import (
     BandMCPBackend,
@@ -131,16 +133,6 @@ HISTORY_REPLAY_HEADER = (
 # stdio and TCP are the built-in transports; injecting one (e.g. docker exec / ssh,
 # or a fake in tests) is the supported extension point.
 SpawnProcess = Callable[..., object]
-
-
-def session_config_options(response: object) -> list[SessionConfigOption] | None:
-    """The provider's valid select/boolean catalog, if it advertised one."""
-    options = getattr(response, "config_options", None)
-    if not isinstance(options, list) or not all(
-        isinstance(option, SessionConfigOption) for option in options
-    ):
-        return None
-    return options
 
 
 def _resolve_launcher(command: list[str]) -> list[str]:
@@ -751,7 +743,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self,
         room_id: str,
         session_id: str,
-        config_options: list[SessionConfigOption] | None,
+        config_options: tuple[SessionConfigOption, ...] | None,
     ) -> None:
         """Apply caller-selected values from the session's live ACP catalog."""
         if self._resolve_session_config is None:
@@ -774,7 +766,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         except Exception as error:
             raise ACPConfigError(
                 session_id=session_id,
-                option_id="resolver",
+                option_id=RESOLVER_CONFIG_OPTION_ID,
                 selected_value="",
                 message=f"ACP session configuration resolver failed: {error}",
             ) from error
