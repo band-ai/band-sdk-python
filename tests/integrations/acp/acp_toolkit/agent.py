@@ -400,6 +400,10 @@ class FakeACPAgent:
             for received in self.prompts
         ]
 
+    def session_ids(self) -> list[str]:
+        """Each created session id, in creation order."""
+        return [session["session_id"] for session in self.sessions]
+
     async def prompt(
         self, prompt: Any, session_id: str, message_id: str | None = None, **kwargs: Any
     ) -> PromptResponse:

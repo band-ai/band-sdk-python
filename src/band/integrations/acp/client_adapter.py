@@ -105,6 +105,7 @@ SYSTEM_UPDATE_PREFIX = "[System]: "
 # per-turn nonce defeats spoofing: replayed content was authored before this
 # turn, so it cannot contain the marker the header names.
 NEW_MESSAGE_MARKER_PREFIX = "[New Message"
+SESSION_CLOSE_TIMEOUT_SECONDS = 5.0
 
 
 def new_message_marker() -> str:
@@ -722,9 +723,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     async def _close_fresh_session(self, session_id: str) -> None:
         """Best-effort cleanup when configuration prevented first use."""
         try:
-            await self._runtime.close_session(session_id)
+            await asyncio.wait_for(
+                self._runtime.close_session(session_id),
+                timeout=SESSION_CLOSE_TIMEOUT_SECONDS,
+            )
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
+        except TimeoutError:
+            logger.warning(
+                "Timed out closing unconfigured ACP session %s after %s seconds",
+                session_id,
+                SESSION_CLOSE_TIMEOUT_SECONDS,
+            )
         except Exception:
             logger.warning(
                 "Could not close unconfigured ACP session %s",
