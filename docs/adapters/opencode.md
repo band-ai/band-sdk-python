@@ -4,6 +4,9 @@
 `opencode serve`: room messages become prompts, and the server's SSE stream is
 relayed back as room messages, tool narration, and error events.
 
+For the managed-host construction surface, including model variants, see
+[Managed Host Adapter Configuration](managed-host-adapters.md).
+
 | Purpose | Path |
 |---|---|
 | Adapter package | `src/band/adapters/opencode/{adapter,approvals,config}.py` |

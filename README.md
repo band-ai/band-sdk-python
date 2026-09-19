@@ -451,7 +451,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
 | Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
 | Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
-| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | [docs](docs/adapters/managed-host-adapters.md) | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
 | Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
@@ -460,7 +460,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
 | Strands Agents   | `strands`     | `StrandsAdapter`                     | | [examples](examples/strands/)         |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
+| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [docs](docs/adapters/managed-host-adapters.md) | [examples](examples/opencode/)       |
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.TOOL_CALLS` telemetry for tool calls/results.
 
