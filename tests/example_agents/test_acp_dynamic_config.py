@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from acp.schema import (
     SessionConfigOptionSelect,
@@ -85,3 +87,28 @@ async def test_example_ignores_an_unadvertised_preference() -> None:
     )
 
     assert selections == {}
+
+
+@pytest.mark.asyncio
+async def test_example_warns_when_a_preference_has_no_matching_option(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    request = ACPConfigRequest(
+        room_id="room-1",
+        session_id="session-1",
+        config_options=(
+            select_option("reasoning_effort", "medium", ["medium", "high"]),
+        ),
+    )
+
+    selections = await generic_acp.choose_session_config(
+        request,
+        preferences={"model": "large", "reasoning_effort": "high"},
+    )
+
+    assert selections == {"reasoning_effort": "high"}
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ] == ["ACP session 'session-1' does not advertise config option 'model'."]
