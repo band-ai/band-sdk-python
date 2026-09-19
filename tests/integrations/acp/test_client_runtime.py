@@ -708,7 +708,7 @@ class TestACPRuntime:
         mock_conn.authenticate.assert_awaited_once_with(method_id="cursor_login")
 
     @pytest.mark.asyncio
-    async def test_start_forwards_elicitation_capabilities_to_an_unstable_agent(
+    async def test_start_preserves_the_custom_transport_contract_for_unstable_agents(
         self, make_acp_transport
     ) -> None:
         transport = make_acp_transport()
@@ -728,7 +728,26 @@ class TestACPRuntime:
             protocol_version=1,
             client_capabilities=capabilities,
         )
-        assert transport.last_kwargs["use_unstable_protocol"] is True
+        assert "use_unstable_protocol" not in transport.last_kwargs
+
+    @pytest.mark.asyncio
+    async def test_start_enables_unstable_protocol_for_the_builtin_stdio_transport(
+        self,
+    ) -> None:
+        mock_conn = AsyncMock()
+        mock_conn.initialize = AsyncMock(return_value=MagicMock())
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
+
+        with patch(
+            "band.integrations.acp.client_runtime.spawn_agent_process",
+            return_value=mock_ctx,
+        ) as spawn:
+            runtime = ACPRuntime(command=["omp", "acp"], use_unstable_protocol=True)
+
+            await runtime.start()
+
+        assert spawn.call_args.kwargs["use_unstable_protocol"] is True
 
     @pytest.mark.asyncio
     async def test_create_session_and_prompt_use_active_connection(self) -> None:

@@ -34,7 +34,10 @@ from band.integrations.acp.session_config import SessionConfigResolver
 from band.integrations.acp.types import ACPToolCall, PermissionOutcome
 from band.integrations.omp import (
     OMP_APPROVAL_MODE_ARGUMENT,
+    OMP_APPROVAL_MODE_ASSIGNMENT_PREFIX,
     OMP_AUTO_APPROVE_ARGUMENT,
+    OMP_AUTO_APPROVAL_MODES,
+    OMP_ALWAYS_ASK_APPROVAL_MODE,
     OMP_COMMAND,
     OMP_ELICITATION_APPROVE_OPTION,
     OMP_ELICITATION_CALL_ID_PREFIX,
@@ -45,12 +48,15 @@ from band.integrations.omp import (
     OMP_MCP_CONTENT_FIELD,
     OMP_MCP_DEVICE_PREFIX,
     OMP_MCP_PATH_FIELD,
-    OMP_YOLO_APPROVAL_MODE,
     OMP_YOLO_ARGUMENT,
 )
 from band.runtime.custom_tools import CustomToolDef
 
-DEFAULT_OMP_ACP_COMMAND = OMP_COMMAND
+DEFAULT_OMP_ACP_COMMAND = (
+    *OMP_COMMAND,
+    OMP_APPROVAL_MODE_ARGUMENT,
+    OMP_ALWAYS_ASK_APPROVAL_MODE,
+)
 _UNSAFE_APPROVAL_ARGUMENTS = frozenset({OMP_YOLO_ARGUMENT, OMP_AUTO_APPROVE_ARGUMENT})
 
 
@@ -166,9 +172,23 @@ class OmpACPAdapter(ACPClientAdapter):
 def _uses_unsafe_approval(command: tuple[str, ...]) -> bool:
     """Whether an OMP command disables permission-gated tool execution."""
     return bool(_UNSAFE_APPROVAL_ARGUMENTS.intersection(command)) or any(
-        option == OMP_APPROVAL_MODE_ARGUMENT and value == OMP_YOLO_APPROVAL_MODE
-        for option, value in zip(command, command[1:])
+        mode in OMP_AUTO_APPROVAL_MODES for mode in _approval_modes(command)
     )
+
+
+def _approval_modes(command: tuple[str, ...]) -> tuple[str, ...]:
+    """Return every explicit OMP approval-mode value in a command."""
+    values = [
+        value
+        for option, value in zip(command, command[1:])
+        if option == OMP_APPROVAL_MODE_ARGUMENT
+    ]
+    values.extend(
+        option.removeprefix(OMP_APPROVAL_MODE_ASSIGNMENT_PREFIX)
+        for option in command
+        if option.startswith(OMP_APPROVAL_MODE_ASSIGNMENT_PREFIX)
+    )
+    return tuple(values)
 
 
 def _omp_elicitation_details(mode: object) -> tuple[str | None, tuple[str, ...] | None]:

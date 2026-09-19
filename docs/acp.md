@@ -185,7 +185,8 @@ and cwd overrides when the CLI is not on the default path.
 
 OMP receives Band tools through the normal ACP `mcpServers` injection. The client
 does not advertise ACP filesystem, terminal, or terminal-authentication capabilities.
-It advertises form elicitation because OMP uses it for `always-ask` tool approvals;
+Its default command explicitly uses `always-ask`, and it advertises form elicitation
+because OMP uses it for those tool approvals;
 only OMP's exact Approve/Deny form is routed through the adapter's permission
 resolver, and every other form is declined. `--yolo` and auto-approve modes bypass
 that resolver. Automated runs should use a fresh `PI_CODING_AGENT_DIR` and a

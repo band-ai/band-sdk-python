@@ -779,7 +779,7 @@ class ACPRuntime:
         self._client_capabilities = client_capabilities
         self._use_unstable_protocol = use_unstable_protocol
         self._client_factory = client_factory or ACPCollectingClient
-        self._spawn_process = spawn_process or spawn_agent_process
+        self._spawn_process = spawn_process
 
         self._conn: ACPConnectionProtocol | None = None
         self._client: ACPCollectingClient | None = None
@@ -801,16 +801,7 @@ class ACPRuntime:
         self._client = self._client_factory()  # type: ignore[abstract]  # ACP client protocol defines optional hooks as abstract
         ctx = cast(
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
-            self._spawn_process(
-                self._client,
-                # Splat the whole command: stdio forwards executable + args, while
-                # a TCP transport passes an empty command (host/port live in the
-                # injected spawn_process closure) and receives no positional args.
-                *self._command,
-                env=self._env,
-                transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
-                use_unstable_protocol=self._use_unstable_protocol,
-            ),
+            self._spawn_context(self._client),
         )
         self._ctx = ctx
         try:
@@ -842,6 +833,28 @@ class ACPRuntime:
         logger.info(
             "Connected to ACP agent: %s",
             " ".join(self._command) or "<injected transport>",
+        )
+
+    def _spawn_context(self, client: ACPCollectingClient) -> object:
+        """Open the configured ACP transport without widening its public seam."""
+        spawn_kwargs = {
+            "env": self._env,
+            "transport_kwargs": {"limit": ACP_STDIO_LIMIT_BYTES},
+        }
+        if self._spawn_process is None:
+            return spawn_agent_process(
+                client,
+                *self._command,
+                use_unstable_protocol=self._use_unstable_protocol,
+                **spawn_kwargs,
+            )
+        return self._spawn_process(
+            client,
+            # Splat the whole command: stdio forwards executable + args, while
+            # a TCP transport passes an empty command (host/port live in the
+            # injected spawn_process closure) and receives no positional args.
+            *self._command,
+            **spawn_kwargs,
         )
 
     async def ensure_connection(self, *, can_respawn: bool) -> ACPConnectionProtocol:

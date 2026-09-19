@@ -25,7 +25,9 @@ from band.integrations.omp import (
     OMP_ALWAYS_ASK_APPROVAL_MODE,
     OMP_ACP_SUBCOMMAND,
     OMP_APPROVAL_MODE_ARGUMENT,
+    OMP_APPROVAL_MODE_ASSIGNMENT_PREFIX,
     OMP_AUTO_APPROVE_ARGUMENT,
+    OMP_AUTO_APPROVAL_MODES,
     OMP_BINARY,
     OMP_ELICITATION_APPROVE_OPTION,
     OMP_ELICITATION_DENY_OPTION,
@@ -37,7 +39,6 @@ from band.integrations.omp import (
     OMP_MCP_PATH_FIELD,
     OMP_OPENAI_API_KEY_ENV,
     OMP_STATE_DIRECTORY_ENV,
-    OMP_YOLO_APPROVAL_MODE,
     OMP_YOLO_ARGUMENT,
 )
 from band.runtime.tools import BandTool
@@ -58,6 +59,10 @@ class TestOmpACPAdapterConstruction:
         adapter = OmpACPAdapter()
 
         assert adapter._command == list(DEFAULT_OMP_ACP_COMMAND)
+        assert adapter._command[-2:] == [
+            OMP_APPROVAL_MODE_ARGUMENT,
+            OMP_ALWAYS_ASK_APPROVAL_MODE,
+        ]
         assert adapter._host is None
         assert adapter._port is None
         assert adapter._runtime._use_unstable_protocol
@@ -153,12 +158,18 @@ class TestOmpACPAdapterConstruction:
         [
             (OMP_BINARY, OMP_ACP_SUBCOMMAND, OMP_YOLO_ARGUMENT),
             (OMP_BINARY, OMP_ACP_SUBCOMMAND, OMP_AUTO_APPROVE_ARGUMENT),
-            (
-                OMP_BINARY,
-                OMP_ACP_SUBCOMMAND,
-                OMP_APPROVAL_MODE_ARGUMENT,
-                OMP_YOLO_APPROVAL_MODE,
-            ),
+            *[
+                (OMP_BINARY, OMP_ACP_SUBCOMMAND, OMP_APPROVAL_MODE_ARGUMENT, mode)
+                for mode in OMP_AUTO_APPROVAL_MODES
+            ],
+            *[
+                (
+                    OMP_BINARY,
+                    OMP_ACP_SUBCOMMAND,
+                    f"{OMP_APPROVAL_MODE_ASSIGNMENT_PREFIX}{mode}",
+                )
+                for mode in OMP_AUTO_APPROVAL_MODES
+            ],
         ],
     )
     def test_rejects_auto_approval_modes(self, command: tuple[str, ...]) -> None:

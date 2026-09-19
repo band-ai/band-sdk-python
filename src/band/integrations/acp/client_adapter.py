@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, TypeAlias
 from uuid import uuid4
 
-from acp import spawn_agent_process
 from acp.schema import (
     ClientCapabilities,
     HttpMcpServer,
@@ -305,18 +304,27 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     @staticmethod
     def _select_transport(
-        spawn_process: SpawnProcess | None, host: str | None, port: int | None
-    ) -> SpawnProcess:
+        spawn_process: SpawnProcess | None,
+        host: str | None,
+        port: int | None,
+        use_unstable_protocol: bool,
+    ) -> SpawnProcess | None:
         """An explicit ``spawn_process`` wins (advanced/custom transports and
         tests); otherwise acp's subprocess spawner (stdio) or a connect-only
-        seam closed over host/port (TCP; see ``tcp_spawn_process``). ``host``/
-        ``port`` are explicit (not read off ``self``), matching
+        seam closed over host/port (TCP; see ``tcp_spawn_process``). The stdio
+        default remains ``None`` so ``ACPRuntime`` can pass its connection-only
+        unstable-protocol setting without widening the injected transport contract.
+        ``host``/``port`` are explicit (not read off ``self``), matching
         ``_shape_command``."""
         if spawn_process is not None:
             return spawn_process
         if host is not None and port is not None:
-            return tcp_spawn_process(host, port)
-        return spawn_agent_process
+            return tcp_spawn_process(
+                host,
+                port,
+                use_unstable_protocol=use_unstable_protocol,
+            )
+        return None
 
     def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
         return ACPRuntime(
@@ -330,7 +338,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 canonicalize_tool_name=self._canonical_tool_name,
                 normalize_tool_call=self._normalize_acp_tool_call,
             ),
-            spawn_process=self._select_transport(spawn_process, self._host, self._port),
+            spawn_process=self._select_transport(
+                spawn_process,
+                self._host,
+                self._port,
+                self._use_unstable_protocol,
+            ),
         )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
