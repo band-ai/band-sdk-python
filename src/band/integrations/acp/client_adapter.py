@@ -711,6 +711,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         )
         try:
             yield session
+        except asyncio.CancelledError:
+            asyncio.create_task(self._close_fresh_session(session.session_id))
+            raise
         except BaseException:
             await self._close_fresh_session(session.session_id)
             raise

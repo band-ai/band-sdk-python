@@ -1206,6 +1206,40 @@ class TestACPClientAdapterCleanup:
             "Timed out closing unconfigured ACP session session-1 after 0.01 seconds"
         ]
 
+    @pytest.mark.asyncio
+    async def test_cancelled_fresh_session_does_not_wait_to_close(self) -> None:
+        adapter = ACPClientAdapter(command="codex")
+        initialization_started = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        close_finished = asyncio.Event()
+        adapter._runtime.create_session_response = AsyncMock(
+            return_value=NewSessionResponse(session_id="session-1")
+        )
+
+        async def wait_to_close(_: str) -> None:
+            close_started.set()
+            await release_close.wait()
+            close_finished.set()
+
+        adapter._runtime.close_session = AsyncMock(wraps=wait_to_close)
+
+        async def initialize() -> None:
+            async with adapter._fresh_session([]):
+                initialization_started.set()
+                await asyncio.Event().wait()
+
+        initializing = asyncio.create_task(initialize())
+        await initialization_started.wait()
+        initializing.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(initializing, timeout=0.1)
+
+        await close_started.wait()
+        release_close.set()
+        await close_finished.wait()
+
 
 class TestACPClientAdapterStop:
     """Tests for ACPClientAdapter.stop()."""
