@@ -38,6 +38,7 @@ class PendingPermission:
     permission: str
     patterns: list[str]
     timeout_task: asyncio.Task[None] | None = None
+    replying: bool = False
 
 
 @dataclass
@@ -45,6 +46,7 @@ class PendingQuestion:
     request_id: str
     questions: list[OpencodeQuestion]
     timeout_task: asyncio.Task[None] | None = None
+    replying: bool = False
 
 
 @dataclass
@@ -147,6 +149,8 @@ class RoomApprovals:
         # until the turn timed out.
         self._permissions: dict[str, PendingPermission] = {}
         self._questions: dict[str, PendingQuestion] = {}
+        self._handled_permission_ids: set[str] = set()
+        self._handled_question_ids: set[str] = set()
         # Set while NO manual ask is parked on a human. Cleared only when we
         # actually forward an ask to the room and wait; set again the moment it
         # resolves. Both transitions go through the helpers below, which own
@@ -227,7 +231,11 @@ class RoomApprovals:
             await self._approve_own_band_tool(request_id)
             return
 
-        _cancel_timeout(self._permissions.get(request_id))
+        existing = self._permissions.get(request_id)
+        _cancel_timeout(existing)
+        if existing and existing.replying:
+            return
+
         pending = PendingPermission(
             request_id=request_id,
             permission=request.permission,
@@ -261,7 +269,10 @@ class RoomApprovals:
         if not request_id or not request.questions:
             return
 
-        _cancel_timeout(self._questions.get(request_id))
+        existing = self._questions.get(request_id)
+        _cancel_timeout(existing)
+        if existing and existing.replying:
+            return
         pending = PendingQuestion(
             request_id=request_id,
             questions=request.questions,
@@ -299,7 +310,9 @@ class RoomApprovals:
         mentions = [{"id": sender_id}] if sender_id else []
 
         approval = parse_permission_reply(command)
-        if approval and (self._permissions or approval.request_id is not None):
+        if approval and (
+            self._permissions or approval.request_id in self._handled_permission_ids
+        ):
             pending = self._resolve_permission(approval.request_id)
             if pending is None and approval.request_id is None:
                 # Ambiguous rather than unknown: name the asks instead of
@@ -353,7 +366,11 @@ class RoomApprovals:
                 )
             return True
 
-        if _is_question_rejection(command) and len(command.split()) > 1:
+        if (
+            _is_question_rejection(command)
+            and len(command.split()) > 1
+            and command.split()[1] in self._handled_question_ids
+        ):
             request_id = command.split()[1]
             await self._notify_room(
                 f"OpenCode question `{request_id}` is no longer pending.", mentions
@@ -410,6 +427,8 @@ class RoomApprovals:
 
     def cancel(self) -> None:
         """Drop pending state and stop its expiry timers (turn end/cleanup)."""
+        self._handled_permission_ids.update(self._permissions)
+        self._handled_question_ids.update(self._questions)
         for pending in (*self._permissions.values(), *self._questions.values()):
             _cancel_timeout(pending)
         self._permissions.clear()
@@ -439,14 +458,14 @@ class RoomApprovals:
     async def _reply_permission(
         self, pending: PendingPermission, reply: ApprovalReply
     ) -> bool:
+        if self._permissions.get(pending.request_id) is not pending or pending.replying:
+            return False
+        pending.replying = True
         _cancel_timeout(pending)
         try:
             async with self._permission_reply(
                 "reply to permission", pending.request_id
-            ) as (
-                client,
-                session_id,
-            ):
+            ) as (client, session_id):
                 await client.reply_permission(
                     session_id, pending.request_id, response=reply
                 )
@@ -458,6 +477,9 @@ class RoomApprovals:
     async def _reply_question(
         self, pending: PendingQuestion, answers: list[list[str]]
     ) -> bool:
+        if self._questions.get(pending.request_id) is not pending or pending.replying:
+            return False
+        pending.replying = True
         _cancel_timeout(pending)
         try:
             async with self._question_reply(
@@ -470,6 +492,9 @@ class RoomApprovals:
         return True
 
     async def _reject_question(self, pending: PendingQuestion) -> bool:
+        if self._questions.get(pending.request_id) is not pending or pending.replying:
+            return False
+        pending.replying = True
         _cancel_timeout(pending)
         try:
             async with self._question_reply(
@@ -490,6 +515,10 @@ class RoomApprovals:
         )
         if registry.get(pending.request_id) is pending:
             del registry[pending.request_id]
+            if isinstance(pending, PendingPermission):
+                self._handled_permission_ids.add(pending.request_id)
+            else:
+                self._handled_question_ids.add(pending.request_id)
         self._release_if_idle()
 
     async def _expire_permission(self, request_id: str) -> None:
