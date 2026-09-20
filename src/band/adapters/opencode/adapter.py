@@ -77,6 +77,7 @@ class TurnState:
     """All mutable state belonging to one submitted OpenCode turn."""
 
     session_id: str
+    client: OpencodeClientProtocol
     tools: AgentToolsProtocol
     turn_future: asyncio.Future[None]
     turn_release_future: asyncio.Future[None]
@@ -109,12 +110,18 @@ class RoomState:
     persisted_session_id: str | None = None
 
     def begin_turn(
-        self, *, session_id: str, tools: AgentToolsProtocol, sender_id: str | None
+        self,
+        *,
+        session_id: str,
+        client: OpencodeClientProtocol,
+        tools: AgentToolsProtocol,
+        sender_id: str | None,
     ) -> TurnState:
         """Reset reply state and create the futures for one new turn."""
         loop = asyncio.get_running_loop()
         self.turn = TurnState(
             session_id=session_id,
+            client=client,
             tools=tools,
             turn_future=loop.create_future(),
             turn_release_future=loop.create_future(),
@@ -428,6 +435,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             turn = self._begin_turn(
                 room_state,
                 session_id=session_id,
+                client=client,
                 tools=tools,
                 sender_id=msg.sender_id,
             )
@@ -608,7 +616,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             ApprovalPorts(
                 room_id=state.room_id,
                 session_id=lambda: self._owner_session_id(owner),
-                client=lambda: self._client,
+                client=lambda: self._owner_client(owner),
                 tools=lambda: self._owner_tools(owner),
                 turn_mentions=lambda: self._owner_mentions(owner),
                 release_turn_wait=lambda: self._release_turn_wait_for_owner(owner),
@@ -631,6 +639,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     ) -> AgentToolsProtocol | None:
         turn = owner()
         return turn.tools if turn else None
+
+    @staticmethod
+    def _owner_client(
+        owner: Callable[[], TurnState | None],
+    ) -> OpencodeClientProtocol | None:
+        turn = owner()
+        return turn.client if turn else None
 
     @staticmethod
     def _owner_mentions(owner: Callable[[], TurnState | None]) -> list[dict[str, str]]:
@@ -945,6 +960,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state: RoomState,
         *,
         session_id: str,
+        client: OpencodeClientProtocol,
         tools: AgentToolsProtocol,
         sender_id: str | None,
     ) -> TurnState:
@@ -954,7 +970,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
         room_state.approvals = state_approvals
         turn = room_state.begin_turn(
-            session_id=session_id, tools=tools, sender_id=sender_id
+            session_id=session_id, client=client, tools=tools, sender_id=sender_id
         )
         owner.append(turn)
         return turn
@@ -1015,10 +1031,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _abort_turn(self, turn: TurnState, reason: str) -> None:
         """Best-effort: tell OpenCode to stop working on this room's session."""
-        if not self._client:
-            return
         try:
-            await self._client.abort_session(turn.session_id)
+            await turn.client.abort_session(turn.session_id)
         except Exception:
             logger.exception(
                 "Failed to abort %s OpenCode session %s",

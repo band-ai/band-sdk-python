@@ -59,6 +59,7 @@ async def test_watch_task_drains_the_turn_that_started_it() -> None:
         adapter._begin_turn(
             room_state,
             session_id="sess-1",
+            client=fake_client,
             tools=tools_protocol(tools),
             sender_id="user-2",
         )
@@ -105,6 +106,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     first_turn = adapter._begin_turn(
         room_state,
         session_id="sess-1",
+        client=FakeOpencodeClient(),
         tools=tools_protocol(tools),
         sender_id="user-1",
     )
@@ -114,6 +116,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     next_turn = adapter._begin_turn(
         room_state,
         session_id="sess-1",
+        client=FakeOpencodeClient(),
         tools=tools_protocol(tools),
         sender_id="user-2",
     )
