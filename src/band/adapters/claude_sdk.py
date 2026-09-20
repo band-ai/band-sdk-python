@@ -36,6 +36,7 @@ try:
     from claude_agent_sdk._errors import CLIConnectionError  # type: ignore[import-not-found]
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
+        EffortLevel,
         HookContext,
         HookInput,
         HookJSONOutput,
@@ -131,7 +132,6 @@ _CLAUDE_SDK_MAX_BUFFER_BYTES = MAX_INLINE_IMAGE_BYTES * 2
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
-ClaudeEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 # Commands recognised as local (not forwarded to Claude)
 _APPROVAL_CMDS = frozenset({"approve", "decline", "approvals"})
@@ -249,7 +249,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         fallback_model: str | None = None,
         custom_section: str | None = None,
         max_thinking_tokens: int | None = None,
-        effort: ClaudeEffort | None = None,
+        effort: EffortLevel | None = None,
         permission_mode: PermissionMode = "acceptEdits",
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
