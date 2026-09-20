@@ -965,10 +965,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         sender_id: str | None,
     ) -> TurnState:
         owner: list[TurnState] = []
-        state_approvals = self._new_approvals(
+        room_state.approvals = self._new_approvals(
             room_state, lambda: owner[0] if owner else None
         )
-        room_state.approvals = state_approvals
         turn = room_state.begin_turn(
             session_id=session_id, client=client, tools=tools, sender_id=sender_id
         )
@@ -1040,10 +1039,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 turn.session_id,
             )
 
-    async def _abort_current_turn(self, state: RoomState, reason: str) -> None:
-        if state.turn is not None:
-            await self._abort_turn(state.turn, reason)
-
     async def _abort_owner_turn(
         self, owner: Callable[[], TurnState | None], reason: str
     ) -> None:
@@ -1102,10 +1097,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 # against the extended deadline.
                 await approvals.wait_until_idle()
 
-    def _release_turn_wait(self, room_state: RoomState) -> None:
-        if room_state.turn is not None:
-            self._release_turn_wait_for(room_state.turn)
-
     def _release_turn_wait_for(self, turn: TurnState) -> None:
         self._resolve_future(turn.turn_release_future)
 
@@ -1119,11 +1110,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if room_state.turn is not None:
             self._resolve_future(room_state.turn.turn_future)
             self._release_turn_wait_for(room_state.turn)
-
-    def _fail_turn(self, room_state: RoomState, message: str) -> None:
-        if room_state.turn is not None:
-            room_state.turn.last_error_message = message
-        self._finish_turn(room_state)
 
     def _fail_turn_for_owner(
         self, owner: Callable[[], TurnState | None], message: str

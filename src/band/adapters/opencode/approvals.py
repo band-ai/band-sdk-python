@@ -164,11 +164,6 @@ class RoomApprovals:
         """Whether a manual permission/question is parked on a human reply."""
         return not self._idle.is_set()
 
-    def begin_turn(self) -> None:
-        """Reset the compute-budget extension for a new model turn."""
-        self.cancel()
-        self._human_wait_total = 0.0
-
     def _parked_on_human(self) -> bool:
         """Whether any ask is still waiting on a human.
 
