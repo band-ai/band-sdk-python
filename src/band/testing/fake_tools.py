@@ -96,7 +96,9 @@ class FakeAgentTools:
         files: list[dict[str, Any]] | None = None,
         tasks: list[dict[str, Any]] | None = None,
         board: dict[str, Any] | None = None,
+        agent_id: str | None = None,
     ):
+        self._agent_id = agent_id
         self.room_id = room_id
         self._hub_room_id = hub_room_id
         self.messages_sent: list[dict[str, Any]] = []
@@ -132,6 +134,11 @@ class FakeAgentTools:
         self.participants_removed: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
         self.context_calls: list[dict[str, Any]] = []
+
+    @property
+    def agent_id(self) -> str | None:
+        """Optional fake identity, matching the production tools surface."""
+        return self._agent_id
 
     @property
     def is_hub_room(self) -> bool:
@@ -172,7 +179,7 @@ class FakeAgentTools:
             raise BandToolError(
                 append_mention_handles_hint(
                     "At least one mention is required",
-                    available_mention_handles(self._participants),
+                    available_mention_handles(self._participants, self.agent_id),
                 )
             )
 

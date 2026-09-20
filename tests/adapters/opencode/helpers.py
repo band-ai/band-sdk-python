@@ -360,7 +360,7 @@ class FakeOpencodeClient:
     async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
         self.registered_mcp_servers.append({"name": name, "url": url})
         self.serve_registrations[name] = url
-        return {"name": name, "url": url}
+        return {name: {"status": "connected"}}
 
     async def disconnect_mcp_server(self, name: str) -> None:
         self.disconnected_mcp_servers.append(name)

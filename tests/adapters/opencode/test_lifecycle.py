@@ -49,13 +49,19 @@ async def test_watch_task_drains_the_turn_that_started_it() -> None:
     async def racing_prompt(*args: Any, **kwargs: Any) -> None:
         # This turn's usage arrives and the turn completes while the
         # prompt POST is still open...
-        room_state.usage_by_message["msg-1"] = TurnUsage(
+        assert room_state.turn is not None
+        room_state.turn.usage_by_message["msg-1"] = TurnUsage(
             input_tokens=100, output_tokens=20
         )
         adapter._finish_turn(room_state)
         # ...and a racing message begins (and finishes) the next turn
         # before the first on_message resumes.
-        adapter._begin_turn(room_state, sender_id="user-2")
+        adapter._begin_turn(
+            room_state,
+            session_id="sess-1",
+            tools=tools_protocol(tools),
+            sender_id="user-2",
+        )
         adapter._finish_turn(room_state)
         await orig_prompt(*args, **kwargs)
 
@@ -96,16 +102,24 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
     room_state = await adapter._get_or_create_room_state("room-1")
     room_state.tools = tools_protocol(tools)
 
-    adapter._begin_turn(room_state, sender_id="user-1")
-    room_state.usage_by_message["msg-1"] = TurnUsage(input_tokens=100, output_tokens=20)
+    first_turn = adapter._begin_turn(
+        room_state,
+        session_id="sess-1",
+        tools=tools_protocol(tools),
+        sender_id="user-1",
+    )
+    first_turn.usage_by_message["msg-1"] = TurnUsage(input_tokens=100, output_tokens=20)
     # What on_message hands this turn's watch task.
-    first_turn_usage = room_state.usage_by_message
-
     # The next turn begins before the first turn's usage is drained.
-    adapter._begin_turn(room_state, sender_id="user-2")
-    assert room_state.usage_by_message == {}
+    next_turn = adapter._begin_turn(
+        room_state,
+        session_id="sess-1",
+        tools=tools_protocol(tools),
+        sender_id="user-2",
+    )
+    assert next_turn.usage_by_message == {}
 
-    await adapter._emit_turn_usage(room_state, first_turn_usage)
+    await adapter._emit_turn_usage(first_turn)
 
     usage_payloads = recorded_usage_payloads(tools)
     assert usage_payloads == [

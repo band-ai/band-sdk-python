@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Literal, cast
 
 from pydantic import BaseModel
@@ -92,6 +92,7 @@ def make_room_approvals(
     tools: FakeAgentTools | None = None,
     release_turn_wait: Callable[[], None] = lambda: None,
     fail_turn: Callable[[str], None] = lambda _message: None,
+    abort_session: Callable[[], Awaitable[None]] | None = None,
     config: OpencodeAdapterConfig | None = None,
 ) -> RoomApprovals:
     tools = tools if tools is not None else FakeAgentTools()
@@ -105,9 +106,14 @@ def make_room_approvals(
             turn_mentions=list,
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
+            abort_session=abort_session or _ignore_abort,
             is_own_band_tool=lambda _permission: False,
         ),
     )
+
+
+async def _ignore_abort() -> None:
+    return None
 
 
 async def test_manual_permission_reply_preserves_mixed_case_request_id() -> None:
@@ -226,9 +232,8 @@ async def test_polite_permission_reply_uses_pending_request() -> None:
     assert client.permission_replies[0]["permission_id"] == "req-1"
 
 
-async def test_reply_to_nonmatching_request_id_is_not_consumed() -> None:
-    """A reply naming a different id is not for this pending ask: it is left
-    alone (forwarded as an ordinary prompt), not swallowed."""
+async def test_reply_to_nonmatching_request_id_is_consumed() -> None:
+    """A named stale approval command is feedback, not a new model prompt."""
     client = FakeOpencodeClient()
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
 
@@ -236,7 +241,7 @@ async def test_reply_to_nonmatching_request_id_is_not_consumed() -> None:
         OpencodePermissionRequest(id="req-current", permission="bash")
     )
 
-    assert not await approvals.try_handle_reply("approve req-stale", "user-1")
+    assert await approvals.try_handle_reply("approve req-stale", "user-1")
     assert client.permission_replies == []
 
 
@@ -758,6 +763,7 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
             turn_mentions=list,
             release_turn_wait=lambda: None,
             fail_turn=lambda _message: None,
+            abort_session=_ignore_abort,
             is_own_band_tool=lambda _permission: False,
         ),
     )
