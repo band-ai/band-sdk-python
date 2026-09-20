@@ -326,6 +326,22 @@ class TestOnStarted:
             assert sdk_options.model == "opus"
             assert sdk_options.fallback_model == "sonnet"
 
+    @pytest.mark.asyncio
+    async def test_effort_is_forwarded(self):
+        adapter = ClaudeSDKAdapter(effort="xhigh")
+
+        with patch(
+            "band.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.effort == "xhigh"
+
 
 class TestOnMessage:
     """Tests for on_message() method (bootstrap, history, invoke and response)."""
