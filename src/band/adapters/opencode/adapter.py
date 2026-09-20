@@ -596,27 +596,46 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             state = self._rooms.get(room_id)
             if state is None:
                 state = RoomState(room_id=room_id)
-                state.approvals = self._new_approvals(state)
+                state.approvals = self._new_approvals(state, lambda: state.turn)
                 self._rooms[room_id] = state
             return state
 
-    def _new_approvals(self, state: RoomState) -> RoomApprovals:
+    def _new_approvals(
+        self, state: RoomState, owner: Callable[[], TurnState | None]
+    ) -> RoomApprovals:
         return RoomApprovals(
             self.config,
             ApprovalPorts(
                 room_id=state.room_id,
-                session_id=lambda: state.turn.session_id if state.turn else None,
+                session_id=lambda: self._owner_session_id(owner),
                 client=lambda: self._client,
-                tools=lambda: state.turn.tools if state.turn else None,
-                turn_mentions=lambda: state.turn.pending_mentions if state.turn else [],
-                release_turn_wait=lambda: self._release_turn_wait(state),
-                fail_turn=lambda message: self._fail_turn(state, message),
-                abort_session=lambda: self._abort_current_turn(
-                    state, "approval abandoned"
+                tools=lambda: self._owner_tools(owner),
+                turn_mentions=lambda: self._owner_mentions(owner),
+                release_turn_wait=lambda: self._release_turn_wait_for_owner(owner),
+                fail_turn=lambda message: self._fail_turn_for_owner(owner, message),
+                abort_session=lambda: self._abort_owner_turn(
+                    owner, "approval abandoned"
                 ),
                 is_own_band_tool=self._is_own_band_tool,
             ),
         )
+
+    @staticmethod
+    def _owner_session_id(owner: Callable[[], TurnState | None]) -> str | None:
+        turn = owner()
+        return turn.session_id if turn else None
+
+    @staticmethod
+    def _owner_tools(
+        owner: Callable[[], TurnState | None],
+    ) -> AgentToolsProtocol | None:
+        turn = owner()
+        return turn.tools if turn else None
+
+    @staticmethod
+    def _owner_mentions(owner: Callable[[], TurnState | None]) -> list[dict[str, str]]:
+        turn = owner()
+        return turn.pending_mentions if turn else []
 
     async def _ensure_client_started(self) -> None:
         async with self._state_lock:
@@ -929,11 +948,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         tools: AgentToolsProtocol,
         sender_id: str | None,
     ) -> TurnState:
-        state_approvals = self._new_approvals(room_state)
+        owner: list[TurnState] = []
+        state_approvals = self._new_approvals(
+            room_state, lambda: owner[0] if owner else None
+        )
         room_state.approvals = state_approvals
-        return room_state.begin_turn(
+        turn = room_state.begin_turn(
             session_id=session_id, tools=tools, sender_id=sender_id
         )
+        owner.append(turn)
+        return turn
 
     async def _watch_turn_completion(
         self,
@@ -1006,6 +1030,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if state.turn is not None:
             await self._abort_turn(state.turn, reason)
 
+    async def _abort_owner_turn(
+        self, owner: Callable[[], TurnState | None], reason: str
+    ) -> None:
+        if turn := owner():
+            await self._abort_turn(turn, reason)
+
     async def _report_delivery_failure(self, room_id: str, turn: TurnState) -> None:
         """Tell the room the turn finished but its result could not be posted.
 
@@ -1065,6 +1095,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _release_turn_wait_for(self, turn: TurnState) -> None:
         self._resolve_future(turn.turn_release_future)
 
+    def _release_turn_wait_for_owner(
+        self, owner: Callable[[], TurnState | None]
+    ) -> None:
+        if turn := owner():
+            self._release_turn_wait_for(turn)
+
     def _finish_turn(self, room_state: RoomState) -> None:
         if room_state.turn is not None:
             self._resolve_future(room_state.turn.turn_future)
@@ -1074,6 +1110,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if room_state.turn is not None:
             room_state.turn.last_error_message = message
         self._finish_turn(room_state)
+
+    def _fail_turn_for_owner(
+        self, owner: Callable[[], TurnState | None], message: str
+    ) -> None:
+        if turn := owner():
+            turn.last_error_message = message
+            self._resolve_future(turn.turn_future)
+            self._release_turn_wait_for(turn)
 
     def _clear_turn_state(
         self,
