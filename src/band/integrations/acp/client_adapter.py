@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -207,6 +207,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._room_to_session: dict[str, str] = {}
         self._session_initializers: dict[str, SessionInitializer] = {}
         self._room_tools: dict[str, AgentToolsProtocol] = {}
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._band_mcp_backend: BandMCPBackend | None = None
         self._bootstrapped_sessions: set[str] = set()
         self._session_lock = asyncio.Lock()
@@ -712,7 +713,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         try:
             yield session
         except asyncio.CancelledError:
-            asyncio.create_task(self._close_fresh_session(session.session_id))
+            self._track_background_task(self._close_fresh_session(session.session_id))
             raise
         except BaseException:
             await self._close_fresh_session(session.session_id)
@@ -744,6 +745,41 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id,
                 exc_info=True,
             )
+
+    def _track_background_task(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Run a fire-and-forget task that outlives its caller.
+
+        An untracked ``asyncio.create_task`` result can be garbage-collected
+        before it runs (the event loop only keeps a weak reference), silently
+        dropping the work. Keeping it here until it finishes also gives a
+        crash somewhere to be logged instead of vanishing.
+        """
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning("ACP background task failed", exc_info=error)
+
+    async def _drain_background_tasks(self) -> None:
+        """Let in-flight fire-and-forget cleanup finish before the runtime it
+        depends on stops.
+
+        Discards the awaited snapshot itself rather than relying on
+        ``_on_background_task_done`` to shrink the set: when every task in
+        the snapshot is already finished, ``asyncio.gather`` resolves
+        eagerly without ever suspending, so a callback-only removal would
+        spin here forever waiting for a yield that never happens.
+        """
+        while self._background_tasks:
+            pending = tuple(self._background_tasks)
+            await asyncio.gather(*pending, return_exceptions=True)
+            self._background_tasks.difference_update(pending)
 
     async def _session_mcp_servers(self) -> list[object]:
         """The MCP configuration supplied when creating or loading a session."""
@@ -931,6 +967,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._room_tools.clear()
             self._bootstrapped_sessions.clear()
         await self._cancel_session_initializers(*initializers)
+        await self._drain_background_tasks()
         async with self._mcp_backend_lock:
             backend = self._band_mcp_backend
             self._band_mcp_backend = None

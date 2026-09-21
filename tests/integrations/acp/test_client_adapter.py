@@ -1241,6 +1241,69 @@ class TestACPClientAdapterCleanup:
         release_close.set()
         await close_finished.wait()
 
+    @pytest.mark.asyncio
+    async def test_cancelled_fresh_session_close_is_tracked_not_lost(self) -> None:
+        """The background close task is retained, not a bare, unreferenced task."""
+        adapter = ACPClientAdapter(command="codex")
+        initialization_started = asyncio.Event()
+        release_close = asyncio.Event()
+        adapter._runtime.create_session_response = AsyncMock(
+            return_value=NewSessionResponse(session_id="session-1")
+        )
+
+        async def wait_to_close(_: str) -> None:
+            await release_close.wait()
+
+        adapter._runtime.close_session = AsyncMock(wraps=wait_to_close)
+
+        async def initialize() -> None:
+            async with adapter._fresh_session([]):
+                initialization_started.set()
+                await asyncio.Event().wait()
+
+        initializing = asyncio.create_task(initialize())
+        await initialization_started.wait()
+        initializing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(initializing, timeout=0.1)
+
+        assert len(adapter._background_tasks) == 1
+
+        release_close.set()
+        await asyncio.gather(*adapter._background_tasks)
+
+        assert adapter._background_tasks == set()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_waits_for_background_close_tasks(self) -> None:
+        adapter = ACPClientAdapter(command="codex")
+        initialization_started = asyncio.Event()
+        close_finished = asyncio.Event()
+        adapter._runtime.create_session_response = AsyncMock(
+            return_value=NewSessionResponse(session_id="session-1")
+        )
+
+        async def wait_to_close(_: str) -> None:
+            close_finished.set()
+
+        adapter._runtime.close_session = AsyncMock(wraps=wait_to_close)
+
+        async def initialize() -> None:
+            async with adapter._fresh_session([]):
+                initialization_started.set()
+                await asyncio.Event().wait()
+
+        initializing = asyncio.create_task(initialize())
+        await initialization_started.wait()
+        initializing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(initializing, timeout=0.1)
+
+        await adapter.cleanup_all(final=False)
+
+        assert close_finished.is_set()
+        assert adapter._background_tasks == set()
+
 
 class TestACPClientAdapterStop:
     """Tests for ACPClientAdapter.stop()."""
