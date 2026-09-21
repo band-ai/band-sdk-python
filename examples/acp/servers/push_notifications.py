@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 ACP Server with push notifications - Real-time activity from Band peers.

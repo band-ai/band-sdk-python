@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[copilot_sdk]>=1.5.0,<2.0.0"]
+# dependencies = ["band-sdk[copilot_sdk]>=1.5.0"]
 # ///
 """
 Human-in-the-loop via Copilot's ``ask_user`` tool, answered in the room.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk>=1.2.0", "pydantic-settings>=2.0.0"]
 # ///
 """Test inter-agent communication between planner and reviewer.
 
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -70,9 +69,7 @@ async def main() -> None:
     settings = Settings()
 
     # Use planner as the "orchestrator" to create the room
-    client = AsyncRestClient(
-        api_key=planner_key, base_url=settings.band_rest_url
-    )
+    client = AsyncRestClient(api_key=planner_key, base_url=settings.band_rest_url)
 
     # Step 1: Create a chat room
     logger.info("Creating chat room...")

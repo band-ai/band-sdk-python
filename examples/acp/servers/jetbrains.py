@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 JetBrains ACP Server - Use Band as an ACP agent in JetBrains IDEs.

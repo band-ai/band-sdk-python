@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[letta]>=1.2.0,<2.0.0", "pydantic-settings", "python-dotenv"]
+# dependencies = ["band-sdk[letta]>=1.2.0", "pydantic-settings", "python-dotenv"]
 # ///
 """
 Basic Letta agent example.

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[a2a_gateway]>=1.2.0"]
 # ///
 """
 Basic A2A Gateway adapter example.

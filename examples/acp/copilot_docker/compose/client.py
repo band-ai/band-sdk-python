@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[acp]>=1.2.0", "pydantic-settings>=2.0.0"]
 # ///
 """
 Host-side Band SDK client for the Copilot Docker Compose example.

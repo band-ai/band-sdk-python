@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 GitHub Copilot CLI ACP Client - Use GitHub Copilot from Band.

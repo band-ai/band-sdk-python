@@ -168,7 +168,7 @@ reviewer:
 - **`Config file is empty` / `IsADirectoryError` on `agent_config.yaml`**: a
   stale empty `agent_config.yaml` **directory** exists (Docker auto-creates the
   bind-mount source when the file is missing). Run `docker compose down`, then
-  `rm -rf agent_config.yaml && python create_agents.py` to regenerate the file
+  `rm -rf agent_config.yaml && uv run create_agents.py` to regenerate the file
   before `docker compose up`.
 - `Config file not found`: run `create_agents.py` to generate `agent_config.yaml`.
 - **`httpx.ConnectError: [Errno -2] Name or service not known` (crash loop)**:

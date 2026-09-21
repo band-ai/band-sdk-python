@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[strands]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[strands]>=1.6.0"]
 # ///
 """
 Strands agent on Amazon Bedrock.

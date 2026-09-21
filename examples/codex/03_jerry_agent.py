@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[codex,logging]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[codex,logging]>=1.2.0"]
 # ///
 """
 Jerry the mouse agent - clever and cheese-loving!

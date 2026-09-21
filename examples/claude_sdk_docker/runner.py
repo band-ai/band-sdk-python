@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[claude_sdk]>=1.2.0,<2.0.0", "pyyaml"]
+# dependencies = ["band-sdk[claude_sdk]>=1.2.0", "pyyaml"]
 # ///
 """
 YAML-based agent runner for Band Claude SDK.

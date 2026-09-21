@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk>=1.2.0", "pydantic-settings>=2.0.0"]
 # ///
 """Register the planner + reviewer agents and write agent_config.yaml.
 

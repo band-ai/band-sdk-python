@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[a2a_gateway]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[a2a_gateway]>=1.2.0"]
 # ///
 """
 Remote A2A fact checker for the mixed example.

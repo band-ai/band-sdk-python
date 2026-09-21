@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[pydantic-ai,logging]>=1.2.0,<2.0.0",
+#   "band-sdk[pydantic-ai,logging]>=1.2.0",
 #   "opentelemetry-sdk>=1.44.0",
 #   "opentelemetry-instrumentation-logging>=0.65b0",
 # ]

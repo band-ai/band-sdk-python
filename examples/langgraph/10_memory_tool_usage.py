@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]>=1.2.0,<2.0.0"]
+# dependencies = ["band-sdk[langgraph]>=1.2.0"]
 # ///
 """
 LangGraph agent with memory tools enabled.
