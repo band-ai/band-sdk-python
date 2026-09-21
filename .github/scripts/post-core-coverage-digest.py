@@ -42,7 +42,7 @@ def format_line_ranges(numbers: tuple[int, ...]) -> str:
     for number in numbers:
         if start is None:
             start = previous = number
-        elif number == previous + 1:
+        elif previous is not None and number == previous + 1:
             previous = number
         else:
             ranges.append(str(start) if start == previous else f"{start}-{previous}")
