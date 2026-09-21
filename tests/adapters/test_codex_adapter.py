@@ -1574,6 +1574,45 @@ class TestCodexAdapter:
         assert failures[0]["code"] == "timeout"
 
     @pytest.mark.asyncio
+    async def test_turn_timeout_emits_failed_lifecycle_event(self) -> None:
+        """A timed-out turn still gets a failed-status lifecycle event, same
+        as the transport/closed and turn/completed(status=failed) paths --
+        the timeout branch's TurnResultAlreadyReported raise happens from
+        inside its own except clause, so it can't rely on the sibling
+        `except TurnResultAlreadyReported` handler to emit it."""
+        fake_client = FakeCodexClient(events=[])
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(
+                transport="ws",
+                turn_timeout_s=0.01,
+                emit_turn_lifecycle_events=True,
+            ),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        with pytest.raises(TurnResultAlreadyReported):
+            await adapter.on_message(
+                make_platform_message(),
+                tools,
+                CodexSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        lifecycle_events = [
+            e
+            for e in tools.events_sent
+            if e["metadata"].get("codex_event_type") == "turn_lifecycle"
+        ]
+        assert len(lifecycle_events) == 2
+        assert lifecycle_events[0]["metadata"]["codex_turn_status"] == "started"
+        assert lifecycle_events[1]["metadata"]["codex_turn_status"] == "failed"
+
+    @pytest.mark.asyncio
     async def test_item_completed_text_overrides_accumulated_deltas(self) -> None:
         """item/completed text is authoritative and should replace any accumulated deltas."""
         events = [
@@ -5228,7 +5267,10 @@ class TestReviewFixes:
                 is_session_bootstrap=True,
                 room_id="room-1",
             )
-        assert len(reported_failures(tools)) == 1
+        failures = reported_failures(tools)
+        assert len(failures) == 1
+        assert failures[0]["provider"] == "codex"
+        assert failures[0]["message"] == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_rpc_error_from_event_loop_keeps_curated_failure(self) -> None:

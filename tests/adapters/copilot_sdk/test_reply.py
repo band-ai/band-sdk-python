@@ -39,6 +39,21 @@ class TestReply:
         assert sent["mentions"] == [{"id": "user-1", "name": "Alice"}]
 
     @pytest.mark.asyncio
+    async def test_send_message_failure_is_not_reported_as_provider_failure(self):
+        """Copilot answered fine; the room POST is what failed. That must not
+        surface as a copilot_sdk AgentFailure -- deliver_reply's
+        DeliveryFailedError must be recognized and left unreported here."""
+        client = FakeCopilotClient(reply_content="Hi Alice!")
+        adapter = await make_started_adapter(client)
+        tools = ToolSchemaFakeTools()
+        tools.send_message_error = RuntimeError("platform rejected the message")
+
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await run_message(adapter, tools)
+
+        assert not reported_failures(tools)
+
+    @pytest.mark.asyncio
     async def test_prompt_contains_room_context_and_message(self):
         client = FakeCopilotClient()
         adapter = await make_started_adapter(client)

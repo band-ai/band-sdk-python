@@ -1129,18 +1129,31 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "Failed to send turn/interrupt after timeout",
                         exc_info=True,
                     )
-            await tools.send_failure(
-                AgentFailure(
-                    CODEX_PROVIDER,
-                    f"Codex turn timed out after {self.config.turn_timeout_s}s",
-                    FAILURE_CODE_TIMEOUT,
-                )
-            )
-            result.turn_status = "failed"
-            result.turn_error = (
+            timeout_message = (
                 f"Codex turn timed out after {self.config.turn_timeout_s}s"
             )
-            raise TurnResultAlreadyReported("Turn timed out")
+            await tools.send_failure(
+                AgentFailure(CODEX_PROVIDER, timeout_message, FAILURE_CODE_TIMEOUT)
+            )
+            result.turn_status = "failed"
+            result.turn_error = timeout_message
+            # A raise from here lands in this try's own except clauses, not the
+            # sibling `except TurnResultAlreadyReported` above -- Python never
+            # matches an exception raised inside one except against a sibling
+            # of the same try. Call the same failed-turn telemetry directly
+            # (as on_message's CodexJsonRpcError branch already does) so a
+            # timeout still gets the "Codex turn"/lifecycle failed-status
+            # events every other TurnResultAlreadyReported path emits.
+            await self._emit_failed_turn_outcome(
+                tools=tools,
+                msg=msg,
+                room_id=room_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                result=result,
+                turn_start=turn_start,
+            )
+            raise TurnResultAlreadyReported(timeout_message)
         return result
 
     async def on_cleanup(self, room_id: str) -> None:

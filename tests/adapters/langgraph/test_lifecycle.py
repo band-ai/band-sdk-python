@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 
 from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD, LangGraphAdapter
+from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import PlatformMessage
 
 from .helpers import make_capture_graph
@@ -334,7 +335,7 @@ class TestErrorHandling:
             mock_tools.send_failure.assert_awaited_once()
             failure = mock_tools.send_failure.call_args.args[0]
             assert failure.provider == "langgraph"
-            assert "Graph error!" not in failure.message
+            assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
             assert failure.code is None
             assert failure.detail is None
 
@@ -369,3 +370,6 @@ class TestErrorHandling:
         mock_tools.send_failure.assert_awaited_once()
         failure = mock_tools.send_failure.call_args.args[0]
         assert failure.provider == "langgraph"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
+        assert failure.code is None
+        assert failure.detail is None

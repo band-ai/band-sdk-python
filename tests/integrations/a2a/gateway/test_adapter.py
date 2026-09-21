@@ -21,6 +21,7 @@ from a2a.types import (
     TaskStatus,
 )
 
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import PlatformMessage
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
@@ -302,7 +303,7 @@ class TestGatewayExecution:
         terminal = await queue.dequeue_event()
         assert terminal.status.state == TaskState.TASK_STATE_FAILED
         assert terminal.metadata["failure"]["provider"] == "a2a-gateway"
-        assert terminal.metadata["failure"]["code"] == "timeout"
+        assert terminal.metadata["failure"]["code"] == FAILURE_CODE_TIMEOUT
         assert adapter._pending_tasks == {}
         assert not any(
             "A2A request completed" in record.message for record in caplog.records

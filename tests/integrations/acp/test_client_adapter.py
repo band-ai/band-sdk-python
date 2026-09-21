@@ -11,7 +11,7 @@ from acp.exceptions import RequestError
 from acp.helpers import update_agent_message_text
 
 from band.converters.parsing import parse_tool_call, parse_tool_result
-from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
+from band.core.protocols import FAILURE_CODE_TIMEOUT, GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
@@ -820,7 +820,7 @@ class TestACPClientAdapterOnMessage:
 
         failures = reported_failures(tools)
         assert len(failures) == 1
-        assert failures[0]["code"] == "timeout"
+        assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
 
     @pytest.mark.asyncio
     async def test_on_message_request_error_captures_code_and_data(
@@ -1561,7 +1561,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
         failures = reported_failures(tools_a)
         assert len(failures) == 1
         assert failures[0]["provider"] == "acp"
-        assert failures[0]["code"] == "timeout"
+        assert failures[0]["code"] == FAILURE_CODE_TIMEOUT
 
         release_b.set()
         await b_turn

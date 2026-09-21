@@ -200,6 +200,17 @@ class TestSendMessage:
         assert result is None
         assert tools.messages_sent == []
 
+    async def test_send_message_error_raises_instead_of_recording(self):
+        """Simulates a room-delivery rejection, for tests proving a caller
+        distinguishes that from a provider failure."""
+        tools = FakeAgentTools()
+        tools.send_message_error = RuntimeError("platform rejected the message")
+
+        with pytest.raises(RuntimeError, match="platform rejected the message"):
+            await tools.send_message(content="Hello!", mentions=["user-1"])
+
+        assert tools.messages_sent == []
+
 
 class TestSendEvent:
     """Tests for send_event tracking."""

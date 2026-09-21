@@ -1695,6 +1695,7 @@ class TestEmptyFinalAnswer:
         mock_tools.send_failure.assert_awaited_once()
         failure = mock_tools.send_failure.call_args.args[0]
         assert failure.provider == "pydantic_ai"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_failed_run_still_emits_captured_usage(
@@ -1780,7 +1781,9 @@ class TestEmptyFinalAnswer:
             )
 
         mock_tools.send_failure.assert_awaited_once()
-        assert mock_tools.send_failure.call_args.args[0].provider == "pydantic_ai"
+        failure = mock_tools.send_failure.call_args.args[0]
+        assert failure.provider == "pydantic_ai"
+        assert failure.message == GENERIC_PROVIDER_FAILURE_MESSAGE
 
     @pytest.mark.asyncio
     async def test_generic_provider_error_reports_and_propagates(

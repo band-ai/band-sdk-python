@@ -107,6 +107,10 @@ class FakeAgentTools:
         # Set to simulate a send_event REST rejection (e.g. proving
         # send_failure swallows it while send_event itself still raises).
         self.send_event_error: Exception | None = None
+        # Set to simulate a send_message REST rejection (e.g. proving a
+        # room-delivery failure propagates without being reported as a
+        # provider AgentFailure).
+        self.send_message_error: Exception | None = None
         self._participants: list[dict[str, Any]] = participants or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
         # Seeds are validated and canonicalized at seed time (not list time),
@@ -166,6 +170,8 @@ class FakeAgentTools:
         ``None`` without recording anything — mirroring the real send's
         non-throwing refusal at ``band.platform.posting.post_message``.
         """
+        if self.send_message_error is not None:
+            raise self.send_message_error
         self._require_mentions(mentions)
         if not has_visible_content(content):
             return None

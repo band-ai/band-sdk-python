@@ -539,6 +539,7 @@ class TestTurnProductivity:
         failures = reported_failures(tools)
         assert len(failures) == 1
         assert failures[0]["provider"] == "strands"
+        assert "band_send_message" in failures[0]["message"]
         # The shared bridge returns a normalized, model-visible tool failure.
         assert any(
             text.startswith("Error executing band_send_message:")

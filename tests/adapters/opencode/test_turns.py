@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import (
     Capability,
     Emit,
@@ -423,7 +424,10 @@ async def test_turn_timeout_aborts_session_and_emits_error() -> None:
 
     assert fake_client.aborted_sessions == ["sess-1"]
     failures = reported_failures(tools)
-    assert any(f["provider"] == "opencode" and f["code"] == "timeout" for f in failures)
+    assert any(
+        f["provider"] == "opencode" and f["code"] == FAILURE_CODE_TIMEOUT
+        for f in failures
+    )
     assert any("timed out" in f["message"].lower() for f in failures)
 
     await adapter.on_cleanup("room-1")
