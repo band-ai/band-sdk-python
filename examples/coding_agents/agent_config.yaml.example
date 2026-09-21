@@ -1,5 +1,6 @@
 # Agent credentials for all agents in this example.
-# Copy to agent_config.yaml and fill in values from the Band platform.
+# `create_agents.py` generates agent_config.yaml from the Band platform.
+# This file documents the optional repository configuration shape.
 # NEVER commit real credentials to version control.
 #
 # Keys must match:
