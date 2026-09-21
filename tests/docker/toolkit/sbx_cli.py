@@ -10,7 +10,8 @@ CLI, and run only under the ``sandbox``-marked proof
 (``SANDBOX_TESTS_ENABLED=true``). The module itself imports cleanly (stdlib +
 yaml), so its pure helpers are unit-tested in CI: the agent-name derivation and
 the absence-search command in ``tests/docker/test_nevervm_contracts.py``, and
-the proxy cert probe in ``tests/docker/test_sbx_cli.py``.
+the proxy cert probe and the pty-attached process lifecycle in
+``tests/docker/test_sbx_cli.py``.
 """
 
 from __future__ import annotations
@@ -274,50 +275,75 @@ def allow_network_for_hosts(hosts: Iterable[str], *, kit: Path | str) -> Iterato
         yield
 
 
-def spawn_attached_run(name: str) -> tuple[subprocess.Popen[bytes], int]:
-    """Start `sbx run --name <name>` attached to a real pty, held open for the
-    sandbox's lifetime.
+def _spawn_pty_process(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
+    """Start `argv` attached to a real pty (its stdin/stdout/stderr), returning
+    the child and the controlling end of the pty.
+
+    A backgrounded process without a real pty makes `sbx run` fail after ~30s
+    with `inspect exec: context deadline exceeded`, so `attached_run` (below)
+    holds one open via the stdlib `pty` module rather than redirecting to a
+    pipe or `/dev/null`. `pty` is POSIX-only (no `termios` on Windows) and
+    imported here rather than at module level, so this module still imports
+    cleanly for collection on Windows CI — every caller of this function is
+    already gated behind `sbx_available()`/`SANDBOX_TESTS_ENABLED` and never
+    runs there.
+    """
+    import pty  # noqa: PLC0415 -- POSIX-only, deferred so this module still collects on Windows
+
+    controller_fd, child_fd = pty.openpty()
+    try:
+        process = subprocess.Popen(
+            argv, stdin=child_fd, stdout=child_fd, stderr=child_fd, close_fds=True
+        )
+    except Exception:
+        os.close(controller_fd)
+        os.close(child_fd)
+        raise
+    os.close(child_fd)
+    return process, controller_fd
+
+
+def _stop_pty_process(process: subprocess.Popen[bytes], controller_fd: int) -> None:
+    """Terminate `process`, escalating to SIGKILL if it ignores SIGTERM, then
+    close `controller_fd` regardless of how it exited."""
+
+    def exited_within_timeout() -> bool:
+        try:
+            process.wait(timeout=ATTACH_STOP_TIMEOUT_S)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+
+    try:
+        if process.poll() is None:
+            process.terminate()
+            if not exited_within_timeout():
+                logger.warning(
+                    "process %s ignored SIGTERM; sending SIGKILL", process.args
+                )
+                process.kill()
+                if not exited_within_timeout():
+                    logger.warning("process %s still alive after SIGKILL", process.args)
+    finally:
+        os.close(controller_fd)
+
+
+@contextmanager
+def attached_run(name: str) -> Iterator[None]:
+    """Hold `sbx run --name <name>` attached to a real pty for the block.
 
     The kit's agent runs on `sandbox.entrypoint`, which only launches once
     something attaches — `sbx create` alone leaves the sandbox idle, and `sbx`
     v0.43.0 auto-stops an idle, unattached sandbox within ~60-90s regardless of
-    what's running inside it. A backgrounded `sbx run` without a real pty fails
-    after ~30s with `inspect exec: context deadline exceeded`, so this
-    allocates one via the stdlib `pty` module rather than redirecting to a
-    pipe or `/dev/null`. Public: both `Sandbox.create` and any caller that
-    drives `sbx create`/`band-kit provision` directly (e.g. a demo script)
-    need to hold this open the same way.
-
-    `pty` is POSIX-only (no `termios` on Windows) and imported here rather
-    than at module level, so this module still imports cleanly for
-    collection on Windows CI — every sandbox-marked test that reaches this
-    function is already gated behind `sbx_available()`/`SANDBOX_TESTS_ENABLED`
-    and never runs there.
+    what's running inside it. Both `Sandbox.create` and any caller that drives
+    `sbx create`/`band-kit provision` directly (e.g. a demo script) need to
+    hold this open the same way.
     """
-    import pty  # noqa: PLC0415 -- POSIX-only, deferred so this module still collects on Windows
-
-    controller_fd, sandbox_fd = pty.openpty()
-    process = subprocess.Popen(
-        [SBX, "run", "--name", name],
-        stdin=sandbox_fd,
-        stdout=sandbox_fd,
-        stderr=sandbox_fd,
-        close_fds=True,
-    )
-    os.close(sandbox_fd)
-    return process, controller_fd
-
-
-def stop_attached_run(process: subprocess.Popen[bytes], controller_fd: int) -> None:
-    """Tear down a `spawn_attached_run` session before `sbx rm`."""
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=ATTACH_STOP_TIMEOUT_S)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=ATTACH_STOP_TIMEOUT_S)
-    os.close(controller_fd)
+    process, controller_fd = _spawn_pty_process([SBX, "run", "--name", name])
+    try:
+        yield
+    finally:
+        _stop_pty_process(process, controller_fd)
 
 
 NAME_PREFIX = "band-nevervm"
@@ -373,11 +399,13 @@ class Sandbox:
             check=True,
             timeout=CREATE_TIMEOUT_S,
         )
-        attach_process, attach_fd = spawn_attached_run(name)
+        # `sbx create` above already succeeded, so `sbx rm` must run on any
+        # exception from here on (including one raised while entering
+        # attached_run) — otherwise the created sandbox is orphaned.
         try:
-            yield cls(name)
+            with attached_run(name):
+                yield cls(name)
         finally:
-            stop_attached_run(attach_process, attach_fd)
             subprocess.run(
                 [SBX, "rm", "-f", name],
                 capture_output=True,

@@ -57,10 +57,9 @@ from tests.docker.test_kit_proxy_managed_live import (
 )
 from tests.docker.toolkit.sbx_cli import (
     allow_network_for_hosts,
+    attached_run,
     remove_custom_secret_command,
     sandbox_name,
-    spawn_attached_run,
-    stop_attached_run,
 )
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import Replies, reply_capture
@@ -223,7 +222,6 @@ async def run(kit: str) -> None:
 
     room_id: str | None = None
     agent_id: str | None = None
-    attach: tuple[subprocess.Popen[bytes], int] | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="band-selfreg-demo-") as tmp_dir:
             workspace = _prepare_workspace(Path(tmp_dir), endpoints=settings.endpoints)
@@ -247,39 +245,38 @@ async def run(kit: str) -> None:
                     "Step 2/5: attaching to launch the agent "
                     "(sandbox.entrypoint only runs once something attaches)"
                 )
-                attach = spawn_attached_run(name)
-
-                logger.info("Step 3/5: creating room and adding the agent")
-                room_id = await resource_manager.provision_room(participants=[agent_id])
-
-                logger.info(
-                    "Step 4/5: sending a room message and awaiting the echo reply"
-                )
-                replies = await _ping_and_await_echo(
-                    resource_manager,
-                    settings=settings,
-                    room_id=room_id,
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                )
-                replies.assert_contains_any(["echo:"])
-                logger.info("Got a reply containing 'echo:'")
-
-                logger.info("Step 5/5: re-running provision to prove idempotency")
-                rerun_id = _band_kit_provision(
-                    name=name, workspace=workspace, create=False
-                )
-                if rerun_id != agent_id:
-                    raise RuntimeError(
-                        f"expected the idempotent no-op to return {agent_id!r}, got {rerun_id!r}"
+                with attached_run(name):
+                    logger.info("Step 3/5: creating room and adding the agent")
+                    room_id = await resource_manager.provision_room(
+                        participants=[agent_id]
                     )
-                logger.info("Confirmed idempotent: no duplicate agent registered")
+
+                    logger.info(
+                        "Step 4/5: sending a room message and awaiting the echo reply"
+                    )
+                    replies = await _ping_and_await_echo(
+                        resource_manager,
+                        settings=settings,
+                        room_id=room_id,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                    )
+                    replies.assert_contains_any(["echo:"])
+                    logger.info("Got a reply containing 'echo:'")
+
+                    logger.info("Step 5/5: re-running provision to prove idempotency")
+                    rerun_id = _band_kit_provision(
+                        name=name, workspace=workspace, create=False
+                    )
+                    if rerun_id != agent_id:
+                        raise RuntimeError(
+                            f"expected the idempotent no-op to return {agent_id!r}, got {rerun_id!r}"
+                        )
+                    logger.info("Confirmed idempotent: no duplicate agent registered")
 
         logger.info("Success: agent %s self-registered and round-tripped.", agent_id)
     finally:
         logger.info("Cleaning up...")
-        if attach:
-            stop_attached_run(*attach)
         _teardown_sbx(name)
         if room_id:
             await resource_manager.reap_room(room_id)
