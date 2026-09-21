@@ -328,6 +328,7 @@ class TestOnStarted:
 
     @pytest.mark.asyncio
     async def test_effort_is_forwarded(self):
+        """effort= should land in ClaudeAgentOptions.effort."""
         adapter = ClaudeSDKAdapter(effort="xhigh")
 
         with patch(

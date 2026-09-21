@@ -85,7 +85,7 @@ langgraph = [
     "beautifulsoup4>=4.12.0",
 ]
 claude_sdk = [
-    "claude-agent-sdk>=0.2.82",
+    "claude-agent-sdk>=0.2.82",  # Floor: EffortLevel exported as a named type (ClaudeSDKAdapter's effort option); also carries ResultMessage.errors/api_error_status (used by the failure path). Requires Node.js 20+ and @anthropic-ai/claude-code CLI
     "mcp>=1.28.1,<2",
 ]
 copilot_sdk = [
