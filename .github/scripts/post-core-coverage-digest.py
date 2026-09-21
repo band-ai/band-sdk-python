@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LOW_COVERAGE_PERCENT = 80.0
+MID_COVERAGE_PERCENT = 50.0
 MAX_MISSED_LINE_RANGES = 8
 MAX_LOW_COVERAGE_FILES = 8
 
@@ -60,7 +61,7 @@ def format_line_ranges(numbers: tuple[int, ...]) -> str:
 def coverage_marker(percent: float) -> str:
     if percent >= LOW_COVERAGE_PERCENT:
         return "🟢"
-    if percent >= 50:
+    if percent >= MID_COVERAGE_PERCENT:
         return "🟠"
     return "🔴"
 

@@ -33,12 +33,10 @@ def _pin_guard_script(run_text: str) -> str:
     return "\n".join(lines[start:end])
 
 
-def _run_pin_guard(version: str) -> subprocess.CompletedProcess[str]:
-    """Execute the real guard script from the workflow against a given version string."""
-    workflow = load_workflow()
-    run_text = _step(workflow, "Resolve pinned band-sdk-core version")["run"]
-    core_tag_prefix = workflow["jobs"]["coverage"]["env"]["CORE_TAG_PREFIX"]
-    script = f'version="{version}"\n{_pin_guard_script(run_text)}'
+def _run_bash(
+    script: str, *, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Execute a shell script the same way a workflow's bash step runs it."""
     bash = "bash"
     if sys.platform == "win32":
         bash = str(Path(os.environ["ProgramFiles"]) / "Git" / "bin" / "bash.exe")
@@ -47,8 +45,26 @@ def _run_pin_guard(version: str) -> subprocess.CompletedProcess[str]:
         [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
         capture_output=True,
         text=True,
-        env={**os.environ, "CORE_TAG_PREFIX": core_tag_prefix},
+        cwd=cwd,
+        env={**os.environ, **(env or {})},
     )
+
+
+def _run_pin_guard(version: str) -> subprocess.CompletedProcess[str]:
+    """Execute the real guard script from the workflow against a given version string."""
+    workflow = load_workflow()
+    run_text = _step(workflow, "Resolve pinned band-sdk-core version")["run"]
+    core_tag_prefix = workflow["jobs"]["coverage"]["env"]["CORE_TAG_PREFIX"]
+    script = f'version="{version}"\n{_pin_guard_script(run_text)}'
+    return _run_bash(script, env={"CORE_TAG_PREFIX": core_tag_prefix})
+
+
+def _run_step(
+    step_name: str, *, cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Execute a coverage-job step's real `run:` text as a subprocess from `cwd`."""
+    run_text = _step(load_workflow(), step_name)["run"]
+    return _run_bash(run_text, cwd=cwd, env=env)
 
 
 def test_pin_step_resolves_version_into_github_output() -> None:
@@ -122,9 +138,10 @@ def test_core_tag_prefix_is_a_single_source_of_truth() -> None:
     assert "band-sdk-core-core-v" not in pin_run
 
 
-def test_report_dir_is_a_single_source_of_truth() -> None:
+def test_report_dir_and_artifact_dir_are_single_sources_of_truth() -> None:
     workflow = load_workflow()
     report_dir = workflow["jobs"]["coverage"]["env"]["REPORT_DIR"]
+    artifact_dir = workflow["jobs"]["coverage"]["env"]["ARTIFACT_DIR"]
     summary_run = _step(workflow, "Write coverage summary")["run"]
     stage_run = _step(workflow, "Stage coverage report")["run"]
     upload_paths = _step(workflow, "Upload coverage report")["with"]["path"]
@@ -134,11 +151,42 @@ def test_report_dir_is_a_single_source_of_truth() -> None:
     assert upload_paths == "${{ env.ARTIFACT_DIR }}"
     assert report_dir not in summary_run
     assert report_dir not in stage_run
+    assert artifact_dir not in stage_run
+    assert artifact_dir not in upload_paths
 
 
-def test_coverage_artifact_has_a_single_staging_root() -> None:
-    coverage = load_workflow()["jobs"]["coverage"]
-    assert coverage["env"]["ARTIFACT_DIR"] == "python-core-coverage-artifact"
+def test_stage_coverage_report_copies_only_files_that_exist(tmp_path: Path) -> None:
+    report = tmp_path / "band-sdk-core" / "report"
+    report.mkdir(parents=True)
+    (report / "python-consumer.lcov").write_text("lcov data")
+    (report / "summary.txt").write_text("summary data")
+    (report / "html").mkdir()
+    (report / "html" / "index.html").write_text("<html></html>")
+
+    result = _run_step(
+        "Stage coverage report",
+        cwd=tmp_path,
+        env={"REPORT_DIR": "report", "ARTIFACT_DIR": "artifact"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    staged = tmp_path / "artifact"
+    assert (staged / "python-consumer.lcov").read_text() == "lcov data"
+    assert (staged / "summary.txt").read_text() == "summary data"
+    assert (staged / "html" / "index.html").is_file()
+
+
+def test_stage_coverage_report_tolerates_a_missing_checkout(tmp_path: Path) -> None:
+    # band-sdk-core/ may not exist at all (see test_write_coverage_summary_has_no_working_directory) --
+    # staging must not fail just because there is nothing to stage.
+    result = _run_step(
+        "Stage coverage report",
+        cwd=tmp_path,
+        env={"REPORT_DIR": "report", "ARTIFACT_DIR": "artifact"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert list((tmp_path / "artifact").iterdir()) == []
 
 
 def test_write_coverage_summary_has_no_working_directory() -> None:
@@ -193,15 +241,53 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
     )
 
 
-def test_weekly_digest_identifies_low_and_completely_uncovered_files(
-    tmp_path: Path,
-) -> None:
+def _load_digest_module() -> Any:
+    """Load post-core-coverage-digest.py, which has no package, as a module."""
     script_path = REPO_ROOT / ".github/scripts/post-core-coverage-digest.py"
     spec = spec_from_file_location("post_core_coverage_digest", script_path)
     assert spec is not None and spec.loader is not None
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def test_display_path_falls_back_to_basename_without_a_crates_segment() -> None:
+    module = _load_digest_module()
+    assert module.display_path("/work/other/src/file.rs") == "file.rs"
+
+
+def test_coverage_marker_thresholds() -> None:
+    module = _load_digest_module()
+    assert module.coverage_marker(100.0) == "🟢"
+    assert module.coverage_marker(module.LOW_COVERAGE_PERCENT) == "🟢"
+    assert module.coverage_marker(module.LOW_COVERAGE_PERCENT - 0.01) == "🟠"
+    assert module.coverage_marker(module.MID_COVERAGE_PERCENT) == "🟠"
+    assert module.coverage_marker(module.MID_COVERAGE_PERCENT - 0.01) == "🔴"
+    assert module.coverage_marker(0.0) == "🔴"
+
+
+def test_render_digest_reports_unavailable_coverage_when_lcov_is_missing(
+    tmp_path: Path,
+) -> None:
+    module = _load_digest_module()
+    digest = module.render_digest(
+        lcov_path=tmp_path / "missing.lcov",
+        label="Core",
+        recipients="@bandzalkin",
+        run_url="https://example.test/run",
+        result="failure",
+    )
+
+    assert "⚠️ **Coverage unavailable** · workflow `failure`" in digest
+    assert "No LCOV report was produced" in digest
+    assert "[Open run](https://example.test/run)" in digest
+
+
+def test_weekly_digest_identifies_low_and_completely_uncovered_files(
+    tmp_path: Path,
+) -> None:
+    module = _load_digest_module()
 
     lcov = tmp_path / "coverage.lcov"
     lcov.write_text(
