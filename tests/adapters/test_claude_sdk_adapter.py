@@ -496,6 +496,39 @@ class TestOnMessage:
             assert "Hello, agent!" in full_message
             mock_process.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_refuses_second_message_while_a_turn_is_running(
+        self, sample_message, mock_tools
+    ):
+        """A room with a still-running turn is refused, not queued or double-started."""
+        adapter = ClaudeSDKAdapter()
+        adapter._session_manager = AsyncMock()
+        never_release = asyncio.Event()
+        running_turn = asyncio.create_task(never_release.wait())
+        adapter._turn_tasks["room-123"] = running_turn
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=ClaudeSDKSessionState(text=""),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        adapter._session_manager.get_or_create_session.assert_not_awaited()
+        assert adapter._turn_tasks["room-123"] is running_turn
+        mock_tools.send_message.assert_awaited_once()
+        assert (
+            mock_tools.send_message.call_args[0][0]
+            == "Still processing the previous request in this room."
+        )
+        assert mock_tools.send_message.call_args[0][1] == ["user-456"]
+
+        never_release.set()
+        await running_turn
+
 
 class TestErrorHandling:
     """Tests for error handling when SDK or tools raise."""
@@ -807,10 +840,10 @@ class TestOnCleanup:
         assert not rejoined_release.done()
 
     @pytest.mark.asyncio
-    async def test_turn_releases_its_future_after_room_state_is_removed(
-        self, mock_tools
-    ):
-        """Cleanup cannot strand the caller waiting on its captured release future."""
+    async def test_run_turn_always_releases_its_handed_future(self, mock_tools):
+        """``_run_turn`` resolves the release future it was given directly, never
+        by looking it up in ``_turn_release`` -- so a caller isn't stranded even
+        when that dict never held (or no longer holds) this room's entry."""
         adapter = ClaudeSDKAdapter()
         release_future = asyncio.get_running_loop().create_future()
         client = MagicMock()
@@ -886,6 +919,31 @@ class TestOnCleanup:
 
         assert turn_task.cancelled()
         assert "room-123" not in adapter._turn_tasks
+
+    @pytest.mark.asyncio
+    async def test_log_turn_task_exception_skips_cancelled_tasks(self):
+        """A cancelled task's exception must never be retrieved -- that call raises."""
+        adapter = ClaudeSDKAdapter()
+        task = asyncio.create_task(asyncio.sleep(10))
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        adapter._log_turn_task_exception(task)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_log_turn_task_exception_retrieves_a_failed_turns_exception(self):
+        """A failed (non-cancelled) turn's exception is retrieved without raising."""
+        adapter = ClaudeSDKAdapter()
+
+        async def failing_turn() -> None:
+            raise RuntimeError("boom")
+
+        task = asyncio.create_task(failing_turn())
+        with pytest.raises(RuntimeError):
+            await task
+
+        adapter._log_turn_task_exception(task)  # must not raise
 
 
 class TestCleanupAll:
