@@ -70,6 +70,9 @@ When you need approval or clarification, ask clearly and wait for the user's nex
 """
 
 _MCP_SERVER_ID_LENGTH = 8
+# OpenCode's own registration-result vocabulary; shared with the test double
+# (tests/adapters/opencode/helpers.py) so both sides name the same status.
+MCP_REGISTRATION_CONNECTED_STATUS = "connected"
 
 
 @dataclass
@@ -105,7 +108,8 @@ class RoomState:
     tools: AgentToolsProtocol | None = None
     turn: TurnState | None = None
     turn_task: asyncio.Task[None] | None = None
-    # Bound in _get_or_create_room_state, immediately after construction.
+    # Bound in _get_or_create_room_state at construction, and rebound by
+    # _begin_turn on every subsequent turn.
     approvals: RoomApprovals = field(init=False)
     persisted_session_id: str | None = None
 
@@ -517,9 +521,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             # the watcher), then ask OpenCode to stop working.
             if turn_future is not None:
                 assert turn is not None
-                await turn.approvals.abandon()
+                already_aborted = await turn.approvals.abandon()
                 self._clear_turn_state(room_state, expected_turn=turn)
-                await self._abort_turn(turn, "interrupted")
+                if not already_aborted:
+                    await self._abort_turn(turn, "interrupted")
             raise
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
@@ -703,8 +708,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     self._mcp_server_name,
                 )
                 return
-            if result.get(self._mcp_server_name, {}).get("status") != "connected":
-                logger.warning("MCP server %s was not connected", self._mcp_server_name)
+            status = result.get(self._mcp_server_name, {}).get("status")
+            if status != MCP_REGISTRATION_CONNECTED_STATUS:
+                logger.warning(
+                    "MCP server %s was not connected (status=%s)",
+                    self._mcp_server_name,
+                    status,
+                )
                 return
             async with self._state_lock:
                 if self._client is client:
@@ -964,15 +974,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         tools: AgentToolsProtocol,
         sender_id: str | None,
     ) -> TurnState:
-        owner: list[TurnState] = []
-        room_state.approvals = self._new_approvals(
-            room_state, lambda: owner[0] if owner else None
-        )
-        turn = room_state.begin_turn(
+        room_state.approvals = self._new_approvals(room_state, lambda: room_state.turn)
+        return room_state.begin_turn(
             session_id=session_id, client=client, tools=tools, sender_id=sender_id
         )
-        owner.append(turn)
-        return turn
 
     async def _watch_turn_completion(
         self,
@@ -999,14 +1004,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 turn.session_id,
             )
             await self._abort_turn(turn, "timed-out")
-            if turn.tools:
-                await turn.tools.send_event(
-                    "OpenCode timed out before completing the turn.",
-                    "error",
+            try:
+                if turn.tools:
+                    await turn.tools.send_event(
+                        "OpenCode timed out before completing the turn.",
+                        "error",
+                    )
+                # Tokens spent before the timeout were still spent — emit them,
+                # same as the success path (best-effort; no-op if none captured).
+                await self._emit_turn_usage(turn)
+            except Exception:
+                logger.exception(
+                    "Failed to report the OpenCode timeout for room %s", room_id
                 )
-            # Tokens spent before the timeout were still spent — emit them, same
-            # as the success path (best-effort; no-op if none captured).
-            await self._emit_turn_usage(turn)
+                await self._report_delivery_failure(room_state.room_id, turn)
         else:
             try:
                 await self._deliver_fallback_text(room_state.room_id, turn)

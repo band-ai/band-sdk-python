@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from band.adapters.opencode import OpencodeAdapter
+from band.adapters.opencode.adapter import MCP_REGISTRATION_CONNECTED_STATUS
 from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import (
@@ -254,6 +255,7 @@ class FakeOpencodeClient:
         get_session_missing: set[str] | None = None,
         prompt_exceptions: list[Exception] | None = None,
         serve_registrations: dict[str, str] | None = None,
+        register_mcp_statuses: list[str] | None = None,
     ) -> None:
         # A real ``opencode serve`` keys MCP registrations globally by name, so
         # clients sharing one serve share this mapping.
@@ -277,6 +279,9 @@ class FakeOpencodeClient:
         self._reject_question_events = reject_question_events or {}
         self._get_session_missing = get_session_missing or set()
         self._prompt_exceptions = list(prompt_exceptions or [])
+        # Popped one at a time per register_mcp_server call; once exhausted,
+        # every further call reports connected.
+        self._register_mcp_statuses = list(register_mcp_statuses or [])
 
     async def create_session(
         self,
@@ -359,8 +364,14 @@ class FakeOpencodeClient:
 
     async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
         self.registered_mcp_servers.append({"name": name, "url": url})
-        self.serve_registrations[name] = url
-        return {name: {"status": "connected"}}
+        status = (
+            self._register_mcp_statuses.pop(0)
+            if self._register_mcp_statuses
+            else MCP_REGISTRATION_CONNECTED_STATUS
+        )
+        if status == MCP_REGISTRATION_CONNECTED_STATUS:
+            self.serve_registrations[name] = url
+        return {name: {"status": status}}
 
     async def disconnect_mcp_server(self, name: str) -> None:
         self.disconnected_mcp_servers.append(name)

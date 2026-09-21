@@ -111,7 +111,6 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
         sender_id="user-1",
     )
     first_turn.usage_by_message["msg-1"] = TurnUsage(input_tokens=100, output_tokens=20)
-    # What on_message hands this turn's watch task.
     # The next turn begins before the first turn's usage is drained.
     next_turn = adapter._begin_turn(
         room_state,

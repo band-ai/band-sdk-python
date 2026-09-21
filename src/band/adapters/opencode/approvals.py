@@ -149,8 +149,6 @@ class RoomApprovals:
         # until the turn timed out.
         self._permissions: dict[str, PendingPermission] = {}
         self._questions: dict[str, PendingQuestion] = {}
-        self._handled_permission_ids: set[str] = set()
-        self._handled_question_ids: set[str] = set()
         # Set while NO manual ask is parked on a human. Cleared only when we
         # actually forward an ask to the room and wait; set again the moment it
         # resolves. Both transitions go through the helpers below, which own
@@ -305,9 +303,7 @@ class RoomApprovals:
         mentions = [{"id": sender_id}] if sender_id else []
 
         approval = parse_permission_reply(command)
-        if approval and (
-            self._permissions or approval.request_id in self._handled_permission_ids
-        ):
+        if approval and (approval.request_id is not None or self._permissions):
             pending = self._resolve_permission(approval.request_id)
             if pending is None and approval.request_id is None:
                 # Ambiguous rather than unknown: name the asks instead of
@@ -323,12 +319,13 @@ class RoomApprovals:
                         mentions,
                     )
                 return True
-            if approval.request_id is not None:
-                await self._notify_room(
-                    f"OpenCode approval `{approval.request_id}` is no longer pending.",
-                    mentions,
-                )
-                return True
+            # A named id that matches nothing currently pending (never asked, or
+            # already resolved): feedback, not a fresh prompt for the model.
+            await self._notify_room(
+                f"OpenCode approval `{approval.request_id}` is no longer pending.",
+                mentions,
+            )
+            return True
 
         question = self._resolve_question(command)
         if question is not None:
@@ -361,11 +358,9 @@ class RoomApprovals:
                 )
             return True
 
-        if (
-            _is_question_rejection(command)
-            and len(command.split()) > 1
-            and command.split()[1] in self._handled_question_ids
-        ):
+        if _is_question_rejection(command) and len(command.split()) > 1:
+            # A named id that matched no pending question above: feedback,
+            # not a fresh prompt for the model.
             request_id = command.split()[1]
             await self._notify_room(
                 f"OpenCode question `{request_id}` is no longer pending.", mentions
@@ -422,8 +417,6 @@ class RoomApprovals:
 
     def cancel(self) -> None:
         """Drop pending state and stop its expiry timers (turn end/cleanup)."""
-        self._handled_permission_ids.update(self._permissions)
-        self._handled_question_ids.update(self._questions)
         for pending in (*self._permissions.values(), *self._questions.values()):
             _cancel_timeout(pending)
         self._permissions.clear()
@@ -431,12 +424,18 @@ class RoomApprovals:
         # No ask is parked anymore -- release any watcher waiting on us.
         self._release_from_human()
 
-    async def abandon(self) -> None:
-        """Stop a parked session after local approval state is discarded."""
+    async def abandon(self) -> bool:
+        """Stop a parked session after local approval state is discarded.
+
+        Returns whether an ask was actually pending (and so the session was
+        aborted), so a caller with its own unconditional abort afterward
+        (on_message's interrupt handler) can skip a redundant one.
+        """
         was_pending = bool(self._permissions or self._questions)
         self.cancel()
         if was_pending:
             await self._ports.abort_session()
+        return was_pending
 
     async def _approve_own_band_tool(self, request_id: str) -> None:
         try:
@@ -510,10 +509,6 @@ class RoomApprovals:
         )
         if registry.get(pending.request_id) is pending:
             del registry[pending.request_id]
-            if isinstance(pending, PendingPermission):
-                self._handled_permission_ids.add(pending.request_id)
-            else:
-                self._handled_question_ids.add(pending.request_id)
         self._release_if_idle()
 
     async def _expire_permission(self, request_id: str) -> None:
@@ -554,6 +549,15 @@ class RoomApprovals:
         await self._ports.abort_session()
 
     @asynccontextmanager
+    async def _reply_guard(self, action: str, request_id: str) -> AsyncIterator[None]:
+        """Shared failure handling for the two reply context managers below."""
+        try:
+            yield
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+            await self._fail_request(action, request_id, error=error)
+            raise ApprovalReplyError from error
+
+    @asynccontextmanager
     async def _permission_reply(
         self, action: str, request_id: str
     ) -> AsyncIterator[tuple[OpencodeClientProtocol, str]]:
@@ -562,11 +566,8 @@ class RoomApprovals:
         if client is None or not session_id:
             await self._fail_request(action, request_id)
             raise ApprovalReplyError
-        try:
+        async with self._reply_guard(action, request_id):
             yield client, session_id
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            await self._fail_request(action, request_id, error=error)
-            raise ApprovalReplyError from error
 
     @asynccontextmanager
     async def _question_reply(
@@ -576,11 +577,8 @@ class RoomApprovals:
         if client is None:
             await self._fail_request(action, request_id)
             raise ApprovalReplyError
-        try:
+        async with self._reply_guard(action, request_id):
             yield client
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
-            await self._fail_request(action, request_id, error=error)
-            raise ApprovalReplyError from error
 
     async def _expire_question(self, request_id: str) -> None:
         try:

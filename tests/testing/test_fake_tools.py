@@ -169,6 +169,20 @@ class TestSendMessage:
         with pytest.raises(BandToolError, match=r"Available handles: \['@alice'\]"):
             await tools.send_message(content="Hello!")
 
+    async def test_rejection_excludes_the_agents_own_handle(self):
+        """Matches production (runtime/tools/agent.py): the one mention the
+        real tool can never offer is the agent's own handle."""
+        tools = FakeAgentTools(
+            participants=[
+                {"id": "self", "handle": "@self"},
+                {"id": "user-1", "handle": "@alice"},
+            ],
+            agent_id="self",
+        )
+
+        with pytest.raises(BandToolError, match=r"Available handles: \['@alice'\]"):
+            await tools.send_message(content="Hello!")
+
     async def test_tracks_mentions(self):
         """Should track mentions in sent messages."""
         tools = FakeAgentTools()

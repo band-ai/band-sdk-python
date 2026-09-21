@@ -86,13 +86,17 @@ class FailingReplyClient(FakeOpencodeClient):
         raise RuntimeError("question rejection failed")
 
 
+async def _ignore_abort() -> None:
+    return None
+
+
 def make_room_approvals(
     client: OpencodeClientProtocol,
     *,
     tools: FakeAgentTools | None = None,
     release_turn_wait: Callable[[], None] = lambda: None,
     fail_turn: Callable[[str], None] = lambda _message: None,
-    abort_session: Callable[[], Awaitable[None]] | None = None,
+    abort_session: Callable[[], Awaitable[None]] = _ignore_abort,
     config: OpencodeAdapterConfig | None = None,
 ) -> RoomApprovals:
     tools = tools if tools is not None else FakeAgentTools()
@@ -106,14 +110,10 @@ def make_room_approvals(
             turn_mentions=list,
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
-            abort_session=abort_session or _ignore_abort,
+            abort_session=abort_session,
             is_own_band_tool=lambda _permission: False,
         ),
     )
-
-
-async def _ignore_abort() -> None:
-    return None
 
 
 async def test_manual_permission_reply_preserves_mixed_case_request_id() -> None:
@@ -245,6 +245,35 @@ async def test_reply_to_nonmatching_request_id_is_consumed() -> None:
     assert client.permission_replies == []
 
 
+async def test_reply_naming_a_never_asked_id_is_consumed() -> None:
+    """A named id gets feedback even with nothing at all pending -- not just
+    while some other ask is pending (the case above)."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    assert await approvals.try_handle_reply("approve never-asked-id", "user-1")
+    assert client.permission_replies == []
+
+
+async def test_reply_naming_an_already_resolved_id_is_consumed() -> None:
+    """A reply that arrives after every pending ask has already resolved
+    still gets 'no longer pending' feedback instead of being forwarded to
+    the model as a fresh prompt."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+    assert await approvals.try_handle_reply("approve perm-1", "user-1")
+    client.permission_replies.clear()
+
+    assert await approvals.try_handle_reply("approve perm-1", "user-1")
+    assert client.permission_replies == []
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
+
+
 async def test_notify_room_send_failure_does_not_strand_turn() -> None:
     """The approval-request post is best-effort: if send_message raises, the
     failure is swallowed so the turn still unblocks (``release_turn_wait``
@@ -294,6 +323,69 @@ async def test_mention_only_question_reply_requests_a_real_answer() -> None:
     assert await approvals.try_handle_reply("@alexander.zaikman/tom", "user-1")
     assert client.question_replies == []
     assert "waiting for answers" in tools.messages_sent[-1]["content"].lower()
+
+
+async def test_malformed_question_with_no_questions_is_ignored() -> None:
+    """A question.asked with an empty questions list must not park the turn
+    -- there is nothing answerable to show a human."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-empty", questions=[])
+    )
+
+    assert not approvals.awaiting_human()
+    assert tools.messages_sent == []
+
+
+async def test_redelivered_permission_while_reply_in_flight_is_ignored() -> None:
+    """A permission redelivered with the SAME id while its own reply is
+    still in flight must not create a second pending entry or send a
+    duplicate reply."""
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+
+    reply_task = asyncio.create_task(
+        approvals.try_handle_reply("approve req-1", "user-1")
+    )
+    await client.reply_started.wait()
+
+    # OpenCode redelivers the same ask while the reply above is in flight.
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    client.allow_reply.set()
+
+    assert await reply_task
+    assert [reply["permission_id"] for reply in client.permission_replies] == ["req-1"]
+
+
+async def test_redelivered_permission_cancels_previous_timeout() -> None:
+    """A permission redelivered with the SAME id (no reply in flight) must
+    cancel the FIRST ask's expiry timer, not leave it running to later
+    auto-reject the replacement."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    first_timer = approvals._permissions["req-1"].timeout_task
+    assert first_timer is not None and not first_timer.done()
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await wait_for(first_timer.done)
+
+    second_timer = approvals._permissions["req-1"].timeout_task
+    assert second_timer is not first_timer
+    assert not second_timer.done()
 
 
 async def test_new_permission_ask_survives_previous_reply() -> None:
@@ -821,8 +913,10 @@ async def test_cleanup_with_pending_permission() -> None:
     except asyncio.CancelledError:
         pass
 
-    # No permission reply should have been sent (just cleaned up)
+    # No permission reply should have been sent (just cleaned up), but the
+    # abandoned session must still be told to stop working.
     assert fake_client.permission_replies == []
+    assert fake_client.aborted_sessions == ["sess-1"]
 
 
 async def test_cleanup_with_pending_question() -> None:
@@ -863,9 +957,11 @@ async def test_cleanup_with_pending_question() -> None:
     except asyncio.CancelledError:
         pass
 
-    # No question reply should have been sent
+    # No question reply should have been sent, but the abandoned session
+    # must still be told to stop working.
     assert fake_client.question_replies == []
     assert fake_client.question_rejections == []
+    assert fake_client.aborted_sessions == ["sess-1"]
 
 
 async def test_always_permission_reply_from_follow_up_message(
