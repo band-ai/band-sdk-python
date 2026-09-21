@@ -60,7 +60,7 @@ class CursorACPAdapterConfig:
 
 
 @dataclass
-class _CursorTurn:
+class CursorTurn:
     """The room context for the one Cursor extension-capable prompt."""
 
     room_id: str
@@ -70,7 +70,7 @@ class _CursorTurn:
 
 
 @dataclass
-class _PendingDecision:
+class PendingDecision:
     """A room command waiting to settle one Cursor extension request."""
 
     kind: DecisionKind
@@ -95,8 +95,8 @@ class CursorACPAdapter(ACPClientAdapter):
         self._config = config
         self._cursor_profile = CursorACPClientProfile(self._resolve_extension_method)
         self._turn_lock = asyncio.Lock()
-        self._active_turn: _CursorTurn | None = None
-        self._pending_decisions: dict[str, _PendingDecision] = {}
+        self._active_turn: CursorTurn | None = None
+        self._pending_decisions: dict[str, PendingDecision] = {}
         env = self._cursor_env(config)
         super().__init__(
             command=list(config.command),
@@ -149,7 +149,7 @@ class CursorACPAdapter(ACPClientAdapter):
             return
 
         async with self._turn_lock:
-            self._active_turn = _CursorTurn(
+            self._active_turn = CursorTurn(
                 room_id=room_id,
                 tools=tools,
                 requester_id=msg.sender_id,
@@ -234,7 +234,7 @@ class CursorACPAdapter(ACPClientAdapter):
                 return {}
 
     async def _resolve_question(
-        self, turn: _CursorTurn, params: dict[str, object]
+        self, turn: CursorTurn, params: dict[str, object]
     ) -> dict[str, object]:
         choices = self._question_choices(params)
         if not choices:
@@ -268,7 +268,7 @@ class CursorACPAdapter(ACPClientAdapter):
                 )
 
     async def _resolve_plan(
-        self, turn: _CursorTurn, params: dict[str, object]
+        self, turn: CursorTurn, params: dict[str, object]
     ) -> dict[str, object]:
         match self._config.plan_mode:
             case "auto_accept":
@@ -296,7 +296,7 @@ class CursorACPAdapter(ACPClientAdapter):
         self,
         *,
         kind: DecisionKind,
-        turn: _CursorTurn,
+        turn: CursorTurn,
         prompt: str,
         choices: dict[str, tuple[str, ...]] | None = None,
         multi_select: frozenset[str] = frozenset(),
@@ -304,7 +304,7 @@ class CursorACPAdapter(ACPClientAdapter):
         token = uuid4().hex[:8]
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
         self._evict_oldest_decision()
-        self._pending_decisions[token] = _PendingDecision(
+        self._pending_decisions[token] = PendingDecision(
             kind=kind,
             room_id=turn.room_id,
             future=future,
@@ -374,7 +374,7 @@ class CursorACPAdapter(ACPClientAdapter):
         return True
 
     def _command_result(
-        self, action: str, args: list[str], pending: _PendingDecision
+        self, action: str, args: list[str], pending: PendingDecision
     ) -> object:
         match pending.kind, action:
             case "permission", "deny":
@@ -436,8 +436,8 @@ class CursorACPAdapter(ACPClientAdapter):
     @staticmethod
     def _question_choices(params: dict[str, object]) -> dict[str, tuple[str, ...]]:
         return {
-            question_id: option_ids
-            for question_id, (_, option_ids) in CursorACPAdapter._question_details(
+            question_id: tuple(option_id for option_id, _ in options)
+            for question_id, (_, options) in CursorACPAdapter._question_details(
                 params
             ).items()
         }
@@ -445,29 +445,34 @@ class CursorACPAdapter(ACPClientAdapter):
     @staticmethod
     def _question_details(
         params: dict[str, object],
-    ) -> dict[str, tuple[str | None, tuple[str, ...]]]:
-        """Project the valid question IDs, prompts, and option IDs once."""
+    ) -> dict[str, tuple[str | None, tuple[tuple[str, str], ...]]]:
+        """Project the valid question IDs, prompts, and labeled options once."""
         questions = params.get("questions")
         if not isinstance(questions, list):
             return {}
-        details: dict[str, tuple[str | None, tuple[str, ...]]] = {}
+        details: dict[str, tuple[str | None, tuple[tuple[str, str], ...]]] = {}
         for question in questions:
             if not isinstance(question, Mapping):
                 continue
             question_id, options = question.get("id"), question.get("options")
             if not isinstance(question_id, str) or not isinstance(options, list):
                 continue
-            option_ids = tuple(
-                option_id
+            option_details = tuple(
+                (
+                    option_id,
+                    label
+                    if isinstance((label := option.get("label")), str)
+                    else option_id,
+                )
                 for option in options
                 if isinstance(option, Mapping)
                 and isinstance((option_id := option.get("id")), str)
             )
-            if option_ids:
+            if option_details:
                 prompt = question.get("prompt")
                 details[question_id] = (
                     prompt if isinstance(prompt, str) else None,
-                    option_ids,
+                    option_details,
                 )
         return details
 
@@ -488,8 +493,8 @@ class CursorACPAdapter(ACPClientAdapter):
     @staticmethod
     def _question_summary(params: dict[str, object]) -> str:
         return "; ".join(
-            f"{question_id}: {prompt} ({', '.join(option_ids)})"
-            for question_id, (prompt, option_ids) in CursorACPAdapter._question_details(
+            f"{question_id}: {prompt} ({', '.join(f'{option_id}={label}' for option_id, label in options)})"
+            for question_id, (prompt, options) in CursorACPAdapter._question_details(
                 params
             ).items()
             if prompt is not None
@@ -509,7 +514,7 @@ class CursorACPAdapter(ACPClientAdapter):
                 option_ids.append(option_id)
         return tuple(option_ids)
 
-    def _active_turn_for(self, room_id: str, session_id: str) -> _CursorTurn | None:
+    def _active_turn_for(self, room_id: str, session_id: str) -> CursorTurn | None:
         turn = self._active_turn
         return (
             turn

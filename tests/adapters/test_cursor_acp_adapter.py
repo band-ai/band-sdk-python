@@ -13,7 +13,7 @@ from band.adapters.cursor_acp import (
     DEFAULT_CURSOR_ACP_COMMAND,
     CursorACPAdapter,
     CursorACPAdapterConfig,
-    _CursorTurn,
+    CursorTurn,
 )
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPPermissionRequest
@@ -88,7 +88,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_question_requires_a_valid_room_answer(self) -> None:
         tools = _DecisionTools()
         adapter = CursorACPAdapter()
-        turn = _CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
+        turn = CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
         adapter._active_turn = turn
 
         pending = asyncio.create_task(
@@ -109,6 +109,8 @@ class TestCursorACPAdapterDecisions:
             )
         )
         await tools.prompt_sent.wait()
+        assert "agent=Agent" in tools.messages[0]
+        assert "plan=Plan" in tools.messages[0]
         token = next(iter(adapter._pending_decisions))
 
         handled = await adapter._handle_control_message(
@@ -133,7 +135,7 @@ class TestCursorACPAdapterDecisions:
     @pytest.mark.asyncio
     async def test_auto_question_uses_the_first_advertised_option(self) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(question_mode="auto_first"))
-        turn = _CursorTurn("room-1", _DecisionTools(), "user-1", "session-1")  # type: ignore[arg-type]
+        turn = CursorTurn("room-1", _DecisionTools(), "user-1", "session-1")  # type: ignore[arg-type]
 
         result = await adapter._resolve_question(
             turn,
@@ -159,7 +161,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_permission_can_be_denied_from_the_room(self) -> None:
         tools = _DecisionTools()
         adapter = CursorACPAdapter()
-        adapter._active_turn = _CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
+        adapter._active_turn = CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
@@ -189,7 +191,7 @@ class TestCursorACPAdapterDecisions:
     async def test_manual_permission_can_select_an_advertised_option(self) -> None:
         tools = _DecisionTools()
         adapter = CursorACPAdapter()
-        adapter._active_turn = _CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
+        adapter._active_turn = CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
         request = ACPPermissionRequest(
             room_id="room-1",
             session_id="session-1",
@@ -230,7 +232,7 @@ class TestCursorACPAdapterDecisions:
         )
 
         result = await adapter._resolve_plan(
-            _CursorTurn("room-1", _DecisionTools(), "user-1", "session-1"),  # type: ignore[arg-type]
+            CursorTurn("room-1", _DecisionTools(), "user-1", "session-1"),  # type: ignore[arg-type]
             {"plan": "Plan"},
         )
 
@@ -242,7 +244,7 @@ class TestCursorACPAdapterDecisions:
         adapter = CursorACPAdapter()
         pending = asyncio.create_task(
             adapter._resolve_plan(
-                _CursorTurn("room-1", tools, "user-1", "session-1"),  # type: ignore[arg-type]
+                CursorTurn("room-1", tools, "user-1", "session-1"),  # type: ignore[arg-type]
                 {"plan": "Plan"},
             )
         )
@@ -287,7 +289,7 @@ class TestCursorACPAdapterDecisions:
 
         result = await adapter._wait_for_decision(
             kind="plan",
-            turn=_CursorTurn("room-1", _FailingDecisionTools(), "user-1", "session-1"),  # type: ignore[arg-type]
+            turn=CursorTurn("room-1", _FailingDecisionTools(), "user-1", "session-1"),  # type: ignore[arg-type]
             prompt="Plan {token}",
         )
 
@@ -300,7 +302,7 @@ class TestCursorACPAdapterDecisions:
 
         result = await adapter._wait_for_decision(
             kind="plan",
-            turn=_CursorTurn(
+            turn=CursorTurn(
                 "room-1", _FailingDecisionTools(fail_after=1), "user-1", "session-1"
             ),  # type: ignore[arg-type]
             prompt="Plan {token}",

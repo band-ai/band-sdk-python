@@ -18,6 +18,9 @@ CURSOR_CREATE_PLAN_METHOD = "cursor/create_plan"
 class ACPClientProfile(Protocol):
     """Extension hook surface for runtime-specific ACP behavior."""
 
+    @property
+    def extension_session_id(self) -> str | None: ...
+
     async def ext_method(
         self,
         method: str,
@@ -33,6 +36,10 @@ class ACPClientProfile(Protocol):
 
 class NoopACPClientProfile:
     """Default profile that ignores ACP extension methods and notifications."""
+
+    @property
+    def extension_session_id(self) -> None:
+        return None
 
     async def ext_method(
         self,
