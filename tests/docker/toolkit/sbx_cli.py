@@ -39,8 +39,9 @@ SBX = "sbx"
 # docker image build ceiling in docker_cli.
 CREATE_TIMEOUT_S = 600
 EXEC_TIMEOUT_S = 120
-# How long to wait for an attached `sbx run` to exit cleanly after `terminate()`
-# before escalating to `kill()`.
+# How long _stop_pty_process waits for a process to exit after each signal:
+# once after `terminate()` before escalating to `kill()`, and again after
+# `kill()` before giving up and logging it as still alive.
 ATTACH_STOP_TIMEOUT_S = 10
 
 # The issuer a credential-injected (MITM) TLS connection presents inside a
@@ -283,17 +284,19 @@ def _spawn_pty_process(argv: list[str]) -> tuple[subprocess.Popen[bytes], int]:
     with `inspect exec: context deadline exceeded`, so `attached_run` (below)
     holds one open via the stdlib `pty` module rather than redirecting to a
     pipe or `/dev/null`. `pty` is POSIX-only (no `termios` on Windows) and
-    imported here rather than at module level, so this module still imports
-    cleanly for collection on Windows CI — every caller of this function is
-    already gated behind `sbx_available()`/`SANDBOX_TESTS_ENABLED` and never
-    runs there.
+    imported here rather than at module level, purely so this module still
+    imports cleanly for collection on Windows CI — every actual caller of
+    this function only ever runs on POSIX (real `sbx`-driving callers are
+    gated behind `sbx_available()`/`SANDBOX_TESTS_ENABLED` or their own
+    documented prerequisites; the unit tests below are Windows-skipped via
+    `markers.requires_posix_pty`).
     """
     import pty  # noqa: PLC0415 -- POSIX-only, deferred so this module still collects on Windows
 
     controller_fd, child_fd = pty.openpty()
     try:
         process = subprocess.Popen(
-            argv, stdin=child_fd, stdout=child_fd, stderr=child_fd, close_fds=True
+            argv, stdin=child_fd, stdout=child_fd, stderr=child_fd
         )
     except Exception:
         os.close(controller_fd)
@@ -319,11 +322,17 @@ def _stop_pty_process(process: subprocess.Popen[bytes], controller_fd: int) -> N
             process.terminate()
             if not exited_within_timeout():
                 logger.warning(
-                    "process %s ignored SIGTERM; sending SIGKILL", process.args
+                    "process pid=%s (%s) ignored SIGTERM; sending SIGKILL",
+                    process.pid,
+                    process.args,
                 )
                 process.kill()
                 if not exited_within_timeout():
-                    logger.warning("process %s still alive after SIGKILL", process.args)
+                    logger.warning(
+                        "process pid=%s (%s) still alive after SIGKILL",
+                        process.pid,
+                        process.args,
+                    )
     finally:
         os.close(controller_fd)
 

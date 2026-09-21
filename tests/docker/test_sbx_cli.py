@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import select
+import signal
 import socket
 import subprocess
 import sys
@@ -198,15 +199,27 @@ def test_stop_pty_process_escalates_to_sigkill_when_sigterm_is_ignored(
 ) -> None:
     monkeypatch.setattr(sbx_cli, "ATTACH_STOP_TIMEOUT_S", 0.2)
     ignore_sigterm = (
-        "import signal, time; "
+        "import signal; "
         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-        "time.sleep(100)"
+        "print('ready', flush=True); "
+        "import time; time.sleep(100)"
     )
     process, controller_fd = _spawn_pty_process([sys.executable, "-c", ignore_sigterm])
+    try:
+        os.set_blocking(controller_fd, True)
+        # Wait for the child to actually install the ignore handler -- sending
+        # SIGTERM any earlier would kill it under the default disposition and
+        # the escalation this test targets would never run.
+        assert b"ready" in os.read(controller_fd, 1024)
+    except BaseException:
+        _stop_pty_process(process, controller_fd)
+        raise
 
     _stop_pty_process(process, controller_fd)
 
-    _assert_stopped_and_fd_closed(process, controller_fd)
+    assert process.returncode == -signal.SIGKILL  # proves the escalation fired
+    with pytest.raises(OSError):
+        os.close(controller_fd)  # already closed by _stop_pty_process
 
 
 @markers.requires_posix_pty
