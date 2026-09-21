@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 
 _BoundToolMethod = Callable[..., Coroutine[Any, Any, Any]]
 
+_OBJECT_SCHEMA_VALIDATOR = SchemaValidator(core_schema.dict_schema())
+"""Shared validator for the object-shape check every tool installs.
+
+The schema is the same for every tool (just "is this an object"), and a
+``SchemaValidator`` holds no per-tool state, so one instance is built once
+and reused across every ``_build_tool`` call instead of once per tool."""
+
 
 def build_band_pydantic_ai_tools(
     features: AdapterFeatures,
@@ -92,7 +99,7 @@ def _build_tool(definition: ToolDefinition) -> Tool[AgentToolsProtocol]:
     # ``Tool.from_schema`` deliberately uses ``any_schema()`` because it skips
     # schema validation. Replace it with an object-shape validator so malformed
     # non-object payloads become ordinary validation retries.
-    tool.function_schema.validator = _object_schema_validator()
+    tool.function_schema.validator = _OBJECT_SCHEMA_VALIDATOR
     return tool
 
 
@@ -131,12 +138,6 @@ def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
             "model_json_schema": classmethod(_no_advertisement),
         },
     )
-
-
-def _object_schema_validator() -> SchemaValidator:
-    """Validate that a tool payload is an object before custom validation."""
-
-    return SchemaValidator(core_schema.dict_schema())
 
 
 def _validated_kwargs(
