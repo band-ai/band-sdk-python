@@ -833,6 +833,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     room_state.turn.last_error_message = describe_error(
                         event.properties.error
                     )
+                    # Every other terminal path (interrupt, timeout, cleanup)
+                    # abandons pending approvals before releasing the turn; a
+                    # session error must too, or a permission/question left
+                    # parked on a human survives this turn indefinitely --
+                    # unreachable once a later turn rebinds room_state.approvals,
+                    # answerable only by its own expiry timer.
+                    await room_state.turn.approvals.abandon()
                 self._finish_turn(room_state)
             case SessionIdleEvent():
                 logger.info(
