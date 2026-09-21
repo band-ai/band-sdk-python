@@ -118,8 +118,9 @@ def _strict_schema(schema: type[BaseModel]) -> type[BaseModel]:
     Validation only (see ``_build_tool``) -- ``additionalProperties: false``
     on a schema *advertised* to the model reaches some providers unstripped
     (e.g. Gemini) and breaks tool calls there, so ``model_json_schema`` is
-    disabled here rather than merely documented as off-limits: it already
-    got wired into ``json_schema=`` by mistake once in this file's history.
+    disabled here rather than merely documented as off-limits: nothing else
+    stops a future ``json_schema=`` call site from advertising this strict
+    schema by mistake.
     """
 
     def _no_advertisement(*_args: Any, **_kwargs: Any) -> Any:
