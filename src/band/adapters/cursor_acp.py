@@ -17,7 +17,11 @@ from band.integrations.acp.client_adapter import (
     ACPClientAdapter,
     ACPPermissionRequest,
 )
-from band.integrations.acp.client_profiles import CursorACPClientProfile
+from band.integrations.acp.client_profiles import (
+    CURSOR_ASK_QUESTION_METHOD,
+    CURSOR_CREATE_PLAN_METHOD,
+    CursorACPClientProfile,
+)
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.client_runtime import select_allow_option_id
 from band.integrations.acp.session_config import SessionConfigResolver
@@ -178,11 +182,15 @@ class CursorACPAdapter(ACPClientAdapter):
         return session_id, created
 
     async def on_cleanup(self, room_id: str) -> None:
+        session_id = self._room_to_session.get(room_id)
         self._cancel_room_decisions(room_id)
         await super().on_cleanup(room_id)
+        if session_id is not None:
+            self._cursor_profile.forget_session(session_id)
 
     async def cleanup_all(self, *, final: bool = True) -> None:
         self._cancel_all_decisions()
+        self._cursor_profile.clear_sessions()
         await super().cleanup_all(final=final)
 
     async def _resolve_cursor_permission(
@@ -218,9 +226,9 @@ class CursorACPAdapter(ACPClientAdapter):
         if turn is None or turn.session_id is None:
             return {"outcome": {"outcome": "cancelled"}}
         match method:
-            case "cursor/ask_question":
+            case value if value == CURSOR_ASK_QUESTION_METHOD:
                 return await self._resolve_question(turn, params)
-            case "cursor/create_plan":
+            case value if value == CURSOR_CREATE_PLAN_METHOD:
                 return await self._resolve_plan(turn, params)
             case _:
                 return {}
@@ -304,25 +312,31 @@ class CursorACPAdapter(ACPClientAdapter):
             multi_select=multi_select,
         )
         try:
-            await turn.tools.send_message(
-                prompt.format(token=token),
-                mentions=[turn.requester_id] if turn.requester_id else None,
-            )
-        except Exception:
-            logger.warning("Could not deliver Cursor %s decision prompt", kind)
-            return None
-        try:
-            return await asyncio.wait_for(
-                future, timeout=self._config.decision_timeout_s
-            )
-        except TimeoutError:
-            await turn.tools.send_message(
-                f"Cursor {kind} decision `{token}` timed out and was cancelled.",
-                mentions=[turn.requester_id] if turn.requester_id else None,
-            )
-            return None
+            try:
+                await turn.tools.send_message(
+                    prompt.replace("{token}", token),
+                    mentions=[turn.requester_id] if turn.requester_id else None,
+                )
+            except Exception:
+                logger.warning("Could not deliver Cursor %s decision prompt", kind)
+                return None
+            try:
+                return await asyncio.wait_for(
+                    future, timeout=self._config.decision_timeout_s
+                )
+            except TimeoutError:
+                try:
+                    await turn.tools.send_message(
+                        f"Cursor {kind} decision `{token}` timed out and was cancelled.",
+                        mentions=[turn.requester_id] if turn.requester_id else None,
+                    )
+                except Exception:
+                    logger.warning("Could not deliver Cursor %s timeout notice", kind)
+                return None
         finally:
-            self._pending_decisions.pop(token, None)
+            pending = self._pending_decisions.pop(token, None)
+            if pending is not None and not pending.future.done():
+                pending.future.set_result(None)
 
     async def _handle_control_message(
         self, msg: PlatformMessage, tools: AgentToolsProtocol, room_id: str

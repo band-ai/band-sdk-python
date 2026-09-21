@@ -36,6 +36,19 @@ class _DecisionTools:
         self.prompt_sent.set()
 
 
+class _FailingDecisionTools(_DecisionTools):
+    def __init__(self, *, fail_after: int = 0) -> None:
+        super().__init__()
+        self._fail_after = fail_after
+
+    async def send_message(
+        self, content: str, mentions: list[str] | None = None
+    ) -> None:
+        if len(self.messages) >= self._fail_after:
+            raise RuntimeError("room delivery failed")
+        await super().send_message(content, mentions)
+
+
 class TestCursorACPAdapterConstruction:
     def test_uses_cursor_acp_and_the_current_extension_profile(self) -> None:
         adapter = CursorACPAdapter()
@@ -171,3 +184,127 @@ class TestCursorACPAdapterDecisions:
         )
 
         assert await pending is None
+
+    @pytest.mark.asyncio
+    async def test_manual_permission_can_select_an_advertised_option(self) -> None:
+        tools = _DecisionTools()
+        adapter = CursorACPAdapter()
+        adapter._active_turn = _CursorTurn("room-1", tools, "user-1", "session-1")  # type: ignore[arg-type]
+        request = ACPPermissionRequest(
+            room_id="room-1",
+            session_id="session-1",
+            tool_call=ACPToolCall("call-1", "shell", {}),
+            options=(
+                PermissionOption(
+                    optionId="allow-once", name="Allow", kind="allow_once"
+                ),
+            ),
+        )
+        pending = asyncio.create_task(adapter._resolve_cursor_permission(request))
+        await tools.prompt_sent.wait()
+        token = next(iter(adapter._pending_decisions))
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=f"/cursor select {token} allow-once", sender_id="user-1"
+                ),
+            ),
+            tools,  # type: ignore[arg-type]
+            "room-1",
+        )
+
+        assert await pending == "allow-once"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("plan_mode", "outcome"),
+        [("auto_accept", "accepted"), ("auto_decline", "rejected")],
+    )
+    async def test_automatic_plan_policy_returns_its_outcome(
+        self, plan_mode: str, outcome: str
+    ) -> None:
+        adapter = CursorACPAdapter(
+            CursorACPAdapterConfig(plan_mode=cast(object, plan_mode))  # type: ignore[arg-type]
+        )
+
+        result = await adapter._resolve_plan(
+            _CursorTurn("room-1", _DecisionTools(), "user-1", "session-1"),  # type: ignore[arg-type]
+            {"plan": "Plan"},
+        )
+
+        assert result == {"outcome": {"outcome": outcome}}
+
+    @pytest.mark.asyncio
+    async def test_manual_plan_accepts_a_room_command(self) -> None:
+        tools = _DecisionTools()
+        adapter = CursorACPAdapter()
+        pending = asyncio.create_task(
+            adapter._resolve_plan(
+                _CursorTurn("room-1", tools, "user-1", "session-1"),  # type: ignore[arg-type]
+                {"plan": "Plan"},
+            )
+        )
+        await tools.prompt_sent.wait()
+        token = next(iter(adapter._pending_decisions))
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(content=f"/cursor accept {token}", sender_id="user-1"),
+            ),
+            tools,  # type: ignore[arg-type]
+            "room-1",
+        )
+
+        assert await pending == {"outcome": {"outcome": "accepted"}}
+
+    @pytest.mark.asyncio
+    async def test_automatic_permission_policies_use_offered_options(self) -> None:
+        request = ACPPermissionRequest(
+            room_id="room-1",
+            session_id="session-1",
+            tool_call=ACPToolCall("call-1", "shell", {}),
+            options=(
+                PermissionOption(
+                    optionId="allow-once", name="Allow", kind="allow_once"
+                ),
+            ),
+        )
+
+        accepted = CursorACPAdapter(CursorACPAdapterConfig(approval_mode="auto_accept"))
+        declined = CursorACPAdapter(
+            CursorACPAdapterConfig(approval_mode="auto_decline")
+        )
+
+        assert await accepted._resolve_cursor_permission(request) == "allow-once"
+        assert await declined._resolve_cursor_permission(request) is None
+
+    @pytest.mark.asyncio
+    async def test_decision_delivery_failure_cleans_up_the_pending_token(self) -> None:
+        adapter = CursorACPAdapter()
+
+        result = await adapter._wait_for_decision(
+            kind="plan",
+            turn=_CursorTurn("room-1", _FailingDecisionTools(), "user-1", "session-1"),  # type: ignore[arg-type]
+            prompt="Plan {token}",
+        )
+
+        assert result is None
+        assert adapter._pending_decisions == {}
+
+    @pytest.mark.asyncio
+    async def test_timeout_notice_failure_still_cancels_the_decision(self) -> None:
+        adapter = CursorACPAdapter(CursorACPAdapterConfig(decision_timeout_s=0.001))
+
+        result = await adapter._wait_for_decision(
+            kind="plan",
+            turn=_CursorTurn(
+                "room-1", _FailingDecisionTools(fail_after=1), "user-1", "session-1"
+            ),  # type: ignore[arg-type]
+            prompt="Plan {token}",
+        )
+
+        assert result is None
+        assert adapter._pending_decisions == {}

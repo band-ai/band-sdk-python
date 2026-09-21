@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
 PermissionHandler = Callable[..., Awaitable[dict[str, object]]]
+PermissionNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
 MCPTransportKind = Literal["http", "sse"]
 
@@ -576,15 +577,22 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     ) -> dict[str, object]:
         handler = self._permission_handlers.get(session_id)
         if handler:
-            # A denied request posts a tool_call/tool_result pair; the lock
-            # keeps the pair atomic between narration posts.
-            async with self._session_lock(session_id):
-                return await handler(
-                    options=options,
-                    session_id=session_id,
-                    tool_call=tool_call,
-                    **kwargs,
-                )
+
+            async def narrate_permission(action: Awaitable[None]) -> None:
+                """Serialize the denied-permission narration, not its decision wait."""
+                async with self._session_lock(session_id):
+                    await action
+
+            # A manual handler can wait for room input. Holding the ingestion lock
+            # for that wait stalls every live update, so the handler receives a
+            # narrow narrator for the denied tool-call/tool-result pair instead.
+            return await handler(
+                options=options,
+                session_id=session_id,
+                tool_call=tool_call,
+                narrate_permission=narrate_permission,
+                **kwargs,
+            )
 
         logger.debug("Auto-cancelling permission request for session %s", session_id)
         return cancel_permission()

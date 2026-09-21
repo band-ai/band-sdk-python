@@ -1495,6 +1495,30 @@ class TestACPCollectingClientCursorProfileExtensions:
         assert "[ ] Write tests" in chunks[-1].content
 
     @pytest.mark.asyncio
+    async def test_ext_notification_cursor_todos_do_not_cross_sessions(self) -> None:
+        profile = CursorACPClientProfile()
+        client = ACPCollectingClient(profile=profile)
+        profile.bind_session("first")
+        await client.ext_notification(
+            "cursor/update_todos",
+            {
+                "todos": [{"id": "old", "content": "Old task", "status": "pending"}],
+                "merge": False,
+            },
+        )
+        profile.bind_session("second")
+        await client.ext_notification(
+            "cursor/update_todos",
+            {
+                "todos": [{"id": "new", "content": "New task", "status": "pending"}],
+                "merge": True,
+            },
+        )
+
+        chunks = client.get_collected_chunks("second")
+        assert chunks[-1].content == "- [ ] New task"
+
+    @pytest.mark.asyncio
     async def test_ext_notification_cursor_task(self) -> None:
         """Renders documented task metadata without inventing a result field."""
         profile = CursorACPClientProfile()

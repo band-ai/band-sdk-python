@@ -38,6 +38,7 @@ from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
     PermissionHandler,
+    PermissionNarrator,
     allow_permission,
     cancel_permission,
     select_allow_option_id,
@@ -427,6 +428,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             options: object,
             session_id: str,
             tool_call: object,
+            narrate_permission: PermissionNarrator | None = None,
             **kwargs: object,
         ) -> dict[str, object]:
             del kwargs
@@ -457,11 +459,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # pair as the only record. An approved request grants silently: if
             # the tool then executes, its own real tool_call/tool_result narrate
             # it like any other tool (no pair needed).
-            await emitter.open_permission(
+            narration = emitter.open_permission(
                 call=call,
                 session_id=session_id,
                 outcome="cancelled",
             )
+            if narrate_permission is None:
+                await narration
+            else:
+                await narrate_permission(narration)
             return cancel_permission()
 
         return handler

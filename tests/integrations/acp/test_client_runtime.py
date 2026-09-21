@@ -625,8 +625,14 @@ class TestACPCollectingClientSerialization:
                 pass
 
         async def handler(**kwargs: object) -> dict[str, object]:
-            async with probe:
-                return {"outcome": {"outcome": "cancelled"}}
+            narrator = kwargs["narrate_permission"]
+
+            async def post_denial() -> None:
+                async with probe:
+                    pass
+
+            await narrator(post_denial())  # type: ignore[operator]
+            return {"outcome": {"outcome": "cancelled"}}
 
         client.set_sink("s1", sink)
         client.set_permission_handler("s1", handler)
@@ -639,6 +645,37 @@ class TestACPCollectingClientSerialization:
         )
 
         assert probe.peak == 1
+
+    @pytest.mark.asyncio
+    async def test_permission_wait_does_not_block_live_session_updates(self) -> None:
+        client = ACPCollectingClient()
+        decision_started = asyncio.Event()
+        release_decision = asyncio.Event()
+        posted: list[str] = []
+
+        async def sink(chunk: CollectedChunk) -> None:
+            posted.append(chunk.content)
+
+        async def handler(**kwargs: object) -> dict[str, object]:
+            del kwargs
+            decision_started.set()
+            await release_decision.wait()
+            return {"outcome": {"outcome": "cancelled"}}
+
+        client.set_sink("s1", sink)
+        client.set_permission_handler("s1", handler)
+        permission = asyncio.create_task(
+            client.request_permission(
+                options=[], session_id="s1", tool_call=MagicMock()
+            )
+        )
+        await decision_started.wait()
+
+        await client.session_update("s1", self._tool_call("tool-0", "tc-0"))
+
+        assert posted == ["tool-0"]
+        release_decision.set()
+        await permission
 
     @pytest.mark.asyncio
     async def test_sink_failure_is_logged_and_keeps_the_chunk_buffered(
