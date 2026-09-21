@@ -482,11 +482,16 @@ class FakeAgentTools:
         )
 
     def _promote_received_request_to_contact(self, request: dict[str, Any]) -> None:
-        """Append a contact record for a received request being approved.
+        """Approve a received request: append its contact record and mark it
+        (and any reciprocal outgoing request) approved.
 
         Shared by ``respond_contact_request``'s approve branch and
         ``add_contact``'s reciprocal auto-accept, so a promoted contact's
-        handle normalization and required-field check are defined once.
+        handle normalization, required-field check, and the request's own
+        status transition are defined once -- approving is exactly what this
+        function does, so no caller should flip ``request["status"]`` itself.
+        Raising before any mutation (on a missing ``from_handle``) leaves the
+        request pending rather than approved-with-no-contact.
 
         ReceivedContactRequest doesn't carry the requester's entity type;
         extra="allow" lets a seed attach one, defaulting to User.
@@ -518,6 +523,7 @@ class FakeAgentTools:
         )
         if reciprocal_sent is not None:
             reciprocal_sent["status"] = ContactRequestStatus.APPROVED
+        request["status"] = ContactRequestStatus.APPROVED
 
     async def add_contact(
         self, handle: str, message: str | None = None
@@ -542,7 +548,6 @@ class FakeAgentTools:
             status=ContactRequestStatus.PENDING,
         )
         if reverse_request is not None:
-            reverse_request["status"] = ContactRequestStatus.APPROVED
             self._promote_received_request_to_contact(reverse_request)
             return AddAgentContactResponseData(
                 id=reverse_request["id"], status=ContactRequestStatus.APPROVED
@@ -650,7 +655,8 @@ class FakeAgentTools:
         )
         if action == ContactRequestAction.APPROVE:
             self._promote_received_request_to_contact(request)
-        request["status"] = status
+        else:
+            request["status"] = status
         return RespondToAgentContactRequestResponseData(id=request["id"], status=status)
 
     async def list_memories(
