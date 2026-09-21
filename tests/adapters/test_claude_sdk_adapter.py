@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -169,6 +170,24 @@ def _result_message(
 def _denial(tool_use_id: str, tool_name: str) -> dict[str, Any]:
     """A ``SDKPermissionDenial``-shaped entry for ``ResultMessage.permission_denials``."""
     return {"tool_name": tool_name, "tool_use_id": tool_use_id, "tool_input": {}}
+
+
+def _blocking_turn() -> tuple[asyncio.Event, asyncio.Event, Callable[..., Any]]:
+    """A ``_process_response`` stand-in that parks a turn until released.
+
+    Returns ``(started, release, wait_for_response)``. ``started`` fires once
+    the stand-in is entered, so a test can await the detached turn actually
+    reaching it before asserting against a concurrent cleanup/cancellation;
+    the stand-in then blocks on ``release`` until the test sets it.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def wait_for_response(*_args: Any) -> None:
+        started.set()
+        await release.wait()
+
+    return started, release, wait_for_response
 
 
 @pytest.fixture
@@ -716,14 +735,9 @@ class TestOnCleanup:
     async def test_cancels_turn_before_cleaning_up_session(self, mock_tools):
         """Room cleanup must stop a detached turn before closing its client."""
         adapter = ClaudeSDKAdapter()
-        response_started = asyncio.Event()
-        continue_response = asyncio.Event()
+        response_started, continue_response, wait_for_response = _blocking_turn()
         client = MagicMock()
         client.query = AsyncMock()
-
-        async def wait_for_response(*_args):
-            response_started.set()
-            await continue_response.wait()
 
         adapter._session_manager = AsyncMock()
         turn_task = asyncio.create_task(
@@ -767,12 +781,7 @@ class TestOnCleanup:
         adapter = ClaudeSDKAdapter()
         old_release = asyncio.get_running_loop().create_future()
         adapter._turn_release["room-123"] = old_release
-        response_started = asyncio.Event()
-        release_response = asyncio.Event()
-
-        async def wait_for_response(*_args):
-            response_started.set()
-            await release_response.wait()
+        response_started, release_response, wait_for_response = _blocking_turn()
 
         client = MagicMock()
         client.query = AsyncMock()
@@ -849,17 +858,12 @@ class TestOnCleanup:
     ):
         """Cancelling the runtime callback must stop its detached Claude turn."""
         adapter = ClaudeSDKAdapter()
-        response_started = asyncio.Event()
-        continue_response = asyncio.Event()
+        response_started, continue_response, wait_for_response = _blocking_turn()
         mock_client = MagicMock()
         mock_client.query = AsyncMock()
         mock_manager = AsyncMock()
         mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
         adapter._session_manager = mock_manager
-
-        async def wait_for_response(*_args):
-            response_started.set()
-            await continue_response.wait()
 
         with patch.object(adapter, "_process_response", side_effect=wait_for_response):
             message_task = asyncio.create_task(
@@ -906,14 +910,9 @@ class TestCleanupAll:
     async def test_cancels_turns_before_stopping_session_manager(self, mock_tools):
         """Adapter shutdown must stop detached turns before closing all sessions."""
         adapter = ClaudeSDKAdapter()
-        response_started = asyncio.Event()
-        continue_response = asyncio.Event()
+        response_started, continue_response, wait_for_response = _blocking_turn()
         client = MagicMock()
         client.query = AsyncMock()
-
-        async def wait_for_response(*_args):
-            response_started.set()
-            await continue_response.wait()
 
         adapter._session_manager = AsyncMock()
         turn_task = asyncio.create_task(
