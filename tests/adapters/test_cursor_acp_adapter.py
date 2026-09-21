@@ -132,6 +132,15 @@ class TestCursorACPAdapterDecisions:
             }
         }
 
+    def test_duplicate_question_answer_is_rejected(self) -> None:
+        result = CursorACPAdapter._answer_result(
+            ["mode=agent", "mode=plan"],
+            {"mode": ("agent", "plan")},
+            frozenset(),
+        )
+
+        assert not isinstance(result, dict)
+
     @pytest.mark.asyncio
     async def test_auto_question_uses_the_first_advertised_option(self) -> None:
         adapter = CursorACPAdapter(CursorACPAdapterConfig(question_mode="auto_first"))

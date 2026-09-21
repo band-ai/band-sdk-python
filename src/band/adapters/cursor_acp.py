@@ -407,6 +407,7 @@ class CursorACPAdapter(ACPClientAdapter):
             if (
                 not question_id
                 or question_id not in choices
+                or question_id in selected
                 or not option_ids
                 or (len(option_ids) > 1 and question_id not in multi_select)
                 or any(
