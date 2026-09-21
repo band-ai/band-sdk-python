@@ -10,7 +10,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar, TypeAlias
+from typing import Any, ClassVar, TypeAlias, TypeVar
 
 import httpx
 from typing_extensions import Unpack
@@ -84,7 +84,9 @@ class TurnState:
     tools: AgentToolsProtocol
     turn_future: asyncio.Future[None]
     turn_release_future: asyncio.Future[None]
-    approvals: RoomApprovals
+    # Bound after construction in `_begin_turn` so ApprovalPorts can close
+    # over this instance (`lambda: turn`) without a late-binding cell.
+    approvals: RoomApprovals = field(init=False)
     pending_mentions: list[dict[str, str]] = field(default_factory=list)
     text_parts: OrderedDict[str, str] = field(default_factory=OrderedDict)
     assistant_message_ids: set[str] = field(default_factory=set)
@@ -106,6 +108,7 @@ class TurnState:
 # whichever turn is currently live on the room (the bootstrap RoomApprovals
 # built before any turn exists, see _get_or_create_room_state).
 TurnOwner: TypeAlias = Callable[[], TurnState | None]
+_OwnerT = TypeVar("_OwnerT")
 
 
 @dataclass
@@ -141,7 +144,6 @@ class RoomState:
             tools=tools,
             turn_future=loop.create_future(),
             turn_release_future=loop.create_future(),
-            approvals=self.approvals,
             pending_mentions=[{"id": sender_id}] if sender_id else [],
         )
         self.turn_task = None
@@ -424,7 +426,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
             return
 
-        if room_state.turn and not room_state.turn.turn_future.done():
+        if room_state.turn and (
+            not room_state.turn.turn_future.done()
+            or room_state.approvals.awaiting_human()
+        ):
             await tools.send_event(
                 "OpenCode is still processing the previous request in this room.",
                 "error",
@@ -565,12 +570,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._room_by_session.pop(room_state.session_id, None)
             should_shutdown = not self._rooms
 
-        if room_state:
-            await room_state.approvals.abandon()
-            self._clear_turn_state(room_state)
-
-        if should_shutdown:
-            await self._shutdown_client()
+        try:
+            if room_state:
+                try:
+                    await room_state.approvals.abandon()
+                finally:
+                    self._clear_turn_state(room_state)
+        finally:
+            if should_shutdown:
+                await self._shutdown_client()
 
     def _default_client_factory(
         self, config: OpencodeAdapterConfig
@@ -634,10 +642,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config,
             ApprovalPorts(
                 room_id=state.room_id,
-                session_id=lambda: self._owner_session_id(owner),
-                client=lambda: self._owner_client(owner),
-                tools=lambda: self._owner_tools(owner),
-                turn_mentions=lambda: self._owner_mentions(owner),
+                session_id=lambda: self._if_owner(owner, lambda t: t.session_id, None),
+                client=lambda: self._if_owner(owner, lambda t: t.client, None),
+                tools=lambda: self._if_owner(owner, lambda t: t.tools, None),
+                turn_mentions=lambda: self._if_owner(
+                    owner, lambda t: t.pending_mentions, []
+                ),
                 release_turn_wait=lambda: self._release_turn_wait_for_owner(owner),
                 fail_turn=lambda message: self._fail_turn_for_owner(owner, message),
                 abort_session=lambda: self._abort_owner_turn(
@@ -650,24 +660,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
 
     @staticmethod
-    def _owner_session_id(owner: TurnOwner) -> str | None:
+    def _if_owner(
+        owner: TurnOwner,
+        pick: Callable[[TurnState], _OwnerT],
+        default: _OwnerT,
+    ) -> _OwnerT:
         turn = owner()
-        return turn.session_id if turn else None
-
-    @staticmethod
-    def _owner_tools(owner: TurnOwner) -> AgentToolsProtocol | None:
-        turn = owner()
-        return turn.tools if turn else None
-
-    @staticmethod
-    def _owner_client(owner: TurnOwner) -> OpencodeClientProtocol | None:
-        turn = owner()
-        return turn.client if turn else None
-
-    @staticmethod
-    def _owner_mentions(owner: TurnOwner) -> list[dict[str, str]]:
-        turn = owner()
-        return turn.pending_mentions if turn else []
+        return pick(turn) if turn else default
 
     async def _ensure_client_started(self) -> None:
         async with self._state_lock:
@@ -736,6 +735,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             async with self._state_lock:
                 if self._client is client:
                     self._registered_client = client
+            logger.info(
+                "MCP server %s registered with OpenCode (status=%s)",
+                self._mcp_server_name,
+                status,
+            )
 
     async def _shutdown_client(self) -> None:
         # _register_mcp_backend creates/assigns self._mcp_backend under this
@@ -847,6 +851,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     room_state.room_id,
                     event.session_id,
                 )
+                # Idle is a terminal path: a permission/question still parked
+                # on a human can never be answered on this turn once the
+                # session has gone idle, and a later _begin_turn would make
+                # it unreachable from on_message.
+                if room_state.turn is not None:
+                    await room_state.turn.approvals.abandon()
                 self._finish_turn(room_state)
 
     async def _room_state_for_session(self, session_id: str | None) -> RoomState | None:
@@ -1004,19 +1014,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         sender_id: str | None,
     ) -> TurnState:
         # Pinned to THIS turn specifically, not "whichever turn room_state.turn
-        # currently is": an ask left pending when a later turn begins (e.g. a
-        # SessionErrorEvent finishes turn_future without cancelling approvals)
-        # must keep acting on its own turn's client/session, never a
-        # successor's -- an ambient lookup would silently misroute a reply or
-        # abort onto the wrong turn.
-        owner: list[TurnState] = []
-        room_state.approvals = self._new_approvals(
-            room_state, lambda: owner[0] if owner else None
-        )
+        # currently is": an ask that outlives this _begin_turn must keep
+        # acting on its own turn's client/session, never a successor's -- an
+        # ambient lookup would silently misroute a reply or abort onto the
+        # wrong turn.
         turn = room_state.begin_turn(
             session_id=session_id, client=client, tools=tools, sender_id=sender_id
         )
-        owner.append(turn)
+        room_state.approvals = self._new_approvals(room_state, lambda: turn)
+        turn.approvals = room_state.approvals
         return turn
 
     async def _watch_turn_completion(
@@ -1264,13 +1270,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     ) -> None:
         """Sum the turn's per-assistant-message usage and emit it.
 
-        Takes the turn-owned dict captured by the watch task (not
-        ``room_state.usage_by_message``, which a new turn may have replaced by
-        the time this runs). A no-op when usage reporting is off
-        (``Emit.USAGE`` absent) or nothing was captured: the base
-        ``emit_usage`` skips an empty total. A live OpenCode server reports
-        ``tokens`` on each assistant ``info``; mocked/offline runs don't, so
-        the total is simply empty there.
+        A no-op when usage reporting is off (``Emit.USAGE`` absent) or
+        nothing was captured: the base ``emit_usage`` skips an empty total.
+        Holding ``turn`` keeps the snapshot stable after a later
+        ``_begin_turn``. A live OpenCode server reports ``tokens`` on each
+        assistant ``info``; mocked/offline runs don't, so the total is
+        simply empty there.
         """
         total = sum(turn.usage_by_message.values(), TurnUsage())
         await self.emit_usage(turn.tools, total)

@@ -419,6 +419,201 @@ async def test_session_error_abandons_a_pending_permission(make_adapter, tools) 
     await adapter.on_cleanup("room-1")
 
 
+async def test_session_idle_abandons_a_pending_permission(make_adapter, tools) -> None:
+    """session.idle is a terminal path: a permission still parked on a
+    human must be abandoned so a later turn cannot claim it is 'no longer
+    pending' while the ask is still live."""
+    fake_client = FakeOpencodeClient(prompt_event_sequences=[[]])
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    turn_task = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+    )
+    await wait_for(lambda: bool(fake_client.prompt_calls))
+
+    room_state = await adapter._get_or_create_room_state("room-1")
+    turn = room_state.turn
+    assert turn is not None
+
+    await adapter._handle_event(
+        parse_opencode_event(event_permission("sess-1", "perm-1"))
+    )
+    assert turn.approvals.awaiting_human()
+    await turn_task
+
+    await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
+
+    assert fake_client.aborted_sessions == ["sess-1"]
+    assert not turn.approvals.awaiting_human()
+
+    await adapter.on_cleanup("room-1")
+
+
+async def test_stale_approval_id_survives_a_later_turn(make_adapter, tools) -> None:
+    """Room-scoped known ids must outlive `_begin_turn`'s RoomApprovals
+    rebuild so `approve <old-id>` is feedback, not a new prompt."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [event_permission("sess-1", "perm-1")],
+            [event_session_idle("sess-1")],
+        ],
+    )
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(content="run it"),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+    await adapter.on_message(
+        make_platform_message(content="approve perm-1"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
+    room_state = await adapter._get_or_create_room_state("room-1")
+    await wait_for(
+        lambda: room_state.turn is not None and room_state.turn.turn_future.done()
+    )
+
+    await adapter.on_message(
+        make_platform_message(content="next turn"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await wait_for(lambda: len(fake_client.prompt_calls) == 2)
+
+    await adapter.on_message(
+        make_platform_message(content="approve perm-1"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+    assert len(fake_client.prompt_calls) == 2
+    assert any(
+        "no longer pending" in message["content"] for message in tools.messages_sent
+    )
+    await adapter.on_cleanup("room-1")
+
+
+async def test_new_turn_does_not_inherit_previous_human_wait(
+    make_adapter, tools
+) -> None:
+    """`_begin_turn` rebuilds RoomApprovals so banked deliberation from
+    turn N is not added to turn N+1's compute deadline."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [event_permission("sess-1", "perm-1")],
+            [event_session_idle("sess-1")],
+        ],
+    )
+    adapter = make_adapter(
+        fake_client,
+        config=OpencodeAdapterConfig(approval_mode="manual", turn_timeout_s=30.0),
+    )
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(content="run it"),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+    await asyncio.sleep(0.15)
+    await adapter.on_message(
+        make_platform_message(content="approve perm-1"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
+    room_state = await adapter._get_or_create_room_state("room-1")
+    await wait_for(
+        lambda: room_state.turn is not None and room_state.turn.turn_future.done()
+    )
+
+    await adapter.on_message(
+        make_platform_message(content="next turn"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+    await wait_for(lambda: len(fake_client.prompt_calls) == 2)
+
+    assert room_state.approvals.human_wait_seconds == 0
+    await adapter.on_cleanup("room-1")
+
+
+async def test_cleanup_cancel_during_abandon_still_tears_down(
+    make_adapter, tools
+) -> None:
+    """A CancelledError inside abandon() must still clear turn state and
+    shut down the shared client -- the last-room cleanup path."""
+
+    class CancelOnAbortClient(FakeOpencodeClient):
+        async def abort_session(self, session_id: str) -> None:
+            raise asyncio.CancelledError
+
+    fake_client = CancelOnAbortClient(
+        prompt_event_sequences=[[event_permission("sess-1", "perm-1")]]
+    )
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    try:
+        await adapter.on_cleanup("room-1")
+    except asyncio.CancelledError:
+        pass
+
+    assert fake_client.closed
+    assert "room-1" not in adapter._rooms
+
+
 async def test_turn_timeout_aborts_session_and_emits_error() -> None:
     """A turn that never reaches session.idle times out, aborts the
     OpenCode session, and reports an error instead of hanging the room."""

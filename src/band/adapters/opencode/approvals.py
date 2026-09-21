@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TypeVar
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -126,8 +127,12 @@ def parse_question_answers(
 # of re-typing the sentence.
 APPROVAL_REQUESTED_PREFIX = "OpenCode approval requested for"
 APPROVAL_HANDLED_TEMPLATE = "OpenCode approval `{request_id}` handled with `{reply}`."
-APPROVAL_NO_LONGER_PENDING_TEMPLATE = "OpenCode approval `{request_id}` is no longer pending."
-QUESTION_NO_LONGER_PENDING_TEMPLATE = "OpenCode question `{request_id}` is no longer pending."
+APPROVAL_NO_LONGER_PENDING_TEMPLATE = (
+    "OpenCode approval `{request_id}` is no longer pending."
+)
+QUESTION_NO_LONGER_PENDING_TEMPLATE = (
+    "OpenCode question `{request_id}` is no longer pending."
+)
 
 
 def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -> str:
@@ -242,9 +247,7 @@ class RoomApprovals:
             await self._approve_own_band_tool(request_id)
             return
 
-        existing = self._permissions.get(request_id)
-        _cancel_timeout(existing)
-        if existing and existing.replying:
+        if not _supersede_ask(self._permissions, request_id):
             return
 
         pending = PendingPermission(
@@ -279,11 +282,15 @@ class RoomApprovals:
     async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
         request_id = request.id
         if not request_id or not request.questions:
+            logger.warning(
+                "Ignoring malformed OpenCode question.asked with no questions "
+                "(request_id=%s room=%s)",
+                request_id,
+                self._ports.room_id,
+            )
             return
 
-        existing = self._questions.get(request_id)
-        _cancel_timeout(existing)
-        if existing and existing.replying:
+        if not _supersede_ask(self._questions, request_id):
             return
         pending = PendingQuestion(
             request_id=request_id,
@@ -323,9 +330,7 @@ class RoomApprovals:
         mentions = [{"id": sender_id}] if sender_id else []
 
         approval = parse_permission_reply(command)
-        if approval and (
-            self._permissions or approval.request_id in self._known_permission_ids
-        ):
+        if approval and self._permission_command_applies(approval):
             pending = self._resolve_permission(approval.request_id)
             if pending is None and approval.request_id is None:
                 # Ambiguous rather than unknown: name the asks instead of
@@ -396,6 +401,26 @@ class RoomApprovals:
 
         return False
 
+    def _permission_command_applies(self, approval: PermissionCommand) -> bool:
+        """Whether a parsed approve/always/reject targets a permission.
+
+        ``reject <id>`` is also the question-rejection grammar. A named id
+        that is a live or known question (and not a permission) must fall
+        through so ``_resolve_question`` / ``_reject_question`` can run.
+        """
+        named = approval.request_id
+        if named is not None and (
+            named in self._questions or named in self._known_question_ids
+        ):
+            if (
+                named not in self._permissions
+                and named not in self._known_permission_ids
+            ):
+                return False
+        return bool(self._permissions) or (
+            named is not None and named in self._known_permission_ids
+        )
+
     def _resolve_permission(self, request_id: str | None) -> PendingPermission | None:
         """The ask a reply targets: the named one, else the only one pending."""
         if request_id is not None:
@@ -461,6 +486,10 @@ class RoomApprovals:
         was_pending = bool(self._permissions or self._questions)
         self.cancel()
         if was_pending:
+            logger.info(
+                "OpenCode turn: abandon pending approvals room=%s",
+                self._ports.room_id,
+            )
             await self._ports.abort_session()
         return was_pending
 
@@ -582,9 +611,11 @@ class RoomApprovals:
         # Abandoning a request must stop its expiry timer in the same step:
         # once popped, the entry is past cancel()'s reach, and a surviving
         # timer holds this room's state alive until the wait timeout elapses.
+        # abort_session then kills the whole session, so leftover siblings
+        # can never be answered -- cancel() drops them too.
         _cancel_timeout(self._permissions.pop(request_id, None))
         _cancel_timeout(self._questions.pop(request_id, None))
-        self._release_if_idle()
+        self.cancel()
         self._ports.fail_turn(message)
         await self._ports.abort_session()
 
@@ -647,6 +678,22 @@ def _is_question_rejection(command: str) -> bool:
 def _clock() -> float:
     """Loop time, so the human-wait clock is immune to wall-clock changes."""
     return asyncio.get_running_loop().time()
+
+
+_AskT = TypeVar("_AskT", PendingPermission, PendingQuestion)
+
+
+def _supersede_ask(registry: dict[str, _AskT], request_id: str) -> bool:
+    """Cancel a previous ask's timer so a redelivery can replace it.
+
+    False when a reply is already in flight -- the redelivery must not
+    replace or cancel that claim.
+    """
+    existing = registry.get(request_id)
+    if existing is not None and existing.replying:
+        return False
+    _cancel_timeout(existing)
+    return True
 
 
 def _cancel_timeout(pending: PendingPermission | PendingQuestion | None) -> None:
