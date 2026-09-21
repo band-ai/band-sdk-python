@@ -207,6 +207,14 @@ class TestLookupPeersInput:
         with pytest.raises(ValidationError):
             LookupPeersInput(page_size=101)
 
+    def test_description_covers_reporting_invitable_peers(self):
+        """The tool description must nudge the model to use this tool when
+        asked who else is invitable, not only to delegate when stuck --
+        otherwise a weaker model has no reason to call it for that question."""
+        assert LookupPeersInput.__doc__ is not None
+        normalized = " ".join(LookupPeersInput.__doc__.split())
+        assert "who else is available or invitable" in normalized
+
 
 class TestToolModelsRegistry:
     """Tests for the TOOL_MODELS registry."""
