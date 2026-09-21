@@ -183,6 +183,11 @@ class RoomApprovals:
 
     def awaiting_human(self) -> bool:
         """Whether a manual permission/question is parked on a human reply."""
+        if any(
+            pending.replying
+            for pending in (*self._permissions.values(), *self._questions.values())
+        ):
+            return True
         return not self._idle.is_set()
 
     def _parked_on_human(self) -> bool:
@@ -331,11 +336,22 @@ class RoomApprovals:
 
         approval = parse_permission_reply(command)
         if approval and self._permission_command_applies(approval):
+            if (
+                approval.request_id is None
+                and approval.reply == "reject"
+                and self._permissions
+                and self._questions
+            ):
+                await self._notify_room(self._which_dual_reject_hint(), mentions)
+                return True
             pending = self._resolve_permission(approval.request_id)
             if pending is None and approval.request_id is None:
                 # Ambiguous rather than unknown: name the asks instead of
                 # forwarding the reply to the model as a fresh prompt.
-                await self._notify_room(self._which_permission_hint(), mentions)
+                if self._questions and not self._permissions:
+                    await self._notify_room(self._which_question_command_hint(), mentions)
+                else:
+                    await self._notify_room(self._which_permission_hint(), mentions)
                 return True
             if pending is not None:
                 if await self._reply_permission(pending, approval.reply):
@@ -349,12 +365,20 @@ class RoomApprovals:
             # A named permission id that matches nothing currently pending
             # (already resolved, or another permission is pending instead):
             # feedback, not a fresh prompt for the model.
-            await self._notify_room(
-                APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
-                    request_id=approval.request_id
-                ),
-                mentions,
-            )
+            if (
+                approval.reply in ("once", "always")
+                and approval.request_id in self._questions
+                and approval.request_id not in self._permissions
+                and not self._permissions
+            ):
+                await self._notify_room(self._which_question_command_hint(), mentions)
+            else:
+                await self._notify_room(
+                    APPROVAL_NO_LONGER_PENDING_TEMPLATE.format(
+                        request_id=approval.request_id
+                    ),
+                    mentions,
+                )
             return True
 
         question = self._resolve_question(command)
@@ -388,8 +412,12 @@ class RoomApprovals:
                 )
             return True
 
-        if _is_question_rejection(command) and len(command.split()) > 1:
-            request_id = command.split()[1]
+        if (
+            approval is not None
+            and approval.reply == "reject"
+            and approval.request_id is not None
+        ):
+            request_id = approval.request_id
             if self._questions or request_id in self._known_question_ids:
                 # A named question id that matched no pending question above:
                 # feedback, not a fresh prompt for the model.
@@ -414,11 +442,17 @@ class RoomApprovals:
         if (
             named is not None
             and approval.reply == "reject"
-            and (named in self._questions or named in self._known_question_ids)
-            and named not in self._permissions
-            and named not in self._known_permission_ids
+            and named in self._questions
         ):
             return False
+        if approval.reply in ("once", "always"):
+            return bool(self._permissions or self._questions) or (
+                named is not None
+                and (
+                    named in self._known_permission_ids
+                    or named in self._known_question_ids
+                )
+            )
         return bool(self._permissions) or (
             named is not None and named in self._known_permission_ids
         )
@@ -449,6 +483,22 @@ class RoomApprovals:
         return (
             f"Several OpenCode approvals are pending ({ids}). Reply with the "
             "request id, e.g. `approve <id>`."
+        )
+
+    def _which_question_command_hint(self) -> str:
+        ids = ", ".join(f"`{request_id}`" for request_id in self._questions)
+        return (
+            f"OpenCode is waiting for question answers ({ids}). Reply with your "
+            "answer or `reject <id>` — not `approve`/`always`."
+        )
+
+    def _which_dual_reject_hint(self) -> str:
+        perm_ids = ", ".join(f"`{request_id}`" for request_id in self._permissions)
+        question_ids = ", ".join(f"`{request_id}`" for request_id in self._questions)
+        return (
+            "Both an approval and a question are pending "
+            f"({perm_ids}; {question_ids}). Reply with `reject <id>` naming "
+            "which ask to reject."
         )
 
     async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
@@ -488,12 +538,11 @@ class RoomApprovals:
         # An in-flight reply stays in the dict with ``replying=True`` until
         # ``_forget``; aborting that session would cancel work the human
         # already claimed. Only unanswered asks need the session stopped.
-        was_pending = any(
-            not pending.replying
-            for pending in (*self._permissions.values(), *self._questions.values())
-        )
+        pending_entries = (*self._permissions.values(), *self._questions.values())
+        in_flight = any(pending.replying for pending in pending_entries)
+        was_pending = any(not pending.replying for pending in pending_entries)
         self.cancel()
-        if was_pending:
+        if was_pending and not in_flight:
             logger.info(
                 "OpenCode turn: abandon pending approvals room=%s",
                 self._ports.room_id,
@@ -525,6 +574,8 @@ class RoomApprovals:
             return False
         pending.replying = True
         _cancel_timeout(pending)
+        if not self._parked_on_human():
+            self._release_from_human()
         return True
 
     async def _reply_permission(
@@ -711,3 +762,4 @@ def _cancel_timeout(pending: PendingPermission | PendingQuestion | None) -> None
         and pending.timeout_task is not asyncio.current_task()
     ):
         pending.timeout_task.cancel()
+        pending.timeout_task = None

@@ -21,6 +21,7 @@ from tests.adapters.opencode.helpers import (
     event_message_updated_with_tokens,
     event_part_delta,
     event_permission,
+    event_question,
     event_reasoning_part,
     event_session_error,
     event_session_idle,
@@ -446,6 +447,80 @@ async def test_session_idle_abandons_a_pending_permission(make_adapter, tools) -
 
     await adapter._handle_event(
         parse_opencode_event(event_permission("sess-1", "perm-1"))
+    )
+    assert turn.approvals.awaiting_human()
+    await turn_task
+
+    await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
+
+    assert fake_client.aborted_sessions == ["sess-1"]
+    assert not turn.approvals.awaiting_human()
+
+    await adapter.on_cleanup("room-1")
+
+
+async def test_session_error_abandons_a_pending_question(make_adapter, tools) -> None:
+    fake_client = FakeOpencodeClient(prompt_event_sequences=[[]])
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    turn_task = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+    )
+    await wait_for(lambda: bool(fake_client.prompt_calls))
+
+    room_state = await adapter._get_or_create_room_state("room-1")
+    turn = room_state.turn
+    assert turn is not None
+
+    await adapter._handle_event(
+        parse_opencode_event(event_question("sess-1", "q-1", "Who?"))
+    )
+    assert turn.approvals.awaiting_human()
+    await turn_task
+
+    await adapter._handle_event(
+        parse_opencode_event(event_session_error("sess-1", "boom"))
+    )
+
+    assert fake_client.aborted_sessions == ["sess-1"]
+    assert not turn.approvals.awaiting_human()
+
+    await adapter.on_cleanup("room-1")
+
+
+async def test_session_idle_abandons_a_pending_question(make_adapter, tools) -> None:
+    fake_client = FakeOpencodeClient(prompt_event_sequences=[[]])
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    turn_task = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+    )
+    await wait_for(lambda: bool(fake_client.prompt_calls))
+
+    room_state = await adapter._get_or_create_room_state("room-1")
+    turn = room_state.turn
+    assert turn is not None
+
+    await adapter._handle_event(
+        parse_opencode_event(event_question("sess-1", "q-1", "Who?"))
     )
     assert turn.approvals.awaiting_human()
     await turn_task
