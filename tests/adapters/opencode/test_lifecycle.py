@@ -12,6 +12,7 @@ from band.core.types import (
     Emit,
     TurnUsage,
 )
+from band.integrations.opencode import OpencodePermissionRequest
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
 from tests.adapters.opencode.helpers import (
@@ -132,6 +133,78 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
             "cache_write_tokens": 0,
         }
     ], f"expected the first turn's usage to survive, got {usage_payloads}"
+
+
+async def test_orphaned_turns_pending_permission_replies_against_its_own_client(
+    make_adapter, tools
+) -> None:
+    """Regression: a turn's RoomApprovals is pinned to that turn specifically,
+    not to whichever turn the room currently points at. An ask left pending
+    on turn A when turn B begins must still reply through turn A's own
+    client and session, never turn B's."""
+    adapter = OpencodeAdapter(client_factory=lambda _config: FakeOpencodeClient())
+    room_state = await adapter._get_or_create_room_state("room-1")
+
+    client_a = FakeOpencodeClient()
+    turn_a = adapter._begin_turn(
+        room_state,
+        session_id="sess-a",
+        client=client_a,
+        tools=tools_protocol(tools),
+        sender_id="user-1",
+    )
+    await turn_a.approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+
+    client_b = FakeOpencodeClient()
+    adapter._begin_turn(
+        room_state,
+        session_id="sess-b",
+        client=client_b,
+        tools=tools_protocol(tools),
+        sender_id="user-2",
+    )
+
+    assert await turn_a.approvals.try_handle_reply("approve perm-1", "user-1")
+    assert client_a.permission_replies == [
+        {"session_id": "sess-a", "permission_id": "perm-1", "response": "once"}
+    ]
+    assert client_b.permission_replies == []
+
+
+async def test_orphaned_turns_abandon_aborts_its_own_session(
+    make_adapter, tools
+) -> None:
+    """Regression: abandoning an orphaned turn's approvals must abort THAT
+    turn's session, not whichever turn the room has since moved on to."""
+    adapter = OpencodeAdapter(client_factory=lambda _config: FakeOpencodeClient())
+    room_state = await adapter._get_or_create_room_state("room-1")
+
+    client_a = FakeOpencodeClient()
+    turn_a = adapter._begin_turn(
+        room_state,
+        session_id="sess-a",
+        client=client_a,
+        tools=tools_protocol(tools),
+        sender_id="user-1",
+    )
+    await turn_a.approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+
+    client_b = FakeOpencodeClient()
+    adapter._begin_turn(
+        room_state,
+        session_id="sess-b",
+        client=client_b,
+        tools=tools_protocol(tools),
+        sender_id="user-2",
+    )
+
+    assert await turn_a.approvals.abandon()
+    assert client_a.aborted_sessions == ["sess-a"]
+    assert client_b.aborted_sessions == []
 
 
 async def test_cleanup_is_idempotent(make_adapter, tools) -> None:
@@ -435,6 +508,67 @@ async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> 
     )
 
     assert [m["content"] for m in tools.messages_sent] == ["after the interrupt"]
+
+    await adapter.on_cleanup("room-1")
+
+
+async def test_double_stop_while_abandon_awaits_abort_still_clears_turn_state(
+    tools,
+) -> None:
+    """Regression: a second cancellation (a double-tap stop) landing while
+    the interrupt handler's ``turn.approvals.abandon()`` await is itself
+    parked inside ``abort_session`` -- aborting a permission still waiting
+    on a human -- must not skip ``_clear_turn_state``. Otherwise the room
+    stays wedged forever on a turn whose state never clears.
+    """
+
+    class BlockingAbortClient(FakeOpencodeClient):
+        def __init__(self) -> None:
+            super().__init__(prompt_event_sequences=[[]])
+            self.abort_started = asyncio.Event()
+            self.release_abort = asyncio.Event()
+
+        async def abort_session(self, session_id: str) -> None:
+            self.abort_started.set()
+            await self.release_abort.wait()
+            await super().abort_session(session_id)
+
+    fake_client = BlockingAbortClient()
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    interrupted = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(content="long task"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+    )
+    await wait_for(lambda: bool(fake_client.prompt_calls))
+
+    room_state = await adapter._get_or_create_room_state("room-1")
+    assert room_state.turn is not None
+    await room_state.turn.approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+
+    # First stop: on_message's CancelledError handler finds the permission
+    # still parked on a human and starts abandon(), which awaits
+    # abort_session for it.
+    interrupted.cancel()
+    await fake_client.abort_started.wait()
+
+    # Second stop (double-tap) cuts off that abort_session await mid-flight.
+    interrupted.cancel()
+    with suppress(asyncio.CancelledError):
+        await interrupted
+
+    assert room_state.turn is None, "turn state must clear despite the double cancel"
+    assert room_state.turn_task is None
 
     await adapter.on_cleanup("room-1")
 

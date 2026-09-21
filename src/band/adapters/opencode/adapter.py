@@ -10,7 +10,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeAlias
 
 import httpx
 from typing_extensions import Unpack
@@ -101,6 +101,13 @@ class TurnState:
     usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
 
 
+# Resolves to the TurnState an ApprovalPorts bundle acts on -- either pinned
+# to one specific turn (a per-turn RoomApprovals, see _begin_turn) or tracking
+# whichever turn is currently live on the room (the bootstrap RoomApprovals
+# built before any turn exists, see _get_or_create_room_state).
+TurnOwner: TypeAlias = Callable[[], TurnState | None]
+
+
 @dataclass
 class RoomState:
     room_id: str
@@ -112,6 +119,11 @@ class RoomState:
     # _begin_turn on every subsequent turn.
     approvals: RoomApprovals = field(init=False)
     persisted_session_id: str | None = None
+    # Request ids ever asked in this room, kept at room (not turn) scope so a
+    # reply naming one still gets "no longer pending" feedback even after
+    # _begin_turn has replaced the RoomApprovals that originally asked it.
+    known_permission_ids: set[str] = field(default_factory=set)
+    known_question_ids: set[str] = field(default_factory=set)
 
     def begin_turn(
         self,
@@ -517,12 +529,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             # The runtime interrupts a turn by cancelling this coroutine, but the
             # watcher runs detached. Left alone it outlives the interrupt: it
             # posts the very reply the user stopped, and holds the room's busy
-            # guard until turn_timeout_s. Drop the turn state first (that cancels
-            # the watcher), then ask OpenCode to stop working.
+            # guard until turn_timeout_s. Drop the turn state even if a second
+            # cancellation (e.g. a double-tap stop) cuts off the abandon/abort
+            # awaits below -- otherwise the room stays wedged on a turn whose
+            # state never clears.
             if turn_future is not None:
                 assert turn is not None
-                already_aborted = await turn.approvals.abandon()
-                self._clear_turn_state(room_state, expected_turn=turn)
+                try:
+                    already_aborted = await turn.approvals.abandon()
+                finally:
+                    self._clear_turn_state(room_state, expected_turn=turn)
                 if not already_aborted:
                     await self._abort_turn(turn, "interrupted")
             raise
@@ -613,9 +629,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._rooms[room_id] = state
             return state
 
-    def _new_approvals(
-        self, state: RoomState, owner: Callable[[], TurnState | None]
-    ) -> RoomApprovals:
+    def _new_approvals(self, state: RoomState, owner: TurnOwner) -> RoomApprovals:
         return RoomApprovals(
             self.config,
             ApprovalPorts(
@@ -631,29 +645,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 ),
                 is_own_band_tool=self._is_own_band_tool,
             ),
+            known_permission_ids=state.known_permission_ids,
+            known_question_ids=state.known_question_ids,
         )
 
     @staticmethod
-    def _owner_session_id(owner: Callable[[], TurnState | None]) -> str | None:
+    def _owner_session_id(owner: TurnOwner) -> str | None:
         turn = owner()
         return turn.session_id if turn else None
 
     @staticmethod
-    def _owner_tools(
-        owner: Callable[[], TurnState | None],
-    ) -> AgentToolsProtocol | None:
+    def _owner_tools(owner: TurnOwner) -> AgentToolsProtocol | None:
         turn = owner()
         return turn.tools if turn else None
 
     @staticmethod
-    def _owner_client(
-        owner: Callable[[], TurnState | None],
-    ) -> OpencodeClientProtocol | None:
+    def _owner_client(owner: TurnOwner) -> OpencodeClientProtocol | None:
         turn = owner()
         return turn.client if turn else None
 
     @staticmethod
-    def _owner_mentions(owner: Callable[[], TurnState | None]) -> list[dict[str, str]]:
+    def _owner_mentions(owner: TurnOwner) -> list[dict[str, str]]:
         turn = owner()
         return turn.pending_mentions if turn else []
 
@@ -667,7 +679,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         await self._register_mcp_backend(client)
 
     async def _ensure_mcp_backend(self) -> BandMCPBackend:
-        """Create the shared Band MCP backend (LocalMCPServer with SSE)."""
+        """Create the shared Band MCP backend (LocalMCPServer with SSE).
+
+        Only ever called while holding ``_mcp_lifecycle_lock`` (from
+        ``_register_mcp_backend``), the same lock ``_shutdown_client`` needs
+        to read or clear ``self._mcp_backend`` -- so no concurrent shutdown
+        can race the ``await`` below.
+        """
         if self._mcp_backend is not None:
             return self._mcp_backend
 
@@ -677,10 +695,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             get_tools=self._get_room_tools,
             additional_tools=self._custom_tools or None,
         )
-        # Re-check after await: _shutdown_client may have cleared _mcp_backend
-        if self._mcp_backend is not None:
-            await backend.stop()
-            return self._mcp_backend
         self._mcp_backend = backend
         logger.info(
             "Shared Band MCP backend started with %d tools (%d custom)",
@@ -698,6 +712,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 backend = await self._ensure_mcp_backend()
                 local_server = backend.local_server
                 if local_server is None:
+                    logger.warning(
+                        "MCP backend has no local server to register with OpenCode"
+                    )
                     return
                 result = await client.register_mcp_server(
                     name=self._mcp_server_name, url=local_server.sse_url
@@ -721,22 +738,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     self._registered_client = client
 
     async def _shutdown_client(self) -> None:
-        async with self._state_lock:
-            # ``on_cleanup`` decides to shut down after removing the last room,
-            # then releases the lock before stopping network resources. A new
-            # room may arrive in that gap; keep the shared client registered for
-            # it and let that room's eventual cleanup own shutdown instead.
-            if self._rooms:
-                return
-            event_task = self._event_task
-            client = self._client
-            mcp_backend = self._mcp_backend
-            self._event_task = None
-            self._client = None
-            self._mcp_backend = None
+        # _register_mcp_backend creates/assigns self._mcp_backend under this
+        # same lock; reading and clearing it under _state_lock alone would let
+        # an in-flight registration finish after this snapshot and leave a
+        # live, unstopped backend that shutdown already decided doesn't exist.
+        async with self._mcp_lifecycle_lock:
+            async with self._state_lock:
+                # ``on_cleanup`` decides to shut down after removing the last
+                # room, then releases the lock before stopping network
+                # resources. A new room may arrive in that gap; keep the
+                # shared client registered for it and let that room's
+                # eventual cleanup own shutdown instead.
+                if self._rooms:
+                    return
+                event_task = self._event_task
+                client = self._client
+                mcp_backend = self._mcp_backend
+                self._event_task = None
+                self._client = None
+                self._mcp_backend = None
 
-        if mcp_backend is not None and client is not None:
-            async with self._mcp_lifecycle_lock:
+            if mcp_backend is not None and client is not None:
                 if self._registered_client is client:
                     self._registered_client = None
                     try:
@@ -974,10 +996,21 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         tools: AgentToolsProtocol,
         sender_id: str | None,
     ) -> TurnState:
-        room_state.approvals = self._new_approvals(room_state, lambda: room_state.turn)
-        return room_state.begin_turn(
+        # Pinned to THIS turn specifically, not "whichever turn room_state.turn
+        # currently is": an ask left pending when a later turn begins (e.g. a
+        # SessionErrorEvent finishes turn_future without cancelling approvals)
+        # must keep acting on its own turn's client/session, never a
+        # successor's -- an ambient lookup would silently misroute a reply or
+        # abort onto the wrong turn.
+        owner: list[TurnState] = []
+        room_state.approvals = self._new_approvals(
+            room_state, lambda: owner[0] if owner else None
+        )
+        turn = room_state.begin_turn(
             session_id=session_id, client=client, tools=tools, sender_id=sender_id
         )
+        owner.append(turn)
+        return turn
 
     async def _watch_turn_completion(
         self,
@@ -985,7 +1018,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_id: str,
         turn: TurnState,
     ) -> None:
-
         # 'watcher started' after 'prompt_async returned' but no later
         # 'session.idle' points at a lost/late SSE terminal event, not a slow
         # model -- distinct from the 'timed out' branch below firing at 300s.
@@ -1050,9 +1082,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 turn.session_id,
             )
 
-    async def _abort_owner_turn(
-        self, owner: Callable[[], TurnState | None], reason: str
-    ) -> None:
+    async def _abort_owner_turn(self, owner: TurnOwner, reason: str) -> None:
         if turn := owner():
             await self._abort_turn(turn, reason)
 
@@ -1111,24 +1141,23 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _release_turn_wait_for(self, turn: TurnState) -> None:
         self._resolve_future(turn.turn_release_future)
 
-    def _release_turn_wait_for_owner(
-        self, owner: Callable[[], TurnState | None]
-    ) -> None:
+    def _release_turn_wait_for_owner(self, owner: TurnOwner) -> None:
         if turn := owner():
             self._release_turn_wait_for(turn)
+
+    def _resolve_turn(self, turn: TurnState) -> None:
+        """Mark a turn done and release whoever is waiting on it."""
+        self._resolve_future(turn.turn_future)
+        self._release_turn_wait_for(turn)
 
     def _finish_turn(self, room_state: RoomState) -> None:
         if room_state.turn is not None:
-            self._resolve_future(room_state.turn.turn_future)
-            self._release_turn_wait_for(room_state.turn)
+            self._resolve_turn(room_state.turn)
 
-    def _fail_turn_for_owner(
-        self, owner: Callable[[], TurnState | None], message: str
-    ) -> None:
+    def _fail_turn_for_owner(self, owner: TurnOwner, message: str) -> None:
         if turn := owner():
             turn.last_error_message = message
-            self._resolve_future(turn.turn_future)
-            self._release_turn_wait_for(turn)
+            self._resolve_turn(turn)
 
     def _clear_turn_state(
         self,

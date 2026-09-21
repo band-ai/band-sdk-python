@@ -245,13 +245,14 @@ async def test_reply_to_nonmatching_request_id_is_consumed() -> None:
     assert client.permission_replies == []
 
 
-async def test_reply_naming_a_never_asked_id_is_consumed() -> None:
-    """A named id gets feedback even with nothing at all pending -- not just
-    while some other ask is pending (the case above)."""
+async def test_reply_naming_a_never_asked_id_is_not_consumed() -> None:
+    """A room message naming an id this room has never asked about is an
+    ordinary message, not a reply -- it must be forwarded to the model
+    rather than swallowed as 'no longer pending' feedback."""
     client = FakeOpencodeClient()
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
 
-    assert await approvals.try_handle_reply("approve never-asked-id", "user-1")
+    assert not await approvals.try_handle_reply("approve never-asked-id", "user-1")
     assert client.permission_replies == []
 
 
@@ -340,29 +341,84 @@ async def test_malformed_question_with_no_questions_is_ignored() -> None:
     assert tools.messages_sent == []
 
 
+async def test_reject_by_id_targets_a_pending_question_not_a_stale_permission() -> None:
+    """`reject <id>` is ambiguous between the permission and question reply
+    grammars. When only a question is pending under that id -- no permission
+    has ever used it -- the reply must resolve as a question rejection, not
+    be claimed by the permission branch and swallowed as 'no longer
+    pending'."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("reject q-1", "user-1")
+    assert client.question_rejections == ["q-1"]
+
+
 async def test_redelivered_permission_while_reply_in_flight_is_ignored() -> None:
     """A permission redelivered with the SAME id while its own reply is
     still in flight must not create a second pending entry or send a
     duplicate reply."""
     client = BlockingReplyClient("permission")
-    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="req-1", permission="bash")
     )
+    pending_before = approvals._permissions["req-1"]
+    notifications_before = len(tools.messages_sent)
 
     reply_task = asyncio.create_task(
         approvals.try_handle_reply("approve req-1", "user-1")
     )
     await client.reply_started.wait()
 
-    # OpenCode redelivers the same ask while the reply above is in flight.
+    # OpenCode redelivers the same ask while the reply above is in flight:
+    # it must be a no-op, not a fresh ask that replaces the in-flight entry
+    # or notifies the room again.
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="req-1", permission="bash")
     )
+    assert approvals._permissions["req-1"] is pending_before
+    assert len(tools.messages_sent) == notifications_before
+
     client.allow_reply.set()
 
     assert await reply_task
     assert [reply["permission_id"] for reply in client.permission_replies] == ["req-1"]
+
+
+async def test_redelivered_question_while_reply_in_flight_is_ignored() -> None:
+    """A question redelivered with the SAME id while its own reply is still
+    in flight must not create a second pending entry or send a duplicate
+    ask to the room."""
+    client = BlockingReplyClient("question")
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    pending_before = approvals._questions["q-1"]
+    notifications_before = len(tools.messages_sent)
+
+    reply_task = asyncio.create_task(approvals.try_handle_reply("Alice", "user-1"))
+    await client.reply_started.wait()
+
+    # OpenCode redelivers the same ask while the reply above is in flight:
+    # it must be a no-op, not a fresh ask that replaces the in-flight entry
+    # or notifies the room again.
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+    assert approvals._questions["q-1"] is pending_before
+    assert len(tools.messages_sent) == notifications_before
+
+    client.allow_reply.set()
+
+    assert await reply_task
+    assert [reply["request_id"] for reply in client.question_replies] == ["q-1"]
 
 
 async def test_redelivered_permission_cancels_previous_timeout() -> None:
