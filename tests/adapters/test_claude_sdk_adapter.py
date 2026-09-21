@@ -40,6 +40,7 @@ from band.runtime.tools import (
     ALL_TOOL_NAMES,
     FILE_TOOL_NAMES,
     MAX_INLINE_IMAGE_BYTES,
+    MCP_TOOL_PREFIX,
     missing_reply_error,
     mcp_tool_names,
 )
@@ -347,7 +348,9 @@ class TestOnStarted:
 
             assert matcher.matcher == _NATIVE_TOOL_MATCHER
             assert re.fullmatch(matcher.matcher, "Bash")
-            assert not re.fullmatch(matcher.matcher, "mcp__band__band_send_message")
+            assert not re.fullmatch(
+                matcher.matcher, f"{MCP_TOOL_PREFIX}band_send_message"
+            )
 
 
 class TestOnMessage:

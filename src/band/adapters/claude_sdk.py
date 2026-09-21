@@ -148,7 +148,7 @@ _LOCAL_CMDS = _APPROVAL_CMDS | frozenset({"status"})
 
 # Band's MCP tools are intentionally always available; approval_mode only gates
 # Claude Code's native tools.
-_NATIVE_TOOL_MATCHER = r"^(?!mcp__band__).+"
+_NATIVE_TOOL_MATCHER = rf"^(?!{re.escape(MCP_TOOL_PREFIX)}).+"
 
 # A pending approval's future, force-resolved by eviction or room teardown
 # rather than a genuine /decline reply — distinct from the "decline" string
