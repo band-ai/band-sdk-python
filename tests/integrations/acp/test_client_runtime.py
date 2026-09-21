@@ -59,39 +59,56 @@ class TestACPCollectingClientProfiles:
 
     @pytest.mark.asyncio
     async def test_cursor_profile_handles_methods_and_notifications(self) -> None:
-        client = ACPCollectingClient(profile=CursorACPClientProfile())
+        async def resolve(method: str, params: dict[str, object]) -> dict[str, object]:
+            del params
+            return {
+                "outcome": {
+                    "outcome": "accepted" if method.endswith("plan") else "cancelled"
+                }
+            }
+
+        profile = CursorACPClientProfile(resolve)
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
 
         ask_result = await client.ext_method(
             "cursor/ask_question",
             {
-                "options": [
-                    {"optionId": "a", "name": "Option A"},
-                    {"optionId": "b", "name": "Option B"},
-                ]
+                "questions": [
+                    {
+                        "id": "q1",
+                        "prompt": "Choose",
+                        "options": [{"id": "a", "label": "A"}],
+                    }
+                ],
             },
         )
         plan_result = await client.ext_method("cursor/create_plan", {"plan": "x"})
         await client.ext_notification(
             "cursor/update_todos",
             {
-                "sessionId": "sess-1",
                 "todos": [
-                    {"content": "Read code", "completed": True},
-                    {"content": "Write tests", "completed": False},
+                    {"id": "read", "content": "Read code", "status": "completed"},
+                    {"id": "test", "content": "Write tests", "status": "pending"},
                 ],
+                "merge": False,
             },
         )
         await client.ext_notification(
             "cursor/task",
-            {"sessionId": "sess-1", "result": "Refactored the module"},
+            {
+                "description": "Refactor the module",
+                "prompt": "Do it",
+                "subagentType": "explore",
+            },
         )
 
         chunks = client.get_collected_chunks("sess-1")
-        assert ask_result == {"outcome": {"type": "selected", "optionId": "a"}}
-        assert plan_result == {"outcome": {"type": "approved"}}
-        assert [chunk.chunk_type for chunk in chunks] == ["plan", "text"]
+        assert ask_result == {"outcome": {"outcome": "cancelled"}}
+        assert plan_result == {"outcome": {"outcome": "accepted"}}
+        assert [chunk.chunk_type for chunk in chunks] == ["plan", "plan"]
         assert "[x] Read code" in chunks[0].content
-        assert "Refactored the module" in chunks[1].content
+        assert "Refactor the module" in chunks[1].content
 
 
 class TestACPCollectingClientCoalescing:

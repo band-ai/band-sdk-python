@@ -543,6 +543,39 @@ def _build_copilot_acp(
 
 
 @adapter(
+    Adapter.CURSOR_ACP,
+    requires=[Dep.CURSOR_CLI],
+    supports=_EVERY_CAPABILITY,
+    runs_tool_loop=False,
+)
+def _build_cursor_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig  # noqa: PLC0415 -- isolates the ACP extra from other framework builders
+
+    sandbox = tempfile.mkdtemp(prefix="band-e2e-cursor-acp-")
+    config_kwargs: dict[str, Any] = {
+        "api_key": s.backends.cursor_api_key,
+        "custom_section": prompt or "",
+        "cwd": sandbox,
+    }
+    if s.backends.cursor_command.strip():
+        config_kwargs["command"] = tuple(s.backends.cursor_command.split())
+    built_features = feature_kwargs(features)
+    if "emit" in built_features:
+        built_features["emit"] &= CursorACPAdapter.SUPPORTED_EMIT
+    return CursorACPAdapter(
+        config=CursorACPAdapterConfig(**config_kwargs),
+        additional_tools=_custom_tool_defs(tools),
+        **built_features,
+    )
+
+
+@adapter(
     Adapter.LETTA,
     requires=[Dep.LETTA],
     supports=[Capability.FILES],

@@ -274,6 +274,11 @@ IMAGE_PASSTHROUGH_EXCLUSIONS = (
         "wraps the ACP client adapter, which shares the same MCP engine fix; "
         "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
     ),
+    ExcludedAdapter(
+        Adapter.CURSOR_ACP,
+        "wraps the ACP client adapter, which shares the same MCP engine fix; "
+        "not a separate ADAPTER_CONFIGS entry, so it has no probe of its own",
+    ),
 )
 
 # parlant is absent from the Adapter enum entirely (NON_AGENT_ADAPTERS), so it
@@ -346,6 +351,6 @@ class TestImagePassthroughMatrix:
 
         expected = (
             IMAGE_PASSTHROUGH_SUPPORTED_FRAMEWORK_IDS - {Adapter.CREWAI_FLOW.value}
-        ) | {Adapter.COPILOT_ACP.value, Adapter.LETTA.value}
+        ) | {Adapter.COPILOT_ACP.value, Adapter.CURSOR_ACP.value, Adapter.LETTA.value}
 
         assert {a.value for a in IMAGE_PASSTHROUGH_ADAPTERS} == expected

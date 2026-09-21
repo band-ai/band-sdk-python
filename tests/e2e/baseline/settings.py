@@ -109,7 +109,7 @@ class LLMCredentials(BaseSettings):
 
 
 class Backends(BaseSettings):
-    """Config for the external-backend adapters (codex / opencode / letta / copilot_sdk).
+    """Config for the external-backend adapters.
 
     Reads each backend's standard env vars (no shared prefix). Defaults that the
     matrix relies on live here -- the single source -- not scattered through the
@@ -163,6 +163,11 @@ class Backends(BaseSettings):
     # override the binary + args via COPILOT_COMMAND. Matrix-cell auth is Anthropic
     # BYOK (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder.
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
+
+    # Cursor CLI over ACP. Cursor's API key is passed only to its subprocess;
+    # command overrides preserve local installations outside PATH.
+    cursor_command: str = ""  # CURSOR_COMMAND (override the `agent` binary + args)
+    cursor_api_key: str = ""  # CURSOR_API_KEY
 
     # Copilot-hosted auth for the single non-BYOK smoke
     # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix

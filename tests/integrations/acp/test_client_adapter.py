@@ -11,6 +11,7 @@ import pytest
 from acp.helpers import update_agent_message_text
 from acp.schema import (
     NewSessionResponse,
+    PermissionOption,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
@@ -19,7 +20,11 @@ from acp.schema import (
 from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.types import Capability
 from band.integrations.acp import client_adapter
-from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
+from band.integrations.acp.client_adapter import (
+    ACPClientAdapter,
+    ACPPermissionRequest,
+    _resolve_launcher,
+)
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
 from band.integrations.acp.client_types import (
@@ -885,6 +890,32 @@ class TestACPClientAdapterPermissionHandler:
         assert len(adapter_with_mocks._runtime._client._permission_handlers) > 0
 
     @pytest.mark.asyncio
+    async def test_permission_resolver_receives_only_advertised_choices(self) -> None:
+        received: list[ACPPermissionRequest] = []
+
+        async def resolve(request: ACPPermissionRequest) -> str:
+            received.append(request)
+            return "reject"
+
+        adapter = ACPClientAdapter(command="codex", resolve_permission=resolve)
+        option_id = await adapter._resolve_permission_option(
+            call=ACPToolCall("call-1", "write_file", {}),
+            options=(
+                PermissionOption(optionId="allow", name="Allow", kind="allow_once"),
+                PermissionOption(optionId="reject", name="Reject", kind="reject_once"),
+            ),
+            room_id="room-1",
+            session_id="session-1",
+        )
+
+        assert option_id == "reject"
+        assert received[0].room_id == "room-1"
+        assert [option.option_id for option in received[0].options] == [
+            "allow",
+            "reject",
+        ]
+
+    @pytest.mark.asyncio
     async def test_permission_handler_skips_pair_for_approved_band_send_message(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
@@ -1371,39 +1402,58 @@ class TestACPCollectingClientCursorProfileExtensions:
 
     @pytest.mark.asyncio
     async def test_ext_method_cursor_ask_question(self) -> None:
-        """Should auto-select first option for cursor/ask_question."""
-        client = ACPCollectingClient(profile=CursorACPClientProfile())
+        """Forwards Cursor's complete question payload to the decision bridge."""
+        received: dict[str, object] = {}
+
+        async def resolve(method: str, params: dict[str, object]) -> dict[str, object]:
+            received.update(method=method, params=params)
+            return {
+                "outcome": {
+                    "outcome": "answered",
+                    "answers": [{"questionId": "q1", "selectedOptionIds": ["a"]}],
+                }
+            }
+
+        client = ACPCollectingClient(profile=CursorACPClientProfile(resolve))
 
         result = await client.ext_method(
             "cursor/ask_question",
             {
-                "options": [
-                    {"optionId": "a", "name": "Option A"},
-                    {"optionId": "b", "name": "Option B"},
+                "questions": [
+                    {
+                        "id": "q1",
+                        "prompt": "Choose",
+                        "options": [{"id": "a", "label": "A"}],
+                    }
                 ],
             },
         )
 
-        assert result["outcome"]["type"] == "selected"
-        assert result["outcome"]["optionId"] == "a"
+        assert received["method"] == "cursor/ask_question"
+        assert result["outcome"]["outcome"] == "answered"
 
     @pytest.mark.asyncio
-    async def test_ext_method_cursor_ask_question_empty_options(self) -> None:
-        """Should cancel when no options provided."""
+    async def test_ext_method_without_decision_bridge_cancels(self) -> None:
+        """A bare profile must not silently choose a user-facing answer."""
         client = ACPCollectingClient(profile=CursorACPClientProfile())
 
-        result = await client.ext_method("cursor/ask_question", {"options": []})
+        result = await client.ext_method("cursor/ask_question", {"questions": []})
 
-        assert result["outcome"]["type"] == "cancelled"
+        assert result == {"outcome": {"outcome": "cancelled"}}
 
     @pytest.mark.asyncio
     async def test_ext_method_cursor_create_plan(self) -> None:
-        """Should auto-approve cursor/create_plan."""
-        client = ACPCollectingClient(profile=CursorACPClientProfile())
+        """Forwards plan approval to the decision bridge."""
+
+        async def resolve(method: str, params: dict[str, object]) -> dict[str, object]:
+            del method, params
+            return {"outcome": {"outcome": "accepted"}}
+
+        client = ACPCollectingClient(profile=CursorACPClientProfile(resolve))
 
         result = await client.ext_method("cursor/create_plan", {"plan": "stuff"})
 
-        assert result["outcome"]["type"] == "approved"
+        assert result == {"outcome": {"outcome": "accepted"}}
 
     @pytest.mark.asyncio
     async def test_ext_method_unknown_returns_empty(self) -> None:
@@ -1416,52 +1466,84 @@ class TestACPCollectingClientCursorProfileExtensions:
 
     @pytest.mark.asyncio
     async def test_ext_notification_cursor_update_todos(self) -> None:
-        """Should collect todo updates as plan chunks."""
-        client = ACPCollectingClient(profile=CursorACPClientProfile())
+        """Cursor's merge flag preserves prior todo state."""
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
             "cursor/update_todos",
             {
-                "sessionId": "sess-1",
                 "todos": [
-                    {"content": "Read code", "completed": True},
-                    {"content": "Write tests", "completed": False},
+                    {"id": "read", "content": "Read code", "status": "completed"}
                 ],
+                "merge": False,
+            },
+        )
+        await client.ext_notification(
+            "cursor/update_todos",
+            {
+                "todos": [
+                    {"id": "test", "content": "Write tests", "status": "pending"}
+                ],
+                "merge": True,
+            },
+        )
+
+        chunks = client.get_collected_chunks("sess-1")
+        assert "[x] Read code" in chunks[-1].content
+        assert "[ ] Write tests" in chunks[-1].content
+
+    @pytest.mark.asyncio
+    async def test_ext_notification_cursor_task(self) -> None:
+        """Renders documented task metadata without inventing a result field."""
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
+
+        await client.ext_notification(
+            "cursor/task",
+            {
+                "description": "Explore authentication",
+                "prompt": "Find the auth module",
+                "subagentType": "explore",
+                "model": "Auto",
             },
         )
 
         chunks = client.get_collected_chunks("sess-1")
         assert len(chunks) == 1
         assert chunks[0].chunk_type == "plan"
-        assert "[x] Read code" in chunks[0].content
-        assert "[ ] Write tests" in chunks[0].content
+        assert "Explore authentication" in chunks[0].content
 
     @pytest.mark.asyncio
-    async def test_ext_notification_cursor_task(self) -> None:
-        """Should collect task results as text chunks."""
-        client = ACPCollectingClient(profile=CursorACPClientProfile())
+    async def test_ext_notification_uses_serialized_profile_session(self) -> None:
+        """Cursor notifications omit session ids, so the profile binds the turn."""
+        profile = CursorACPClientProfile()
+        profile.bind_session("sess-1")
+        client = ACPCollectingClient(profile=profile)
 
         await client.ext_notification(
-            "cursor/task",
-            {"sessionId": "sess-1", "result": "Refactored the module"},
+            "cursor/generate_image",
+            {"description": "A logo", "filePath": "/tmp/logo.png"},
         )
 
         chunks = client.get_collected_chunks("sess-1")
-        assert len(chunks) == 1
-        assert chunks[0].chunk_type == "text"
-        assert "Refactored the module" in chunks[0].content
+        assert chunks[0].content == "[Cursor generated image] A logo → /tmp/logo.png"
 
     @pytest.mark.asyncio
-    async def test_ext_notification_no_session_id_is_noop(self) -> None:
-        """Should do nothing when no session_id is present."""
+    async def test_ext_notification_without_bound_session_is_noop(self) -> None:
+        """Profiles without a current Cursor turn cannot route notifications."""
         client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         await client.ext_notification(
             "cursor/update_todos",
-            {"todos": [{"content": "Test", "completed": False}]},
+            {
+                "todos": [{"id": "test", "content": "Test", "status": "pending"}],
+                "merge": False,
+            },
         )
 
-        # No session_id → no chunks collected
         assert client.get_collected_chunks() == []
 
 

@@ -6,16 +6,17 @@ import asyncio
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeAlias
 from uuid import uuid4
 
 from acp import spawn_agent_process
 from acp.schema import (
     HttpMcpServer,
     NewSessionResponse,
+    PermissionOption,
     SetSessionConfigOptionResponse,
     SseMcpServer,
 )
@@ -75,6 +76,21 @@ from band.runtime.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+PermissionOptionValue: TypeAlias = PermissionOption | Mapping[str, object]
+PermissionResolver: TypeAlias = Callable[
+    ["ACPPermissionRequest"], Awaitable[str | None]
+]
+
+
+@dataclass(frozen=True)
+class ACPPermissionRequest:
+    """The permission choices advertised for one ACP tool call."""
+
+    room_id: str
+    session_id: str
+    tool_call: ACPToolCall
+    options: tuple[PermissionOptionValue, ...]
 
 
 @dataclass
@@ -176,6 +192,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
         resolve_session_config: SessionConfigResolver | None = None,
+        resolve_permission: PermissionResolver | None = None,
         # Transport + advanced knobs are keyword-only: this preserves the original
         # positional order (command, env, cwd, …) for existing callers, and TCP /
         # custom-transport wiring reads clearly at the call site.
@@ -201,6 +218,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._auth_method = auth_method
         self._profile = profile
         self._resolve_session_config = resolve_session_config
+        self._resolve_permission = resolve_permission
         self._custom_section = custom_section
         self._runtime = self._build_runtime(spawn_process)
 
@@ -416,10 +434,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 tool_call, canonicalize=self._canonical_tool_name
             )
 
-            # Auto-approve by selecting one of the agent's offered allow options;
-            # an ACP grant must reference an offered optionId (not a bare
-            # "allowed"), or the agent can't parse the response and aborts.
-            option_id = select_allow_option_id(options)
+            option_id = await self._resolve_permission_option(
+                call=call,
+                options=options,
+                room_id=room_id,
+                session_id=session_id,
+            )
 
             logger.info(
                 "Permission request: tool=%s, session=%s, room=%s, option=%s",
@@ -445,6 +465,61 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             return cancel_permission()
 
         return handler
+
+    async def _resolve_permission_option(
+        self,
+        *,
+        call: ACPToolCall,
+        options: object,
+        room_id: str,
+        session_id: str,
+    ) -> str | None:
+        """Return a validated permission choice, or cancel the request."""
+        if self._resolve_permission is None:
+            return select_allow_option_id(options)
+
+        offered = self._permission_options(options)
+        option_id = await self._resolve_permission(
+            ACPPermissionRequest(
+                room_id=room_id,
+                session_id=session_id,
+                tool_call=call,
+                options=offered,
+            )
+        )
+        if option_id is None:
+            return None
+        if not isinstance(option_id, str):
+            raise ValueError("ACP permission resolver must return an option id or None")
+        if option_id not in self._permission_option_ids(offered):
+            raise ValueError(
+                f'ACP permission resolver selected unavailable option "{option_id}".'
+            )
+        return option_id
+
+    @staticmethod
+    def _permission_options(options: object) -> tuple[PermissionOptionValue, ...]:
+        """Return recognized ACP permission choices without fabricating any."""
+        if not isinstance(options, (list, tuple)):
+            return ()
+        return tuple(
+            option
+            for option in options
+            if isinstance(option, (PermissionOption, Mapping))
+        )
+
+    @staticmethod
+    def _permission_option_ids(options: tuple[PermissionOptionValue, ...]) -> set[str]:
+        """The wire option ids a resolver may select."""
+        option_ids: set[str] = set()
+        for option in options:
+            if isinstance(option, Mapping):
+                option_id = option.get("optionId", option.get("option_id"))
+            else:
+                option_id = option.option_id
+            if isinstance(option_id, str):
+                option_ids.add(option_id)
+        return option_ids
 
     @staticmethod
     def _resolve_transport(
