@@ -154,10 +154,13 @@ def _open_fd_count() -> int:
 
 def _assert_stopped_and_fd_closed(
     process: subprocess.Popen[bytes], controller_fd: int
-) -> None:
+) -> int:
+    """Assert `process` actually exited and `controller_fd` was closed by
+    `_stop_pty_process`; return the exit code for callers that care how."""
     process.wait(timeout=5)  # raises TimeoutExpired if it wasn't actually stopped
     with pytest.raises(OSError):
         os.close(controller_fd)  # already closed by _stop_pty_process
+    return process.returncode
 
 
 @markers.requires_posix_pty
@@ -217,9 +220,8 @@ def test_stop_pty_process_escalates_to_sigkill_when_sigterm_is_ignored(
 
     _stop_pty_process(process, controller_fd)
 
-    assert process.returncode == -signal.SIGKILL  # proves the escalation fired
-    with pytest.raises(OSError):
-        os.close(controller_fd)  # already closed by _stop_pty_process
+    returncode = _assert_stopped_and_fd_closed(process, controller_fd)
+    assert returncode == -signal.SIGKILL  # proves the escalation fired
 
 
 @markers.requires_posix_pty
