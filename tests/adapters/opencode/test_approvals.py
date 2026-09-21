@@ -398,6 +398,27 @@ async def test_reject_question_id_is_not_stolen_by_a_pending_permission() -> Non
     assert approvals.awaiting_human()
 
 
+async def test_approve_question_id_does_not_answer_the_question() -> None:
+    """`approve <question-id>` is not the shared reject grammar -- it must
+    not fall through and be submitted as a free-text question answer."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who?"}])
+    )
+
+    assert await approvals.try_handle_reply("approve q-1", "user-1")
+    assert client.question_replies == []
+    assert client.permission_replies == []
+    assert "no longer pending" in tools.messages_sent[-1]["content"]
+    assert list(approvals._permissions) == ["req-1"]
+    assert list(approvals._questions) == ["q-1"]
+
+
 async def test_named_reject_of_a_never_asked_question_is_not_consumed() -> None:
     client = FakeOpencodeClient()
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
@@ -1043,6 +1064,33 @@ async def test_failed_reply_cancels_sibling_asks() -> None:
     assert not approvals.awaiting_human()
     assert await approvals.try_handle_reply("approve perm-2", "user-1")
     assert "no longer pending" in tools.messages_sent[-1]["content"]
+
+
+async def test_abandon_does_not_abort_an_in_flight_reply() -> None:
+    """An ask the human has already claimed (`replying=True`) is not
+    'parked on a human' -- abandon must not abort that session."""
+    aborted: list[bool] = []
+
+    async def record_abort() -> None:
+        aborted.append(True)
+
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, client),
+        abort_session=record_abort,
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    reply_task = asyncio.create_task(
+        approvals.try_handle_reply("approve req-1", "user-1")
+    )
+    await client.reply_started.wait()
+
+    assert await approvals.abandon() is False
+    assert aborted == []
+    client.allow_reply.set()
+    assert await reply_task
 
 
 async def test_abandoning_a_request_stops_its_expiry_timer() -> None:

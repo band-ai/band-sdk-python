@@ -407,16 +407,18 @@ class RoomApprovals:
         ``reject <id>`` is also the question-rejection grammar. A named id
         that is a live or known question (and not a permission) must fall
         through so ``_resolve_question`` / ``_reject_question`` can run.
+        ``approve`` / ``always`` are not shared; those stay on this branch
+        so they are not submitted as free-text question answers.
         """
         named = approval.request_id
-        if named is not None and (
-            named in self._questions or named in self._known_question_ids
+        if (
+            named is not None
+            and approval.reply == "reject"
+            and (named in self._questions or named in self._known_question_ids)
+            and named not in self._permissions
+            and named not in self._known_permission_ids
         ):
-            if (
-                named not in self._permissions
-                and named not in self._known_permission_ids
-            ):
-                return False
+            return False
         return bool(self._permissions) or (
             named is not None and named in self._known_permission_ids
         )
@@ -483,7 +485,13 @@ class RoomApprovals:
         aborted), so a caller with its own unconditional abort afterward
         (on_message's interrupt handler) can skip a redundant one.
         """
-        was_pending = bool(self._permissions or self._questions)
+        # An in-flight reply stays in the dict with ``replying=True`` until
+        # ``_forget``; aborting that session would cancel work the human
+        # already claimed. Only unanswered asks need the session stopped.
+        was_pending = any(
+            not pending.replying
+            for pending in (*self._permissions.values(), *self._questions.values())
+        )
         self.cancel()
         if was_pending:
             logger.info(

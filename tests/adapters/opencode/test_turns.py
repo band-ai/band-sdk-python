@@ -458,6 +458,68 @@ async def test_session_idle_abandons_a_pending_permission(make_adapter, tools) -
     await adapter.on_cleanup("room-1")
 
 
+async def test_session_idle_does_not_abort_an_in_flight_approval(
+    make_adapter, tools
+) -> None:
+    """session.idle during an already-claimed human reply must finish the
+    turn without aborting the session the human just answered."""
+
+    class BlockBeforeReplyClient(FakeOpencodeClient):
+        def __init__(self) -> None:
+            super().__init__(prompt_event_sequences=[[]])
+            self.reply_started = asyncio.Event()
+            self.allow_reply = asyncio.Event()
+
+        async def reply_permission(
+            self, session_id: str, permission_id: str, *, response: str
+        ) -> None:
+            self.reply_started.set()
+            await self.allow_reply.wait()
+            await super().reply_permission(session_id, permission_id, response=response)
+
+    fake_client = BlockBeforeReplyClient()
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    turn_task = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+    )
+    await wait_for(lambda: bool(fake_client.prompt_calls))
+    await adapter._handle_event(
+        parse_opencode_event(event_permission("sess-1", "perm-1"))
+    )
+    await turn_task
+
+    reply_task = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(content="approve perm-1"),
+            tools_protocol(tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+    )
+    await asyncio.wait_for(fake_client.reply_started.wait(), timeout=1.0)
+    await adapter._handle_event(parse_opencode_event(event_session_idle("sess-1")))
+    assert fake_client.aborted_sessions == []
+    fake_client.allow_reply.set()
+    await reply_task
+    assert fake_client.permission_replies == [
+        {"session_id": "sess-1", "permission_id": "perm-1", "response": "once"}
+    ]
+    await adapter.on_cleanup("room-1")
+
+
 async def test_stale_approval_id_survives_a_later_turn(make_adapter, tools) -> None:
     """Room-scoped known ids must outlive `_begin_turn`'s RoomApprovals
     rebuild so `approve <old-id>` is feedback, not a new prompt."""
