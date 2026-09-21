@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any
@@ -14,14 +15,25 @@ import yaml
 from tests.paths import REPO_ROOT
 
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/python-core-coverage.yml"
+# The guard script below shells out to a real `uv run`, which needs a real,
+# writable cache dir -- don't trust an inherited $HOME: another test earlier
+# in the same pytest process may have repointed it (e.g. at a container-only
+# path that doesn't exist on this machine).
+_UV_CACHE_DIR = Path(tempfile.gettempdir()) / "band-sdk-python-pin-guard-uv-cache"
 
 
 def load_workflow() -> dict[str, Any]:
     return yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def _step(workflow: dict[str, Any], name: str) -> dict[str, Any]:
-    steps = workflow["jobs"]["coverage"]["steps"]
+def _step_names(workflow: dict[str, Any], *, job: str = "coverage") -> list[str | None]:
+    return [step.get("name") for step in workflow["jobs"][job]["steps"]]
+
+
+def _step(
+    workflow: dict[str, Any], name: str, *, job: str = "coverage"
+) -> dict[str, Any]:
+    steps = workflow["jobs"][job]["steps"]
     return next(step for step in steps if step.get("name") == name)
 
 
@@ -56,7 +68,10 @@ def _run_pin_guard(version: str) -> subprocess.CompletedProcess[str]:
     run_text = _step(workflow, "Resolve pinned band-sdk-core version")["run"]
     core_tag_prefix = workflow["jobs"]["coverage"]["env"]["CORE_TAG_PREFIX"]
     script = f'version="{version}"\n{_pin_guard_script(run_text)}'
-    return _run_bash(script, env={"CORE_TAG_PREFIX": core_tag_prefix})
+    return _run_bash(
+        script,
+        env={"CORE_TAG_PREFIX": core_tag_prefix, "UV_CACHE_DIR": str(_UV_CACHE_DIR)},
+    )
 
 
 def _run_step(
@@ -103,9 +118,8 @@ def test_checkout_ref_matches_pin_step_output() -> None:
 
 def test_core_checkout_uses_the_scoped_read_secret() -> None:
     workflow = load_workflow()
-    steps = workflow["jobs"]["coverage"]["steps"]
     checkout = _step(workflow, "Checkout band-sdk-core at the pinned version")
-    names = [step.get("name") for step in steps]
+    names = _step_names(workflow)
 
     assert checkout["with"]["token"] == "${{ secrets.CORE_SDK_READ_KEY }}"
     assert "Generate GitHub App Token (scoped to band-sdk-core)" not in names
@@ -117,8 +131,7 @@ def test_coverage_job_skips_dependabot_without_the_read_secret() -> None:
 
 
 def test_prerelease_guard_runs_before_the_cross_repo_checkout() -> None:
-    steps = load_workflow()["jobs"]["coverage"]["steps"]
-    names = [step.get("name") for step in steps]
+    names = _step_names(load_workflow())
     assert names.index("Resolve pinned band-sdk-core version") < names.index(
         "Checkout band-sdk-core at the pinned version"
     )
@@ -205,10 +218,7 @@ def test_write_coverage_summary_falls_back_when_missing() -> None:
 
 
 def test_download_artifact_uses_only_supported_inputs() -> None:
-    report_steps = load_workflow()["jobs"]["report-weekly"]["steps"]
-    step = next(
-        step for step in report_steps if step.get("name") == "Download coverage report"
-    )
+    step = _step(load_workflow(), "Download coverage report", job="report-weekly")
     assert "if-no-files-found" not in step["with"]
 
 
@@ -222,16 +232,11 @@ def test_weekly_report_is_scheduled_and_mentions_the_integrations_roster() -> No
         == "!cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
     )
     assert report["permissions"] == {"contents": "write"}
-    report_steps = report["steps"]
-    mention_step = next(
-        step
-        for step in report_steps
-        if step["name"] == "Read integrations mentions list"
+    mention_step = _step(
+        workflow, "Read integrations mentions list", job="report-weekly"
     )
-    digest_step = next(
-        step
-        for step in report_steps
-        if step["name"] == "Post the weekly coverage digest"
+    digest_step = _step(
+        workflow, "Post the weekly coverage digest", job="report-weekly"
     )
     assert mention_step["id"] == "mentions"
     assert mention_step["if"] == "github.event_name == 'schedule'"

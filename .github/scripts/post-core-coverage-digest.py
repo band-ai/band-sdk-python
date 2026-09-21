@@ -6,12 +6,18 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path
 
 LOW_COVERAGE_PERCENT = 80.0
 MID_COVERAGE_PERCENT = 50.0
 MAX_MISSED_LINE_RANGES = 8
 MAX_LOW_COVERAGE_FILES = 8
+
+
+def safe_percent(hit: int, found: int, default: float) -> float:
+    """`hit`/`found` as a percentage, or `default` when there's nothing to divide by."""
+    return 100 * hit / found if found else default
 
 
 @dataclass(frozen=True)
@@ -25,7 +31,8 @@ class FileCoverage:
 
     @property
     def percent(self) -> float:
-        return 100 * self.hit / self.found if self.found else 100.0
+        # A file with no measured lines is vacuously fully covered.
+        return safe_percent(self.hit, self.found, default=100.0)
 
     @property
     def missed(self) -> int:
@@ -38,18 +45,16 @@ def display_path(path: str) -> str:
 
 
 def format_line_ranges(numbers: tuple[int, ...]) -> str:
-    ranges: list[str] = []
-    start = previous = None
-    for number in numbers:
-        if start is None:
-            start = previous = number
-        elif previous is not None and number == previous + 1:
-            previous = number
-        else:
-            ranges.append(str(start) if start == previous else f"{start}-{previous}")
-            start = previous = number
-    if start is not None:
-        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    """Collapse sorted, consecutive line numbers into `a-b` ranges, e.g. (1,2,3,5) -> "1-3, 5"."""
+    ranges = [
+        str(run[0]) if len(run) == 1 else f"{run[0]}-{run[-1]}"
+        for run in (
+            [n for _, n in group]
+            for _, group in groupby(
+                enumerate(numbers), key=lambda pair: pair[1] - pair[0]
+            )
+        )
+    ]
     shown = ", ".join(ranges[:MAX_MISSED_LINE_RANGES])
     return (
         shown
@@ -130,9 +135,10 @@ def render_digest(
         (item for item in files if item.percent < LOW_COVERAGE_PERCENT),
         key=lambda item: (item.percent, -item.found, item.path),
     )
-    line_percent = 100 * hit / found if found else 0.0
-    function_percent = 100 * functions_hit / functions_found if functions_found else 0.0
+    line_percent = safe_percent(hit, found, default=0.0)
+    function_percent = safe_percent(functions_hit, functions_found, default=0.0)
     healthy_files = len(files) - len(gaps)
+    healthy_percent = safe_percent(healthy_files, len(files), default=0.0)
     lines = [
         header,
         "",
@@ -146,7 +152,7 @@ def render_digest(
         "| --- | --- |",
         f"| Lines | {coverage_marker(line_percent)} **{line_percent:.2f}%** · {hit}/{found} covered · {found - hit} missing |",
         f"| Functions | {coverage_marker(function_percent)} **{function_percent:.2f}%** · {functions_hit}/{functions_found} covered · {functions_found - functions_hit} missing |",
-        f"| Files at target | {coverage_marker(100 * healthy_files / len(files) if files else 0)} **{healthy_files}/{len(files)}** at or above {LOW_COVERAGE_PERCENT:.0f}% |",
+        f"| Files at target | {coverage_marker(healthy_percent)} **{healthy_files}/{len(files)}** at or above {LOW_COVERAGE_PERCENT:.0f}% |",
         "",
     ]
     if gaps:
