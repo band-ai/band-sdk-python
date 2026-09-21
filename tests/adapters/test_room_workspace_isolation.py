@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig, CodexSessionState
+from band.adapters.codex import (
+    CodexAdapter,
+    CodexAdapterConfig,
+    CodexClientProtocol,
+    CodexSessionState,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.testing import FakeAgentTools
@@ -104,6 +110,20 @@ async def test_model_override_survives_codex_client_rebuild() -> None:
     assert clients == []
 
 
+def _adapter_with_client(
+    workspace: str,
+    build_client: Callable[[CodexAdapterConfig], CodexClientProtocol],
+) -> CodexAdapter:
+    """A CodexAdapter with room-a's client constructed and made the active room."""
+    adapter = CodexAdapter(
+        CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
+    )
+    adapter._build_client = build_client  # type: ignore[method-assign]
+    adapter._room_client("room-a")
+    adapter._active_room.set("room-a")
+    return adapter
+
+
 def _adapter_with_failing_connect(
     workspace: str, *, close_error: Exception | None = None
 ) -> CodexAdapter:
@@ -117,13 +137,7 @@ def _adapter_with_failing_connect(
             if close_error is not None:
                 raise close_error
 
-    adapter = CodexAdapter(
-        CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
-    )
-    adapter._build_client = lambda _config: FailingClient()  # type: ignore[method-assign]
-    adapter._room_client("room-a")
-    adapter._active_room.set("room-a")
-    return adapter
+    return _adapter_with_client(workspace, lambda _config: FailingClient())
 
 
 @pytest.mark.asyncio
@@ -190,13 +204,8 @@ async def test_room_state_survives_a_failed_rebuild_attempt(tmp_path: Path) -> N
             raise RuntimeError("close failed too")
 
     workspace = str(tmp_path / "room-workspace")
-    adapter = CodexAdapter(
-        CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
-    )
     client = FlakyClient()
-    adapter._build_client = lambda _config: client  # type: ignore[method-assign]
-    adapter._room_client("room-a")
-    adapter._active_room.set("room-a")
+    adapter = _adapter_with_client(workspace, lambda _config: client)
     state = adapter._require_active_client_state()
     state.model_override = "room-model"
 

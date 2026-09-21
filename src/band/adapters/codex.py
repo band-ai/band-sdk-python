@@ -261,6 +261,12 @@ class RoomCodexClient:
     selected_model: str | None = None
     reasoning_effort: str | None = None
     reasoning_summary: str | None = None
+    # Serializes this room's turn processing so only one turn/RPC call is in
+    # flight at a time for this room. A pending manual approval blocks
+    # further turns in this room only, for up to ``approval_wait_timeout_s``
+    # (300s default) -- other rooms are unaffected. Approval resolution
+    # commands (/approve, /decline) are handled outside this lock in
+    # ``on_message`` so they can unblock a waiting turn.
     rpc_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
 
 
@@ -474,12 +480,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._session_approved: dict[str, OrderedDict[str, None]] = {}
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
-        # Single client receive queue means turn processing must be serialized
-        # — the lock is adapter-wide, not per-room.  A pending manual approval
-        # in room A therefore blocks turn processing in every other room for
-        # up to ``approval_wait_timeout_s`` (300s default). Approval resolution
-        # commands (/approve, /decline) are handled *outside* this lock in
-        # ``on_message`` so they can unblock a waiting turn.
 
     def _release_room_workspace(self, room: RoomCodexClient, room_id: str) -> None:
         """Release this room's workspace claim (see ``release_room_workspace``)."""
@@ -1484,12 +1484,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     ) -> bool:
         """Dispatch a server-initiated request (tool call, approval).
 
-        Concurrency model: this coroutine mutates adapter state
+        Concurrency model: this coroutine mutates room-scoped adapter state
         (``_pending_approvals``, ``_session_approved``, ``_approval_audit``,
         ``_task_titles_by_id``) without an explicit lock.  It is safe
         because the only call site is the turn-processing loop in
-        ``_process_turn_events``, which is already serialized by
-        ``_rpc_lock``.
+        ``_process_turn_events``, which already serializes this room's turns
+        via its room's ``_rpc_lock`` -- and every structure it touches is
+        keyed (or routed via ``_active_room``) per room, so a concurrent
+        turn in a different room never touches the same state.
 
         Because asyncio runs one coroutine at a time, every synchronous
         span inside this method is atomic.  If a new caller is ever added

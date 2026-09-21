@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 WorkspaceResolver = Callable[[str], str]
 
@@ -54,8 +57,17 @@ def release_room_workspace(
     same path): an unconditional pop would evict that new owner's claim
     instead of the stale one this caller actually meant to release.
     """
-    if workspace_rooms.get(workspace) == room_id:
-        del workspace_rooms[workspace]
+    owner = workspace_rooms.get(workspace)
+    if owner != room_id:
+        if owner is not None:
+            logger.debug(
+                "Skipped releasing workspace %r for room %r -- now owned by %r",
+                workspace,
+                room_id,
+                owner,
+            )
+        return
+    del workspace_rooms[workspace]
 
 
 def create_room_workspace_resolver(root: str | Path) -> WorkspaceResolver:
