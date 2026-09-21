@@ -104,30 +104,114 @@ async def test_model_override_survives_codex_client_rebuild() -> None:
     assert clients == []
 
 
-@pytest.mark.asyncio
-async def test_failed_codex_start_releases_workspace_reservation(
-    tmp_path: Path,
-) -> None:
+def _adapter_with_failing_connect(
+    workspace: str, *, close_error: Exception | None = None
+) -> CodexAdapter:
+    """A CodexAdapter whose Codex client fails to connect for room-a."""
+
     class FailingClient:
         async def connect(self) -> None:
             raise RuntimeError("connection failed")
 
         async def close(self) -> None:
-            return None
+            if close_error is not None:
+                raise close_error
 
-    workspace = str(tmp_path / "room-workspace")
     adapter = CodexAdapter(
         CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
     )
     adapter._build_client = lambda _config: FailingClient()  # type: ignore[method-assign]
     adapter._room_client("room-a")
     adapter._active_room.set("room-a")
+    return adapter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "close_error",
+    [None, RuntimeError("close failed too")],
+    ids=["close-ok", "close-fails"],
+)
+async def test_failed_codex_start_releases_workspace_reservation(
+    tmp_path: Path, close_error: Exception | None
+) -> None:
+    workspace = str(tmp_path / "room-workspace")
+    adapter = _adapter_with_failing_connect(workspace, close_error=close_error)
 
     with pytest.raises(RuntimeError, match="connection failed"):
         await adapter._ensure_client_ready()
 
     assert adapter._workspace_rooms == {}
+    assert adapter._room_clients["room-a"].client is None
     adapter._room_client("room-b")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_after_failed_start_does_not_evict_a_new_owners_claim(
+    tmp_path: Path,
+) -> None:
+    """A stale room left behind by a failed connect must not let a later,
+    unrelated ``on_cleanup`` call for that room evict a *different* room's
+    live claim on the workspace it has since taken over.
+    """
+    workspace = str(tmp_path / "room-workspace")
+    adapter = _adapter_with_failing_connect(workspace)
+
+    with pytest.raises(RuntimeError, match="connection failed"):
+        await adapter._ensure_client_ready()
+
+    adapter._room_client("room-b")
+    claim_after_room_b = dict(adapter._workspace_rooms)
+
+    await adapter.on_cleanup("room-a")
+
+    assert adapter._workspace_rooms == claim_after_room_b
+
+
+@pytest.mark.asyncio
+async def test_room_state_survives_a_failed_rebuild_attempt(tmp_path: Path) -> None:
+    """A model override must survive a failed *reconnect*, not just a failed
+    first connect -- ``transport/closed`` resets _client/_initialized to force
+    a rebuild on the next message, and that rebuild can itself fail."""
+
+    class FlakyClient:
+        def __init__(self) -> None:
+            self.connect_calls = 0
+
+        async def connect(self) -> None:
+            self.connect_calls += 1
+            if self.connect_calls > 1:
+                raise RuntimeError("reconnect failed")
+
+        async def initialize(self, **_kwargs: object) -> None:
+            return None
+
+        async def close(self) -> None:
+            raise RuntimeError("close failed too")
+
+    workspace = str(tmp_path / "room-workspace")
+    adapter = CodexAdapter(
+        CodexAdapterConfig(workspace_for_room=lambda _room_id: workspace)
+    )
+    client = FlakyClient()
+    adapter._build_client = lambda _config: client  # type: ignore[method-assign]
+    adapter._room_client("room-a")
+    adapter._active_room.set("room-a")
+    state = adapter._require_active_client_state()
+    state.model_override = "room-model"
+
+    await adapter._ensure_client_ready()  # first connect succeeds
+
+    # Simulate transport/closed forcing a rebuild on the next message.
+    adapter._client = None
+    adapter._initialized = False
+
+    with pytest.raises(RuntimeError, match="reconnect failed"):
+        await adapter._ensure_client_ready()
+
+    assert adapter._require_active_client_state().model_override == "room-model"
+    assert adapter._workspace_rooms == {}
+    adapter._room_client("room-a")
 
 
 @pytest.mark.asyncio

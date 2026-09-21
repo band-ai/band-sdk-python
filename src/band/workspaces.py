@@ -42,6 +42,22 @@ def claim_room_workspace(
     workspace_rooms[workspace] = room_id
 
 
+def release_room_workspace(
+    room_id: str,
+    workspace: str,
+    workspace_rooms: dict[str, str],
+) -> None:
+    """Release a room's claim on a workspace -- a no-op if it isn't the current owner.
+
+    The ownership check matters whenever a release can race a later claim (a
+    room's failed startup releasing after another room has since taken the
+    same path): an unconditional pop would evict that new owner's claim
+    instead of the stale one this caller actually meant to release.
+    """
+    if workspace_rooms.get(workspace) == room_id:
+        del workspace_rooms[workspace]
+
+
 def create_room_workspace_resolver(root: str | Path) -> WorkspaceResolver:
     """Build a resolver that creates an isolated child workspace per room."""
     workspace_root = Path(root).expanduser().resolve()

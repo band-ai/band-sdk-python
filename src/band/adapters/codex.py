@@ -21,7 +21,12 @@ from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.workspaces import claim_room_workspace, resolve_room_workspace
+from band.workspaces import (
+    WorkspaceResolver,
+    claim_room_workspace,
+    release_room_workspace,
+    resolve_room_workspace,
+)
 from band.core.types import (
     AgentInput,
     Capability,
@@ -304,7 +309,7 @@ class CodexAdapterConfig(BaseSettings):
     ) = None
     reasoning_summary: Literal["auto", "concise", "detailed", "none"] | None = None
     cwd: str | None = None
-    workspace_for_room: Callable[[str], str] | None = Field(default=None, exclude=True)
+    workspace_for_room: WorkspaceResolver | None = Field(default=None, exclude=True)
     approval_policy: str = "never"
     personality: Literal["friendly", "pragmatic", "none"] = "pragmatic"
     sandbox: str | None = None
@@ -475,6 +480,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # up to ``approval_wait_timeout_s`` (300s default). Approval resolution
         # commands (/approve, /decline) are handled *outside* this lock in
         # ``on_message`` so they can unblock a waiting turn.
+
+    def _release_room_workspace(self, room: RoomCodexClient, room_id: str) -> None:
+        """Release this room's workspace claim (see ``release_room_workspace``)."""
+        release_room_workspace(room_id, room.workspace, self._workspace_rooms)
 
     def _room_client(self, room_id: str) -> RoomCodexClient:
         room = self._room_clients.get(room_id)
@@ -1138,7 +1147,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             self._room_task_titles.pop(room_id, None)
             if self._client is None:
                 self._room_clients.pop(room_id, None)
-                self._workspace_rooms.pop(room.workspace, None)
+                self._release_room_workspace(room, room_id)
                 return
             try:
                 close_coro = self._client.close()
@@ -1159,7 +1168,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._initialized = False
                 self._selected_model = None
                 self._room_clients.pop(room_id, None)
-                self._workspace_rooms.pop(room.workspace, None)
+                self._release_room_workspace(room, room_id)
 
     async def cleanup_all(self) -> None:
         """Close every room-owned Codex process during agent shutdown."""
@@ -1198,19 +1207,22 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         except Exception:
             if self._client is client:
                 self._client = None
-                closed_cleanly = True
                 try:
                     await client.close()
                 except Exception:
-                    closed_cleanly = False
-                    logger.debug(
+                    logger.warning(
                         "Failed to close unsuccessfully initialized Codex client",
                         exc_info=True,
                     )
-                if closed_cleanly:
-                    state = self._active_client_state()
-                    if state is not None:
-                        self._workspace_rooms.pop(state.workspace, None)
+                # Release the workspace claim (unconditionally -- whether or not
+                # close() itself also raised) but keep the room's RoomCodexClient,
+                # so model_override/reasoning settings survive a failed rebuild
+                # for the next retry. _release_room_workspace's ownership check
+                # keeps this safe even though the stale entry outlives the claim.
+                room_id = self._active_room.get()
+                state = self._active_client_state()
+                if room_id is not None and state is not None:
+                    self._release_room_workspace(state, room_id)
             raise
 
     def _build_client(self, config: CodexAdapterConfig) -> CodexClientProtocol:

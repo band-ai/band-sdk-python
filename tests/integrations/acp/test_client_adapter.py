@@ -507,8 +507,10 @@ class TestACPClientAdapterOnStarted:
     """
 
     @pytest.mark.asyncio
-    async def test_on_started_spawns_process(self, make_acp_transport) -> None:
-        """Should spawn ACP process and initialize connection."""
+    async def test_room_runtime_start_spawns_and_initializes(
+        self, make_acp_transport
+    ) -> None:
+        """A room runtime's own start() spawns the process and initializes it."""
         transport = make_acp_transport()
         adapter = ACPClientAdapter(command="codex")
         inject_acp_spawn(adapter, transport)

@@ -60,6 +60,7 @@ from band.runtime.tools import (
 from band.workspaces import (
     WorkspaceResolver,
     claim_room_workspace,
+    release_room_workspace,
     resolve_room_workspace,
 )
 
@@ -527,7 +528,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         runtime = await self._runtime_for(room_id)
         return self._build_local_mcp_server_config(
-            local_server, runtime._agent_mcp_transport
+            local_server, runtime.agent_mcp_transport
         )
 
     async def _get_or_create_session(self, room_id: str) -> tuple[str, bool]:
@@ -648,7 +649,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             runtime = self._runtimes.pop(room_id, None)
             workspace = self._room_workspaces.pop(room_id, None)
             if workspace is not None:
-                self._workspace_rooms.pop(workspace, None)
+                release_room_workspace(room_id, workspace, self._workspace_rooms)
 
         if runtime is not None:
             await runtime.stop()
