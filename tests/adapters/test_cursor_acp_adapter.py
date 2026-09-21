@@ -132,6 +132,84 @@ class TestCursorACPAdapterDecisions:
             }
         }
 
+    @pytest.mark.asyncio
+    async def test_manual_multi_question_rejects_an_unauthorized_answer_then_resolves(
+        self,
+    ) -> None:
+        tools = _DecisionTools()
+        adapter = CursorACPAdapter(
+            CursorACPAdapterConfig(decision_authorized_senders=frozenset({"owner"}))
+        )
+        turn = CursorTurn("room-1", tools, "requester", "session-1")  # type: ignore[arg-type]
+        adapter._active_turn = turn
+        pending = asyncio.create_task(
+            adapter._resolve_question(
+                turn,
+                {
+                    "questions": [
+                        {
+                            "id": "files",
+                            "prompt": "Choose files",
+                            "allowMultiple": True,
+                            "options": [
+                                {"id": "readme", "label": "README"},
+                                {"id": "config", "label": "Config"},
+                            ],
+                        },
+                        {
+                            "id": "mode",
+                            "prompt": "Choose mode",
+                            "options": [{"id": "plan", "label": "Plan"}],
+                        },
+                    ]
+                },
+            )
+        )
+        await tools.prompt_sent.wait()
+        token = next(iter(adapter._pending_decisions))
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=(f"/cursor answer {token} files=readme,config mode=plan"),
+                    sender_id="intruder",
+                ),
+            ),
+            tools,  # type: ignore[arg-type]
+            "room-1",
+        )
+
+        assert not pending.done()
+        assert (
+            tools.messages[-1] == "You are not authorized to resolve Cursor decisions."
+        )
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=(f"/cursor answer {token} files=readme,config mode=plan"),
+                    sender_id="owner",
+                ),
+            ),
+            tools,  # type: ignore[arg-type]
+            "room-1",
+        )
+
+        assert await pending == {
+            "outcome": {
+                "outcome": "answered",
+                "answers": [
+                    {
+                        "questionId": "files",
+                        "selectedOptionIds": ["readme", "config"],
+                    },
+                    {"questionId": "mode", "selectedOptionIds": ["plan"]},
+                ],
+            }
+        }
+
     def test_duplicate_question_answer_is_rejected(self) -> None:
         result = CursorACPAdapter._answer_result(
             ["mode=agent", "mode=plan"],
@@ -319,3 +397,60 @@ class TestCursorACPAdapterDecisions:
 
         assert result is None
         assert adapter._pending_decisions == {}
+
+    @pytest.mark.asyncio
+    async def test_room_cleanup_cancels_only_its_pending_decision(self) -> None:
+        first_tools = _DecisionTools()
+        second_tools = _DecisionTools()
+        adapter = CursorACPAdapter()
+        first = asyncio.create_task(
+            adapter._wait_for_decision(
+                kind="plan",
+                turn=CursorTurn("room-1", first_tools, "user-1", "session-1"),  # type: ignore[arg-type]
+                prompt="Plan {token}",
+            )
+        )
+        second = asyncio.create_task(
+            adapter._wait_for_decision(
+                kind="plan",
+                turn=CursorTurn("room-2", second_tools, "user-2", "session-2"),  # type: ignore[arg-type]
+                prompt="Plan {token}",
+            )
+        )
+        await asyncio.gather(
+            first_tools.prompt_sent.wait(), second_tools.prompt_sent.wait()
+        )
+        tokens = {
+            decision.room_id: token
+            for token, decision in adapter._pending_decisions.items()
+        }
+
+        await adapter.on_cleanup("room-1")
+
+        assert await first is None
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=f"/cursor accept {tokens['room-1']}", sender_id="user-1"
+                ),
+            ),
+            first_tools,  # type: ignore[arg-type]
+            "room-1",
+        )
+        assert first_tools.messages[-1] == (
+            f"Cursor decision `{tokens['room-1']}` is not pending."
+        )
+
+        await adapter._handle_control_message(
+            cast(
+                PlatformMessage,
+                SimpleNamespace(
+                    content=f"/cursor accept {tokens['room-2']}", sender_id="user-2"
+                ),
+            ),
+            second_tools,  # type: ignore[arg-type]
+            "room-2",
+        )
+
+        assert await second == {"outcome": {"outcome": "accepted"}}
