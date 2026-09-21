@@ -435,12 +435,24 @@ class CursorACPAdapter(ACPClientAdapter):
 
     @staticmethod
     def _question_choices(params: dict[str, object]) -> dict[str, tuple[str, ...]]:
+        return {
+            question_id: option_ids
+            for question_id, (_, option_ids) in CursorACPAdapter._question_details(
+                params
+            ).items()
+        }
+
+    @staticmethod
+    def _question_details(
+        params: dict[str, object],
+    ) -> dict[str, tuple[str | None, tuple[str, ...]]]:
+        """Project the valid question IDs, prompts, and option IDs once."""
         questions = params.get("questions")
         if not isinstance(questions, list):
             return {}
-        choices: dict[str, tuple[str, ...]] = {}
+        details: dict[str, tuple[str | None, tuple[str, ...]]] = {}
         for question in questions:
-            if not isinstance(question, dict):
+            if not isinstance(question, Mapping):
                 continue
             question_id, options = question.get("id"), question.get("options")
             if not isinstance(question_id, str) or not isinstance(options, list):
@@ -452,8 +464,12 @@ class CursorACPAdapter(ACPClientAdapter):
                 and isinstance((option_id := option.get("id")), str)
             )
             if option_ids:
-                choices[question_id] = option_ids
-        return choices
+                prompt = question.get("prompt")
+                details[question_id] = (
+                    prompt if isinstance(prompt, str) else None,
+                    option_ids,
+                )
+        return details
 
     @staticmethod
     def _multiple_choice_questions(params: dict[str, object]) -> frozenset[str]:
@@ -471,26 +487,13 @@ class CursorACPAdapter(ACPClientAdapter):
 
     @staticmethod
     def _question_summary(params: dict[str, object]) -> str:
-        questions = params.get("questions")
-        if not isinstance(questions, list):
-            return ""
-        summaries = [
+        return "; ".join(
             f"{question_id}: {prompt} ({', '.join(option_ids)})"
-            for question in questions
-            if isinstance(question, dict)
-            and isinstance((question_id := question.get("id")), str)
-            and isinstance((prompt := question.get("prompt")), str)
-            and isinstance((options := question.get("options")), list)
-            and (
-                option_ids := [
-                    option_id
-                    for option in options
-                    if isinstance(option, dict)
-                    and isinstance((option_id := option.get("id")), str)
-                ]
-            )
-        ]
-        return "; ".join(summaries)
+            for question_id, (prompt, option_ids) in CursorACPAdapter._question_details(
+                params
+            ).items()
+            if prompt is not None
+        )
 
     @staticmethod
     def _option_ids(options: tuple[object, ...]) -> tuple[str, ...]:
