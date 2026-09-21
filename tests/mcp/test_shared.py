@@ -370,10 +370,6 @@ class BareBandToolErrorAgentTools(FakeAgentTools):
     test exercises engine.py's own ``enrich_send_message_error`` appending
     one for real, rather than one the fake already built in."""
 
-    def __init__(self, *args: Any, agent_id: str | None = None, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.agent_id = agent_id
-
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> dict[str, Any]:
