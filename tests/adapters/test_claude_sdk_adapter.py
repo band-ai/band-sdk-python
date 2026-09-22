@@ -28,18 +28,18 @@ from claude_agent_sdk.types import (
 from pydantic import BaseModel, Field
 
 from band.adapters.claude_sdk import (
-    ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
     _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
     _NATIVE_TOOL_MATCHER,
-    PendingApproval,
-    _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
     BAND_MEMORY_TOOLS,
     BAND_TASK_TOOLS,
+    ClaudeSDKAdapter,
+    PendingApproval,
+    _pre_tool_use_continue_hook,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
@@ -50,8 +50,8 @@ from band.runtime.tools import (
     FILE_TOOL_NAMES,
     MAX_INLINE_IMAGE_BYTES,
     MCP_TOOL_PREFIX,
-    missing_reply_error,
     mcp_tool_names,
+    missing_reply_error,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -771,7 +771,7 @@ class TestOnCleanup:
     async def test_cancels_turn_before_cleaning_up_session(self, mock_tools):
         """Room cleanup must stop a detached turn before closing its client."""
         adapter = ClaudeSDKAdapter()
-        response_started, continue_response, wait_for_response = _blocking_turn()
+        response_started, _release, wait_for_response = _blocking_turn()
         client = MagicMock()
         client.query = AsyncMock()
 
@@ -894,7 +894,7 @@ class TestOnCleanup:
     ):
         """Cancelling the runtime callback must stop its detached Claude turn."""
         adapter = ClaudeSDKAdapter()
-        response_started, continue_response, wait_for_response = _blocking_turn()
+        response_started, _release, wait_for_response = _blocking_turn()
         mock_client = MagicMock()
         mock_client.query = AsyncMock()
         mock_manager = AsyncMock()
@@ -971,7 +971,7 @@ class TestCleanupAll:
     async def test_cancels_turns_before_stopping_session_manager(self, mock_tools):
         """Adapter shutdown must stop detached turns before closing all sessions."""
         adapter = ClaudeSDKAdapter()
-        response_started, continue_response, wait_for_response = _blocking_turn()
+        response_started, _release, wait_for_response = _blocking_turn()
         client = MagicMock()
         client.query = AsyncMock()
 

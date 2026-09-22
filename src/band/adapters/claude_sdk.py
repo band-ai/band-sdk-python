@@ -792,7 +792,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 raise
 
             except Exception as e:
-                logger.exception("Error processing message: %s", e)
+                logger.exception("Error processing message")
                 await self._report_error(tools, str(e))
                 raise
 

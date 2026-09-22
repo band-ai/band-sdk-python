@@ -17,7 +17,6 @@ import pytest
 
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.core.types import Emit
-
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
@@ -79,16 +78,18 @@ async def test_codex_thoughts_are_not_placeholders(
     room_id = await resource_manager.provision_room(
         title="e2e-codex-thoughts", participants=[identity.id]
     )
-    async with running_agent(identity, adapter, baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                reasoning_joke_instruction(name),
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(mid, identity.id)
-            thoughts = await capture.thoughts(sender_id=identity.id)
+    async with (
+        running_agent(identity, adapter, baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            reasoning_joke_instruction(name),
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(mid, identity.id)
+        thoughts = await capture.thoughts(sender_id=identity.id)
 
     replies.assert_contains_any([name])
     thoughts.assert_contains_none(PLACEHOLDER_THOUGHTS)

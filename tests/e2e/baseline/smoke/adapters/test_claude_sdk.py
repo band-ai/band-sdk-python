@@ -29,7 +29,6 @@ import pytest
 
 from band.adapters.claude_sdk import APPROVAL_RESOLVED_TEMPLATE, ClaudeSDKAdapter
 from band.client.streaming import MessageCreatedPayload
-
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
