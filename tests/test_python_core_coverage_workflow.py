@@ -59,6 +59,7 @@ def _run_bash(
         text=True,
         cwd=cwd,
         env={**os.environ, **(env or {})},
+        check=False,
     )
 
 
@@ -296,38 +297,34 @@ def test_weekly_digest_identifies_low_and_completely_uncovered_files(
 
     lcov = tmp_path / "coverage.lcov"
     lcov.write_text(
-        "\n".join(
-            [
-                "SF:/work/crates/core/src/covered.rs",
-                "FNF:2",
-                "FNH:2",
-                "DA:1,1",
-                "DA:2,1",
-                "LF:10",
-                "LH:10",
-                "end_of_record",
-                "SF:/work/crates/core/src/low.rs",
-                "FNF:2",
-                "FNH:1",
-                "DA:10,1",
-                "DA:11,1",
-                "DA:12,0",
-                "DA:13,0",
-                "LF:10",
-                "LH:2",
-                "end_of_record",
-                "SF:/work/crates/core/src/none.rs",
-                "FNF:1",
-                "FNH:0",
-                "DA:20,0",
-                "DA:21,0",
-                "DA:22,0",
-                "DA:23,0",
-                "LF:4",
-                "LH:0",
-                "end_of_record",
-            ]
-        )
+        "SF:/work/crates/core/src/covered.rs\n"
+        "FNF:2\n"
+        "FNH:2\n"
+        "DA:1,1\n"
+        "DA:2,1\n"
+        "LF:10\n"
+        "LH:10\n"
+        "end_of_record\n"
+        "SF:/work/crates/core/src/low.rs\n"
+        "FNF:2\n"
+        "FNH:1\n"
+        "DA:10,1\n"
+        "DA:11,1\n"
+        "DA:12,0\n"
+        "DA:13,0\n"
+        "LF:10\n"
+        "LH:2\n"
+        "end_of_record\n"
+        "SF:/work/crates/core/src/none.rs\n"
+        "FNF:1\n"
+        "FNH:0\n"
+        "DA:20,0\n"
+        "DA:21,0\n"
+        "DA:22,0\n"
+        "DA:23,0\n"
+        "LF:4\n"
+        "LH:0\n"
+        "end_of_record"
     )
 
     digest = module.render_digest(
