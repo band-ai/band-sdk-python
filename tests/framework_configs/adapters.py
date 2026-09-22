@@ -790,7 +790,7 @@ def _build_gemini_config() -> AdapterConfig:
 # claude_sdk is excluded when claude-agent-sdk optional dep is not installed.
 # copilot_sdk is excluded when github-copilot-sdk optional dep is not installed.
 
-_excluded = {"a2a", "a2a_gateway", "acp", "copilot_acp", "slack"}
+_excluded = {"a2a", "a2a_gateway", "acp", "copilot_acp", "omp_acp", "slack"}
 if not _HAS_CLAUDE_SDK:
     _excluded = _excluded | {"claude_sdk"}
 if not _HAS_COPILOT_SDK:

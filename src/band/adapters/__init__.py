@@ -79,6 +79,12 @@ if TYPE_CHECKING:
     from band.adapters.letta import (
         LettaAdapterConfig as LettaAdapterConfig,
     )
+    from band.adapters.omp_acp import (
+        OmpACPAdapter as OmpACPAdapter,
+    )
+    from band.adapters.omp_acp import (
+        OmpACPAdapterConfig as OmpACPAdapterConfig,
+    )
     from band.adapters.opencode import (
         OpencodeAdapter as OpencodeAdapter,
     )
@@ -106,6 +112,7 @@ __all__, __getattr__ = lazy_exports(
     claude_sdk=["ClaudeSDKAdapter"],
     copilot_sdk=["CopilotSDKAdapter", "CopilotSDKAdapterConfig"],
     copilot_acp=["CopilotACPAdapter", "CopilotACPAdapterConfig"],
+    omp_acp=["OmpACPAdapter", "OmpACPAdapterConfig"],
     parlant=["ParlantAdapter"],
     crewai=["CrewAIAdapter"],
     crewai_flow=["CrewAIFlowAdapter"],

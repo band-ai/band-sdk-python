@@ -607,9 +607,19 @@ class TestACPCollectingClientSerialization:
             async with probe:
                 pass
 
-        async def handler(**kwargs: object) -> dict[str, object]:
-            async with probe:
-                return {"outcome": {"outcome": "cancelled"}}
+        async def handler(
+            narrate_permission: object | None = None,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            async def denied_posts() -> None:
+                async with probe:
+                    return
+
+            if narrate_permission is not None:
+                await narrate_permission(denied_posts())
+            else:
+                await denied_posts()
+            return {"outcome": {"outcome": "cancelled"}}
 
         client.set_sink("s1", sink)
         client.set_permission_handler("s1", handler)
@@ -885,6 +895,32 @@ class TestACPRuntime:
         args, kwargs = transport.last_call
         assert args == ()  # no executable/args splatted for a connect-only transport
         assert kwargs["transport_kwargs"] == {"limit": ACP_STDIO_LIMIT_BYTES}
+
+    @pytest.mark.asyncio
+    async def test_start_passes_stdio_limit_only_when_builtin_transport(
+        self, make_acp_transport
+    ) -> None:
+        """Builtin transports get the raised stdio limit; injected ones do not."""
+
+        injected = make_acp_transport()
+        runtime = ACPRuntime(
+            command=["omp", "acp"],
+            spawn_process=injected,
+            pass_builtin_transport_options=False,
+        )
+        await runtime.start()
+        assert "transport_kwargs" not in injected.last_kwargs
+
+        builtin = make_acp_transport()
+        runtime = ACPRuntime(
+            command=["omp", "acp"],
+            spawn_process=builtin,
+            pass_builtin_transport_options=True,
+        )
+        await runtime.start()
+        assert builtin.last_kwargs["transport_kwargs"] == {
+            "limit": ACP_STDIO_LIMIT_BYTES
+        }
 
 
 class TestTCPSpawnProcess:

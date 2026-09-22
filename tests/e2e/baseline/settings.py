@@ -164,6 +164,11 @@ class Backends(BaseSettings):
     # BYOK (see toolkit/builders.py copilot_acp_env), like the copilot_sdk builder.
     copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
 
+    # OMP (oh-my-pi) over ACP (`omp_acp` adapter). Defaults to `omp acp` with
+    # provider-qualified OMP_MODEL; override the binary + args via OMP_COMMAND.
+    omp_command: str = ""  # OMP_COMMAND
+    omp_model: str = "google/gemini-2.5-flash"  # OMP_MODEL
+
     # Copilot-hosted auth for the single non-BYOK smoke
     # (test_copilot_acp.py::test_copilot_hosted_auth_replies); the BYOK matrix
     # cells never read it. The smoke skips when unset.

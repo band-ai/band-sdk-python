@@ -11,6 +11,7 @@ import pytest
 from acp.helpers import update_agent_message_text
 from acp.schema import (
     NewSessionResponse,
+    PermissionOption,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SetSessionConfigOptionResponse,
@@ -19,7 +20,11 @@ from acp.schema import (
 from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.types import Capability
 from band.integrations.acp import client_adapter
-from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
+from band.integrations.acp.client_adapter import (
+    ACPClientAdapter,
+    ACPPermissionRequest,
+    _resolve_launcher,
+)
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
 from band.integrations.acp.client_types import (
@@ -496,8 +501,15 @@ class TestACPClientAdapterOnStarted:
         transport.conn.initialize.assert_awaited_once_with(protocol_version=1)
 
     @pytest.mark.asyncio
-    async def test_on_started_uses_large_stdio_limit(self, make_acp_transport) -> None:
-        """Should raise the stdio reader limit for large ACP JSON frames."""
+    async def test_on_started_skips_builtin_transport_options_for_injected_spawn(
+        self, make_acp_transport
+    ) -> None:
+        """Injected ``spawn_process`` factories must not receive stdio transport knobs.
+
+        ``transport_kwargs`` / ``use_unstable_protocol`` are only meaningful for
+        the built-in stdio/TCP constructors; an injected factory owns its own
+        connection options.
+        """
         transport = make_acp_transport()
         adapter = ACPClientAdapter(
             command=["npx", "@zed-industries/codex-acp"],
@@ -506,7 +518,8 @@ class TestACPClientAdapterOnStarted:
 
         await adapter.on_started("Codex Bridge", "Bridge to Codex")
 
-        assert transport.last_kwargs["transport_kwargs"] == {"limit": 16 * 1024 * 1024}
+        assert "transport_kwargs" not in transport.last_kwargs
+        assert "use_unstable_protocol" not in transport.last_kwargs
 
     @pytest.mark.asyncio
     async def test_on_started_forwards_command_positionally(
@@ -883,6 +896,48 @@ class TestACPClientAdapterPermissionHandler:
 
         # Permission handler should have been set for this session
         assert len(adapter_with_mocks._runtime._client._permission_handlers) > 0
+
+    @pytest.mark.asyncio
+    async def test_permission_resolver_receives_only_advertised_choices(self) -> None:
+        received: list[ACPPermissionRequest] = []
+
+        async def resolve(request: ACPPermissionRequest) -> str:
+            received.append(request)
+            return "reject"
+
+        adapter = ACPClientAdapter(command="codex", resolve_permission=resolve)
+        option_id = await adapter._resolve_permission_option(
+            call=ACPToolCall("call-1", "write_file", {}),
+            options=(
+                PermissionOption(optionId="allow", name="Allow", kind="allow_once"),
+                PermissionOption(optionId="reject", name="Reject", kind="reject_once"),
+            ),
+            room_id="room-1",
+            session_id="session-1",
+        )
+
+        assert option_id == "reject"
+        assert received[0].room_id == "room-1"
+        assert [option.option_id for option in received[0].options] == [
+            "allow",
+            "reject",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_permission_resolver_invalid_option_raises(self) -> None:
+        async def resolve(_request: ACPPermissionRequest) -> str:
+            return "missing"
+
+        adapter = ACPClientAdapter(command="codex", resolve_permission=resolve)
+        with pytest.raises(ValueError, match="unavailable option"):
+            await adapter._resolve_permission_option(
+                call=ACPToolCall("call-1", "write_file", {}),
+                options=(
+                    PermissionOption(optionId="allow", name="Allow", kind="allow_once"),
+                ),
+                room_id="room-1",
+                session_id="session-1",
+            )
 
     @pytest.mark.asyncio
     async def test_permission_handler_skips_pair_for_approved_band_send_message(

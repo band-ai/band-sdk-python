@@ -1,0 +1,279 @@
+"""Tests for ``OmpACPAdapter``."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from acp.schema import (
+    AcceptElicitationResponse,
+    ClientCapabilities,
+    DeclineElicitationResponse,
+    ElicitationFormSessionMode,
+    ElicitationSchema,
+    ElicitationStringPropertySchema,
+)
+from pydantic import BaseModel
+
+from band.adapters.omp_acp import (
+    DEFAULT_OMP_ACP_COMMAND,
+    OmpACPAdapter,
+    OmpACPAdapterConfig,
+    OmpACPCollectingClient,
+)
+from band.integrations.acp.client_adapter import ACPClientAdapter, ACPPermissionRequest
+from band.integrations.acp.client_runtime import ACPCollectingClient
+from band.integrations.acp.session_config import ACPConfigRequest
+from band.integrations.omp import DEFAULT_OMP_ACP_COMMAND as INTEGRATION_DEFAULT
+
+
+class TestOmpACPAdapterConstruction:
+    def test_is_acp_client_adapter(self) -> None:
+        assert issubclass(OmpACPAdapter, ACPClientAdapter)
+
+    def test_stdio_only_no_tcp_fields(self) -> None:
+        adapter = OmpACPAdapter()
+        assert adapter._host is None
+        assert adapter._port is None
+
+    def test_default_command_gets_final_always_ask(self) -> None:
+        adapter = OmpACPAdapter()
+        assert adapter._command[-2:] == ["--approval-mode", "always-ask"]
+        assert list(INTEGRATION_DEFAULT) == list(DEFAULT_OMP_ACP_COMMAND)
+
+    def test_rejects_unsafe_command_in_config(self) -> None:
+        with pytest.raises(ValueError):
+            OmpACPAdapter(OmpACPAdapterConfig(command=("omp", "acp", "--yolo")))
+
+    def test_unsafe_approval_mode_in_command_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            OmpACPAdapter(
+                OmpACPAdapterConfig(
+                    command=(
+                        "omp",
+                        "acp",
+                        "--config",
+                        "unsafe.json",
+                        "--approval-mode",
+                        "write",
+                    )
+                )
+            )
+
+    def test_finalize_appends_trailing_always_ask(self) -> None:
+        adapter = OmpACPAdapter(
+            OmpACPAdapterConfig(command=("omp", "acp", "--config", "safe.json"))
+        )
+        assert adapter._command[-2:] == ["--approval-mode", "always-ask"]
+
+    def test_client_capabilities_are_form_elicitation_only(self) -> None:
+        adapter = OmpACPAdapter()
+        caps = adapter._client_capabilities
+        assert isinstance(caps, ClientCapabilities)
+        assert caps.elicitation is not None
+        assert caps.elicitation.form is not None
+        assert caps.fs is not None and caps.fs.read_text_file is False
+        assert caps.fs.write_text_file is False
+        assert caps.terminal is False
+
+    def test_uses_unstable_protocol_for_builtin_spawn(self) -> None:
+        adapter = OmpACPAdapter()
+        assert adapter._use_unstable_protocol is True
+        assert adapter._pass_builtin_transport_options is True
+
+    def test_custom_spawn_does_not_require_builtin_transport_options(self) -> None:
+        async def custom_spawn(*_args, **_kwargs):
+            raise AssertionError("not called in this construction test")
+
+        adapter = OmpACPAdapter(
+            OmpACPAdapterConfig(),
+            spawn_process=custom_spawn,  # type: ignore[arg-type]
+        )
+        assert adapter._pass_builtin_transport_options is False
+
+    def test_session_config_and_permission_resolvers_forwarded(self) -> None:
+        async def resolver(_request: ACPConfigRequest) -> dict[str, str]:
+            return {}
+
+        async def permission(_request: ACPPermissionRequest) -> str | None:
+            return None
+
+        adapter = OmpACPAdapter(
+            OmpACPAdapterConfig(
+                resolve_session_config=resolver,
+                resolve_permission=permission,
+            )
+        )
+        assert adapter._resolve_session_config is resolver
+        assert adapter._resolve_permission is permission
+
+    def test_custom_tools_and_mcp_forwarded(self) -> None:
+        class EchoInput(BaseModel):
+            text: str
+
+        def _echo(text: str) -> str:
+            return text
+
+        adapter = OmpACPAdapter(
+            OmpACPAdapterConfig(mcp_servers=[{"name": "peer"}]),
+            additional_tools=[(EchoInput, _echo)],
+        )
+        assert adapter._custom_tools
+        assert adapter._mcp_servers == [{"name": "peer"}]
+
+    def test_runtime_client_factory_is_omp_collecting_client(self) -> None:
+        adapter = OmpACPAdapter()
+        client = adapter._runtime_client_factory()
+        assert isinstance(client, OmpACPCollectingClient)
+
+
+class TestOmpDeviceCallNormalization:
+    def test_collecting_client_rewrites_device_write(self) -> None:
+        client = OmpACPCollectingClient(
+            own_tool_names=frozenset({"band_send_message"}),
+        )
+        update = MagicMock()
+        update.session_update = "tool_call"
+        update.title = "write"
+        update.tool_call_id = "tc-1"
+        update.raw_input = {
+            "path": "xd://mcp__band__band_send_message",
+            "content": '{"chat_id":"r1","content":"hello"}',
+        }
+        update.status = "in_progress"
+        chunk = client._tool_call_chunk(update)
+        assert chunk.tool is not None
+        assert chunk.tool.name == "band_send_message"
+        assert chunk.tool.arguments["content"] == "hello"
+
+
+class TestOmpElicitationHandler:
+    @pytest.mark.asyncio
+    async def test_approve_form_accepts_when_resolver_approves(self) -> None:
+        adapter = OmpACPAdapter()
+
+        async def approve(_request: ACPPermissionRequest) -> str:
+            return "omp-approve"
+
+        adapter._resolve_permission = approve
+        handler = adapter._make_elicitation_handler(MagicMock(), "room-1")
+        schema = {
+            "properties": {
+                "choice": {"enum": ["Approve", "Deny"]},
+            }
+        }
+        response = await handler(
+            message="Allow destructive action?",
+            mode="form",
+            session_id="sess-1",
+            requested_schema=schema,
+        )
+        assert isinstance(response, AcceptElicitationResponse)
+        assert response.content == {"choice": "Approve"}
+
+    @pytest.mark.asyncio
+    async def test_form_scope_is_read_from_acp_mode_object(self) -> None:
+        """Live ACP packs session_id + schema into ``mode``, not kwargs."""
+
+        adapter = OmpACPAdapter()
+
+        async def approve(_request: ACPPermissionRequest) -> str:
+            return "omp-approve"
+
+        adapter._resolve_permission = approve
+        client = adapter._runtime_client_factory()
+        handler = adapter._make_elicitation_handler(MagicMock(), "room-1")
+        assert handler is not None
+        client.set_elicitation_handler("sess-live", handler)
+        mode = ElicitationFormSessionMode(
+            session_id="sess-live",
+            tool_call_id=None,
+            requested_schema=ElicitationSchema(
+                type="object",
+                properties={
+                    "value": ElicitationStringPropertySchema(
+                        type="string",
+                        enum=["Approve", "Deny"],
+                    )
+                },
+                required=["value"],
+            ),
+        )
+        response = await client.create_elicitation(
+            "Allow destructive action?",
+            mode,
+        )
+        assert isinstance(response, AcceptElicitationResponse)
+        assert response.content == {"value": "Approve"}
+
+    @pytest.mark.asyncio
+    async def test_malformed_form_declines(self) -> None:
+        adapter = OmpACPAdapter()
+        handler = adapter._make_elicitation_handler(MagicMock(), "room-1")
+        response = await handler(
+            message="?",
+            mode="form",
+            session_id="sess-1",
+            requested_schema={"properties": {}},
+        )
+        assert isinstance(response, DeclineElicitationResponse)
+
+    @pytest.mark.asyncio
+    async def test_denial_uses_unique_elicitation_ids(self) -> None:
+        adapter = OmpACPAdapter()
+
+        async def deny(_request: ACPPermissionRequest) -> None:
+            return None
+
+        adapter._resolve_permission = deny
+        emitter = MagicMock()
+        emitter.open_permission = AsyncMock()
+        handler = adapter._make_elicitation_handler(emitter, "room-1")
+        schema = {"properties": {"choice": {"enum": ["Approve", "Deny"]}}}
+        first = await handler(
+            message="?",
+            mode="form",
+            session_id="sess-1",
+            requested_schema=schema,
+        )
+        second = await handler(
+            message="?",
+            mode="form",
+            session_id="sess-1",
+            requested_schema=schema,
+        )
+        assert isinstance(first, DeclineElicitationResponse)
+        assert isinstance(second, DeclineElicitationResponse)
+        calls = emitter.open_permission.await_args_list
+        assert (
+            calls[0].kwargs["call"].tool_call_id != calls[1].kwargs["call"].tool_call_id
+        )
+
+
+class TestOmpDeterministicMcpReply:
+    @pytest.mark.asyncio
+    async def test_normalized_tool_call_and_text_without_model(self) -> None:
+        """Device-write normalization yields a Band tool name for narration."""
+        client = OmpACPCollectingClient(own_tool_names=frozenset({"band_send_message"}))
+        client.set_sink("sess", AsyncMock())
+        update = MagicMock()
+        update.session_update = "tool_call"
+        update.title = "write"
+        update.tool_call_id = "tc-band"
+        update.raw_input = {
+            "path": "xd://mcp__band__band_send_message",
+            "content": '{"chat_id":"room-1","content":"done"}',
+        }
+        update.status = "completed"
+        await client.session_update("sess", update)
+        chunks = client.get_collected_chunks("sess")
+        assert chunks[0].tool is not None
+        assert chunks[0].tool.name == "band_send_message"
+
+        text_update = MagicMock()
+        text_update.session_update = "agent_message_chunk"
+        text_update.content = MagicMock(text="hello from omp")
+        await client.session_update("sess", text_update)
+        await client.flush("sess")
+        assert client.get_collected_text("sess") == "hello from omp"
+        assert isinstance(client, ACPCollectingClient)

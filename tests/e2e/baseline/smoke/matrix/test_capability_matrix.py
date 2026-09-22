@@ -330,6 +330,7 @@ IMAGE_PASSTHROUGH_ADAPTERS = (
     Adapter.STRANDS,
     Adapter.COPILOT_SDK,
     Adapter.COPILOT_ACP,
+    Adapter.OMP_ACP,
     Adapter.CODEX,
     Adapter.PYDANTIC_AI,
     Adapter.CREWAI,
