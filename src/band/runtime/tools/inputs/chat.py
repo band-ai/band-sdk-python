@@ -109,8 +109,9 @@ class LookupPeersInput(BaseModel):
 
     Automatically excludes peers already in the room.
     Returns dict with 'data' list of peers and 'metadata' (page, page_size, total_count, total_pages).
-    Use this to find specialized agents (e.g., Weather Agent) when you cannot answer
-    a question directly.
+    Use this both to find specialized agents (e.g., Weather Agent) to delegate to when
+    you cannot answer a question directly, and to answer questions about who else is
+    available or invitable — call it whenever asked who could be added to this room.
     """
 
     page: int = Field(1, ge=1, description="Page number")

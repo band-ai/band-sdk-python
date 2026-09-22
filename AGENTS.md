@@ -257,6 +257,28 @@ of other conventions (credentials via `load_agent_config`, `async with agent:
 await agent.run_forever()`, etc.) — see
 [docs/examples-guide.md](docs/examples-guide.md).
 
+### Provisioning / setup scripts (create-agents, register-*, bootstrap)
+
+Scripts that create remote resources (agents, rooms) or generate credential
+files have failure modes plain examples don't. Follow these:
+
+- **Persist created resource ids immediately, append-only.** Write each id to a
+  cleanup ledger the moment the resource exists — before the next create or any
+  file write can fail. Writing all ids once at the end orphans everything already
+  created if a later step throws; overwriting the ledger on a re-run loses the
+  *previous* run's ids. Both leak paid/limited resources.
+- **Refuse to clobber existing credentials without an explicit `FORCE`.** A
+  re-run that silently overwrites `agent_config.yaml` orphans the agents it
+  referenced. Fail with a message pointing at the cleanup ledger.
+- **Guard file writes against the stale bind-mount directory.** Docker
+  auto-creates a *missing* bind-mount source as an empty **directory**. Check
+  `path.is_dir()` / `path.exists()`, NOT `path.is_file()` (which is `False` for a
+  directory and lets the work run, then crashes at `write_text` with
+  `IsADirectoryError`). Do this check **before** any irreversible step (e.g.
+  registering agents), so you never create resources you then can't record.
+- **Keep `main()` thin.** Extract persistence (config/ledger writes) and the
+  user-facing summary into small named helpers — easier to read and to test.
+
 ## Documentation Testing (markdown snippets)
 
 Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown-docs`
