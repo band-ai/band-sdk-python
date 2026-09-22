@@ -64,7 +64,11 @@ def login_codex() -> None:
     if not key:
         return
     result = subprocess.run(
-        ["codex", "login", "--with-api-key"], input=key, text=True, capture_output=True
+        ["codex", "login", "--with-api-key"],
+        check=False,
+        input=key,
+        text=True,
+        capture_output=True,
     )
     if result.returncode != 0:
         # Fail here, not later with a confusing 401. Redact the key from the error.

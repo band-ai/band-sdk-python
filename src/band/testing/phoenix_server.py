@@ -20,8 +20,8 @@ from enum import StrEnum
 
 from phoenix_channels_python_client.phx_messages import ChannelMessage, Event, PHXEvent
 from phoenix_channels_python_client.protocol_handler import (
-    PHXProtocolHandler,
     PhoenixChannelsProtocolVersion,
+    PHXProtocolHandler,
 )
 from phoenix_channels_python_client.utils import make_message
 from websockets.asyncio.server import ServerConnection, serve

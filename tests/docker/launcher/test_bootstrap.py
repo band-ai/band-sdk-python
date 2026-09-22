@@ -9,14 +9,14 @@ from typing import Any
 import pytest
 
 from band.docker import repo_init
-from band.docker.launcher import bootstrap as launcher_bootstrap
-from band.docker.launcher import run as launcher_run
 from band.docker.launcher import (
     LaunchError,
     bootstrap_repository,
     execute,
     resolve_launch,
 )
+from band.docker.launcher import bootstrap as launcher_bootstrap
+from band.docker.launcher import run as launcher_run
 
 from .fakes import Workspace, default_config, enable_repo, make_env, write_config
 

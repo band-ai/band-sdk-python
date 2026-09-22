@@ -16,9 +16,9 @@ which the platform authorizes because the test user owns the agent that owns the
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import CREATE_CHATROOM, TOOL_AGENT
 from tests.e2e.baseline.smoke.samples.sample_tools import EXECUTION_REPORTING
 from tests.e2e.baseline.toolkit.capture import CaptureFactory

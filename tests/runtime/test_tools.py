@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -28,8 +28,6 @@ from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
-from tests.conftest import make_participant_mock
-from tests.content import BLANK_CONTENT_CASES
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -37,16 +35,16 @@ from band.runtime.tools import (
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
     TOOL_MODELS,
+    AddParticipantInput,
     AgentTools,
+    CreateChatroomInput,
+    GetParticipantsInput,
+    LookupPeersInput,
+    RemoveParticipantInput,
+    SendEventInput,
     SendMessageInput,
     SendRoomFileInput,
-    SendEventInput,
     StoreMemoryInput,
-    AddParticipantInput,
-    RemoveParticipantInput,
-    LookupPeersInput,
-    GetParticipantsInput,
-    CreateChatroomInput,
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
@@ -55,6 +53,8 @@ from band.runtime.tools import (
     is_mcp_content_result,
     is_room_posting_tool,
 )
+from tests.conftest import make_participant_mock
+from tests.content import BLANK_CONTENT_CASES
 
 
 class TestIsMcpContentResult:
@@ -62,10 +62,14 @@ class TestIsMcpContentResult:
     shape so a consumer that supports real MCP content (claude_sdk, the MCP
     engine) can pass it through instead of json.dumps-ing it into text."""
 
-    _IMAGE_RESULT = {
+    _IMAGE_RESULT: ClassVar[dict[str, Any]] = {
         "content": [{"type": "image", "data": "YmFzZTY0", "mimeType": "image/png"}]
     }
-    _TEXT_RESULT = {"name": "notes.txt", "content_type": "text/plain", "text": "hi"}
+    _TEXT_RESULT: ClassVar[dict[str, Any]] = {
+        "name": "notes.txt",
+        "content_type": "text/plain",
+        "text": "hi",
+    }
 
     def test_true_for_image_content_block(self) -> None:
         assert is_mcp_content_result(self._IMAGE_RESULT)
@@ -829,7 +833,7 @@ class TestFileTools:
         evicts it, so the cache never keeps serving metadata it already
         gave up on."""
         expired = _attachment(
-            "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+            "file-1", expires_at=datetime.now(UTC) - timedelta(seconds=1)
         )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
@@ -853,7 +857,7 @@ class TestFileTools:
             "file-1",
             content_type="text/plain",
             size=5,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         expired_page = _context_response(
             [
@@ -862,8 +866,7 @@ class TestFileTools:
                     [
                         _attachment(
                             "file-1",
-                            expires_at=datetime.now(timezone.utc)
-                            - timedelta(seconds=1),
+                            expires_at=datetime.now(UTC) - timedelta(seconds=1),
                         )
                     ],
                 )
@@ -891,7 +894,10 @@ class TestFileTools:
         """A naive (offset-less) expires_at -- the Fern model doesn't enforce
         one -- must be treated as UTC, not raise on comparison to aware
         now()."""
-        expired = _attachment("file-1", expires_at=datetime(2020, 1, 1))  # no tzinfo
+        expired = _attachment(
+            "file-1",
+            expires_at=datetime(2020, 1, 1),  # noqa: DTZ001 -- naive on purpose, see docstring
+        )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
 
@@ -2318,7 +2324,7 @@ class TestToolInputModels:
 
     def test_send_event_input_validates_type(self):
         """SendEventInput should validate message_type."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError, match="literal_error"):
             SendEventInput(content="Test", message_type="invalid")
 
     def test_add_participant_input_defaults(self):

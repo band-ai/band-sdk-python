@@ -29,6 +29,7 @@ class TestFakeAgentToolsSeededData:
                 "handle": "@bob",
                 "is_contact": False,
                 "source": "internal",
+                "online": True,
             }
         ]
         tools = FakeAgentTools(peers=peers)
@@ -49,6 +50,7 @@ class TestFakeAgentToolsSeededData:
                 "name": "Alice",
                 "type": "User",
                 "inserted_at": "2025-01-01T00:00:00Z",
+                "online": True,
             }
         ]
         tools = FakeAgentTools(contacts=contacts)

@@ -7,6 +7,7 @@ from band.integrations.opencode.client import (
     OpencodeClientProtocol,
 )
 from band.integrations.opencode.events import (
+    UNKNOWN_OPENCODE_ERROR,
     MessagePartDeltaEvent,
     MessagePartUpdatedEvent,
     MessageUpdatedEvent,
@@ -24,7 +25,6 @@ from band.integrations.opencode.events import (
     QuestionAskedEvent,
     SessionErrorEvent,
     SessionIdleEvent,
-    UNKNOWN_OPENCODE_ERROR,
     UnknownOpencodeEvent,
     describe_error,
     parse_opencode_event,
@@ -32,6 +32,7 @@ from band.integrations.opencode.events import (
 from band.integrations.opencode.types import OpencodeSessionState
 
 __all__ = [
+    "UNKNOWN_OPENCODE_ERROR",
     "HttpOpencodeClient",
     "MessagePartDeltaEvent",
     "MessagePartUpdatedEvent",
@@ -52,7 +53,6 @@ __all__ = [
     "QuestionAskedEvent",
     "SessionErrorEvent",
     "SessionIdleEvent",
-    "UNKNOWN_OPENCODE_ERROR",
     "UnknownOpencodeEvent",
     "describe_error",
     "parse_opencode_event",

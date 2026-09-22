@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0"]
 # ///
 """Start a 20 Questions Arena game as a user by creating a room, adding all agents, and sending a message.
 
@@ -17,14 +14,14 @@ import asyncio
 import logging
 import sys
 
-from dotenv import load_dotenv
 from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
 from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
-
+from dotenv import load_dotenv
 from setup_logging import setup_logging
+
 from band.config import PlatformSettings, load_agent_config
 
 logger = logging.getLogger(__name__)

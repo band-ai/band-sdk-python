@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[opencode]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[opencode]>=1.2.0"]
 # ///
 """Jerry the mouse, powered by OpenCode.
 
@@ -24,8 +21,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_jerry_prompt
-
 from settings import OpenCodeExampleSettings
+
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Emit

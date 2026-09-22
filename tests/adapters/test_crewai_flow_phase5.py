@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -25,13 +25,13 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from band.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from band.core.types import PlatformMessage  # noqa: E402
-from band.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.core.types import PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
 
 
 def _msg(
@@ -51,7 +51,7 @@ def _msg(
         sender_name=sender_name,
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -173,7 +173,7 @@ class TestSequentialChains:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: payload},
                 }
             ],
@@ -247,7 +247,7 @@ class TestSequentialChains:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: payload},
                 }
             ],
@@ -338,7 +338,7 @@ class TestBufferedSyntheses:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: payload},
                 }
             ],
@@ -423,7 +423,7 @@ class TestE2ETrace:
                     {
                         "id": event["id"],
                         "message_type": "task",
-                        "inserted_at": datetime.now(timezone.utc).isoformat(),
+                        "inserted_at": datetime.now(UTC).isoformat(),
                         "metadata": event["metadata"],
                     }
                 )
@@ -557,7 +557,9 @@ class TestE2ETrace:
 
 class TestIdentityNormalization:
     def test_uuid_handle_displayname_resolve_to_same_key(self) -> None:
-        from band.converters.crewai_flow import normalize_participant_key  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        from band.converters.crewai_flow import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            normalize_participant_key,
+        )
 
         participants = [
             {

@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]", "anthropic>=0.75.0"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
 # ///
 """
 Tom the cat agent — tries to catch Jerry!
@@ -46,11 +43,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
-
 
 logger = logging.getLogger(__name__)
 

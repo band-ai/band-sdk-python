@@ -47,7 +47,7 @@ class WorkingStateReporter:
     ) -> None:
         if keep_alive_seconds <= 0:
             raise ValueError(
-                "keep_alive_seconds must be > 0 (got %s)" % keep_alive_seconds
+                f"keep_alive_seconds must be > 0 (got {keep_alive_seconds})"
             )
         self._report = report
         self._keep_alive_seconds = keep_alive_seconds

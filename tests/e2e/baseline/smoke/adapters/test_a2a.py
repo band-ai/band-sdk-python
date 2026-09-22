@@ -1,5 +1,5 @@
 """A2AAdapter showcase smoke -- a live A2AAdapter driven against
-``a2aServer.A2ACounterparty``, a minimal scripted A2A server (not Band's
+``a2a_server.A2ACounterparty``, a minimal scripted A2A server (not Band's
 own gateway), proving the outbound adapter against an independent
 implementation. Deterministic, not LLM-backed, so neither side needs an
 LLM key.
@@ -20,10 +20,9 @@ from __future__ import annotations
 import pytest
 
 from band.integrations.a2a import A2AAdapter
-
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.adapters.a2aServer import (
+from tests.e2e.baseline.smoke.adapters.a2a_server import (
     CANNED_REPLY,
     ERROR_MARKER,
     A2ACounterparty,

@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp.test_utils import TestClient, TestServer
-
 from bridge_core.bridge import AgentRunner
 from bridge_core.config import ReconnectConfig
 from bridge_core.health import HealthServer

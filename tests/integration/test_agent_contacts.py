@@ -14,8 +14,8 @@ import os
 
 import pytest
 
-from band.agent import Agent
 from band.adapters.pydantic_ai import PydanticAIAdapter
+from band.agent import Agent
 from band.platform.event import (
     ContactEvent,
 )

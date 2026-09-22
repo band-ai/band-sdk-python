@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -21,15 +21,11 @@ from band.core.types import MessageType, PlatformMessage
 from band.integrations.acp.server_adapter import BandACPServerAdapter
 from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
 from band.testing import FakeAgentTools
-
 from tests.integrations.acp.acp_toolkit import (
-    FakeACPAgent as FakeACPAgent,  # re-exported for tests importing from conftest
-)
-from tests.integrations.acp.acp_toolkit import (
+    FakeACPAgent,  # re-exported for tests importing from conftest
     FakeSpawn,
     Reply,
-    acp_adapter as acp_adapter,  # re-exported
-    make_acp_connection as make_acp_connection,  # re-exported
+    make_acp_connection,  # re-exported
 )
 
 
@@ -127,7 +123,7 @@ def make_platform_message(
         sender_name=sender_name,
         message_type=message_type,
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 

@@ -25,7 +25,6 @@ from tests.e2e.baseline.toolkit.ci_lanes import (
     workflow_lane_gate_ids,
 )
 
-
 _RELEASE_GATE_WORKFLOW = E2E_WORKFLOW.parent / "release-gate.yml"
 
 

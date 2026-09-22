@@ -23,8 +23,6 @@ import struct
 import uuid
 import zlib
 
-
-from band.core.types import AdapterFeatures, Capability, Emit, MessageType
 from band.core.memory_types import (
     MemorySegment,
     MemoryStoreScope,
@@ -32,7 +30,7 @@ from band.core.memory_types import (
     MemoryType,
 )
 from band.core.task_types import TaskAssignmentStatus
-
+from band.core.types import AdapterFeatures, Capability, Emit, MessageType
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
 from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool, TaskTool

@@ -14,8 +14,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_mcp import shared as shared_mod
+from band_mcp.config import Config
+from band_mcp.server import standalone_spec
+from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from mcp import ClientSession
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import BaseModel, Field, ValidationError
 
@@ -33,12 +38,7 @@ from band.integrations.mcp.engine import (
 )
 from band.runtime.tools import TOOL_DEFINITIONS
 from band.testing.fake_tools import FakeAgentTools
-from band_mcp import shared as shared_mod
-from band_mcp.config import Config
-from band_mcp.server import standalone_spec
-from band_mcp.shared import AGENT_TOOLS_CACHE_MAX_SIZE, StandaloneResolver
 from tests.mcp.conftest import FakeHumanTools
-from mcp.server.transport_security import TransportSecuritySettings
 
 
 async def _list_tool(session: ClientSession, name: str) -> Any:

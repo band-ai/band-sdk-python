@@ -28,6 +28,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from band.core.simple_adapter import SimpleAdapter
+from band.integrations.slack.adapter import SlackAdapter
 from band.integrations.slack.server import (
     DEFAULT_SEEN_EVENTS_CACHE_SIZE,
     SeenEvents,
@@ -36,8 +37,6 @@ from band.integrations.slack.server import (
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
-from band.integrations.slack.adapter import SlackAdapter
-
 
 # ── Unit tests on SeenEvents ────────────────────────────────────────────────
 

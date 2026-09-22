@@ -165,7 +165,7 @@ class AgentCoreForwarder:
                 asyncio.to_thread(_call),
                 timeout=self._target.timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(
                 f"AgentCore forward timed out after {self._target.timeout}s "
                 f"(arn={self._target.runtime_arn})"

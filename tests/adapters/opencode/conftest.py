@@ -7,14 +7,12 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from typing_extensions import Unpack
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import FeatureKwargs
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
-
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     make_fake_mcp_backend_factory,

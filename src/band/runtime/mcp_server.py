@@ -9,6 +9,13 @@ new code should import from the new location instead.
 
 from __future__ import annotations
 
+from band.integrations.mcp.engine import (
+    MCPToolExecutor,
+    MCPToolRegistration,
+    RoomToolResolver,
+    build_band_mcp_tool_registrations,
+    build_resolved_band_mcp_tool_registrations,
+)
 from band.integrations.mcp.local_server import (
     LOCAL_MCP_HEALTH_PATH,
     LOCAL_MCP_HOST,
@@ -21,13 +28,6 @@ from band.integrations.mcp.local_server import (
     SERVER_STOP_TIMEOUT_S,
     EmbeddedUvicornServer,
     LocalMCPServer,
-)
-from band.integrations.mcp.engine import (
-    MCPToolExecutor,
-    MCPToolRegistration,
-    RoomToolResolver,
-    build_band_mcp_tool_registrations,
-    build_resolved_band_mcp_tool_registrations,
 )
 
 __all__ = [

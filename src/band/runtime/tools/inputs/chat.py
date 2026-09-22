@@ -121,7 +121,7 @@ class LookupPeersInput(BaseModel):
 class GetParticipantsInput(BaseModel):
     """Get a list of all participants in the current chat room."""
 
-    pass  # No parameters required
+    # No parameters required
 
 
 class CreateChatroomInput(BaseModel):

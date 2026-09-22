@@ -29,10 +29,10 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from letta_client import AsyncLetta, NotFoundError
-from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 from band.integrations.letta.orgscope import resolve_org_scoped_headers
 
 pytestmark = pytest.mark.requires_api

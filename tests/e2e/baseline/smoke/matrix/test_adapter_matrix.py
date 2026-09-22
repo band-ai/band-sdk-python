@@ -11,11 +11,10 @@ or rely on CI's multiple lanes.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from band.core.simple_adapter import SimpleAdapter
-
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,

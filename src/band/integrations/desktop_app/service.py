@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient, ChatRoomRequest
+from band.integrations.desktop_app.attention import RoomSession
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
+from band.integrations.desktop_app.prompts import (
+    ambiguous_room_guidance,
+    monitoring_notice,
+    room_briefing,
+    unknown_room_guidance,
+)
 from band.integrations.desktop_app.room import (
     EPOCH,
     AgentIdentity,
@@ -20,13 +28,6 @@ from band.integrations.desktop_app.room import (
     RoomTranscript,
     parse_timestamp,
 )
-from band.integrations.desktop_app.prompts import (
-    ambiguous_room_guidance,
-    monitoring_notice,
-    room_briefing,
-    unknown_room_guidance,
-)
-from band.integrations.desktop_app.attention import RoomSession
 from band.integrations.desktop_app.settings import RoomViewTuning
 from band.runtime.tools import AgentTools, iter_chat_pages, serialize_tool_result
 
@@ -158,7 +159,7 @@ class RoomTranscriptService:
         events: RoomEventBroker | None = None,
         transport: RelayStatus | None = None,
         tuning: RoomViewTuning | None = None,
-        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._tools = tools
         self._viewer = viewer

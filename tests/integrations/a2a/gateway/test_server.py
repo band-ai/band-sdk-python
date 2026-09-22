@@ -10,9 +10,9 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
+from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.helpers import new_task_from_user_message
 from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
@@ -453,15 +453,17 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
     event."""
     async with running(build_server(port=0)) as first:
         port1 = first.bound_port
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
+        async with (
+            httpx.AsyncClient(timeout=None) as client,
+            client.stream(
                 "POST",
                 f"http://127.0.0.1:{port1}/agents/weather-agent/message:stream",
                 headers={"A2A-Version": "1.0"},
                 json=hello_message_body(),
-            ) as response:
-                async for _ in response.aiter_bytes():
-                    pass
+            ) as response,
+        ):
+            async for _ in response.aiter_bytes():
+                pass
 
     second = GatewayServer(
         peers={"other-agent": make_peer("uuid-other", "Other Agent", "")},
@@ -472,16 +474,18 @@ async def test_a_second_server_is_not_poisoned_by_a_prior_servers_shutdown() -> 
     async with running(second):
         port2 = second.bound_port
         events: list[str] = []
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
+        async with (
+            httpx.AsyncClient(timeout=None) as client,
+            client.stream(
                 "POST",
                 f"http://127.0.0.1:{port2}/agents/other-agent/message:stream",
                 headers={"A2A-Version": "1.0"},
                 json=hello_message_body(),
-            ) as response:
-                async for line in response.aiter_lines():
-                    if line.startswith("data:"):
-                        events.append(line)
+            ) as response,
+        ):
+            async for line in response.aiter_lines():
+                if line.startswith("data:"):
+                    events.append(line)
 
         assert len(events) >= 3, (
             f"got {len(events)} events, expected 3 (task, working, completed) -- "

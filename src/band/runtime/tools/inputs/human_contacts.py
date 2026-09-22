@@ -116,6 +116,6 @@ class RemoveMyContactInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_at_least_one_field(self) -> "RemoveMyContactInput":
+    def validate_at_least_one_field(self) -> RemoveMyContactInput:
         at_least_one_of(contact_id=self.contact_id, handle=self.handle)
         return self

@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]", "anthropic>=0.75.0"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[agno]>=1.2.0", "anthropic>=0.75.0"]
 # ///
 """
 Basic Agno agent example.
@@ -37,7 +34,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
-
 
 logger = logging.getLogger(__name__)
 

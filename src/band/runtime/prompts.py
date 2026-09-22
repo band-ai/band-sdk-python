@@ -31,7 +31,6 @@ from band.core.memory_types import (
 )
 from band.core.types import AdapterFeatures, Capability
 
-
 # Base instructions appended to user's custom prompt
 BASE_INSTRUCTIONS = """
 ## Environment
@@ -121,14 +120,7 @@ must use these exact values (case-sensitive):
 - **segment**: {_quote_choices(enum_values(MemorySegment))}
 - **scope**: {_quote_choices(enum_values(MemoryStoreScope))}"""
 
-    return "\n\n".join(
-        [
-            _MEMORY_INTRO.strip(),
-            field_rules.strip(),
-            _MEMORY_COMMON_PATTERNS.strip(),
-            _MEMORY_SCOPE_GUIDANCE.strip(),
-        ]
-    )
+    return f"{_MEMORY_INTRO.strip()}\n\n{field_rules.strip()}\n\n{_MEMORY_COMMON_PATTERNS.strip()}\n\n{_MEMORY_SCOPE_GUIDANCE.strip()}"
 
 
 MEMORY_SECTION = _memory_section()

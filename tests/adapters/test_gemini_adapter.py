@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -28,7 +28,7 @@ def sample_message() -> PlatformMessage:
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -562,25 +562,27 @@ class TestMaxToolRounds:
         await adapter.on_started("TestBot", "Test bot")
 
         # Always return a function call so the loop never terminates naturally
-        with patch.object(
-            adapter,
-            "_call_gemini",
-            AsyncMock(
-                return_value=_response_with_function_call(
-                    "band_lookup_peers", {"page": "1"}, "call_1"
-                )
+        with (
+            patch.object(
+                adapter,
+                "_call_gemini",
+                AsyncMock(
+                    return_value=_response_with_function_call(
+                        "band_lookup_peers", {"page": "1"}, "call_1"
+                    )
+                ),
             ),
+            pytest.raises(RuntimeError, match="Exceeded max tool rounds"),
         ):
-            with pytest.raises(RuntimeError, match="Exceeded max tool rounds"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
 
 class TestHttpxRetries:
@@ -659,20 +661,20 @@ class TestHttpxRetries:
             side_effect=httpx.TimeoutException("timeout")
         )
 
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
+        with (
+            patch.object(
+                adapter.client.aio.models,  # type: ignore[union-attr]
+                "generate_content",
+                adapter.client.aio.models.generate_content,
+            ),
+            pytest.raises(httpx.TimeoutException),
         ):
-            with pytest.raises(httpx.TimeoutException):
-                await adapter._call_gemini(
-                    contents=[
-                        types.Content(
-                            role="user", parts=[types.Part.from_text(text="x")]
-                        )
-                    ],
-                    tools=[],
-                )
+            await adapter._call_gemini(
+                contents=[
+                    types.Content(role="user", parts=[types.Part.from_text(text="x")])
+                ],
+                tools=[],
+            )
 
 
 class TestParticipantsContactsInjection:

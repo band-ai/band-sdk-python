@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[acp]>=1.2.0"]
 # ///
 """
 JetBrains ACP Server - Use Band as an ACP agent in JetBrains IDEs.
@@ -107,7 +104,7 @@ async def main() -> None:
     if not api_key:
         try:
             agent_id, api_key = load_agent_config("jetbrains_acp_agent")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- ACP request handler must return a JSON-RPC error over stdio instead of crashing the transport loop
             raise ValueError(
                 "BAND_API_KEY environment variable is required, "
                 "or configure 'jetbrains_acp_agent' in agent_config.yaml"

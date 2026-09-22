@@ -23,7 +23,7 @@ from contextlib import (
     contextmanager,
 )
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from band_rest import (
@@ -36,7 +36,6 @@ from band_rest import (
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
-
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -409,7 +408,7 @@ class ResourceManager:
         Returns the number of agents reaped.
         """
         max_age = timedelta(minutes=self._settings.run.orphan_max_age_minutes)
-        cutoff = datetime.now(timezone.utc) - max_age
+        cutoff = datetime.now(UTC) - max_age
 
         # Collect candidates across all pages FIRST, then delete — deleting while
         # paginating would shrink the list and skip agents past a page boundary.
@@ -433,7 +432,7 @@ class ResourceManager:
                 # abort the autouse session fixture.
                 inserted = agent.inserted_at
                 if inserted.tzinfo is None:
-                    inserted = inserted.replace(tzinfo=timezone.utc)
+                    inserted = inserted.replace(tzinfo=UTC)
                 if inserted > cutoff:
                     continue  # too fresh — could be a concurrent run
                 orphans.append(agent.id)

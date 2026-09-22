@@ -28,17 +28,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-from pydantic import AliasChoices, Field
-
-from band.integrations.mcp.engine import build_engine
 from band_mcp import shared
 from band_mcp.config import Config, Scope, ToolGroup
 from band_mcp.server import standalone_spec
 from band_mcp.shared import StandaloneResolver, build_standalone_resolver
+from mcp.server.fastmcp import FastMCP
+from pydantic import AliasChoices, Field
 from thenvoi_testing.markers import skip_without_env
 from thenvoi_testing.settings import BaseTestSettings
 
+from band.integrations.mcp.engine import build_engine
 from tests.paths import ENV_TEST_FILE
 
 

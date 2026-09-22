@@ -30,9 +30,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.timeouts import slow_turn_budget

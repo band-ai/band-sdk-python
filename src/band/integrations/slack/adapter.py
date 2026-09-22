@@ -19,16 +19,16 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from typing_extensions import Unpack
 
 from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
     AsyncRestClient,
     ChatEventRequest,
     ChatRoomRequest,
-    DEFAULT_REQUEST_OPTIONS,
 )
 from band.converters.slack import SlackHistoryConverter
 from band.core.protocols import AgentToolsProtocol
@@ -594,7 +594,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         # injects it on us before calling ``on_started``; the inner adapter
         # needs it too (e.g. to dedup its own messages by agent id).
         if self.platform is not None:
-            setattr(self._inner, "platform", self.platform)
+            # setattr rather than assignment: FrameworkAdapter is a Protocol, so
+            # a duck-typed adapter may not declare the attribute.
+            setattr(self._inner, "platform", self.platform)  # noqa: B010
 
         await self._inner.on_started(agent_name, agent_description)
 
@@ -776,9 +778,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         if event.get("bot_id") or event.get("subtype") == "bot_message":
             return
 
-        if event_type == "app_mention":
-            await self._invoke_brain_for_slack_event(app, event)
-        elif event_type == "message" and event.get("channel_type") == "im":
+        if (
+            event_type == "app_mention"
+            or event_type == "message"
+            and event.get("channel_type") == "im"
+        ):
             await self._invoke_brain_for_slack_event(app, event)
 
     async def _invoke_brain_for_slack_event(
@@ -820,7 +824,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 "slack_thread_ts": thread_ts,
                 "slack_user_id": slack_user,
             },
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         # Mirror the user turn into the Band room for audit visibility.
@@ -1072,7 +1076,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 or ""
             )
             handle = user.get("name", "") or ""
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- one malformed Slack event must not stop processing of subsequent events
             logger.debug("users.info failed for %s: %s", user_id, exc)
         label = (display_name, handle)
         self._user_label_cache[user_id] = label
@@ -1098,7 +1102,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 label = "DM"
             elif ch.get("name"):
                 label = f"#{ch['name']}"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- one malformed Slack event must not stop processing of subsequent events
             logger.debug("conversations.info failed for %s: %s", channel_id, exc)
         self._channel_label_cache[channel_id] = label
         return label
@@ -1308,7 +1312,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         try:
             resp = await slack.auth_test()
             bot_id = resp.get("bot_id") or None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- one malformed Slack event must not stop processing of subsequent events
             logger.debug("auth.test failed for app %s: %s", app.slug, exc)
         self._bot_ids[app.slug] = bot_id
         return bot_id

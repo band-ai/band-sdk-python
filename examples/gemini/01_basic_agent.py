@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[gemini]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[gemini]>=1.2.0"]
 # ///
 """
 Basic Gemini agent example.
@@ -28,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
 
 from band import Agent, configure_logging
 from band.adapters import GeminiAdapter

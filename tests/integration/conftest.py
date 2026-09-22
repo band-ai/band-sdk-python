@@ -11,11 +11,14 @@ from pathlib import Path
 import pytest
 
 from tests.conftest_integration import (
-    # Pytest hooks (must be re-exported for pytest to find them)
-    pytest_addoption,
+    # Data classes
+    AgentInfo,
+    PeerInfo,
     # Settings and helpers
     api_client,
     api_client_2,
+    # Helpers
+    fetch_all_context,
     get_api_key,
     get_api_key_2,
     get_base_url,
@@ -25,10 +28,14 @@ from tests.conftest_integration import (
     get_ws_url,
     integration_settings,
     is_no_clean_mode,
+    is_room_alive,
+    # Pytest hooks (must be re-exported for pytest to find them)
+    pytest_addoption,
     # Skip markers
     requires_api,
     requires_multi_agent,
     requires_user_api,
+    send_user_mention,
     # Session-scoped fixtures
     session_api_client,
     session_api_client_2,
@@ -43,15 +50,9 @@ from tests.conftest_integration import (
     test_peer_id,
     test_settings,
     user_api_client,
-    # Data classes
-    AgentInfo,
-    PeerInfo,
-    # Helpers
-    fetch_all_context,
-    is_room_alive,
-    send_user_mention,
     wait_until,
 )
+
 # NOTE: pytestmark in conftest.py is NOT applied to collected tests.
 # The 120s timeout is applied via pytest_collection_modifyitems below.
 
@@ -71,11 +72,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 __all__ = [
-    # Pytest hooks
-    "pytest_addoption",
+    # Data classes
+    "AgentInfo",
+    "PeerInfo",
     # Settings and helpers
     "api_client",
     "api_client_2",
+    # Helpers
+    "fetch_all_context",
     "get_api_key",
     "get_api_key_2",
     "get_base_url",
@@ -85,10 +89,14 @@ __all__ = [
     "get_ws_url",
     "integration_settings",
     "is_no_clean_mode",
+    "is_room_alive",
+    # Pytest hooks
+    "pytest_addoption",
     # Skip markers
     "requires_api",
     "requires_multi_agent",
     "requires_user_api",
+    "send_user_mention",
     # Session-scoped fixtures
     "session_api_client",
     "session_api_client_2",
@@ -103,12 +111,5 @@ __all__ = [
     "test_peer_id",
     "test_settings",
     "user_api_client",
-    # Data classes
-    "AgentInfo",
-    "PeerInfo",
-    # Helpers
-    "fetch_all_context",
-    "is_room_alive",
-    "send_user_mention",
     "wait_until",
 ]

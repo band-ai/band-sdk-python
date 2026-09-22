@@ -21,8 +21,10 @@ from __future__ import annotations
 import re
 
 import pytest
+
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from band.core.types import ALL_CAPABILITIES
+from band.integrations.crewai.tools import PLATFORM_TOOLS
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -33,8 +35,6 @@ from band.runtime.tools import (
     TASK_TOOL_NAMES,
     iter_tool_definitions,
 )
-
-from band.integrations.crewai.tools import PLATFORM_TOOLS
 
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools

@@ -16,25 +16,23 @@ Run with:
 
 from __future__ import annotations
 
-import pytest
-
 import logging
 from typing import Any
 
+import pytest
 
 from band.client.streaming import DeliveryStatus
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
-
 from tests.e2e.baseline.agents import Adapter, with_adapters
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     ResourceManager,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import CaptureFactory
 
 logger = logging.getLogger(__name__)
 

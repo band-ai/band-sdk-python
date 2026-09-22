@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,9 +24,7 @@ from band.runtime.presence import RoomPresence
 from band.runtime.runtime import AgentRuntime
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import make_message_event
-
 from tests.runtime.conftest import admit_room, wait_for_condition
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -93,7 +91,7 @@ def make_platform_message(
         sender_name="Tester",
         message_type="text",
         metadata={},
-        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 

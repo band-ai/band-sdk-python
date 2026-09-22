@@ -1,9 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[langgraph]"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = ["band-sdk[langgraph]>=1.2.0"]
 # ///
 """
 Example showing how to add custom tools to a Band agent.
@@ -60,7 +57,7 @@ def calculate(operation: str, left: float, right: float) -> str:
             return f"Error: Unknown operation '{operation}'. Use: add, subtract, multiply, divide, or power"
 
         return f"Result: {result}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
         return f"Error: {e}"
 
 

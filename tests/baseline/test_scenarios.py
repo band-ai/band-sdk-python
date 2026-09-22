@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from band.core.types import AdapterFeatures, Capability, Emit
-
 from tests.baseline.decisions import ModelDecision
 from tests.baseline.harness import BaselineScenario
 from tests.baseline.tools import BaselineTools

@@ -26,10 +26,12 @@ for the wire payload shapes of the events referenced below.
 ```python
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
+
 # CALLBACK strategy - programmatic handling (auto-approve example)
 async def auto_approve(event, tools):
     if isinstance(event, ContactRequestReceivedEvent):
         await tools.respond_contact_request("approve", request_id=event.payload.id)
+
 
 agent = Agent.create(
     adapter=adapter,

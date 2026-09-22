@@ -14,7 +14,6 @@ from collections.abc import Iterable
 from typing import ClassVar
 
 from band.core.types import MessageType
-
 from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 
 

@@ -49,7 +49,6 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
-from band.runtime.tools.inputs.chat import require_visible_content
 from band.runtime.tools import (
     CHAT_ID_FIELD_NAME,
     CHAT_ID_MAX_LENGTH,
@@ -63,6 +62,7 @@ from band.runtime.tools import (
     serialize_tool_result,
     validate_tool_arguments,
 )
+from band.runtime.tools.inputs.chat import require_visible_content
 
 logger = logging.getLogger(__name__)
 

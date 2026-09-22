@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -14,20 +15,17 @@ from band.core.types import Capability
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools
-
-
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
-    make_fake_mcp_backend_factory,
-    run_single_turn,
     event_message_updated,
     event_session_idle,
     event_text_part,
+    make_fake_mcp_backend_factory,
     make_platform_message,
+    run_single_turn,
     tools_protocol,
 )
-import httpx
 
 
 def test_no_leaked_adapter_config_env_vars(
@@ -40,12 +38,14 @@ async def test_startup_fails_loudly_when_server_unreachable() -> None:
     """The default (real-server) path must fail at startup naming the fix."""
 
     adapter = OpencodeAdapter()
-    with patch(
-        "band.integrations.opencode.client.HttpOpencodeClient.health",
-        side_effect=httpx.ConnectError("All connection attempts failed"),
+    with (
+        patch(
+            "band.integrations.opencode.client.HttpOpencodeClient.health",
+            side_effect=httpx.ConnectError("All connection attempts failed"),
+        ),
+        pytest.raises(BandConnectionError, match="opencode serve"),
     ):
-        with pytest.raises(BandConnectionError, match="opencode serve"):
-            await adapter.on_started("Tom", "A cat")
+        await adapter.on_started("Tom", "A cat")
 
 
 async def test_mcp_server_name_is_stable_per_agent_and_distinct_per_agent() -> None:

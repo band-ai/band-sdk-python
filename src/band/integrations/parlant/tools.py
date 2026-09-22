@@ -30,12 +30,11 @@ import inspect
 import json
 import logging
 import warnings
+from collections.abc import Callable
 from typing import (
     Annotated,
     Any,
-    Callable,
     Literal,
-    Optional,
     cast,
     get_args,
     get_origin,
@@ -161,7 +160,7 @@ def or_none(value: str) -> str | None:
     return value or None
 
 
-def set_session_tools(session_id: str, tools: Optional[Any]) -> None:
+def set_session_tools(session_id: str, tools: Any | None) -> None:
     """Set the tools for a specific Parlant session."""
     if tools is None:
         _session_tools.pop(session_id, None)
@@ -172,7 +171,7 @@ def set_session_tools(session_id: str, tools: Optional[Any]) -> None:
     logger.debug("Set tools for session %s: %s", session_id, tools is not None)
 
 
-def get_session_tools(session_id: str) -> Optional[Any]:
+def get_session_tools(session_id: str) -> Any | None:
     """Get the tools for a specific Parlant session."""
     tools = _session_tools.get(session_id)
     logger.debug(
@@ -196,7 +195,7 @@ def was_message_sent(session_id: str) -> bool:
 
 
 # Keep old API for backwards compatibility (deprecated)
-def set_current_tools(tools: Optional[Any]) -> None:
+def set_current_tools(tools: Any | None) -> None:
     """Deprecated: Use set_session_tools instead."""
     warnings.warn(
         "set_current_tools is deprecated, use set_session_tools instead",
@@ -205,7 +204,7 @@ def set_current_tools(tools: Optional[Any]) -> None:
     )
 
 
-def get_current_tools() -> Optional[Any]:
+def get_current_tools() -> Any | None:
     """Deprecated: Use get_session_tools instead."""
     warnings.warn(
         "get_current_tools is deprecated, use get_session_tools instead",
@@ -296,12 +295,10 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 call = inspect.signature(func).bind(context, *args, **kwargs)
                 call.apply_defaults()
             except TypeError as exc:
-                logger.error(
-                    "%s %s: malformed call arguments: %s",
+                logger.exception(
+                    "%s %s: malformed call arguments",
                     LOG_PREFIX,
                     func.__name__,
-                    exc,
-                    exc_info=True,
                 )
                 return ToolResult(data=f"Error calling {func.__name__}: {exc}")
 
@@ -324,9 +321,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 return ToolResult(data=NO_SESSION_TOOLS_ERROR)
             except Exception as exc:
                 context_phrase = failure.format(**call.arguments)
-                logger.error(
-                    "%s Error %s: %s", LOG_PREFIX, context_phrase, exc, exc_info=True
-                )
+                logger.exception("%s Error %s", LOG_PREFIX, context_phrase)
                 message = str(exc)
                 if mention_hints and isinstance(exc, (ValueError, BandToolError)):
                     session_tools = get_session_tools(context.session_id)
@@ -429,8 +424,10 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
 
             metadata = data.get("metadata") or {}
             lines = [
-                f"Available agents (page {metadata.get('page', 1)} of "
-                f"{metadata.get('total_pages', 1)}):"
+                (
+                    f"Available agents (page {metadata.get('page', 1)} of "
+                    f"{metadata.get('total_pages', 1)}):"
+                )
             ]
             lines.extend(
                 f"- {peer.get('name', 'Unknown')} ({peer.get('type', 'Agent')}): "

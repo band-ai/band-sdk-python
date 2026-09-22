@@ -16,7 +16,6 @@ import textwrap
 
 import pytest
 
-
 # A minimal conftest for the sub-run: the real fixtures + guard, with stubbed platform
 # fixtures (collection never runs fixture bodies, so stubs suffice to resolve the closure).
 _SUBRUN_CONFTEST = """

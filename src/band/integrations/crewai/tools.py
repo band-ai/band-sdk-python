@@ -21,7 +21,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -97,7 +98,7 @@ def _execute_tool(
     async def _execute() -> str:
         try:
             return await coro_factory(tools)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             error_msg = str(e)
             if tool_name == BandTool.SEND_MESSAGE and isinstance(
                 e, (ValueError, BandToolError)
@@ -162,7 +163,9 @@ def _platform_tool(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> BaseTool:
     """Wrap one ToolSpec as the CrewAI BaseTool instance the crew is handed."""
-    from crewai.tools import BaseTool  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+    from crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        BaseTool,
+    )
 
     class PlatformTool(BaseTool):
         # str(...): pydantic doesn't validate field defaults (no
@@ -196,7 +199,9 @@ def _custom_tool(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> BaseTool:
     """Wrap one CustomToolDef as a CrewAI BaseTool instance."""
-    from crewai.tools import BaseTool  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+    from crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        BaseTool,
+    )
 
     input_model, handler = definition
     tool_name = get_custom_tool_name(input_model)

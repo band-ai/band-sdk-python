@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -33,15 +33,15 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from band.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from band.core.exceptions import BandConfigError  # noqa: E402
-from band.core.types import PlatformMessage  # noqa: E402
-from band.testing.fake_tools import FakeAgentTools  # noqa: E402
-from band.testing.platform import platform_connection_stub  # noqa: E402
+from band.core.exceptions import BandConfigError
+from band.core.types import PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
+from band.testing.platform import platform_connection_stub
 
 
 def _factory():
@@ -58,7 +58,7 @@ def _msg(*, id: str = "msg-1", content: str = "hi") -> PlatformMessage:
         sender_name="Pat",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

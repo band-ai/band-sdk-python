@@ -20,8 +20,9 @@ from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.content import has_visible_content
 
 if TYPE_CHECKING:
-    from band.client.rest import AsyncRestClient, ChatEventRequest, ChatMessageRequest
     from band_rest.types import EventCreatedResponse, MessageSentResponse
+
+    from band.client.rest import AsyncRestClient, ChatEventRequest, ChatMessageRequest
 
 logger = logging.getLogger(__name__)
 

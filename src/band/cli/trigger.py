@@ -304,14 +304,14 @@ def main() -> None:
 
     try:
         room_id = asyncio.run(run_with_timeout(args))
-    except asyncio.TimeoutError:
+    except TimeoutError:
         sys.stderr.write(f"Error: operation timed out after {args.timeout} seconds\n")
         sys.exit(1)
     except (ValueError, RuntimeError) as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except Exception as e:
-        logger.exception("Unexpected error: %s", e)
+        logger.exception("Unexpected error")
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
 

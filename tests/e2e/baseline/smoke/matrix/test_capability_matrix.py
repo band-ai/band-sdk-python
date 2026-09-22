@@ -15,13 +15,14 @@ import random
 from collections.abc import Awaitable, Callable
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from band.core.memory_types import MemoryListScope
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import Capability
-
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_infra
+from tests.e2e.baseline.scorecard import env_gated_skip
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     CONTACTS_AGENT,
     FILES_AGENT,
@@ -39,8 +40,6 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     task_read_instruction,
     unique_marker,
 )
-from tests.e2e.baseline.scorecard import env_gated_skip
-from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.observations import ContactTool, FileTool, MemoryTool
@@ -160,36 +159,32 @@ async def test_memory_survives_adapter_rehydration(
         title=f"e2e-cap-memory-rejoin-{cell.adapter_id}", participants=[identity.id]
     )
 
-    async with cell.run_as(identity):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                store_memory_instruction(marker),
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            await capture.wait_for_processed(mid, identity.id)
+    async with cell.run_as(identity), reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            store_memory_instruction(marker),
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        await capture.wait_for_processed(mid, identity.id)
 
     retrieval_room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-retrieve-{cell.adapter_id}", participants=[identity.id]
     )
-    async with cell.run_as(identity):
-        async with reply_capture(retrieval_room_id) as capture:
-            mid = await user_ops.send_message(
-                retrieval_room_id,
-                retrieve_memory_instruction(marker),
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(mid, identity.id)
-            mem = await capture.memory(
-                identity,
-                scope=MemoryListScope.AGENT,
-                content_query=marker,
-            )
-            results = await capture.tool_results(
-                sender_id=identity.id, include_memory=True
-            )
+    async with cell.run_as(identity), reply_capture(retrieval_room_id) as capture:
+        mid = await user_ops.send_message(
+            retrieval_room_id,
+            retrieve_memory_instruction(marker),
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(mid, identity.id)
+        mem = await capture.memory(
+            identity,
+            scope=MemoryListScope.AGENT,
+            content_query=marker,
+        )
+        results = await capture.tool_results(sender_id=identity.id, include_memory=True)
 
     # Assert the *effect* of the rehydrated recall, not how an adapter narrated it:
     # the marker coming back in the reply is what proves the fresh run reached the

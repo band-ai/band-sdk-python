@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -38,7 +38,7 @@ def make_platform_message(content: str = "Hello") -> PlatformMessage:
         sender_name="Test User",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -437,7 +437,7 @@ class TestA2AAdapterMessageFlow:
             return_value=stream(task_event(make_task(artifact_text="done")))
         )
         tools = FakeAgentTools()
-        turn = dict(is_session_bootstrap=False, room_id="room-123")
+        turn = {"is_session_bootstrap": False, "room_id": "room-123"}
 
         await adapter.on_message(
             make_platform_message("first"), tools, A2ASessionState(), None, None, **turn

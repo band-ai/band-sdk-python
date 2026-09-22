@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import functools
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tests.framework_configs.output_adapters import OutputAdapter
@@ -40,9 +41,9 @@ from tests.framework_configs.output_adapters import (
 from tests.framework_configs.sentinel import STRICT_CI
 
 __all__ = [
-    "ConverterConfig",
     "CONVERTER_CONFIGS",
     "CONVERTER_EXCLUDED_MODULES",
+    "ConverterConfig",
     "SenderBehavior",
 ]
 
@@ -103,7 +104,9 @@ def _anthropic_factory(**kw: Any) -> Any:
 
 
 def _langchain_factory(**kw: Any) -> Any:
-    from band.converters.langchain import LangChainHistoryConverter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+    from band.converters.langchain import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+        LangChainHistoryConverter,
+    )
 
     return LangChainHistoryConverter(**kw)
 
@@ -121,7 +124,9 @@ def _copilot_sdk_factory(**kw: Any) -> Any:
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from band.converters.pydantic_ai import PydanticAIHistoryConverter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+    from band.converters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+        PydanticAIHistoryConverter,
+    )
 
     return PydanticAIHistoryConverter(**kw)
 
@@ -131,13 +136,17 @@ def _parlant_factory(**kw: Any) -> Any:
 
 
 def _agno_factory(**kw: Any) -> Any:
-    from band.converters.agno import AgnoHistoryConverter  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+    from band.converters.agno import (  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+        AgnoHistoryConverter,
+    )
 
     return AgnoHistoryConverter(**kw)
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from band.converters.gemini import GeminiHistoryConverter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
+    from band.converters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
+        GeminiHistoryConverter,
+    )
 
     return GeminiHistoryConverter(**kw)
 
@@ -147,7 +156,9 @@ def _google_adk_factory(**kw: Any) -> Any:
 
 
 def _strands_factory(**kw: Any) -> Any:
-    from band.converters.strands import StrandsHistoryConverter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
+    from band.converters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
+        StrandsHistoryConverter,
+    )
 
     return StrandsHistoryConverter(**kw)
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -23,13 +23,13 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from band.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from band.core.types import PlatformMessage  # noqa: E402
-from band.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.core.types import PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
 
 NS_PREFIX = "crewai_flow:"
 
@@ -51,7 +51,7 @@ def _msg(
         sender_name=sender_name,
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -237,7 +237,7 @@ class TestReplyMatching:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -314,7 +314,7 @@ class TestReplyMatching:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -381,7 +381,7 @@ class TestReplyMatching:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -421,7 +421,7 @@ class TestReplyMatching:
     @pytest.mark.asyncio
     async def test_ambiguous_agent_reply_records_reply_ambiguous(self) -> None:
         ns = "crewai_flow:router"
-        event_time = datetime.now(timezone.utc).isoformat()
+        event_time = datetime.now(UTC).isoformat()
         run_payloads = []
         for run_id in ("msg-parent-1", "msg-parent-2"):
             run_payloads.append(
@@ -522,7 +522,7 @@ class TestReplyMatching:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -590,7 +590,7 @@ class TestReplyMatching:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: delegation_payload},
                 }
             ],
@@ -711,7 +711,7 @@ class TestIndeterminate:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: reservation_payload},
                 }
             ],
@@ -815,7 +815,7 @@ class TestPersistedRunPolicy:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: delegation_payload},
                 }
             ],
