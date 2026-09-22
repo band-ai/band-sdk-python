@@ -762,16 +762,19 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._client = None
                 self._mcp_backend = None
 
-            if mcp_backend is not None and client is not None:
-                if self._registered_client is client:
-                    self._registered_client = None
-                    try:
-                        await client.disconnect_mcp_server(self._mcp_server_name)
-                    except Exception:  # noqa: BLE001 -- best-effort cleanup; OpenCode may already be stopped, and nothing downstream awaits this disconnect
-                        logger.debug(
-                            "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
-                            self._mcp_server_name,
-                        )
+            if (
+                mcp_backend is not None
+                and client is not None
+                and self._registered_client is client
+            ):
+                self._registered_client = None
+                try:
+                    await client.disconnect_mcp_server(self._mcp_server_name)
+                except Exception:  # noqa: BLE001 -- best-effort cleanup; OpenCode may already be stopped, and nothing downstream awaits this disconnect
+                    logger.debug(
+                        "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
+                        self._mcp_server_name,
+                    )
 
         # What follows acts only on objects already detached from ``self``, so
         # no successor can be affected — and the lock must not be held across a
@@ -905,11 +908,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # text fallback (codex/copilot_sdk/ACP parity). An errored call did not
         # post, so it must not suppress. ``status`` is the raw wire string, so
         # compare by value (the StrEnum member equals its string).
-        if state.status == OpencodeToolStatus.COMPLETED and is_room_posting_tool(
-            tool_name
+        if (
+            state.status == OpencodeToolStatus.COMPLETED
+            and is_room_posting_tool(tool_name)
+            and room_state.turn is not None
         ):
-            if room_state.turn is not None:
-                room_state.turn.replied_via_room_tool = True
+            room_state.turn.replied_via_room_tool = True
 
         if Emit.TOOL_CALLS not in self.features.emit:
             return

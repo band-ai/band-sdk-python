@@ -257,9 +257,7 @@ async def test_reply_to_nonmatching_request_id_is_consumed() -> None:
     """A named stale approval command is feedback, not a new model prompt."""
     client = FakeOpencodeClient()
     tools = FakeAgentTools()
-    approvals = make_room_approvals(
-        cast(OpencodeClientProtocol, client), tools=tools
-    )
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
 
     await approvals.on_permission_asked(
         OpencodePermissionRequest(id="req-current", permission="bash")
@@ -464,7 +462,10 @@ async def test_bare_reject_with_both_permission_and_question_pending() -> None:
     assert await approvals.try_handle_reply("reject", "user-1")
     assert client.permission_replies == []
     assert client.question_rejections == []
-    assert "Both an approval and a question are pending" in tools.messages_sent[-1]["content"]
+    assert (
+        "Both an approval and a question are pending"
+        in tools.messages_sent[-1]["content"]
+    )
 
 
 async def test_reject_shared_id_rejects_the_question() -> None:

@@ -16,9 +16,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TypeVar
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import TypeVar
 
 from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
@@ -349,7 +349,9 @@ class RoomApprovals:
                 # Ambiguous rather than unknown: name the asks instead of
                 # forwarding the reply to the model as a fresh prompt.
                 if self._questions and not self._permissions:
-                    await self._notify_room(self._which_question_command_hint(), mentions)
+                    await self._notify_room(
+                        self._which_question_command_hint(), mentions
+                    )
                 else:
                     await self._notify_room(self._which_permission_hint(), mentions)
                 return True
@@ -683,7 +685,7 @@ class RoomApprovals:
         """Shared failure handling for the two reply context managers below."""
         try:
             yield
-        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+        except Exception as error:
             await self._fail_request(action, request_id, error=error)
             raise ApprovalReplyError from error
 
