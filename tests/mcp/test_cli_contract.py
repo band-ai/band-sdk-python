@@ -57,6 +57,7 @@ _LIST_TOOLS_REQUEST = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "param
 def _run_cli(*args: str, timeout: float = 15.0) -> tuple[int, str, str]:
     result = subprocess.run(
         [sys.executable, "-m", "band_mcp.server", *args],
+        check=False,
         input="",
         capture_output=True,
         text=True,

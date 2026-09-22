@@ -138,7 +138,7 @@ class TestMountedView:
             pytest.skip("node is not installed")
         script = files("band.integrations.desktop_app.assets") / "room-view.js"
         with as_file(script) as path:
-            assert subprocess.run([node, "--check", path]).returncode == 0
+            assert subprocess.run([node, "--check", path], check=False).returncode == 0
 
     def test_it_is_self_contained(self) -> None:
         """The sandbox blocks every external origin, so nothing may be fetched."""

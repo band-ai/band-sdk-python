@@ -82,6 +82,7 @@ def _codex_binary() -> str | None:
     try:
         proc = subprocess.run(
             [binary, "--version"],
+            check=False,
             capture_output=True,
             text=True,
             timeout=20,
@@ -141,6 +142,7 @@ def _run_codex(config_toml: str, tmp_path: Path) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(
             cmd,
+            check=False,
             cwd=str(workdir),
             env=env,
             capture_output=True,

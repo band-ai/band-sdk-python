@@ -60,7 +60,7 @@ def _describe(values: Iterable[Emit] | Iterable[Capability]) -> str:
     return ", ".join(sorted(v.value for v in values)) or "(none)"
 
 
-class SimpleAdapter(Generic[H], ABC):
+class SimpleAdapter(ABC, Generic[H]):
     """
     Simple base class for framework adapters.
 
