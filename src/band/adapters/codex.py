@@ -9,7 +9,8 @@ import time as _time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
@@ -21,12 +22,6 @@ from band.converters.codex import CodexHistoryConverter
 from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.workspaces import (
-    WorkspaceResolver,
-    claim_room_workspace,
-    release_room_workspace,
-    resolve_room_workspace,
-)
 from band.core.types import (
     AgentInput,
     Capability,
@@ -65,6 +60,12 @@ from band.runtime.tools import (
     is_image_passthrough_result,
     is_room_posting_tool,
     redact_tool_call_args,
+)
+from band.workspaces import (
+    WorkspaceResolver,
+    claim_room_workspace,
+    release_room_workspace,
+    resolve_room_workspace,
 )
 
 logger = logging.getLogger(__name__)

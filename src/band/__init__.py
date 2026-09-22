@@ -72,7 +72,6 @@ from .logging_config import (
 
 # Platform layer
 from .platform import BandLink, PlatformEvent
-from .workspaces import create_room_workspace_resolver
 
 # Runtime layer
 from .runtime import (
@@ -104,6 +103,7 @@ from .runtime import (
     render_system_prompt,
     run_with_graceful_shutdown,
 )
+from .workspaces import create_room_workspace_resolver
 
 __all__ = [
     "ALL_TOOL_NAMES",

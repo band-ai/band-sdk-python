@@ -50,6 +50,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
+
 from band import Agent, configure_logging
 from band.adapters import ACPClientAdapter
 from band.integrations.acp.client_profiles import CursorACPClientProfile

@@ -21,9 +21,9 @@ import os
 import tempfile
 from typing import Any
 
+from band import create_room_workspace_resolver
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
-from band import create_room_workspace_resolver
 from band.testing import feature_kwargs
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (

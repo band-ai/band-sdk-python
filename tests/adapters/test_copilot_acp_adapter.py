@@ -132,14 +132,16 @@ class TestCopilotACPAdapterTcpTransport:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         # CopilotACPAdapter warns about ignored auth before the base adapter rejects TCP.
-        with caplog.at_level(logging.WARNING, logger="band.adapters.copilot_acp"):
-            with pytest.raises(
+        with (
+            caplog.at_level(logging.WARNING, logger="band.adapters.copilot_acp"),
+            pytest.raises(
                 ValueError,
                 match="TCP ACP transport cannot guarantee room process isolation",
-            ):
-                CopilotACPAdapter(
-                    CopilotACPAdapterConfig(
-                        host="10.0.0.5", port=8080, github_token="ghp_x"
-                    )
+            ),
+        ):
+            CopilotACPAdapter(
+                CopilotACPAdapterConfig(
+                    host="10.0.0.5", port=8080, github_token="ghp_x"
                 )
+            )
         assert any("ignored over TCP" in r.message for r in caplog.records)
