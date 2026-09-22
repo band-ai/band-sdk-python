@@ -111,11 +111,10 @@ async def test_trace_context_round_trips_through_band_sdk_core_to_the_log(caplog
     tracer = TracerProvider().get_tracer("test")
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
-    with caplog.at_level(logging.ERROR):
-        with tracer.start_as_current_span("probe") as span:
-            span_context = span.get_span_context()
-            # Missing required fields -- a genuine band_sdk_core rejection.
-            received = await dispatch(client, "message_created", {"id": "msg-123"})
+    with caplog.at_level(logging.ERROR), tracer.start_as_current_span("probe") as span:
+        span_context = span.get_span_context()
+        # Missing required fields -- a genuine band_sdk_core rejection.
+        received = await dispatch(client, "message_created", {"id": "msg-123"})
 
     assert received is None
     record = next(
@@ -756,9 +755,11 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
     the `x-api-key` handshake header on the real upgrade (alongside vsn and
     agent_id). The header is what the sandbox proxy substitutes and the platform
     authenticates off (with precedence); the query is retained for back-compat."""
-    async with upgrade_peer() as (ws_url, upgrade):
-        async with WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"):
-            params, headers = await asyncio.wait_for(upgrade, timeout=5)
+    async with (
+        upgrade_peer() as (ws_url, upgrade),
+        WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"),
+    ):
+        params, headers = await asyncio.wait_for(upgrade, timeout=5)
 
     assert params["api_key"] == [PROXY_MANAGED_API_KEY]
     assert params["agent_id"] == ["agent-xyz"]
@@ -1345,18 +1346,20 @@ async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():
     async def on_reconnect() -> None:
         reconnected.set()
 
-    async with phoenix_peer(ack_heartbeats=False) as (ws_url, connected):
-        async with WebSocketClient(
+    async with (
+        phoenix_peer(ack_heartbeats=False) as (ws_url, connected),
+        WebSocketClient(
             ws_url,
             "test-key",
             "agent-123",
             on_reconnect=on_reconnect,
             session_policy=policy,
-        ):
-            await asyncio.wait_for(connected, timeout=5)
-            start = asyncio.get_running_loop().time()
-            await asyncio.wait_for(reconnected.wait(), timeout=5)
-            elapsed = asyncio.get_running_loop().time() - start
+        ),
+    ):
+        await asyncio.wait_for(connected, timeout=5)
+        start = asyncio.get_running_loop().time()
+        await asyncio.wait_for(reconnected.wait(), timeout=5)
+        elapsed = asyncio.get_running_loop().time() - start
 
     assert elapsed >= policy.dead_threshold_s * 0.5
 

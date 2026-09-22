@@ -106,9 +106,11 @@ async def self_registered_sandbox(
     room_id = await resource_manager.provision_room(participants=[agent_id])
     try:
         hosts = _deployment_hosts(baseline_settings.endpoints)
-        with allow_network_for_hosts(hosts, kit=KIT_DIR):
-            with Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace):
-                yield agent_id, room_id, args
+        with (
+            allow_network_for_hosts(hosts, kit=KIT_DIR),
+            Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace),
+        ):
+            yield agent_id, room_id, args
     finally:
         # Not tracked via resource_manager.provision_agent (provision.run()
         # registered it directly with the user key), so it needs its own reap.

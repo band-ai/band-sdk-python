@@ -228,9 +228,11 @@ def test_peer_must_be_a_live_adapter() -> None:
     pending_spec = replace(
         spec_for(Adapter.LANGGRAPH), e2e_pending="synthetic: backend not CI-wired"
     )
-    with patch.dict(adapters_module._REGISTRY, {Adapter.LANGGRAPH: pending_spec}):
-        with pytest.raises(ValueError, match="pending adapter"):
-            per_adapter(peer=Adapter.LANGGRAPH)
+    with (
+        patch.dict(adapters_module._REGISTRY, {Adapter.LANGGRAPH: pending_spec}),
+        pytest.raises(ValueError, match="pending adapter"),
+    ):
+        per_adapter(peer=Adapter.LANGGRAPH)
 
 
 # --- e2e_pending allowlist ----------------------------------------------------------------

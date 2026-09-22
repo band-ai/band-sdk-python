@@ -178,14 +178,18 @@ class TestBridgeConfigFromEnv:
 
     def test_missing_env_var_raises(self) -> None:
         env = {k: v for k, v in os.environ.items() if k != "BAND_BRIDGE_AGENTS"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="BAND_BRIDGE_AGENTS"):
-                BridgeConfig.from_env()
+        with (
+            patch.dict(os.environ, env, clear=True),
+            pytest.raises(ValueError, match="BAND_BRIDGE_AGENTS"),
+        ):
+            BridgeConfig.from_env()
 
     def test_invalid_json_raises(self) -> None:
-        with patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": "not json"}, clear=False):
-            with pytest.raises(ValueError, match="not valid JSON"):
-                BridgeConfig.from_env()
+        with (
+            patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": "not json"}, clear=False),
+            pytest.raises(ValueError, match="not valid JSON"),
+        ):
+            BridgeConfig.from_env()
 
     def test_non_list_json_raises(self) -> None:
         with (

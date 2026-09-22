@@ -147,10 +147,12 @@ async def test_missing_private_attrs_logs_warning_instead_of_silent_noop(
 
     monkeypatch.setattr(server_module.p, "Server", NoPrivateAttrsServer)
 
-    with caplog.at_level(logging.WARNING):
-        with pytest.raises(RuntimeError, match="evaluation failed"):
-            async with running_parlant_server():
-                pass
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(RuntimeError, match="evaluation failed"),
+    ):
+        async with running_parlant_server():
+            pass
 
     assert "_startup_context_manager" in caplog.text
     assert "_exit_stack" in caplog.text

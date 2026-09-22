@@ -208,11 +208,13 @@ class TestLocalMcpServer:
         async with running(server):
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
-            async with sse_client(server.url) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    await _session_lists_only_echo(session)
-                    await _call_echo(session, "hello")
+            async with (
+                sse_client(server.url) as (read_stream, write_stream),
+                ClientSession(read_stream, write_stream) as session,
+            ):
+                await session.initialize()
+                await _session_lists_only_echo(session)
+                await _call_echo(session, "hello")
 
     @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
     @pytest.mark.asyncio
@@ -240,11 +242,13 @@ class TestLocalMcpServer:
 
             async def connect(ready: asyncio.Event) -> None:
                 with suppress(Exception):
-                    async with sse_client(server.url) as (read_stream, write_stream):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            ready.set()
-                            await asyncio.sleep(60)  # never closes on its own
+                    async with (
+                        sse_client(server.url) as (read_stream, write_stream),
+                        ClientSession(read_stream, write_stream) as session,
+                    ):
+                        await session.initialize()
+                        ready.set()
+                        await asyncio.sleep(60)  # never closes on its own
 
             async with held_open(connect):
                 stop_elapsed = await elapsed(server.stop())

@@ -90,15 +90,18 @@ def _safe_eval(node: ast.AST, depth: int = 0) -> float | int:
             raise ValueError(f"Unsupported function: {func_name}")
         eval_args = [_safe_eval(arg, depth + 1) for arg in node.args]
         # Bounds check for pow() function to prevent resource exhaustion
-        if func_name == "pow" and len(eval_args) >= 2:
-            if (
+        if (
+            func_name == "pow"
+            and len(eval_args) >= 2
+            and (
                 abs(eval_args[0]) > _MAX_POW_BASE
                 or abs(eval_args[1]) > _MAX_POW_EXPONENT
-            ):
-                raise ValueError(
-                    f"Pow operands too large (max base: {_MAX_POW_BASE}, "
-                    f"max exponent: {_MAX_POW_EXPONENT})"
-                )
+            )
+        ):
+            raise ValueError(
+                f"Pow operands too large (max base: {_MAX_POW_BASE}, "
+                f"max exponent: {_MAX_POW_EXPONENT})"
+            )
         return _FUNCTIONS[func_name](*eval_args)
     else:
         raise ValueError(f"Unsupported expression type: {type(node).__name__}")

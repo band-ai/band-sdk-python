@@ -661,20 +661,20 @@ class TestHttpxRetries:
             side_effect=httpx.TimeoutException("timeout")
         )
 
-        with patch.object(
-            adapter.client.aio.models,  # type: ignore[union-attr]
-            "generate_content",
-            adapter.client.aio.models.generate_content,
+        with (
+            patch.object(
+                adapter.client.aio.models,  # type: ignore[union-attr]
+                "generate_content",
+                adapter.client.aio.models.generate_content,
+            ),
+            pytest.raises(httpx.TimeoutException),
         ):
-            with pytest.raises(httpx.TimeoutException):
-                await adapter._call_gemini(
-                    contents=[
-                        types.Content(
-                            role="user", parts=[types.Part.from_text(text="x")]
-                        )
-                    ],
-                    tools=[],
-                )
+            await adapter._call_gemini(
+                contents=[
+                    types.Content(role="user", parts=[types.Part.from_text(text="x")])
+                ],
+                tools=[],
+            )
 
 
 class TestParticipantsContactsInjection:

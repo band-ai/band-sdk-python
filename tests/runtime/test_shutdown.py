@@ -97,10 +97,12 @@ class TestGracefulShutdownSignalRegistration:
         shutdown = GracefulShutdown(mock_agent)
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", MagicMock()):
-            with patch.object(loop, "remove_signal_handler", MagicMock()):
-                shutdown.register_signals()
-                shutdown.unregister_signals()
+        with (
+            patch.object(loop, "add_signal_handler", MagicMock()),
+            patch.object(loop, "remove_signal_handler", MagicMock()),
+        ):
+            shutdown.register_signals()
+            shutdown.unregister_signals()
 
         assert shutdown._registered is False
 
@@ -118,9 +120,11 @@ class TestGracefulShutdownSignalRegistration:
         shutdown = GracefulShutdown(mock_agent)
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", side_effect=NotImplementedError):
-            with patch("band.runtime.shutdown.signal.signal") as mock_signal:
-                shutdown.register_signals()  # must not raise
+        with (
+            patch.object(loop, "add_signal_handler", side_effect=NotImplementedError),
+            patch("band.runtime.shutdown.signal.signal") as mock_signal,
+        ):
+            shutdown.register_signals()  # must not raise
 
         assert shutdown._registered is True
         # Every signal that could not use the loop fell back to signal.signal().
@@ -342,11 +346,13 @@ class TestGracefulShutdownContextManager:
         shutdown = GracefulShutdown(mock_agent)
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", MagicMock()):
-            with patch.object(loop, "remove_signal_handler", MagicMock()):
-                async with shutdown:
-                    pass
-                assert shutdown._registered is False
+        with (
+            patch.object(loop, "add_signal_handler", MagicMock()),
+            patch.object(loop, "remove_signal_handler", MagicMock()),
+        ):
+            async with shutdown:
+                pass
+            assert shutdown._registered is False
 
 
 class TestRunWithGracefulShutdown:
@@ -356,39 +362,47 @@ class TestRunWithGracefulShutdown:
         """run_with_graceful_shutdown should register signal handlers."""
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", MagicMock()) as mock_add:
-            with patch.object(loop, "remove_signal_handler", MagicMock()):
-                await run_with_graceful_shutdown(mock_agent, timeout=10.0)
+        with (
+            patch.object(loop, "add_signal_handler", MagicMock()) as mock_add,
+            patch.object(loop, "remove_signal_handler", MagicMock()),
+        ):
+            await run_with_graceful_shutdown(mock_agent, timeout=10.0)
 
-                # Should have registered signals
-                assert mock_add.called
+            # Should have registered signals
+            assert mock_add.called
 
     async def test_run_with_graceful_shutdown_runs_agent(self, mock_agent):
         """run_with_graceful_shutdown should run the agent."""
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", MagicMock()):
-            with patch.object(loop, "remove_signal_handler", MagicMock()):
-                await run_with_graceful_shutdown(mock_agent)
+        with (
+            patch.object(loop, "add_signal_handler", MagicMock()),
+            patch.object(loop, "remove_signal_handler", MagicMock()),
+        ):
+            await run_with_graceful_shutdown(mock_agent)
 
-                mock_agent.run.assert_called_once_with(shutdown_timeout=30.0)
+            mock_agent.run.assert_called_once_with(shutdown_timeout=30.0)
 
     async def test_run_with_graceful_shutdown_uses_custom_timeout(self, mock_agent):
         """run_with_graceful_shutdown should use custom timeout."""
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", MagicMock()):
-            with patch.object(loop, "remove_signal_handler", MagicMock()):
-                await run_with_graceful_shutdown(mock_agent, timeout=60.0)
+        with (
+            patch.object(loop, "add_signal_handler", MagicMock()),
+            patch.object(loop, "remove_signal_handler", MagicMock()),
+        ):
+            await run_with_graceful_shutdown(mock_agent, timeout=60.0)
 
-                mock_agent.run.assert_called_once_with(shutdown_timeout=60.0)
+            mock_agent.run.assert_called_once_with(shutdown_timeout=60.0)
 
     async def test_run_with_graceful_shutdown_handles_cancelled_error(self, mock_agent):
         """run_with_graceful_shutdown should handle CancelledError."""
         mock_agent.run = AsyncMock(side_effect=asyncio.CancelledError())
         loop = asyncio.get_running_loop()
 
-        with patch.object(loop, "add_signal_handler", MagicMock()):
-            with patch.object(loop, "remove_signal_handler", MagicMock()):
-                # Should not raise
-                await run_with_graceful_shutdown(mock_agent)
+        with (
+            patch.object(loop, "add_signal_handler", MagicMock()),
+            patch.object(loop, "remove_signal_handler", MagicMock()),
+        ):
+            # Should not raise
+            await run_with_graceful_shutdown(mock_agent)

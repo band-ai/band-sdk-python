@@ -1661,17 +1661,19 @@ class TestEmptyFinalAnswer:
         def fake_capture():
             yield captured_turn
 
-        with patch("band.adapters.pydantic_ai.capture_run_messages", fake_capture):
-            with pytest.raises(UnexpectedModelBehavior):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+        with (
+            patch("band.adapters.pydantic_ai.capture_run_messages", fake_capture),
+            pytest.raises(UnexpectedModelBehavior),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         usage_payloads = sent_usage_payloads(mock_tools)
         assert usage_payloads == [

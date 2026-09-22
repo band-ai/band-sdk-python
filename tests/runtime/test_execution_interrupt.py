@@ -810,9 +810,11 @@ class TestCycleWatchdog:
             # nothing was ever actually cancelled.
             yield _FakeExpiredDeadline()
 
-        with patch("band.runtime.execution.asyncio_timeout", fake_timeout):
-            with caplog.at_level(logging.DEBUG, logger="band.runtime.execution"):
-                result = await ctx._process_event(make_message_event(msg_id="boundary"))
+        with (
+            patch("band.runtime.execution.asyncio_timeout", fake_timeout),
+            caplog.at_level(logging.DEBUG, logger="band.runtime.execution"),
+        ):
+            result = await ctx._process_event(make_message_event(msg_id="boundary"))
 
         assert result is True
         mock_link.mark_processed.assert_awaited_once_with("room-123", "boundary")

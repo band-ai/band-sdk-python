@@ -266,44 +266,48 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     )
 
     # Phase 1: seed a user fact and make the agent produce its own fact.
-    async with running_agent(identity, make_adapter("phase1"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "Create a short project log note for later reference. The "
-                f"tracking marker is {tracking_marker}. Also answer this "
-                "calibration question inside your reply: what color is a "
-                "clear daytime sky? Reply in one short sentence that includes "
-                "the tracking marker and the color answer.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # The user never uttered this answer; it must come from the
-            # agent's phase-1 reply when phase 2 reconstructs history.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase1"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "Create a short project log note for later reference. The "
+            f"tracking marker is {tracking_marker}. Also answer this "
+            "calibration question inside your reply: what color is a "
+            "clear daytime sky? Reply in one short sentence that includes "
+            "the tracking marker and the color answer.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # The user never uttered this answer; it must come from the
+        # agent's phase-1 reply when phase 2 reconstructs history.
+        replies.assert_contains_any([agent_fact])
 
     # Phase 2: fresh process state AND fresh Copilot state directory — recall
     # can only come from the platform history the adapter injects.
-    async with running_agent(identity, make_adapter("phase2"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "From the earlier project log, what was the tracking marker "
-                "and what color answer did you give? Reply with both.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # The user never uttered this answer — only the agent's own
-            # injected phase-1 reply can supply it.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase2"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "From the earlier project log, what was the tracking marker "
+            "and what color answer did you give? Reply with both.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # The user never uttered this answer — only the agent's own
+        # injected phase-1 reply can supply it.
+        replies.assert_contains_any([agent_fact])
 
 
 @lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core

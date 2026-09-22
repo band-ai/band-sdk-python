@@ -189,9 +189,11 @@ class TestLettaAdapterOnStarted:
         mock_letta_module = MagicMock()
         mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
 
-        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            with pytest.raises(RuntimeError, match="MCP server registration failed"):
-                await adapter.on_started("TestBot", "A test bot")
+        with (
+            patch.dict("sys.modules", {"letta_client": mock_letta_module}),
+            pytest.raises(RuntimeError, match="MCP server registration failed"),
+        ):
+            await adapter.on_started("TestBot", "A test bot")
 
     @pytest.mark.asyncio
     async def test_on_started_self_hosted_org_scoped_by_default(
@@ -309,9 +311,11 @@ class TestLettaAdapterOnStarted:
     async def test_on_started_import_error(self) -> None:
         adapter = LettaAdapter()
 
-        with patch.dict("sys.modules", {"letta_client": None}):
-            with pytest.raises(ImportError, match="letta-client is required"):
-                await adapter.on_started("TestBot", "A test bot")
+        with (
+            patch.dict("sys.modules", {"letta_client": None}),
+            pytest.raises(ImportError, match="letta-client is required"),
+        ):
+            await adapter.on_started("TestBot", "A test bot")
 
 
 # ──────────────────────────────────────────────────────────────────────

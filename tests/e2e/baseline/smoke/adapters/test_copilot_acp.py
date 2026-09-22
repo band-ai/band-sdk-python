@@ -199,18 +199,20 @@ async def test_copilot_hosted_auth_replies(
     adapter = CopilotACPAdapter(
         hermetic_copilot_config(baseline_settings, tmp_path / "hosted", hosted=True)
     )
-    async with running_agent(identity, adapter, baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                f"Reply with one short sentence that includes the marker {marker}.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([marker])
+    async with (
+        running_agent(identity, adapter, baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            f"Reply with one short sentence that includes the marker {marker}.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([marker])
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
@@ -261,40 +263,44 @@ async def test_acp_recall_via_room_replay_when_session_load_misses(
     )
 
     # Phase 1: seed a user fact and make the agent produce its own fact.
-    async with running_agent(identity, make_adapter("phase1"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "Create a short project log note for later reference. The "
-                f"tracking marker is {tracking_marker}. Also answer this "
-                "calibration question inside your reply: what color is a "
-                "clear daytime sky? Reply in one short sentence that includes "
-                "the tracking marker and the color answer.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # Must be in the transcript now, or phase 2 has nothing to replay.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase1"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "Create a short project log note for later reference. The "
+            f"tracking marker is {tracking_marker}. Also answer this "
+            "calibration question inside your reply: what color is a "
+            "clear daytime sky? Reply in one short sentence that includes "
+            "the tracking marker and the color answer.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # Must be in the transcript now, or phase 2 has nothing to replay.
+        replies.assert_contains_any([agent_fact])
 
     # Phase 2: fresh process AND fresh COPILOT_HOME — session/load misses, so
     # recall can only come from the replayed Band room transcript.
-    async with running_agent(identity, make_adapter("phase2"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "From the earlier project log, what was the tracking marker "
-                "and what color answer did you give? Reply with both.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # The user never uttered this answer — only the agent's own
-            # replayed phase-1 reply can supply it.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase2"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "From the earlier project log, what was the tracking marker "
+            "and what color answer did you give? Reply with both.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # The user never uttered this answer — only the agent's own
+        # replayed phase-1 reply can supply it.
+        replies.assert_contains_any([agent_fact])
