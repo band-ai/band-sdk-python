@@ -12,7 +12,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
@@ -212,7 +212,7 @@ async def test_supersede_event_records_terminal_reason_and_disables_reconnect():
 
     class MockMessage:
         event = "supersede"
-        payload = {
+        payload: ClassVar[dict[str, Any]] = {
             "reason": "session.already_connected",
             "message": "This connection has been superseded by a newer session for this agent.",
             "retryable": False,
@@ -1010,7 +1010,7 @@ async def test_join_room_participants_channel_allows_omitted_room_deleted_handle
 
     class MockMessage:
         event = "room_deleted"
-        payload = {"id": "room-123"}
+        payload: ClassVar[dict[str, Any]] = {"id": "room-123"}
 
     await message_handler(MockMessage())
 
@@ -1041,7 +1041,7 @@ async def test_join_room_participants_channel_routes_room_deleted_handler():
 
     class MockMessage:
         event = "room_deleted"
-        payload = {"id": "room-123"}
+        payload: ClassVar[dict[str, Any]] = {"id": "room-123"}
 
     await message_handler(MockMessage())
 
@@ -1132,7 +1132,7 @@ async def test_skips_unknown_event_without_handler(caplog):
 
     class MockMessage:
         event = "unknown_event"
-        payload = {"data": "test"}
+        payload: ClassVar[dict[str, Any]] = {"data": "test"}
 
     with caplog.at_level(logging.WARNING):
         await client._handle_events(MockMessage(), {})
@@ -1148,7 +1148,7 @@ async def test_event_created_without_handler_logs_at_debug_not_warning(caplog):
 
     class MockMessage:
         event = "event_created"
-        payload = {"data": "test"}
+        payload: ClassVar[dict[str, Any]] = {"data": "test"}
 
     with caplog.at_level(logging.DEBUG, logger="band.client.streaming.client"):
         await client._handle_events(MockMessage(), {})

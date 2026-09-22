@@ -493,18 +493,17 @@ def example_environment(
 
 @contextmanager
 def child_log(spec: ExampleSpec) -> Iterator[tuple[ChildLog, IO[bytes]]]:
-    log_file = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="ab", prefix=f"band-example-{spec.id}-", suffix=".log", delete=False
-    )
-    log_path = Path(log_file.name)
-    log_path.chmod(0o600)
-    artifact = ChildLog(log_path)
-    try:
-        yield artifact, log_file
-    finally:
-        log_file.close()
-        if not artifact.preserve:
-            log_path.unlink(missing_ok=True)
+    ) as log_file:
+        log_path = Path(log_file.name)
+        log_path.chmod(0o600)
+        artifact = ChildLog(log_path)
+        try:
+            yield artifact, log_file
+        finally:
+            if not artifact.preserve:
+                log_path.unlink(missing_ok=True)
 
 
 async def start_example(

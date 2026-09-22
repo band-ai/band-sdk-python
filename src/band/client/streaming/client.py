@@ -25,6 +25,7 @@ from phoenix_channels_python_client.client import (
 )
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
+from pydantic import Field
 
 from band.client.streaming.errors import (
     WebSocketUpgradeError,
@@ -98,7 +99,7 @@ class ControlMode(StrEnum):
 class MessageMetadata(WirePayload):
     """Metadata within message_created / message_updated payloads."""
 
-    mentions: list[Mention] = []
+    mentions: list[Mention] = Field(default_factory=list)
     status: str | None = None
     # Per-recipient delivery state, populated on `message_updated` as recipients
     # process the message. Keyed by recipient (agent) id; each value carries a

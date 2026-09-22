@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -62,10 +62,14 @@ class TestIsMcpContentResult:
     shape so a consumer that supports real MCP content (claude_sdk, the MCP
     engine) can pass it through instead of json.dumps-ing it into text."""
 
-    _IMAGE_RESULT = {
+    _IMAGE_RESULT: ClassVar[dict[str, Any]] = {
         "content": [{"type": "image", "data": "YmFzZTY0", "mimeType": "image/png"}]
     }
-    _TEXT_RESULT = {"name": "notes.txt", "content_type": "text/plain", "text": "hi"}
+    _TEXT_RESULT: ClassVar[dict[str, Any]] = {
+        "name": "notes.txt",
+        "content_type": "text/plain",
+        "text": "hi",
+    }
 
     def test_true_for_image_content_block(self) -> None:
         assert is_mcp_content_result(self._IMAGE_RESULT)

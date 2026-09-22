@@ -12,7 +12,7 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from pydantic import BaseModel
@@ -325,7 +325,7 @@ class TestPromptConfiguration:
 class TestOpenAIRehydration:
     """Cold-boot history remains valid when it reaches OpenAI."""
 
-    _HISTORY = [
+    _HISTORY: ClassVar[list[dict]] = [
         tool_call("calc", {"expr": "2+2"}, "call-1"),
         text("also, hello"),
         tool_result("calc", "4", "call-1"),
@@ -642,7 +642,7 @@ class TestTurnFailure:
 class TestUsageMapping:
     def test_usage_from_agent_maps_all_fields(self):
         class _Metrics:
-            accumulated_usage = {
+            accumulated_usage: ClassVar[dict[str, int]] = {
                 "inputTokens": 10,
                 "outputTokens": 5,
                 "totalTokens": 15,

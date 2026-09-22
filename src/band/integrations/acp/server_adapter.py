@@ -692,6 +692,3 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         if set_done:
             pending.done_event.set()
         return pending
-
-
-BandACPServerAdapter = BandACPServerAdapter

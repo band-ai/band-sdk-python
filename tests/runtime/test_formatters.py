@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, ClassVar
+
 from band.runtime.formatters import (
     _MAX_PARTICIPANT_DESCRIPTION_LENGTH,
     build_participants_message,
@@ -515,7 +517,7 @@ class TestMessagesBefore:
     turns of their own, and replaying them exposes future requests and
     duplicates them when their own turn arrives."""
 
-    MESSAGES = [
+    MESSAGES: ClassVar[list[dict[str, Any]]] = [
         {"id": "m1", "content": "old one"},
         {"id": "m2", "content": "old two"},
         {"id": "trigger", "content": "the current message"},

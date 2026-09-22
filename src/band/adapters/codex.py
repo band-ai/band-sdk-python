@@ -2991,7 +2991,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     # This mapping bridges the two.  If the Codex protocol renames tags,
     # update both this mapping and _canonical_sandbox_key's aliases.
     # Reference: codex-app-server protocol types (thread/start, turn/start).
-    _SANDBOX_MODE_TO_POLICY_TYPE: dict[str, str] = {
+    _SANDBOX_MODE_TO_POLICY_TYPE: ClassVar[dict[str, str]] = {
         "read-only": "readOnly",
         "workspace-write": "workspaceWrite",
         "danger-full-access": "dangerFullAccess",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,7 +16,7 @@ from band.integrations.parlant.server import running_parlant_server
 class StubServer:
     """Model Parlant's configure, setup, serve, and cleanup phases."""
 
-    instances: list[StubServer] = []
+    instances: ClassVar[list[StubServer]] = []
 
     def __init__(self, **_kwargs) -> None:
         self.events: list[str] = []

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import warnings
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -836,7 +836,7 @@ class TestFeatureFilters:
     """include_tools/exclude_tools/include_categories gate which Band tools
     are wired (parity with LangGraph)."""
 
-    ALL_SCHEMAS = [
+    ALL_SCHEMAS: ClassVar[list[dict[str, Any]]] = [
         openai_tool_schema("band_send_message"),  # chat
         openai_tool_schema("band_lookup_peers"),  # chat
         openai_tool_schema("band_store_memory"),  # memory

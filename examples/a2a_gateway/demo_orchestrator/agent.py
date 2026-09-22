@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterable
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg, tool
@@ -118,7 +118,7 @@ Always be helpful and provide clear responses to the user."""
         "Set response status to completed if the request is complete."
     )
 
-    SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
+    SUPPORTED_CONTENT_TYPES: ClassVar[list[str]] = ["text", "text/plain"]
 
     def __init__(
         self,
