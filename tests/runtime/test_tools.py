@@ -45,13 +45,13 @@ from band.runtime.tools import (
     SendMessageInput,
     SendRoomFileInput,
     StoreMemoryInput,
-    matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
     canonicalize_mcp_tool_name,
     format_tool_validation_error,
     is_mcp_content_result,
     is_room_posting_tool,
+    matches_identifier,
 )
 from tests.conftest import make_participant_mock
 from tests.content import BLANK_CONTENT_CASES

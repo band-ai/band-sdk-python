@@ -74,6 +74,7 @@ BOB_PEER = {
     "type": "User",
     "is_contact": False,
     "source": "registry",
+    "online": True,
 }
 
 #: A seeded participant mentionable via ``@alice`` -- shared by every test

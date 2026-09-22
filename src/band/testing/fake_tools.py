@@ -513,6 +513,7 @@ class FakeAgentTools:
                 name=request.get("from_name"),
                 type=request.get("type", "User"),
                 inserted_at=_FAKE_TIMESTAMP,
+                online=True,
             ).model_dump()
         )
         reciprocal_sent = _find_by_handle(

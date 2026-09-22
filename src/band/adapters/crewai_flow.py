@@ -102,6 +102,21 @@ class CrewAIFlowStateSource(Protocol):
 # ---------------------------------------------------------------------------
 
 
+def _metadata_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """An item's ``metadata`` as a plain dict, regardless of source.
+
+    ``AgentTools.fetch_room_context`` items carry it as the Fern-typed
+    ``ChatMessageMetadata`` model (``extra="allow"``); events from
+    ``AgentInput.history`` already carry a plain dict.
+    """
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, BaseModel):
+        return metadata.model_dump(exclude_none=True)
+    return {}
+
+
 class RoomCacheEntry:
     __slots__ = ("events", "latest_inserted_at", "seen_event_ids")
 
@@ -204,10 +219,7 @@ class RestCrewAIFlowStateSource:
     def _is_task_event(item: dict[str, Any], namespace: str) -> bool:
         if item.get("message_type") != "task":
             return False
-        metadata = item.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            return False
-        return namespace in metadata
+        return namespace in _metadata_dict(item)
 
     @staticmethod
     def _coerce_inserted_at(value: Any) -> datetime | None:
@@ -391,8 +403,7 @@ class HistoryCrewAIFlowStateSource:
                 continue
             if item.get("message_type") != "task":
                 continue
-            metadata = item.get("metadata") or {}
-            if isinstance(metadata, dict) and metadata_namespace in metadata:
+            if metadata_namespace in _metadata_dict(item):
                 events.append(item)
         return events
 

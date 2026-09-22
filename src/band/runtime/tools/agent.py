@@ -699,7 +699,7 @@ class AgentTools(AgentToolsProtocol):
 
         return response
 
-    async def get_participants(self) -> list["ChatParticipant"]:
+    async def get_participants(self) -> list[ChatParticipant]:
         """
         Get participants in the current room.
 

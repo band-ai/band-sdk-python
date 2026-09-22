@@ -325,6 +325,21 @@ def _sort_key(event: dict[str, Any]) -> tuple[datetime, str]:
     return (inserted, str(event.get("id") or event.get("message_id") or ""))
 
 
+def _metadata_dict(event: dict[str, Any]) -> dict[str, Any]:
+    """An event's ``metadata`` as a plain dict, regardless of source.
+
+    ``AgentTools.fetch_room_context`` items carry it as the Fern-typed
+    ``ChatMessageMetadata`` model (``extra="allow"``); events from
+    ``AgentInput.history`` already carry a plain dict.
+    """
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, BaseModel):
+        return metadata.model_dump(exclude_none=True)
+    return {}
+
+
 class CrewAIFlowStateConverter:
     """Reconstruct ``CrewAIFlowSessionState`` from raw task-event dicts.
 
@@ -371,10 +386,7 @@ class CrewAIFlowStateConverter:
         # Filter and sort.
         candidate: list[tuple[datetime, str, dict[str, Any], dict[str, Any]]] = []
         for event in raw:
-            metadata = event.get("metadata") or {}
-            if not isinstance(metadata, dict):
-                continue
-            payload = metadata.get(self.metadata_namespace)
+            payload = _metadata_dict(event).get(self.metadata_namespace)
             if payload is None:
                 continue
             inserted, msg_id = _sort_key(event)

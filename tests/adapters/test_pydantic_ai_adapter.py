@@ -890,6 +890,7 @@ class TestContactTools:
                     "name": "Alice",
                     "type": "User",
                     "inserted_at": "2025-01-01T00:00:00Z",
+                    "online": True,
                 }
             ]
         )

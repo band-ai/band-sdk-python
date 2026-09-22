@@ -665,6 +665,7 @@ class TestRuntimeTools:
                     "type": "User",
                     "is_contact": False,
                     "source": "registry",
+                    "online": True,
                 }
             ]
         )

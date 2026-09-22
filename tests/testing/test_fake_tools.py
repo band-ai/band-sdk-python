@@ -14,7 +14,6 @@ from band.testing import FakeAgentTools
 from tests.content import BLANK_CONTENT_CASES
 from tests.testing.support import seeded_participant
 
-
 _SEED_INSERTED_AT = "2025-01-01T00:00:00Z"
 
 
@@ -41,6 +40,7 @@ def seeded_peer(
         "type": type,
         "is_contact": False,
         "source": "registry",
+        "online": True,
     }
 
 
@@ -54,6 +54,7 @@ def seeded_contact(
         "name": name,
         "type": type,
         "inserted_at": _SEED_INSERTED_AT,
+        "online": True,
     }
 
 

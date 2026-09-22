@@ -86,11 +86,11 @@ class AgentToolsProtocol(Protocol):
 
     async def add_participant(
         self, identifier: str, role: str = "member"
-    ) -> "ParticipantAddResult":
+    ) -> ParticipantAddResult:
         """Add a participant to the current room by handle, name, or ID."""
         ...
 
-    async def remove_participant(self, identifier: str) -> "ParticipantRemoveResult":
+    async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
         """Remove a participant from the current room by handle, name, or ID."""
         ...
 
@@ -104,7 +104,7 @@ class AgentToolsProtocol(Protocol):
         """True if this instance is bound to the contact hub room."""
         ...
 
-    async def get_participants(self) -> list["ChatParticipant"]:
+    async def get_participants(self) -> list[ChatParticipant]:
         """Get participants in the current room."""
         ...
 
