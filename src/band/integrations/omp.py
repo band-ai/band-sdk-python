@@ -9,24 +9,31 @@ from uuid import uuid4
 
 from band.runtime.tools import BAND_MCP_SERVER_NAME, canonicalize_mcp_tool_name
 
+OMP_APPROVAL_MODE_FLAG = "--approval-mode"
+OMP_APPROVAL_MODE_ALWAYS_ASK = "always-ask"
+OMP_YOLO_FLAG = "--yolo"
+OMP_AUTO_APPROVE_FLAG = "--auto-approve"
+OMP_APPROVAL_MODE_WRITE = "write"
+OMP_APPROVAL_MODE_YOLO = "yolo"
+
 DEFAULT_OMP_ACP_COMMAND: tuple[str, ...] = (
     "omp",
     "acp",
-    "--approval-mode",
-    "always-ask",
+    OMP_APPROVAL_MODE_FLAG,
+    OMP_APPROVAL_MODE_ALWAYS_ASK,
 )
 
-OMP_APPROVAL_MODE_FLAG = "--approval-mode"
-OMP_APPROVAL_MODE_ALWAYS_ASK = "always-ask"
+OMP_BARE_UNSAFE_APPROVAL_FLAGS: frozenset[str] = frozenset(
+    {OMP_YOLO_FLAG, OMP_AUTO_APPROVE_FLAG}
+)
 
 OMP_UNSAFE_APPROVAL_FLAGS: frozenset[str] = frozenset(
     {
-        "--yolo",
-        "--auto-approve",
-        "--approval-mode write",
-        "--approval-mode yolo",
-        "--approval-mode=write",
-        "--approval-mode=yolo",
+        *OMP_BARE_UNSAFE_APPROVAL_FLAGS,
+        f"{OMP_APPROVAL_MODE_FLAG} {OMP_APPROVAL_MODE_WRITE}",
+        f"{OMP_APPROVAL_MODE_FLAG} {OMP_APPROVAL_MODE_YOLO}",
+        f"{OMP_APPROVAL_MODE_FLAG}={OMP_APPROVAL_MODE_WRITE}",
+        f"{OMP_APPROVAL_MODE_FLAG}={OMP_APPROVAL_MODE_YOLO}",
     }
 )
 
@@ -34,6 +41,9 @@ XD_URL_PREFIX = "xd://"
 
 OMP_FORM_APPROVE = "Approve"
 OMP_FORM_DENY = "Deny"
+OMP_APPROVE_OPTION_ID = "omp-approve"
+OMP_DENY_OPTION_ID = "omp-deny"
+OMP_APPROVAL_FORM_TOOL_NAME = "omp_approval_form"
 
 OMP_PINNED_PACKAGE = "@oh-my-pi/pi-coding-agent@18.2.8"
 OMP_MIN_BUN = "1.3.14"
@@ -55,7 +65,9 @@ _OMP_PROVIDER_API_KEY_ENV: dict[str, str] = {
     "cohere": "COHERE_API_KEY",
 }
 
-_APPROVAL_MODE_EQ = re.compile(r"^--approval-mode=(.+)$", re.IGNORECASE)
+_APPROVAL_MODE_EQ = re.compile(
+    rf"^{re.escape(OMP_APPROVAL_MODE_FLAG)}=(.+)$", re.IGNORECASE
+)
 
 
 def omp_model_provider(model: str) -> str:
@@ -93,7 +105,7 @@ def validate_omp_command(command: Sequence[str]) -> None:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in ("--yolo", "--auto-approve"):
+        if token in OMP_BARE_UNSAFE_APPROVAL_FLAGS:
             raise ValueError(f"Unsafe OMP flag {token!r} is not allowed")
         if token == OMP_APPROVAL_MODE_FLAG:
             mode = tokens[index + 1] if index + 1 < len(tokens) else ""
@@ -103,7 +115,11 @@ def validate_omp_command(command: Sequence[str]) -> None:
             index += 2
             continue
         match = _APPROVAL_MODE_EQ.match(token)
-        if match and f"--approval-mode={match.group(1)}" in OMP_UNSAFE_APPROVAL_FLAGS:
+        if (
+            match
+            and f"{OMP_APPROVAL_MODE_FLAG}={match.group(1)}"
+            in OMP_UNSAFE_APPROVAL_FLAGS
+        ):
             raise ValueError(
                 f"Unsafe OMP approval mode {match.group(1)!r} is not allowed"
             )
@@ -182,7 +198,6 @@ def _xd_mcp_wire_tool_name(path: str) -> str | None:
         if server and tool:
             return f"{server}-{tool}"
         return None
-    # ``mcp__band_band_send_message`` → ``band-band_send_message``
     prefix = f"{BAND_MCP_SERVER_NAME}_"
     if remainder.startswith(prefix) and remainder != prefix:
         return f"{BAND_MCP_SERVER_NAME}-{remainder.removeprefix(prefix)}"

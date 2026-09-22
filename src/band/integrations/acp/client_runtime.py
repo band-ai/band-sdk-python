@@ -39,6 +39,7 @@ ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
 PermissionHandler = Callable[..., Awaitable[dict[str, object]]]
 PermissionNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ElicitationHandler = Callable[..., Awaitable[object]]
+ElicitationNarrator = Callable[[Awaitable[None]], Awaitable[None]]
 ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
 MCPTransportKind = Literal["http", "sse"]
 
@@ -95,17 +96,25 @@ def cancel_permission() -> dict[str, object]:
     return {"outcome": {"outcome": "cancelled"}}
 
 
-async def narrate_denied_elicitation_form(
-    emitter: object,
-    *,
-    call: ACPToolCall,
-    session_id: str,
-) -> None:
-    """Post a synthetic denied tool pair for a declined OMP approval form."""
-    open_permission = getattr(emitter, "open_permission", None)
-    if open_permission is None:
-        return
-    await open_permission(call=call, session_id=session_id, outcome="cancelled")
+def elicitation_session_id(mode: object, kwargs: dict[str, object]) -> str:
+    """Session id from ACP ``mode`` or test kwargs (camelCase / snake_case)."""
+    return str(
+        getattr(mode, "session_id", None)
+        or kwargs.get("session_id")
+        or kwargs.get("sessionId")
+        or ""
+    )
+
+
+def elicitation_requested_schema(
+    mode: object, kwargs: dict[str, object]
+) -> object | None:
+    """Form schema from ACP ``mode`` or test kwargs (camelCase / snake_case)."""
+    return (
+        getattr(mode, "requested_schema", None)
+        or kwargs.get("requested_schema")
+        or kwargs.get("requestedSchema")
+    )
 
 
 def _strict_json_equal(a: object, b: object) -> bool:
@@ -620,15 +629,20 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         # (``ElicitationFormSessionMode.session_id``); kwargs only carry
         # ``_meta``. Prefer the mode field so form handlers bind to the
         # same room session that registered them.
-        session_id = str(
-            getattr(mode, "session_id", None)
-            or kwargs.get("session_id")
-            or kwargs.get("sessionId")
-            or ""
-        )
+        session_id = elicitation_session_id(mode, kwargs)
         handler = self._elicitation_handlers.get(session_id)
         if handler is not None:
-            return await handler(message=message, mode=mode, **kwargs)
+
+            async def narrate_elicitation(action: Awaitable[None]) -> None:
+                async with self._session_lock(session_id):
+                    await action
+
+            return await handler(
+                message=message,
+                mode=mode,
+                narrate_elicitation=narrate_elicitation,
+                **kwargs,
+            )
         logger.debug(
             "Auto-declining elicitation for session %s (no handler)", session_id
         )

@@ -36,13 +36,9 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
-from band.integrations.omp import (
-    DEFAULT_OMP_MODEL,
-    OMP_MIN_BUN,
-    omp_model_provider,
-    omp_provider_api_key_env,
-)
+from band.integrations.omp import OMP_MIN_BUN
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.omp_credentials import omp_provider_api_key
 from tests.paths import REPO_ROOT
 
 # REPO_ROOT: used to reject a Codex working directory inside the SDK checkout,
@@ -248,26 +244,11 @@ def _omp_cli_responds(settings: BaselineSettings) -> bool:
     return True
 
 
-def _omp_provider_api_key(settings: BaselineSettings) -> str:
-    model = settings.backends.omp_model.strip() or DEFAULT_OMP_MODEL
-    env_key = omp_provider_api_key_env(omp_model_provider(model))
-    creds = settings.llm_credentials
-    match env_key:
-        case "ANTHROPIC_API_KEY":
-            return creds.anthropic_api_key
-        case "OPENAI_API_KEY":
-            return creds.openai_api_key
-        case "GEMINI_API_KEY":
-            return creds.gemini_api_key or creds.google_api_key
-        case _:
-            return ""
-
-
 def _omp_available(settings: BaselineSettings) -> bool:
     return (
         _bun_meets_min_version(OMP_MIN_BUN)
         and _omp_cli_responds(settings)
-        and bool(_omp_provider_api_key(settings))
+        and bool(omp_provider_api_key(settings))
     )
 
 
@@ -358,7 +339,7 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.OMP: DepSpec(
         _omp_available,
-        "Bun >= 1.3.14, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
+        f"Bun >= {OMP_MIN_BUN}, working `omp`/`omp acp`, and a provider key for OMP_MODEL not set",
         lane=Lane.BACKENDS,
     ),
     Dep.CODEX_CWD: DepSpec(

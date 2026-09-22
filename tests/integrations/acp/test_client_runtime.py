@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from acp.client.connection import ClientSideConnection
 from acp.exceptions import RequestError
+from acp.schema import ClientCapabilities, DeclineElicitationResponse
 
 from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
@@ -634,6 +635,59 @@ class TestACPCollectingClientSerialization:
         assert probe.peak == 1
 
     @pytest.mark.asyncio
+    async def test_elicitation_handling_never_interleaves_with_narration_posts(
+        self, probe: ConcurrencyProbe
+    ) -> None:
+        """Elicitation denial narration must serialize under the session lock."""
+        client = ACPCollectingClient()
+
+        async def sink(chunk: CollectedChunk) -> None:
+            async with probe:
+                pass
+
+        async def handler(
+            narrate_elicitation: object | None = None,
+            **kwargs: object,
+        ) -> object:
+            async def denied_posts() -> None:
+                async with probe:
+                    return
+
+            if narrate_elicitation is not None:
+                await narrate_elicitation(denied_posts())
+            else:
+                await denied_posts()
+            return DeclineElicitationResponse(action="decline")
+
+        client.set_sink("s1", sink)
+        client.set_elicitation_handler("s1", handler)
+
+        await asyncio.gather(
+            client.session_update("s1", self._tool_call("tool-0", "tc-0")),
+            client.create_elicitation("Approve?", mode=MagicMock(session_id="s1")),
+        )
+
+        assert probe.peak == 1
+
+    @pytest.mark.asyncio
+    async def test_create_elicitation_without_handler_declines(self) -> None:
+        client = ACPCollectingClient()
+        response = await client.create_elicitation(
+            "Approve?", mode=MagicMock(session_id="missing")
+        )
+        assert isinstance(response, DeclineElicitationResponse)
+        assert response.action == "decline"
+
+    @pytest.mark.asyncio
+    async def test_set_then_reset_clears_elicitation_handler(self) -> None:
+        client = ACPCollectingClient()
+        handler = AsyncMock(return_value=DeclineElicitationResponse(action="decline"))
+        client.set_elicitation_handler("sess-1", handler)
+        assert "sess-1" in client._elicitation_handlers
+        client.reset_session("sess-1")
+        assert "sess-1" not in client._elicitation_handlers
+
+    @pytest.mark.asyncio
     async def test_sink_failure_is_logged_and_keeps_the_chunk_buffered(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -866,6 +920,17 @@ class TestACPRuntime:
         assert "sess-2" not in runtime._client._permission_handlers
 
     @pytest.mark.asyncio
+    async def test_set_elicitation_handler_delegates_to_client(self) -> None:
+        runtime = ACPRuntime(command=["codex"])
+        runtime._client = ACPCollectingClient()
+        handler = AsyncMock(return_value=DeclineElicitationResponse(action="decline"))
+
+        runtime.set_elicitation_handler("sess-1", handler)
+        assert runtime._client._elicitation_handlers["sess-1"] is handler
+        runtime.reset_session("sess-1")
+        assert "sess-1" not in runtime._client._elicitation_handlers
+
+    @pytest.mark.asyncio
     async def test_stop_exits_context_and_clears_state(self) -> None:
         mock_ctx = AsyncMock()
         mock_ctx.__aexit__ = AsyncMock(return_value=None)
@@ -921,6 +986,37 @@ class TestACPRuntime:
         assert builtin.last_kwargs["transport_kwargs"] == {
             "limit": ACP_STDIO_LIMIT_BYTES
         }
+
+    @pytest.mark.asyncio
+    async def test_start_forwards_client_capabilities_to_initialize(
+        self, make_acp_transport
+    ) -> None:
+        caps = ClientCapabilities()
+        transport = make_acp_transport()
+        runtime = ACPRuntime(
+            command=["omp", "acp"],
+            spawn_process=transport,
+            client_capabilities=caps,
+        )
+        await runtime.start()
+        transport.conn.initialize.assert_awaited_once()
+        assert (
+            transport.conn.initialize.await_args.kwargs["client_capabilities"] is caps
+        )
+
+    @pytest.mark.asyncio
+    async def test_start_passes_use_unstable_protocol_when_builtin(
+        self, make_acp_transport
+    ) -> None:
+        transport = make_acp_transport()
+        runtime = ACPRuntime(
+            command=["omp", "acp"],
+            spawn_process=transport,
+            use_unstable_protocol=True,
+            pass_builtin_transport_options=True,
+        )
+        await runtime.start()
+        assert transport.last_kwargs.get("use_unstable_protocol") is True
 
 
 class TestTCPSpawnProcess:

@@ -553,20 +553,14 @@ def omp_acp_env(s: BaselineSettings, agent_home: str) -> dict[str, str]:
     """Hermetic OMP child env: model, provider key, and isolated agent state dir."""
     from band.integrations.omp import (  # noqa: PLC0415 -- keep builder imports lazy like sibling adapters
         DEFAULT_OMP_MODEL,
-        omp_model_provider,
-        omp_provider_api_key_env,
         omp_provider_env,
+    )
+    from tests.e2e.baseline.toolkit.omp_credentials import (  # noqa: PLC0415
+        omp_provider_api_key,
     )
 
     model = s.backends.omp_model.strip() or DEFAULT_OMP_MODEL
-    env_key = omp_provider_api_key_env(omp_model_provider(model))
-    creds = s.llm_credentials
-    api_key = {
-        "ANTHROPIC_API_KEY": creds.anthropic_api_key,
-        "OPENAI_API_KEY": creds.openai_api_key,
-        "GEMINI_API_KEY": creds.gemini_api_key or creds.google_api_key,
-    }.get(env_key, "")
-    env = omp_provider_env(model=model, api_key=api_key)
+    env = omp_provider_env(model=model, api_key=omp_provider_api_key(s))
     env["PI_CODING_AGENT_DIR"] = agent_home
     return env
 

@@ -325,14 +325,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
-            client_factory=lambda: BandACPClient(
-                profile=self._profile,
-                canonicalize_tool_name=self._canonical_tool_name,
-            ),
+            client_factory=self._runtime_client_factory,
             spawn_process=self._select_transport(spawn_process, self._host, self._port),
             client_capabilities=self._client_capabilities,
             use_unstable_protocol=self._use_unstable_protocol,
             pass_builtin_transport_options=self._pass_builtin_transport_options,
+        )
+
+    def _runtime_client_factory(self) -> BandACPClient:
+        return BandACPClient(
+            profile=self._profile,
+            canonicalize_tool_name=self._canonical_tool_name,
         )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -441,7 +444,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             session_id,
             self._make_permission_handler(emitter, room_id),
         )
-        elicitation_handler = self._make_elicitation_handler(emitter, room_id)
+        elicitation_handler = self._make_elicitation_handler(
+            emitter, room_id, session_id
+        )
         if elicitation_handler is not None:
             self._runtime.set_elicitation_handler(session_id, elicitation_handler)
 
@@ -449,8 +454,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self,
         emitter: RoomTurnEmitter,
         room_id: str,
+        session_id: str,
     ) -> ElicitationHandler | None:
-        del emitter, room_id
+        del emitter, room_id, session_id
         return None
 
     def _make_permission_handler(

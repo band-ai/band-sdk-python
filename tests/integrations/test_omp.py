@@ -7,8 +7,11 @@ import pytest
 from band.integrations.omp import (
     DEFAULT_OMP_ACP_COMMAND,
     DEFAULT_OMP_MODEL,
+    OMP_APPROVAL_MODE_ALWAYS_ASK,
+    OMP_APPROVAL_MODE_FLAG,
     OMP_FORM_APPROVE,
     OMP_FORM_DENY,
+    OMP_PINNED_PACKAGE,
     finalize_omp_command,
     is_omp_approve_deny_form,
     normalize_omp_mcp_device_call,
@@ -18,6 +21,7 @@ from band.integrations.omp import (
     omp_provider_env,
     validate_omp_command,
 )
+from tests.paths import CI_SCRIPTS
 
 
 def test_default_command_is_safe_after_finalize() -> None:
@@ -109,3 +113,15 @@ def test_provider_env_uses_gemini_for_google_models() -> None:
     env = omp_provider_env(model=DEFAULT_OMP_MODEL, api_key="secret")
     assert env["OMP_MODEL"] == DEFAULT_OMP_MODEL
     assert env["GEMINI_API_KEY"] == "secret"
+
+
+def test_default_command_uses_approval_mode_constants() -> None:
+    assert DEFAULT_OMP_ACP_COMMAND[-2:] == (
+        OMP_APPROVAL_MODE_FLAG,
+        OMP_APPROVAL_MODE_ALWAYS_ASK,
+    )
+
+
+def test_setup_omp_script_pins_same_package() -> None:
+    script = (CI_SCRIPTS / "setup-omp.sh").read_text()
+    assert OMP_PINNED_PACKAGE in script

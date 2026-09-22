@@ -21,16 +21,21 @@ from band.adapters.omp_acp import (
     OmpACPAdapterConfig,
     OmpACPCollectingClient,
 )
-from band.integrations.acp.client_adapter import ACPClientAdapter, ACPPermissionRequest
-from band.integrations.acp.client_runtime import ACPCollectingClient
+from band.integrations.acp.client_adapter import ACPPermissionRequest
+from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import ACPConfigRequest
-from band.integrations.omp import DEFAULT_OMP_ACP_COMMAND as INTEGRATION_DEFAULT
+from band.integrations.omp import (
+    DEFAULT_OMP_ACP_COMMAND as INTEGRATION_DEFAULT,
+)
+from band.integrations.omp import (
+    OMP_APPROVAL_FORM_TOOL_NAME,
+    OMP_APPROVE_OPTION_ID,
+)
+from band.testing import FakeAgentTools
+from tests.integrations.acp.conftest import make_platform_message
 
 
 class TestOmpACPAdapterConstruction:
-    def test_is_acp_client_adapter(self) -> None:
-        assert issubclass(OmpACPAdapter, ACPClientAdapter)
-
     def test_stdio_only_no_tcp_fields(self) -> None:
         adapter = OmpACPAdapter()
         assert adapter._host is None
@@ -153,10 +158,10 @@ class TestOmpElicitationHandler:
         adapter = OmpACPAdapter()
 
         async def approve(_request: ACPPermissionRequest) -> str:
-            return "omp-approve"
+            return OMP_APPROVE_OPTION_ID
 
         adapter._resolve_permission = approve
-        handler = adapter._make_elicitation_handler(MagicMock(), "room-1")
+        handler = adapter._make_elicitation_handler(MagicMock(), "room-1", "sess-1")
         schema = {
             "properties": {
                 "choice": {"enum": ["Approve", "Deny"]},
@@ -165,7 +170,6 @@ class TestOmpElicitationHandler:
         response = await handler(
             message="Allow destructive action?",
             mode="form",
-            session_id="sess-1",
             requested_schema=schema,
         )
         assert isinstance(response, AcceptElicitationResponse)
@@ -178,11 +182,11 @@ class TestOmpElicitationHandler:
         adapter = OmpACPAdapter()
 
         async def approve(_request: ACPPermissionRequest) -> str:
-            return "omp-approve"
+            return OMP_APPROVE_OPTION_ID
 
         adapter._resolve_permission = approve
         client = adapter._runtime_client_factory()
-        handler = adapter._make_elicitation_handler(MagicMock(), "room-1")
+        handler = adapter._make_elicitation_handler(MagicMock(), "room-1", "sess-live")
         assert handler is not None
         client.set_elicitation_handler("sess-live", handler)
         mode = ElicitationFormSessionMode(
@@ -209,11 +213,10 @@ class TestOmpElicitationHandler:
     @pytest.mark.asyncio
     async def test_malformed_form_declines(self) -> None:
         adapter = OmpACPAdapter()
-        handler = adapter._make_elicitation_handler(MagicMock(), "room-1")
+        handler = adapter._make_elicitation_handler(MagicMock(), "room-1", "sess-1")
         response = await handler(
             message="?",
             mode="form",
-            session_id="sess-1",
             requested_schema={"properties": {}},
         )
         assert isinstance(response, DeclineElicitationResponse)
@@ -228,18 +231,16 @@ class TestOmpElicitationHandler:
         adapter._resolve_permission = deny
         emitter = MagicMock()
         emitter.open_permission = AsyncMock()
-        handler = adapter._make_elicitation_handler(emitter, "room-1")
+        handler = adapter._make_elicitation_handler(emitter, "room-1", "sess-1")
         schema = {"properties": {"choice": {"enum": ["Approve", "Deny"]}}}
         first = await handler(
             message="?",
             mode="form",
-            session_id="sess-1",
             requested_schema=schema,
         )
         second = await handler(
             message="?",
             mode="form",
-            session_id="sess-1",
             requested_schema=schema,
         )
         assert isinstance(first, DeclineElicitationResponse)
@@ -248,6 +249,34 @@ class TestOmpElicitationHandler:
         assert (
             calls[0].kwargs["call"].tool_call_id != calls[1].kwargs["call"].tool_call_id
         )
+        assert calls[0].kwargs["call"].name == OMP_APPROVAL_FORM_TOOL_NAME
+
+
+class TestOmpElicitationHandlerWiring:
+    @pytest.mark.asyncio
+    async def test_elicitation_handler_wired_on_message(self) -> None:
+        """``on_message`` must register the OMP form elicitation handler."""
+        adapter = OmpACPAdapter()
+        adapter._inject_band_tools = False
+        adapter._runtime._conn = AsyncMock()
+        mock_session = MagicMock()
+        mock_session.session_id = "acp-session-123"
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._conn.prompt = AsyncMock()
+        adapter._runtime._client = adapter._runtime_client_factory()
+
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+        await adapter.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        assert "acp-session-123" in adapter._runtime._client._elicitation_handlers
 
 
 class TestOmpDeterministicMcpReply:
@@ -276,4 +305,3 @@ class TestOmpDeterministicMcpReply:
         await client.session_update("sess", text_update)
         await client.flush("sess")
         assert client.get_collected_text("sess") == "hello from omp"
-        assert isinstance(client, ACPCollectingClient)

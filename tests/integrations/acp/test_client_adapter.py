@@ -940,6 +940,51 @@ class TestACPClientAdapterPermissionHandler:
             )
 
     @pytest.mark.asyncio
+    async def test_permission_resolver_deny_cancels_via_request_permission(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A wired PermissionResolver deny must cancel through request_permission."""
+
+        async def deny(_request: ACPPermissionRequest) -> None:
+            return None
+
+        adapter_with_mocks._resolve_permission = deny
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+        captured: dict[str, object] = {}
+
+        async def mock_prompt(**kwargs: object) -> None:
+            tool_call = MagicMock()
+            tool_call.title = "write_file"
+            tool_call.tool_call_id = "tc-deny"
+            tool_call.raw_input = {"path": "/tmp/x"}
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                    {"optionId": "reject", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            captured.update(result)
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert captured == {"outcome": {"outcome": "cancelled"}}
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_permission_handler_skips_pair_for_approved_band_send_message(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:

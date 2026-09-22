@@ -26,15 +26,18 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_runtime import (
     ACPCollectingClient,
-    ACPRuntime,
     ElicitationHandler,
-    narrate_denied_elicitation_form,
+    ElicitationNarrator,
+    elicitation_requested_schema,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.integrations.acp.types import ACPToolCall
 from band.integrations.omp import (
     DEFAULT_OMP_ACP_COMMAND,
+    OMP_APPROVAL_FORM_TOOL_NAME,
+    OMP_APPROVE_OPTION_ID,
+    OMP_DENY_OPTION_ID,
     OMP_FORM_APPROVE,
     OMP_FORM_DENY,
     approve_deny_form_field,
@@ -126,22 +129,6 @@ class OmpACPAdapter(ACPClientAdapter):
             **features,
         )
 
-    def _build_runtime(self, spawn_process: SpawnProcess | None) -> ACPRuntime:
-        from band.integrations.acp.client_adapter import (  # noqa: PLC0415
-            _resolve_launcher,
-        )
-
-        return ACPRuntime(
-            command=_resolve_launcher(self._command),
-            env=self._env,
-            auth_method=self._auth_method,
-            client_factory=self._runtime_client_factory,
-            spawn_process=self._select_transport(spawn_process, self._host, self._port),
-            client_capabilities=self._client_capabilities,
-            use_unstable_protocol=self._use_unstable_protocol,
-            pass_builtin_transport_options=self._pass_builtin_transport_options,
-        )
-
     def _runtime_client_factory(self) -> OmpACPCollectingClient:
         return OmpACPCollectingClient(
             own_tool_names=self._own_tool_names,
@@ -152,9 +139,16 @@ class OmpACPAdapter(ACPClientAdapter):
         self,
         emitter: RoomTurnEmitter,
         room_id: str,
+        session_id: str,
     ) -> ElicitationHandler | None:
-        async def handler(*, message: str, mode: object, **kwargs: object) -> object:
-            session_id, requested_schema = self._elicitation_scope(mode, kwargs)
+        async def handler(
+            *,
+            message: str,
+            mode: object,
+            narrate_elicitation: ElicitationNarrator | None = None,
+            **kwargs: object,
+        ) -> object:
+            requested_schema = elicitation_requested_schema(mode, kwargs)
             if not is_omp_approve_deny_form(requested_schema):
                 logger.debug(
                     "Declining unsupported OMP elicitation form for session %s",
@@ -166,17 +160,17 @@ class OmpACPAdapter(ACPClientAdapter):
             assert field is not None
             synthetic_call = ACPToolCall(
                 tool_call_id=omp_elicitation_call_id(session_id),
-                name="omp_approval_form",
+                name=OMP_APPROVAL_FORM_TOOL_NAME,
                 arguments={"message": message},
             )
             options = (
                 PermissionOption(
-                    optionId="omp-approve",
+                    optionId=OMP_APPROVE_OPTION_ID,
                     name=OMP_FORM_APPROVE,
                     kind="allow_once",
                 ),
                 PermissionOption(
-                    optionId="omp-deny",
+                    optionId=OMP_DENY_OPTION_ID,
                     name=OMP_FORM_DENY,
                     kind="reject_once",
                 ),
@@ -187,37 +181,23 @@ class OmpACPAdapter(ACPClientAdapter):
                 room_id=room_id,
                 session_id=session_id,
             )
-            if option_id == "omp-approve":
+            if option_id == OMP_APPROVE_OPTION_ID:
                 return AcceptElicitationResponse(
                     action="accept",
                     content={field: OMP_FORM_APPROVE},
                 )
-            await narrate_denied_elicitation_form(
-                emitter,
+            narration = emitter.open_permission(
                 call=synthetic_call,
                 session_id=session_id,
+                outcome="cancelled",
             )
+            if narrate_elicitation is None:
+                await narration
+            else:
+                await narrate_elicitation(narration)
             return DeclineElicitationResponse(action="decline")
 
         return handler
-
-    @staticmethod
-    def _elicitation_scope(
-        mode: object, kwargs: dict[str, object]
-    ) -> tuple[str, object | None]:
-        """Resolve session id + schema from ACP ``mode`` or test kwargs."""
-        session_id = str(
-            getattr(mode, "session_id", None)
-            or kwargs.get("session_id")
-            or kwargs.get("sessionId")
-            or ""
-        )
-        requested_schema = (
-            getattr(mode, "requested_schema", None)
-            or kwargs.get("requested_schema")
-            or kwargs.get("requestedSchema")
-        )
-        return session_id, requested_schema
 
 
 __all__ = [
