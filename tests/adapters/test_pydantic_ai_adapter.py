@@ -929,7 +929,7 @@ class TestBuiltinToolExecution:
             arguments,
         )
 
-        (retry,) = _parts(result, RetryPromptPart)
+        (_retry,) = _parts(result, RetryPromptPart)
         deps.send_message.assert_not_called()
 
     @pytest.mark.asyncio

@@ -37,7 +37,7 @@ from band.adapters.crewai_flow import CrewAIFlowAdapter
 from band.adapters.google_adk import GoogleADKAdapter
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.parlant import ParlantAdapter
-from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
 from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 

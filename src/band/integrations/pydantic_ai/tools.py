@@ -212,7 +212,7 @@ def _dispatcher(
         method = _resolve_method(ctx.deps, definition)
         try:
             result = await method(**kwargs)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return await _dispatch_failed(ctx, definition, error, notify_room=True)
         try:
             # Normalization (e.g. band_read_room_file's image decode) can also
@@ -222,7 +222,7 @@ def _dispatcher(
             # the method call already succeeded, so this is not a failure to
             # answer the request and must not be reported to the room as one.
             return _normalized_result(definition, result)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- normalization may fail on malformed data of any type; must surface to the LLM as an error string, not crash the turn
             return await _dispatch_failed(ctx, definition, error, notify_room=False)
 
     return dispatch
@@ -246,7 +246,7 @@ async def _dispatch_failed(
         definition.name,
         ctx.tool_call_id,
         error,
-        exc_info=True,
+        exc_info=error,
     )
     if notify_room or not is_terminal_success(definition.name, succeeded=True):
         # The "Error " prefix is load-bearing: band_tool_errored reads it to
@@ -291,7 +291,7 @@ async def _send_contact_request_error_event(
     """
     try:
         await deps.send_event(message, MessageType.ERROR)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- best-effort error-reporting fallback; must not raise if sending the error event itself fails
         logger.warning("Failed to report the contact-request failure: %s", error)
 
 

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar, get_origin, get_type_hints
 
 import httpx
+from band_rest.core.api_error import ApiError
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
@@ -36,10 +37,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext
-
-from band_rest.core.api_error import ApiError
 from typing_extensions import Unpack
 
+from band.converters.pydantic_ai import (
+    PydanticAIHistoryConverter,
+    PydanticAIMessages,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -49,10 +52,6 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
-)
-from band.converters.pydantic_ai import (
-    PydanticAIHistoryConverter,
-    PydanticAIMessages,
 )
 from band.integrations.pydantic_ai.tools import build_band_pydantic_ai_tools
 from band.runtime.custom_tools import (
