@@ -555,7 +555,10 @@ def _build_cursor_acp(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.cursor_acp import CursorACPAdapter, CursorACPAdapterConfig  # noqa: PLC0415 -- isolates the ACP extra from other framework builders
+    from band.adapters.cursor_acp import (  # noqa: PLC0415 -- isolates the ACP extra from other framework builders
+        CursorACPAdapter,
+        CursorACPAdapterConfig,
+    )
 
     sandbox = tempfile.mkdtemp(prefix="band-e2e-cursor-acp-")
     config_kwargs: dict[str, Any] = {

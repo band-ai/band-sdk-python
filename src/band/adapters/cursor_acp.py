@@ -22,8 +22,8 @@ from band.integrations.acp.client_profiles import (
     CURSOR_CREATE_PLAN_METHOD,
     CursorACPClientProfile,
 )
-from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.client_runtime import select_allow_option_id
+from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import SessionConfigResolver
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.formatters import strip_leading_mentions
@@ -317,7 +317,7 @@ class CursorACPAdapter(ACPClientAdapter):
                     prompt.replace("{token}", token),
                     mentions=[turn.requester_id] if turn.requester_id else None,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort room notify; any failure (network, REST, unresolved mention) should not block the decision wait below
                 logger.warning("Could not deliver Cursor %s decision prompt", kind)
                 return None
             try:
@@ -330,7 +330,7 @@ class CursorACPAdapter(ACPClientAdapter):
                         f"Cursor {kind} decision `{token}` timed out and was cancelled.",
                         mentions=[turn.requester_id] if turn.requester_id else None,
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 -- best-effort room notify; the decision has already timed out, so a delivery failure here changes nothing
                     logger.warning("Could not deliver Cursor %s timeout notice", kind)
                 return None
         finally:
@@ -559,10 +559,10 @@ class CursorACPAdapter(ACPClientAdapter):
 
 
 __all__ = [
+    "DEFAULT_CURSOR_ACP_COMMAND",
     "ApprovalMode",
     "CursorACPAdapter",
     "CursorACPAdapterConfig",
-    "DEFAULT_CURSOR_ACP_COMMAND",
     "PlanMode",
     "QuestionMode",
 ]
