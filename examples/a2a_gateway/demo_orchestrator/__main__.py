@@ -94,7 +94,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
                 logger.info("Discovered %s peers from gateway", len(available_peers))
             else:
                 logger.warning("No peers discovered from gateway")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
             logger.warning("Could not discover peers from gateway: %s", e)
 
     logger.info("Starting Demo Orchestrator Agent on %s:%s", host, port)
@@ -181,7 +181,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
         # Run server
         uvicorn.run(server, host=host, port=port)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.error("Error starting server: %s", e)
         sys.exit(1)
 

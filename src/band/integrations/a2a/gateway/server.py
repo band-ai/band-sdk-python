@@ -162,7 +162,7 @@ class GatewayServer:
         async def endpoint(request: Request) -> Any:
             try:
                 body = await request.json()
-            except Exception:
+            except Exception:  # noqa: BLE001 -- A2A JSON-RPC handler must return an error response, not crash on an unexpected exception
                 body = None
             method = body.get("method") if isinstance(body, dict) else None
             if method is not None and method not in ALLOWED_JSONRPC_METHODS:

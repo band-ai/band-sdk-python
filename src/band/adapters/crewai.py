@@ -519,5 +519,5 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         """Send error event (best effort)."""
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send error event: %s", e)

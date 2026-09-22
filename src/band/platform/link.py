@@ -208,7 +208,7 @@ class BandLink:
 
         try:
             await self._ws.leave_agent_control_channel(self.agent_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Error unsubscribing from agent_control: %s", e)
 
         await self._ws.__aexit__(None, None, None)
@@ -315,7 +315,7 @@ class BandLink:
         try:
             await self._join_agent_control_channel(ws)
             logger.info("Recovered agent_control after a rejected rejoin")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to recover agent_control: %s", e)
 
     # --- Event handlers ---

@@ -256,7 +256,7 @@ class AgentRuntime:
                 continue
             try:
                 await execution.request_resync()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning("Failed to request resync for room %s: %s", room_id, e)
 
     # --- Control signals ---
@@ -426,7 +426,7 @@ class AgentRuntime:
         if self._on_session_cleanup:
             try:
                 await self._on_session_cleanup(room_id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                 logger.warning("Session cleanup callback failed for %s: %s", room_id, e)
 
         logger.debug("Destroyed execution for room %s", room_id)

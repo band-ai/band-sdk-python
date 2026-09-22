@@ -103,7 +103,7 @@ def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
                         }
                     }
                 )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             # A malformed or future-extended image block (see
             # is_mcp_content_result's docstring) must degrade to the
             # adapter's normal failure result, not raise uncaught out of
@@ -259,7 +259,7 @@ class CustomToolBridge(StrandsToolBridge):
             result = await execute_custom_tool(
                 self._tool_def, dict(tool_use["input"] or {})
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             yield _tool_result(
                 tool_use,
                 value=f"Error executing tool '{self.tool_name}': {error}",
@@ -389,7 +389,7 @@ class BandTurnHooks(HookProvider):
                 content=json.dumps(payload, default=str),
                 message_type=message_type,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, error)
 
 
@@ -582,7 +582,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         """Map Strands' accumulated turn usage into the SDK value object."""
         try:
             usage = dict(agent.event_loop_metrics.accumulated_usage)
-        except Exception:  # pragma: no cover - usage reporting is best-effort
+        except Exception:  # pragma: no cover - usage reporting is best-effort  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             return TurnUsage()
         return TurnUsage.from_mapping(
             usage,

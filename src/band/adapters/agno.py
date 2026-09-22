@@ -111,7 +111,7 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str | ToolR
                         decode_image_block(block) for block in result["content"]
                     )
                 ]
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 # A malformed or future-extended image block (see
                 # is_mcp_content_result's docstring) must degrade to the
                 # adapter's usual error string, not raise uncaught out of
@@ -732,7 +732,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
         try:
             await tools.send_event(content=text, message_type="thought")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s msg %s: failed to report thought: %s", room_id, msg_id, e
             )
@@ -798,7 +798,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             await tools.send_event(
                 content=json.dumps(payload), message_type=message_type
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s msg %s: failed to report %s %s: %s",
                 room_id,

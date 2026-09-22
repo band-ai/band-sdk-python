@@ -149,6 +149,6 @@ class DefaultPreprocessor(Preprocessor):
                 len(history) if history else 0,
             )
             return history or []
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Room %s: Failed to load history: %s", ctx.room_id, e)
             return []

@@ -454,7 +454,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning(
                         "Failed to send tool_call event: %s",
                         e,
@@ -477,7 +477,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         else result
                     )
                 is_error = False
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
@@ -496,7 +496,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning(
                         "Failed to send tool_result event: %s",
                         e,
@@ -518,5 +518,5 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         """Send error event (best effort)."""
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send error event: %s", e)

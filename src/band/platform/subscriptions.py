@@ -103,7 +103,7 @@ class SubscriptionManager:
         try:
             await leave()
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.log(level, "Error %s: %s", description, e)
             return False
 
@@ -161,7 +161,7 @@ class SubscriptionManager:
                     room_id,
                     on_message_created=on_message_created,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join chat_room:%s: %s", room_id, e)
                 self._subscriptions.record_chat_room_join_failed(
                     room_id=room_id, ticket=ticket
@@ -177,7 +177,7 @@ class SubscriptionManager:
                     on_participant_removed=on_participant_removed,
                     on_room_deleted=on_room_deleted,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
                 logger.warning("Failed to join room_participants:%s: %s", room_id, e)
                 # Clean up the chat_room channel we already joined. Logged at
                 # DEBUG here (not WARNING) so a rollback failure produces one
@@ -280,7 +280,7 @@ class SubscriptionManager:
             )
             settled = True
             logger.debug("Joined agent topic %s", topic)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to join agent topic %s: %s", topic, e)
             self._subscriptions.record_agent_topic_join(
                 topic=topic, ticket=ticket, joined=False

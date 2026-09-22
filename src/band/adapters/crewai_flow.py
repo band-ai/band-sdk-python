@@ -190,7 +190,7 @@ class RestCrewAIFlowStateSource:
                 return await tools.fetch_room_context(
                     room_id=room_id, page=page, page_size=self._page_size
                 )
-            except Exception as exc:  # pragma: no cover - reraise after retries
+            except Exception as exc:  # pragma: no cover - reraise after retries  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 last_exc = exc
                 attempt += 1
                 if attempt > self._retry_attempts:

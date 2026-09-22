@@ -265,7 +265,7 @@ class ClaudeSessionManager:
         try:
             await self._sessions[room_id].disconnect()
             logger.debug("Disconnected client for room %s", room_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- session cleanup/reconnect must degrade gracefully, not crash
             logger.warning("Error disconnecting session for room %s: %s", room_id, e)
 
         del self._sessions[room_id]

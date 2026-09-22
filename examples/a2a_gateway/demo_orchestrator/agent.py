@@ -67,7 +67,7 @@ async def call_peer_agent(
             context_id=context_id,
         )
         return response
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.error("Error calling peer '%s': %s", peer_id, e)
         return f"Error calling peer '{peer_id}': {e}"
 

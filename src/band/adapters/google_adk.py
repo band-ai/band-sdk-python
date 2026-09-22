@@ -574,7 +574,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 if Emit.TOOL_CALLS in self.features.emit:
                     try:
                         await self._report_event(event, tools)
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                         logger.warning("Failed to report event: %s", e)
 
                 if event.is_final_response():
@@ -710,7 +710,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_call event: %s", e)
 
         function_responses = event.get_function_responses()
@@ -730,12 +730,12 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_result event: %s", e)
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
         """Send error event (best effort)."""
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send error event: %s", e)

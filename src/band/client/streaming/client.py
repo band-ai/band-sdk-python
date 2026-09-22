@@ -608,7 +608,7 @@ class WebSocketClient:
 
             try:
                 await self.client.__aenter__()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
                 delay = await self._resolve_failed_connect_attempt(exc, epoch)
                 await asyncio.sleep(delay)
             else:

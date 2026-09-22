@@ -55,7 +55,7 @@ class MessageLifecycle:
                 id=message_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to mark message %s as processing: %s", message_id, e)
             return False
         return True
@@ -75,7 +75,7 @@ class MessageLifecycle:
                 id=message_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to mark message %s as processed: %s", message_id, e)
             return False
         return True
@@ -97,7 +97,7 @@ class MessageLifecycle:
                 error=error,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to mark message %s as failed: %s", message_id, e)
             return False
         return True
@@ -134,7 +134,7 @@ class MessageLifecycle:
                     "max_retries": 0,
                 },
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             if not self._activity_report_failing:
                 self._activity_report_failing = True
                 logger.warning(
@@ -253,7 +253,7 @@ class MessageLifecycle:
                 page += 1
 
             return messages
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning(
                 "Failed to get stale processing messages for room %s: %s",
                 room_id,

@@ -530,7 +530,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_call event: %s", e)
 
             response_parts: list[types.FunctionResponsePart] | None = None
@@ -572,7 +572,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_result event: %s", e)
 
             response_payload = (
@@ -595,5 +595,5 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         """Send error event (best effort)."""
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send error event: %s", e)

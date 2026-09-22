@@ -370,7 +370,7 @@ class ContactEventHandler:
                 ),
             )
             logger.debug("Task event posted to hub room: %s", event_type)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             # Log but don't fail - the queue injection is the important part
             logger.warning("Failed to post task event to hub room: %s", e)
 
@@ -651,7 +651,7 @@ class ContactEventHandler:
             logger.debug("Request not found in API: %s", request_id)
             return None
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Failed to fetch request details from API: %s", e)
             return None
 

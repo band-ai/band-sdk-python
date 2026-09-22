@@ -652,7 +652,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             await self._update_instruction_block(agent_id, room_id)
             await self._verify_mcp_tools_attached(agent_id)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: Failed to resume agent %s: %s", room_id, agent_id, e
             )
@@ -717,7 +717,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     logger.info(
                         "Room %s: Resumed conversation %s", room_id, conversation_id
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning(
                     "Room %s: Failed to resume conversation %s: %s",
                     room_id,
@@ -862,7 +862,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 await self._client.agents.tools.attach(
                     agent_id=agent_id, tool_id=tool_id
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 if self._is_stale_tool_error(e):
                     logger.warning(
                         "Agent %s: MCP tool %s is gone from the org "
@@ -934,7 +934,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         """
         try:
             attached_ids = await self._list_attached_tool_ids(agent_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to verify MCP tools for agent %s: %s", agent_id, e)
             return False
 
@@ -981,7 +981,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     agent_id,
                 )
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 # Label not found on this agent, try next
                 logger.debug(
                     "Room %s: Block %r not found for agent %s, trying next",
@@ -1006,7 +1006,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
                 agent_id,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: Could not update or create instruction block: %s",
                 room_id,
@@ -1039,7 +1039,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 message_type="task",
                 metadata=metadata,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to emit task event: %s", e)
 
     # ------------------------------------------------------------------
@@ -1181,5 +1181,5 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         """Send error event (best effort)."""
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.debug("Failed to report error to platform: %s", error)

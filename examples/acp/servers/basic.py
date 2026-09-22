@@ -81,7 +81,7 @@ async def main() -> None:
     if not api_key:
         try:
             agent_id, api_key = load_agent_config("acp_server_agent")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- ACP request handler must return a JSON-RPC error over stdio instead of crashing the transport loop
             raise ValueError(
                 "BAND_API_KEY environment variable is required, "
                 "or configure 'acp_server_agent' in agent_config.yaml"

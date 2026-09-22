@@ -780,7 +780,7 @@ async def exercise_steps_reported(
 ) -> None:
     try:
         await exercise_steps(running, resources, ws, settings, scenario, results)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_result(
             results,
             Result(scenario, running.spec.id, "fail", f"steps: {error}"),
@@ -855,7 +855,7 @@ async def start_group_examples(
         try:
             agent = await resources.provision_agent(f"group-{spec.id}")
             running[spec.id] = await start_example(spec, agent, repo, settings)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
             record_result(
                 results,
                 Result("together", spec.id, "fail", f"startup: {error}"),
@@ -910,7 +910,7 @@ async def exercise_shared_turn_reported(
     try:
         await exercise_shared_turn(running, resources, capture, room_id)
         result = Result("shared-room", running.spec.id, "pass")
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         result = Result("shared-room", running.spec.id, "fail", str(error))
     record_result(results, result)
 
@@ -939,7 +939,7 @@ async def exercise_shared_room(
             title="example-hunt-shared-room",
             participants=[item.agent.id for item in running.values()],
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_shared_setup_failure(running, results, error)
         return
 
@@ -955,7 +955,7 @@ async def exercise_shared_room(
                 await exercise_shared_turn_reported(
                     item, resources, capture, room_id, results
                 )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_result(
             results,
             Result("shared-room", "group", "fail", f"capture: {error}"),
@@ -987,7 +987,7 @@ async def exercise_collaborations(
             await exercise_collaboration(
                 collaboration, running, resources, ws, settings, results
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
             record_result(results, Result("collaboration", label, "fail", str(error)))
 
 
@@ -1038,13 +1038,13 @@ async def run_independent_example(
         agent = await resources.provision_agent(f"solo-{spec.id}")
         running = await start_example(spec, agent, repo, settings)
         await exercise_steps(running, resources, ws, settings, "independent", results)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
         record_result(results, Result("independent", spec.id, "fail", str(error)))
     finally:
         if running is not None:
             try:
                 await stop_example(running)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
                 record_result(results, Result("cleanup", spec.id, "fail", str(error)))
 
 
@@ -1097,7 +1097,7 @@ async def run_live(plan: Plan, repo: Path, keep: bool, results: list[Result]) ->
                 )
                 try:
                     await run_group(plan, resources, ws, settings, repo, results)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 -- one example's failure is recorded in the results list; the harness must keep running the rest of the batch
                     record_result(
                         results, Result("together", "group", "fail", str(error))
                     )

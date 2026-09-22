@@ -43,7 +43,7 @@ class GatewayClient:
             response = await http_client.get(f"{self.gateway_url}/peers")
             response.raise_for_status()
             return response.json().get("peers", [])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
             logger.warning("Could not fetch peers from gateway: %s", exc)
             return []
 
@@ -61,7 +61,7 @@ class GatewayClient:
                 )
                 await client.close()
             return True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
             logger.debug("Peer %s not available: %s", peer_id, exc)
             return False
 

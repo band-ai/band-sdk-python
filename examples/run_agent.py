@@ -1001,7 +1001,7 @@ Examples:
     # Load agent credentials
     try:
         agent_id, api_key = load_agent_config(args.agent)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         parser.error(f"Failed to load agent config '{args.agent}': {e}")
 
     logger.info("Agent: %s (%s)", args.agent, agent_id)

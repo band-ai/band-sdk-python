@@ -405,7 +405,7 @@ class PlatformRuntime:
                 try:
                     execution.inject_system_message(f"[Contacts]: {msg}")
                     logger.debug("Broadcast injected into room %s: %s", room_id, msg)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
                     logger.warning(
                         "Failed to inject broadcast into room %s: %s", room_id, e
                     )

@@ -240,7 +240,7 @@ class GracefulShutdown:
         if self.on_signal:
             try:
                 self.on_signal(signum)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- teardown path must not abort cleanup of remaining resources
                 logger.warning("Error in on_signal callback: %s", e)
 
         # Set shutdown event to unblock any waiters

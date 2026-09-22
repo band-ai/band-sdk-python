@@ -679,7 +679,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             if mcp_backend is not None and client is not None:
                 try:
                     await client.disconnect_mcp_server(self._mcp_server_name)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.debug(
                         "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
                         self._mcp_server_name,

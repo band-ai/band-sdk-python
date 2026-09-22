@@ -93,6 +93,6 @@ class TrackingWebSocketClient:
         for room_id in list(self._joined_rooms):
             try:
                 await self._ws.leave_chat_room_channel(room_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- best-effort drain; a failure here should not mask the real test assertion
                 logger.debug("Failed to leave room %s during cleanup", room_id)
         self._joined_rooms.clear()

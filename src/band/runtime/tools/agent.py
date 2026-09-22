@@ -1904,7 +1904,7 @@ class AgentTools(AgentToolsProtocol):
                 )
         except ValueError as error:
             return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
             msg = f"Error validating {tool_name} arguments: {e}"
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
@@ -1921,6 +1921,6 @@ class AgentTools(AgentToolsProtocol):
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
             msg = f"Error executing {tool_name}: {e}"
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)

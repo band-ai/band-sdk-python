@@ -52,7 +52,7 @@ async def bounded_teardown(
             timeout_s,
             action,
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
         logger.warning("Failed to %s during Letta teardown: %s", action, e)
     return False
 

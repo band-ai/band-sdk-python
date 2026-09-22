@@ -292,7 +292,7 @@ class TestClaudeSDKApprovalIntegration:
                 agent_task.cancel()
                 try:
                     await agent_task
-                except (asyncio.CancelledError, Exception):
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 -- swallows the CancelledError (and any residual exception) from awaiting the task we just cancelled during test teardown
                     pass
 
     @pytest.mark.asyncio
@@ -415,5 +415,5 @@ class TestClaudeSDKApprovalIntegration:
                 agent_task.cancel()
                 try:
                     await agent_task
-                except (asyncio.CancelledError, Exception):
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 -- swallows the CancelledError (and any residual exception) from awaiting the task we just cancelled during test teardown
                     pass

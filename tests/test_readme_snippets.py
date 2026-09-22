@@ -17,14 +17,14 @@ try:
     from band.adapters import PydanticAIAdapter as _PydanticAICheck  # noqa: F401
 
     _has_pydantic_ai = True
-except (ImportError, Exception):
+except (ImportError, Exception):  # noqa: BLE001 -- a broken optional install may raise more than ImportError; used only to set a skip marker
     _has_pydantic_ai = False
 
 try:
     import claude_code_sdk  # noqa: F401
 
     _has_claude_sdk = True
-except (ImportError, Exception):
+except (ImportError, Exception):  # noqa: BLE001 -- a broken optional install may raise more than ImportError; used only to set a skip marker
     _has_claude_sdk = False
 
 skip_no_pydantic_ai = pytest.mark.skipif(

@@ -833,7 +833,7 @@ class ExecutionContext:
             if response.data is not None:
                 self.set_participants([p.model_dump() for p in response.data])
             self._participants_loaded = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             # Catches both the REST call (any exception) and set_participants
             # (ValueError on a duplicate id) -- band_sdk_core failures carry
             # .issues/.trace_context, which a bare "%s" would only stringify.
@@ -907,7 +907,7 @@ class ExecutionContext:
                 len(self._context_cache.participants),
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             logger.warning("Context hydration failed: %s", e)
             self._context_cache = ConversationContext(
                 room_id=self.room_id,

@@ -427,7 +427,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     content=json.dumps(payload, default=str),
                     message_type="tool_call",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type in {"on_tool_end", "on_tool_error"}:
@@ -449,7 +449,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     content=json.dumps(payload, default=str),
                     message_type="tool_result",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_result event: %s", e)
 
     @staticmethod

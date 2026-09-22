@@ -66,7 +66,7 @@ async def probe_upgrade_error(websocket_url: str) -> WebSocketUpgradeError | Non
     try:
         async with connect(websocket_url, open_timeout=5):
             return None
-    except Exception as probe_exc:
+    except Exception as probe_exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
         return WebSocketUpgradeError.from_exception(probe_exc)
 
 

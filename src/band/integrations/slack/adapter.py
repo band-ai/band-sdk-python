@@ -1076,7 +1076,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 or ""
             )
             handle = user.get("name", "") or ""
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- one malformed Slack event must not stop processing of subsequent events
             logger.debug("users.info failed for %s: %s", user_id, exc)
         label = (display_name, handle)
         self._user_label_cache[user_id] = label
@@ -1102,7 +1102,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 label = "DM"
             elif ch.get("name"):
                 label = f"#{ch['name']}"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- one malformed Slack event must not stop processing of subsequent events
             logger.debug("conversations.info failed for %s: %s", channel_id, exc)
         self._channel_label_cache[channel_id] = label
         return label
@@ -1312,7 +1312,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         try:
             resp = await slack.auth_test()
             bot_id = resp.get("bot_id") or None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- one malformed Slack event must not stop processing of subsequent events
             logger.debug("auth.test failed for app %s: %s", app.slug, exc)
         self._bot_ids[app.slug] = bot_id
         return bot_id

@@ -109,7 +109,7 @@ class TrackingWebSocketClient:
         for room_id in list(self._joined_rooms):
             try:
                 await self._ws.leave_chat_room_channel(room_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
                 logger.debug("Failed to leave room %s during cleanup", room_id)
         self._joined_rooms.clear()
 

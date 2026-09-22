@@ -272,7 +272,7 @@ class SimpleAdapter(Generic[H], ABC):
                 message_type=USAGE_EVENT_TYPE,
                 metadata={USAGE_METADATA_KEY: usage.to_dict()},
             )
-        except Exception as e:  # best-effort: usage reporting must never crash a turn
+        except Exception as e:  # best-effort: usage reporting must never crash a turn  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send usage event: %s", e)
 
     async def on_cleanup(self, room_id: str) -> None:

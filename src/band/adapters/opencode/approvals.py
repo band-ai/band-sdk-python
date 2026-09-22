@@ -402,7 +402,7 @@ class RoomApprovals:
             return
         try:
             await client.reply_permission(session_id, request_id, response="always")
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             self._fail_request("auto-approve permission", request_id, error=error)
 
     async def _reply_permission(
@@ -423,7 +423,7 @@ class RoomApprovals:
                 pending.request_id,
                 response=reply,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             self._fail_request("reply to permission", pending.request_id, error=error)
             return False
         self._forget(pending)
@@ -439,7 +439,7 @@ class RoomApprovals:
         _cancel_timeout(pending)
         try:
             await client.reply_question(pending.request_id, answers=answers)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             self._fail_request("answer question", pending.request_id, error=error)
             return False
         self._forget(pending)
@@ -453,7 +453,7 @@ class RoomApprovals:
         _cancel_timeout(pending)
         try:
             await client.reject_question(pending.request_id)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             self._fail_request("reject question", pending.request_id, error=error)
             return False
         self._forget(pending)

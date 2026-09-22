@@ -854,7 +854,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 content=content() if callable(content) else content,
                 message_type=message_type,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, e)
 
     async def _narrate_thinking(
@@ -1006,7 +1006,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 message_type="task",
                 metadata={SESSION_ID_METADATA_KEY: session_id},
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Room %s: Failed to persist session_id: %s", room_id, e)
 
     async def _on_tool_result(
@@ -1254,7 +1254,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         try:
             await tools.send_message(message, mentions=mentions)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
             return False
 
@@ -1335,7 +1335,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     "Use `/approvals` to list pending approvals.",
                     mentions=mention,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning(
                     "Room %s: Failed to send approval notification — declining", room_id
                 )
