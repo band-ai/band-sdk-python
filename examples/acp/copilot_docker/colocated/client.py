@@ -1,9 +1,10 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[acp]", "pydantic-settings", "python-dotenv"]
-#
-# [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# dependencies = [
+#   "band-sdk[acp]>=1.2.0",
+#   "pydantic-settings>=2.0.0",
+#   "python-dotenv>=1.2.2",
+# ]
 # ///
 """
 Host-side Band SDK client for the colocated Copilot Docker example.
