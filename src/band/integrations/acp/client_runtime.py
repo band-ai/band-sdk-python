@@ -329,6 +329,17 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
+    def _session_narrator(
+        self, session_id: str
+    ) -> Callable[[Awaitable[None]], Awaitable[None]]:
+        """Serialize a narration awaitable under the session's chunk lock."""
+
+        async def narrate(action: Awaitable[None]) -> None:
+            async with self._session_lock(session_id):
+                await action
+
+        return narrate
+
     async def session_update(
         self, session_id: str, update: object, **kwargs: object
     ) -> None:
@@ -603,16 +614,11 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     ) -> dict[str, object]:
         handler = self._permission_handlers.get(session_id)
         if handler:
-
-            async def narrate_permission(action: Awaitable[None]) -> None:
-                async with self._session_lock(session_id):
-                    await action
-
             return await handler(
                 options=options,
                 session_id=session_id,
                 tool_call=tool_call,
-                narrate_permission=narrate_permission,
+                narrate_permission=self._session_narrator(session_id),
                 **kwargs,
             )
 
@@ -632,15 +638,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         session_id = elicitation_session_id(mode, kwargs)
         handler = self._elicitation_handlers.get(session_id)
         if handler is not None:
-
-            async def narrate_elicitation(action: Awaitable[None]) -> None:
-                async with self._session_lock(session_id):
-                    await action
-
             return await handler(
                 message=message,
                 mode=mode,
-                narrate_elicitation=narrate_elicitation,
+                narrate_elicitation=self._session_narrator(session_id),
                 **kwargs,
             )
         logger.debug(

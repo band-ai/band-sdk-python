@@ -12,7 +12,7 @@ from band.core.types import MessageType
 from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.omp import OMP_APPROVAL_FORM_TOOL_NAME
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
-from tests.e2e.baseline.flaky import flaky_infra, flaky_model
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -90,7 +90,7 @@ def _denying_omp_adapter(settings: BaselineSettings) -> OmpACPAdapter:
 
 @lane(Lane.BACKENDS)
 @requires(Dep.OMP)
-@flaky_infra("OMP form elicitation depends on the model attempting a gated action")
+@flaky_model("OMP form elicitation depends on the model attempting a gated action")
 @pytest.mark.timeout(extra=BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_omp_acp_form_elicitation_denied_is_narrated(
@@ -127,5 +127,21 @@ async def test_omp_acp_form_elicitation_denied_is_narrated(
                 mid, agent.id, deadline_s=BUDGET.deadline_s
             )
             tool_calls = await capture.events(MessageType.TOOL_CALL, sender_id=agent.id)
+            tool_results = await capture.tool_results(sender_id=agent.id)
 
         tool_calls.assert_contains_any([OMP_APPROVAL_FORM_TOOL_NAME])
+        form_results = tool_results.named(OMP_APPROVAL_FORM_TOOL_NAME)
+        form_results.assert_present()
+        assert any(
+            result.is_error and "cancelled" in result.output.lower()
+            for result in form_results
+        )
+        assert any(
+            (
+                result.raw.metadata.model_dump()
+                if result.raw.metadata is not None
+                else {}
+            ).get("permission_outcome")
+            == "cancelled"
+            for result in form_results
+        )

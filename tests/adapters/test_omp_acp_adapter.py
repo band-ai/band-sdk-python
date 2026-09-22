@@ -16,7 +16,6 @@ from acp.schema import (
 from pydantic import BaseModel
 
 from band.adapters.omp_acp import (
-    DEFAULT_OMP_ACP_COMMAND,
     OmpACPAdapter,
     OmpACPAdapterConfig,
     OmpACPCollectingClient,
@@ -25,11 +24,15 @@ from band.integrations.acp.client_adapter import ACPPermissionRequest
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import ACPConfigRequest
 from band.integrations.omp import (
-    DEFAULT_OMP_ACP_COMMAND as INTEGRATION_DEFAULT,
-)
-from band.integrations.omp import (
     OMP_APPROVAL_FORM_TOOL_NAME,
+    OMP_APPROVAL_MODE_ALWAYS_ASK,
+    OMP_APPROVAL_MODE_FLAG,
+    OMP_APPROVAL_MODE_WRITE,
     OMP_APPROVE_OPTION_ID,
+    OMP_FORM_APPROVE,
+    OMP_FORM_DENY,
+    OMP_YOLO_FLAG,
+    XD_MCP_PREFIX,
 )
 from band.testing import FakeAgentTools
 from tests.integrations.acp.conftest import make_platform_message
@@ -43,12 +46,14 @@ class TestOmpACPAdapterConstruction:
 
     def test_default_command_gets_final_always_ask(self) -> None:
         adapter = OmpACPAdapter()
-        assert adapter._command[-2:] == ["--approval-mode", "always-ask"]
-        assert list(INTEGRATION_DEFAULT) == list(DEFAULT_OMP_ACP_COMMAND)
+        assert adapter._command[-2:] == [
+            OMP_APPROVAL_MODE_FLAG,
+            OMP_APPROVAL_MODE_ALWAYS_ASK,
+        ]
 
     def test_rejects_unsafe_command_in_config(self) -> None:
         with pytest.raises(ValueError):
-            OmpACPAdapter(OmpACPAdapterConfig(command=("omp", "acp", "--yolo")))
+            OmpACPAdapter(OmpACPAdapterConfig(command=("omp", "acp", OMP_YOLO_FLAG)))
 
     def test_unsafe_approval_mode_in_command_is_rejected(self) -> None:
         with pytest.raises(ValueError):
@@ -59,8 +64,8 @@ class TestOmpACPAdapterConstruction:
                         "acp",
                         "--config",
                         "unsafe.json",
-                        "--approval-mode",
-                        "write",
+                        OMP_APPROVAL_MODE_FLAG,
+                        OMP_APPROVAL_MODE_WRITE,
                     )
                 )
             )
@@ -69,7 +74,10 @@ class TestOmpACPAdapterConstruction:
         adapter = OmpACPAdapter(
             OmpACPAdapterConfig(command=("omp", "acp", "--config", "safe.json"))
         )
-        assert adapter._command[-2:] == ["--approval-mode", "always-ask"]
+        assert adapter._command[-2:] == [
+            OMP_APPROVAL_MODE_FLAG,
+            OMP_APPROVAL_MODE_ALWAYS_ASK,
+        ]
 
     def test_client_capabilities_are_form_elicitation_only(self) -> None:
         adapter = OmpACPAdapter()
@@ -142,7 +150,7 @@ class TestOmpDeviceCallNormalization:
         update.title = "write"
         update.tool_call_id = "tc-1"
         update.raw_input = {
-            "path": "xd://mcp__band__band_send_message",
+            "path": f"xd://{XD_MCP_PREFIX}band_send_message",
             "content": '{"chat_id":"r1","content":"hello"}',
         }
         update.status = "in_progress"
@@ -150,6 +158,20 @@ class TestOmpDeviceCallNormalization:
         assert chunk.tool is not None
         assert chunk.tool.name == "band_send_message"
         assert chunk.tool.arguments["content"] == "hello"
+
+    def test_collecting_client_rewrites_mcp_title(self) -> None:
+        client = OmpACPCollectingClient(
+            own_tool_names=frozenset({"band_send_message"}),
+        )
+        update = MagicMock()
+        update.session_update = "tool_call"
+        update.title = f"{XD_MCP_PREFIX}band_send_message"
+        update.tool_call_id = "tc-title"
+        update.raw_input = {"chat_id": "r1", "content": "hello"}
+        update.status = "in_progress"
+        chunk = client._tool_call_chunk(update)
+        assert chunk.tool is not None
+        assert chunk.tool.name == "band_send_message"
 
 
 class TestOmpElicitationHandler:
@@ -164,7 +186,7 @@ class TestOmpElicitationHandler:
         handler = adapter._make_elicitation_handler(MagicMock(), "room-1", "sess-1")
         schema = {
             "properties": {
-                "choice": {"enum": ["Approve", "Deny"]},
+                "choice": {"enum": [OMP_FORM_APPROVE, OMP_FORM_DENY]},
             }
         }
         response = await handler(
@@ -173,7 +195,7 @@ class TestOmpElicitationHandler:
             requested_schema=schema,
         )
         assert isinstance(response, AcceptElicitationResponse)
-        assert response.content == {"choice": "Approve"}
+        assert response.content == {"choice": OMP_FORM_APPROVE}
 
     @pytest.mark.asyncio
     async def test_form_scope_is_read_from_acp_mode_object(self) -> None:
@@ -197,7 +219,7 @@ class TestOmpElicitationHandler:
                 properties={
                     "value": ElicitationStringPropertySchema(
                         type="string",
-                        enum=["Approve", "Deny"],
+                        enum=[OMP_FORM_APPROVE, OMP_FORM_DENY],
                     )
                 },
                 required=["value"],
@@ -208,7 +230,7 @@ class TestOmpElicitationHandler:
             mode,
         )
         assert isinstance(response, AcceptElicitationResponse)
-        assert response.content == {"value": "Approve"}
+        assert response.content == {"value": OMP_FORM_APPROVE}
 
     @pytest.mark.asyncio
     async def test_malformed_form_declines(self) -> None:
@@ -232,7 +254,7 @@ class TestOmpElicitationHandler:
         emitter = MagicMock()
         emitter.open_permission = AsyncMock()
         handler = adapter._make_elicitation_handler(emitter, "room-1", "sess-1")
-        schema = {"properties": {"choice": {"enum": ["Approve", "Deny"]}}}
+        schema = {"properties": {"choice": {"enum": [OMP_FORM_APPROVE, OMP_FORM_DENY]}}}
         first = await handler(
             message="?",
             mode="form",
@@ -249,6 +271,43 @@ class TestOmpElicitationHandler:
         assert (
             calls[0].kwargs["call"].tool_call_id != calls[1].kwargs["call"].tool_call_id
         )
+        assert calls[0].kwargs["call"].name == OMP_APPROVAL_FORM_TOOL_NAME
+        assert calls[0].kwargs["outcome"] == "cancelled"
+        assert calls[1].kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_denial_via_create_elicitation_narrates_cancelled(self) -> None:
+        adapter = OmpACPAdapter()
+
+        async def deny(_request: ACPPermissionRequest) -> None:
+            return None
+
+        adapter._resolve_permission = deny
+        emitter = MagicMock()
+        emitter.open_permission = AsyncMock()
+        client = adapter._runtime_client_factory()
+        handler = adapter._make_elicitation_handler(emitter, "room-1", "sess-deny")
+        assert handler is not None
+        client.set_elicitation_handler("sess-deny", handler)
+        mode = ElicitationFormSessionMode(
+            session_id="sess-deny",
+            tool_call_id=None,
+            requested_schema=ElicitationSchema(
+                type="object",
+                properties={
+                    "value": ElicitationStringPropertySchema(
+                        type="string",
+                        enum=[OMP_FORM_APPROVE, OMP_FORM_DENY],
+                    )
+                },
+                required=["value"],
+            ),
+        )
+        response = await client.create_elicitation("Allow?", mode)
+        assert isinstance(response, DeclineElicitationResponse)
+        calls = emitter.open_permission.await_args_list
+        assert len(calls) == 1
+        assert calls[0].kwargs["outcome"] == "cancelled"
         assert calls[0].kwargs["call"].name == OMP_APPROVAL_FORM_TOOL_NAME
 
 
@@ -290,7 +349,7 @@ class TestOmpDeterministicMcpReply:
         update.title = "write"
         update.tool_call_id = "tc-band"
         update.raw_input = {
-            "path": "xd://mcp__band__band_send_message",
+            "path": f"xd://{XD_MCP_PREFIX}band_send_message",
             "content": '{"chat_id":"room-1","content":"done"}',
         }
         update.status = "completed"

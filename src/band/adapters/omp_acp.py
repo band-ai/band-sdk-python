@@ -42,7 +42,6 @@ from band.integrations.omp import (
     OMP_FORM_DENY,
     approve_deny_form_field,
     finalize_omp_command,
-    is_omp_approve_deny_form,
     normalize_omp_mcp_device_call,
     omp_elicitation_call_id,
 )
@@ -149,15 +148,14 @@ class OmpACPAdapter(ACPClientAdapter):
             **kwargs: object,
         ) -> object:
             requested_schema = elicitation_requested_schema(mode, kwargs)
-            if not is_omp_approve_deny_form(requested_schema):
+            field = approve_deny_form_field(requested_schema)
+            if field is None:
                 logger.debug(
                     "Declining unsupported OMP elicitation form for session %s",
                     session_id,
                 )
                 return DeclineElicitationResponse(action="decline")
 
-            field = approve_deny_form_field(requested_schema)
-            assert field is not None
             synthetic_call = ACPToolCall(
                 tool_call_id=omp_elicitation_call_id(session_id),
                 name=OMP_APPROVAL_FORM_TOOL_NAME,
