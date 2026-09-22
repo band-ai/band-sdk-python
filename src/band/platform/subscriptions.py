@@ -9,7 +9,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from band.client.streaming import WebSocketClient
 from band_sdk_core import (
     AgentTopicKind,
     LeaveOutcome,
@@ -18,6 +17,8 @@ from band_sdk_core import (
     chat_room_topic,
     room_participants_topic,
 )
+
+from band.client.streaming import WebSocketClient
 
 if TYPE_CHECKING:
     from band.client.streaming import (

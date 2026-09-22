@@ -9,9 +9,10 @@ Tests cover:
 
 from __future__ import annotations
 
-import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timezone
+
+import pytest
 
 from band.platform.event import ReconnectedEvent
 from band.runtime.execution import ExecutionContext
@@ -32,7 +33,7 @@ def make_message(msg_id: str, room_id: str = "room-123") -> PlatformMessage:
         sender_name="Test User",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

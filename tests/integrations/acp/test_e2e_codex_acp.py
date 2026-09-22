@@ -23,6 +23,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from acp import spawn_agent_process
+from acp.exceptions import RequestError
+from acp.schema import HttpMcpServer
 from pydantic import BaseModel
 
 from band.integrations.acp.client_profiles import NoopACPClientProfile
@@ -41,11 +44,8 @@ from band.integrations.mcp.engine import (
 )
 from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.tools import AgentTools
-from tests.toolkit.timeouts import backstop_timeout
-from acp import spawn_agent_process
-from acp.schema import HttpMcpServer
 from tests.runtime.conftest import make_participant
-from acp.exceptions import RequestError
+from tests.toolkit.timeouts import backstop_timeout
 
 logger = logging.getLogger(__name__)
 

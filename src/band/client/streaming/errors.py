@@ -26,7 +26,7 @@ class WebSocketUpgradeError(Exception):
         super().__init__(self.message)
 
     @classmethod
-    def from_exception(cls, exc: Exception) -> "WebSocketUpgradeError | None":
+    def from_exception(cls, exc: Exception) -> WebSocketUpgradeError | None:
         """Parse a websockets handshake exception when it exposes the HTTP response."""
         response = getattr(exc, "response", None)
         status_code = getattr(response, "status_code", None)

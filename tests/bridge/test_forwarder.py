@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-
 from bridge_core.config import AgentCoreTarget, HTTPTarget
 from bridge_core.forwarder import (
     AgentCoreForwarder,

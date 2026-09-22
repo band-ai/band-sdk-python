@@ -14,13 +14,13 @@ import logging
 from typing import Any
 from unittest.mock import MagicMock
 
-from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactAddedEvent,
-)
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
     ContactAddedPayload,
+    ContactRequestReceivedPayload,
+)
+from band.platform.event import (
+    ContactAddedEvent,
+    ContactRequestReceivedEvent,
 )
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contact_tools import ContactTools

@@ -150,7 +150,7 @@ class TestToolBridging:
             b: int
 
             @model_validator(mode="after")
-            def check_order(self) -> "PairInput":
+            def check_order(self) -> PairInput:
                 if self.a >= self.b:
                     raise ValueError("a must be less than b")
                 return self

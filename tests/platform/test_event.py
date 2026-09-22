@@ -1,23 +1,23 @@
 """Tests for platform events using tagged union pattern."""
 
-from band.platform.event import (
-    MessageEvent,
-    RoomAddedEvent,
-    RoomDeletedEvent,
-    RoomRemovedEvent,
-    ParticipantAddedEvent,
-    ParticipantRemovedEvent,
-    PlatformEvent,
-)
 from band.client.streaming import (
     MessageCreatedPayload,
+    MessageMetadata,
+    ParticipantAddedPayload,
+    ParticipantRemovedPayload,
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
-    ParticipantAddedPayload,
-    ParticipantRemovedPayload,
-    MessageMetadata,
     WireEvent,
+)
+from band.platform.event import (
+    MessageEvent,
+    ParticipantAddedEvent,
+    ParticipantRemovedEvent,
+    PlatformEvent,
+    RoomAddedEvent,
+    RoomDeletedEvent,
+    RoomRemovedEvent,
 )
 
 

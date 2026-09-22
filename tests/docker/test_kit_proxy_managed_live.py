@@ -47,7 +47,7 @@ from tests.docker.toolkit.sbx_cli import (
     sandbox_name,
     sbx_available,
 )
-from tests.e2e.baseline.settings import BaselineSettings, BandEndpoints
+from tests.e2e.baseline.settings import BandEndpoints, BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps

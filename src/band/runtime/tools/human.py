@@ -40,7 +40,7 @@ class HumanTools:
     verbatim; widening to full Fern parity is explicitly out of scope.
     """
 
-    def __init__(self, rest: "AsyncRestClient") -> None:
+    def __init__(self, rest: AsyncRestClient) -> None:
         """Bind this HumanTools instance to a user-scoped REST client."""
         self.rest = rest
 
@@ -234,7 +234,7 @@ class HumanTools:
         )
         since_dt = None
         if since:
-            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            since_dt = datetime.fromisoformat(since)
         return await self.rest.human_api_messages.list_my_chat_messages(
             chat_id=chat_id,
             page=page,

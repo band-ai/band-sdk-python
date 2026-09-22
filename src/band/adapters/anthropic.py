@@ -15,6 +15,7 @@ from anthropic import AsyncAnthropic
 from anthropic.types import Message, MessageParam, TextBlock, ToolParam, ToolUseBlock
 from typing_extensions import Unpack
 
+from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -26,7 +27,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -278,7 +278,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         tools=tool_schemas,
                     )
                 except Exception as e:
-                    logger.error("Error calling Anthropic: %s", e, exc_info=True)
+                    logger.exception("Error calling Anthropic")
                     await self._report_error(tools, str(e))
                     raise  # Re-raise so message is marked as failed
 

@@ -12,10 +12,12 @@ from a2a.client import Client, ClientConfig, ClientFactory
 from a2a.helpers import get_message_text, new_text_message
 from a2a.types import (
     Message as A2AMessage,
+)
+from a2a.types import (
     Role,
     SendMessageRequest,
-    SubscribeToTaskRequest,
     StreamResponse,
+    SubscribeToTaskRequest,
     Task,
     TaskState,
 )
@@ -173,7 +175,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 )
 
         except Exception as e:
-            logger.exception("A2A agent error: %s", e)
+            logger.exception("A2A agent error")
             await tools.send_event(
                 content=f"A2A agent error: {e}",
                 message_type="error",

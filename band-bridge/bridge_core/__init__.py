@@ -34,7 +34,6 @@ __all__ = [
     "HealthServer",
     "ReconnectConfig",
     "Target",
-    "BandBridge",
     "build_forwarder",
     "main",
 ]

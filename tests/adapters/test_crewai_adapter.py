@@ -13,11 +13,11 @@ import asyncio
 import concurrent.futures
 import contextlib
 import importlib
+import json
 import sys
 import threading
 import warnings
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -81,7 +81,7 @@ def crewai_mocks(monkeypatch):
 
 
 @pytest.fixture
-def CrewAIAdapter(crewai_mocks) -> type["CrewAIAdapterType"]:
+def CrewAIAdapter(crewai_mocks) -> type[CrewAIAdapterType]:
 
     module = importlib.import_module("band.adapters.crewai")
     return module.CrewAIAdapter
@@ -98,7 +98,7 @@ def sample_message():
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -418,7 +418,7 @@ class TestOnMessage:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         await adapter.on_message(
             msg=followup,
@@ -1610,7 +1610,9 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitToolCallsReporter.report_call should not propagate."""
-        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        from band.integrations.crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            EmitToolCallsReporter,
+        )
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         reporter = EmitToolCallsReporter(adapter.features)
@@ -1624,7 +1626,9 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitToolCallsReporter.report_result should not propagate."""
-        from band.integrations.crewai import EmitToolCallsReporter  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        from band.integrations.crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            EmitToolCallsReporter,
+        )
 
         adapter = CrewAIAdapter(emit=Emit.TOOL_CALLS)
         reporter = EmitToolCallsReporter(adapter.features)

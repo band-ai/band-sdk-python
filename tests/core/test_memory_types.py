@@ -127,8 +127,10 @@ class TestValidateMemoryTypeForSystem:
             (
                 "type",
                 "invalid_value",
-                "type `semantic` is not valid for system `sensory`; "
-                "expected one of: iconic, echoic, haptic",
+                (
+                    "type `semantic` is not valid for system `sensory`; "
+                    "expected one of: iconic, echoic, haptic"
+                ),
             ),
         )
 

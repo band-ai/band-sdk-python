@@ -12,8 +12,8 @@ import pytest
 from pydantic import ValidationError
 
 from band import (
-    LogSettings,
     LoggingStyle,
+    LogSettings,
     LogStream,
     configure_logging_from_env,
 )

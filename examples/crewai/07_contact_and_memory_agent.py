@@ -29,8 +29,8 @@ from dotenv import load_dotenv
 
 from band import Agent, configure_logging
 from band.adapters import CrewAIAdapter
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
 from band.core.types import Capability
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)

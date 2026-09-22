@@ -6,10 +6,11 @@ Extracted from core/types.py - data structures used across the runtime layer.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 # --- Constants for synthetic messages (injected by SDK, not from platform) ---
 #

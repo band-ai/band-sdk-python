@@ -40,6 +40,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
+from typing import Self
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,7 @@ class CircuitBreaker:
         self._end_requested = False  # presenter posted the end phrase
         self.stop_reason: str = ""  # human-readable why, for the conductor's closer
 
-    def __enter__(self) -> CircuitBreaker:
+    def __enter__(self) -> Self:
         """Enter the guarded meeting; the caller drives ``record``/``poll`` inside
         the ``with`` block."""
         return self

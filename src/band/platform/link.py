@@ -12,45 +12,45 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from band_sdk_core import AgentTopicKind, SessionState
+
 from band.client.rest import AsyncRestClient
-from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
+from band.config.settings import DEFAULT_REST_URL, DEFAULT_WS_URL
 from band.core.types import PlatformConnection
+from band.platform.event import (
+    ContactAddedEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
+    MessageEvent,
+    ParticipantAddedEvent,
+    ParticipantRemovedEvent,
+    PlatformEvent,
+    ReconnectedEvent,
+    RoomAddedEvent,
+    RoomDeletedEvent,
+    RoomRemovedEvent,
+    WebSocketDisconnectedEvent,
+)
 from band.platform.message_lifecycle import MessageLifecycle
 from band.platform.subscriptions import SubscriptionManager
 from band.runtime.types import PlatformMessage
-from band_sdk_core import AgentTopicKind, SessionState
-
-from band.platform.event import (
-    MessageEvent,
-    RoomAddedEvent,
-    RoomRemovedEvent,
-    RoomDeletedEvent,
-    ReconnectedEvent,
-    WebSocketDisconnectedEvent,
-    ParticipantAddedEvent,
-    ParticipantRemovedEvent,
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
-    PlatformEvent,
-)
 
 if TYPE_CHECKING:
     from band.client.streaming import (
+        AgentControlPayload,
+        ContactAddedPayload,
+        ContactRemovedPayload,
+        ContactRequestReceivedPayload,
+        ContactRequestUpdatedPayload,
         MessageCreatedPayload,
         ParticipantAddedPayload,
         ParticipantRemovedPayload,
         RoomAddedPayload,
         RoomDeletedPayload,
         RoomRemovedPayload,
-        ContactRequestReceivedPayload,
-        ContactRequestUpdatedPayload,
-        ContactAddedPayload,
-        ContactRemovedPayload,
         SupersedePayload,
-        AgentControlPayload,
     )
 
 logger = logging.getLogger(__name__)
@@ -347,7 +347,7 @@ class BandLink:
         """
         await self._subscriptions_manager.drain_reconciliation(self._connected_ws())
 
-    async def _on_supersede(self, payload: "SupersedePayload") -> None:
+    async def _on_supersede(self, payload: SupersedePayload) -> None:
         """Handle an agent_control supersede event before the platform closes
         the socket. Session arbitrates whether this specific supersede is
         actually current (not a stale notification about an epoch this
@@ -387,7 +387,7 @@ class BandLink:
         )
         self._queue_event(WebSocketDisconnectedEvent(payload=reason))
 
-    async def _on_control(self, payload: "AgentControlPayload") -> None:
+    async def _on_control(self, payload: AgentControlPayload) -> None:
         """Handle an ``agent.control`` push (interrupt/stop/play).
 
         Invoked directly from the WebSocket receive task. Forwards to the
@@ -428,14 +428,14 @@ class BandLink:
         """Queue a synthetic event for processing (public API)."""
         self._queue_event(event)
 
-    async def _on_room_added(self, payload: "RoomAddedPayload") -> None:
+    async def _on_room_added(self, payload: RoomAddedPayload) -> None:
         event = RoomAddedEvent(
             room_id=payload.id,
             payload=payload,
         )
         self._queue_event(event)
 
-    async def _on_room_removed(self, payload: "RoomRemovedPayload") -> None:
+    async def _on_room_removed(self, payload: RoomRemovedPayload) -> None:
         event = RoomRemovedEvent(
             room_id=payload.id,
             payload=payload,
@@ -443,7 +443,7 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_message_created(
-        self, room_id: str, payload: "MessageCreatedPayload"
+        self, room_id: str, payload: MessageCreatedPayload
     ) -> None:
         event = MessageEvent(
             room_id=room_id,
@@ -451,9 +451,7 @@ class BandLink:
         )
         self._queue_event(event)
 
-    async def _on_room_deleted(
-        self, room_id: str, payload: "RoomDeletedPayload"
-    ) -> None:
+    async def _on_room_deleted(self, room_id: str, payload: RoomDeletedPayload) -> None:
         """
         Handle room_deleted from WebSocket.
 
@@ -466,7 +464,7 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_participant_added(
-        self, room_id: str, payload: "ParticipantAddedPayload"
+        self, room_id: str, payload: ParticipantAddedPayload
     ) -> None:
         """Payload is already validated by WebSocketClient._handle_events()."""
         event = ParticipantAddedEvent(
@@ -476,7 +474,7 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_participant_removed(
-        self, room_id: str, payload: "ParticipantRemovedPayload"
+        self, room_id: str, payload: ParticipantRemovedPayload
     ) -> None:
         """Payload is already validated by WebSocketClient._handle_events()."""
         event = ParticipantRemovedEvent(
@@ -486,7 +484,7 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_contact_request_received(
-        self, payload: "ContactRequestReceivedPayload"
+        self, payload: ContactRequestReceivedPayload
     ) -> None:
         """Handle contact_request_received from WebSocket."""
         logger.debug(
@@ -502,7 +500,7 @@ class BandLink:
         self._queue_event(event)
 
     async def _on_contact_request_updated(
-        self, payload: "ContactRequestUpdatedPayload"
+        self, payload: ContactRequestUpdatedPayload
     ) -> None:
         """Handle contact_request_updated from WebSocket."""
         logger.debug(
@@ -516,7 +514,7 @@ class BandLink:
         )
         self._queue_event(event)
 
-    async def _on_contact_added(self, payload: "ContactAddedPayload") -> None:
+    async def _on_contact_added(self, payload: ContactAddedPayload) -> None:
         """Handle contact_added from WebSocket."""
         logger.debug(
             "WebSocket: contact_added %s (%s), contact_id=%s",
@@ -530,7 +528,7 @@ class BandLink:
         )
         self._queue_event(event)
 
-    async def _on_contact_removed(self, payload: "ContactRemovedPayload") -> None:
+    async def _on_contact_removed(self, payload: ContactRemovedPayload) -> None:
         """Handle contact_removed from WebSocket."""
         logger.debug("WebSocket: contact_removed contact_id=%s", payload.id)
         event = ContactRemovedEvent(

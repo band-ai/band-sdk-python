@@ -17,6 +17,7 @@ def make_peer(peer_id: str, name: str, description: str = "") -> Peer:
         handle=f"test/{name.lower().replace(' ', '-')}",
         is_contact=False,
         source="registry",
+        online=True,
     )
 
 

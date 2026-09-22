@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
 from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import Capability, Emit, PlatformMessage
 
 from .helpers import make_capture_graph
-from langchain_core.tools import tool
-from langgraph.graph import END, START, MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode
 
 
 class TestOnMessage:
@@ -184,7 +184,7 @@ class TestOnMessage:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         with patch(

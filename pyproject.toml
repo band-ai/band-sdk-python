@@ -465,9 +465,20 @@ conflicts = [
 ]
 
 [tool.ruff.lint]
-# extend-select adds to ruff's default rule set (E4, E7, E9, F) rather than
-# replacing it, so enabling PLC0415 doesn't change any other lint behavior.
+# extend-select adds to ruff's default rule set rather than replacing it, so
+# enabling PLC0415 doesn't change any other lint behavior. Ruff 0.16 grew that
+# default from 59 to 413 rules; this repo adopted the wider set deliberately
+# rather than pinning back to the old default.
 extend-select = ["PLC0415"]
+
+# TRY004 ("isinstance + raise ValueError should be TypeError") conflicts with
+# this repo's own convention (see CLAUDE.md: "Use raise ValueError(...) for
+# missing required config"): every isinstance check this rule flags here
+# validates the *shape* of external/config data (JSON payloads, env values,
+# wire messages), not a Python argument type — ValueError is the correct,
+# repo-mandated exception for that, and rewriting to TypeError would also
+# risk breaking callers that catch ValueError around config parsing.
+ignore = ["TRY004"]
 
 [tool.pyrefly]
 project_includes = [

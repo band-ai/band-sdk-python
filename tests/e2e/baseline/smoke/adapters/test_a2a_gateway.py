@@ -28,7 +28,6 @@ from a2a.types import Role, SendMessageRequest
 
 from band.integrations.a2a.adapter import _SSE_READ_TIMEOUT_S
 from band.integrations.a2a.gateway import A2AGatewayAdapter
-
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.toolkit.provisioning import (

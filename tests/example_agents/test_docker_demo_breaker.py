@@ -290,9 +290,8 @@ def test_context_manager_closes_the_meeting_on_exit(config: BreakerConfig) -> No
 
 
 def test_context_manager_does_not_suppress_exceptions(config: BreakerConfig) -> None:
-    with pytest.raises(ValueError):
-        with CircuitBreaker(config, start_time=0.0):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), CircuitBreaker(config, start_time=0.0):
+        raise ValueError("boom")
 
 
 # --- interactive open floor -----------------------------------------------------

@@ -126,7 +126,7 @@ class CopilotACPAdapter(ACPClientAdapter):
 
 
 __all__ = [
+    "DEFAULT_COPILOT_COMMAND",
     "CopilotACPAdapter",
     "CopilotACPAdapterConfig",
-    "DEFAULT_COPILOT_COMMAND",
 ]

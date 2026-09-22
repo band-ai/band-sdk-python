@@ -12,17 +12,16 @@ provision, run and reap them — so the body has no construction or lifecycle gl
 
 from __future__ import annotations
 
-import pytest
-
 from collections.abc import Awaitable, Callable
 
+import pytest
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import CaptureFactory
 
 JudgeFn = Callable[..., Awaitable[Verdict]]
 

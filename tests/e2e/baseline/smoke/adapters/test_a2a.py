@@ -20,7 +20,6 @@ from __future__ import annotations
 import pytest
 
 from band.integrations.a2a import A2AAdapter
-
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.adapters.a2aServer import (

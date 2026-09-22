@@ -33,13 +33,11 @@ from band.integrations.slack.adapter import SlackAdapter
 from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.testing.platform import platform_connection_stub
-
 from tests.integrations.slack.test_wrapping import (
-    _SlackReplyBrain,
     _make_rest_mock,
     _mention_event,
+    _SlackReplyBrain,
 )
-
 
 # Lenient p95 bar; see module docstring. Target is 50 ms; this is
 # 2× headroom for CI noise.

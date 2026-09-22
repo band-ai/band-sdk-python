@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from band.runtime.formatters import (
     _MAX_PARTICIPANT_DESCRIPTION_LENGTH,
-    format_message_for_llm,
-    format_history_for_llm,
     build_participants_message,
+    format_history_for_llm,
+    format_message_for_llm,
     messages_before,
     replace_uuid_mentions,
     strip_leading_mentions,

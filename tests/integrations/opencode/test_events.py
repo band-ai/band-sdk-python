@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from band.core.types import TurnUsage
 from band.integrations.opencode import (
+    UNKNOWN_OPENCODE_ERROR,
     MessagePartDeltaEvent,
     MessagePartUpdatedEvent,
     MessageUpdatedEvent,
@@ -13,7 +14,6 @@ from band.integrations.opencode import (
     QuestionAskedEvent,
     SessionErrorEvent,
     SessionIdleEvent,
-    UNKNOWN_OPENCODE_ERROR,
     UnknownOpencodeEvent,
     describe_error,
     parse_opencode_event,

@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
     AsyncRestClient,
     ChatEventRequest,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
     ChatRoomRequest,
-    DEFAULT_REQUEST_OPTIONS,
 )
 from band.converters.acp_server import ACPServerHistoryConverter
 from band.core.content import BLANK_CONTENT_ERROR
@@ -260,11 +260,10 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except Exception:
-            logger.error(
+            logger.exception(
                 "Could not fetch agent identity for mention filtering. "
                 "Self-mention filtering will be disabled. "
-                "Check that your API key is valid and the REST URL is reachable.",
-                exc_info=True,
+                "Check that your API key is valid and the REST URL is reachable."
             )
 
         logger.info("ACP server adapter started: %s", agent_name)
@@ -427,7 +426,7 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
                 pending.done_event.wait(),
                 timeout=_PROMPT_TIMEOUT_SECONDS,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self._finish_pending_prompt(room_id)
             logger.error(
                 "Prompt timed out after %ds for session %s (room %s)",

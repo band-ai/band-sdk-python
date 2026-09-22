@@ -9,7 +9,7 @@ stream event handling, execution reporting, and custom tools.
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NamedTuple
@@ -58,8 +58,8 @@ from band.adapters.pydantic_ai import (
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import Capability, Emit, PlatformMessage, TurnUsage
 from band.runtime.custom_tools import get_custom_tool_name
-from tests.adapters.usage_events import sent_usage_payloads
 from band.runtime.tools import get_tool_description
+from tests.adapters.usage_events import sent_usage_payloads
 from tests.framework_configs.adapters import pydantic_ai_probe_tools
 
 
@@ -142,7 +142,7 @@ def sample_message():
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 

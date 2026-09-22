@@ -6,8 +6,8 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 from typing_extensions import Unpack
 
@@ -212,7 +212,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         is already rejected at config construction — see LettaAdapterConfig).
         """
         try:
-            from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency  # noqa: PLC0415
+            from letta_client import (  # type: ignore[import-not-found]  # optional dependency  # noqa: PLC0415
+                AsyncLetta,
+            )
         except ImportError:
             raise ImportError(
                 "letta-client is required for LettaAdapter. "
@@ -283,7 +285,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     await self._mcp.ensure_ready(self._client)
                     await self._ensure_agent(room_id, history, tools)
         except Exception as e:
-            logger.exception("Room %s: Failed to prepare Letta session: %s", room_id, e)
+            logger.exception("Room %s: Failed to prepare Letta session", room_id)
             await self._report_error(tools, str(e))
             return
 
@@ -418,7 +420,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 ),
                 timeout=self.config.turn_timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "Room %s: Letta turn timed out after %ss",
                 room_id,
@@ -429,12 +431,12 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 f"Letta agent response timed out after {self.config.turn_timeout_s}s",
             )
         except Exception as e:
-            logger.exception("Room %s: Error during Letta turn: %s", room_id, e)
+            logger.exception("Room %s: Error during Letta turn", room_id)
             await self._report_error(tools, str(e))
         else:
             if room_ctx.pending_seed:
                 room_ctx.pending_seed = []
-            room_ctx.last_interaction = datetime.now(timezone.utc)
+            room_ctx.last_interaction = datetime.now(UTC)
             if final_text_parts:
                 room_ctx.summary = self._extract_summary(
                     final_text_parts, self.config.summary_max_length
@@ -1028,7 +1030,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             metadata: dict[str, Any] = {
                 "letta_agent_id": agent_id,
                 "letta_room_id": room_id,
-                "letta_created_at": datetime.now(timezone.utc).isoformat(),
+                "letta_created_at": datetime.now(UTC).isoformat(),
             }
             if conversation_id:
                 metadata["letta_conversation_id"] = conversation_id
@@ -1144,10 +1146,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     @staticmethod
     def _format_time_ago(dt: datetime) -> str:
         """Format a datetime as a human-readable time-ago string."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Ensure dt is timezone-aware for comparison
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         delta = now - dt
         total_seconds = int(delta.total_seconds())
         if total_seconds < 60:

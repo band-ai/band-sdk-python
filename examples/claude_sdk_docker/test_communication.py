@@ -17,9 +17,6 @@ import sys
 from pathlib import Path
 
 import yaml
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from band import LoggingStyle, LogSettings
 from band_rest import AsyncRestClient
 from band_rest.types import (
     ChatMessageRequest,
@@ -27,6 +24,9 @@ from band_rest.types import (
     ChatRoomRequest,
     ParticipantRequest,
 )
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band import LoggingStyle, LogSettings
 
 # The bare message format only exists for the standard style, so the style is
 # pinned rather than read from BAND_LOG_CONSOLE_STYLE.

@@ -18,7 +18,10 @@ from dataclasses import dataclass
 from typing import Any
 
 try:
-    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions  # type: ignore[import-not-found]
+    from claude_agent_sdk import (  # type: ignore[import-not-found]
+        ClaudeAgentOptions,
+        ClaudeSDKClient,
+    )
     from claude_agent_sdk.types import CanUseTool  # type: ignore[import-not-found]
 
     _CLAUDE_SDK_AVAILABLE = True
@@ -172,7 +175,7 @@ class ClaudeSessionManager:
                 logger.debug("Session loop cancelled")
                 break
             except Exception as e:
-                logger.error("Error in session loop: %s", e, exc_info=True)
+                logger.exception("Error in session loop")
                 if cmd and cmd.result_future and not cmd.result_future.done():
                     cmd.result_future.set_exception(e)
 

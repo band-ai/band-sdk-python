@@ -21,11 +21,11 @@ import logging
 import pytest
 
 from band.client.streaming import (
-    WebSocketClient,
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
+    WebSocketClient,
 )
 from tests.integration.conftest import requires_multi_agent
 
@@ -202,7 +202,7 @@ class TestContactWebSocketEvents:
                 # Wait for WebSocket event
                 try:
                     await asyncio.wait_for(request_received.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pytest.fail("Timeout waiting for contact_request_received event")
 
             # Verify event
@@ -302,7 +302,7 @@ class TestContactWebSocketEvents:
                 # Wait for request event
                 try:
                     await asyncio.wait_for(request_received.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pytest.fail("Timeout waiting for contact_request_received")
 
                 # Agent 2 approves the request
@@ -316,7 +316,7 @@ class TestContactWebSocketEvents:
                 # Wait for contact_added event
                 try:
                     await asyncio.wait_for(contact_added.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pytest.fail("Timeout waiting for contact_added event")
 
             # Verify
@@ -426,7 +426,7 @@ class TestContactWebSocketEvents:
                 # Wait for event
                 try:
                     await asyncio.wait_for(contact_removed.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pytest.fail("Timeout waiting for contact_removed event")
 
             # Verify
@@ -521,7 +521,7 @@ class TestContactWebSocketEvents:
                 # Wait for request event
                 try:
                     await asyncio.wait_for(request_received.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pytest.fail("Timeout waiting for contact_request_received")
 
                 # Agent 2 rejects the request
@@ -535,7 +535,7 @@ class TestContactWebSocketEvents:
                 # Wait for updated event
                 try:
                     await asyncio.wait_for(request_updated.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pytest.fail("Timeout waiting for contact_request_updated event")
 
             # Verify

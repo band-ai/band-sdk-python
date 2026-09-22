@@ -14,8 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from band_sdk_core import EventType
 
 from band.client.streaming.client import (
+    _PAYLOAD_MODELS,
     AgentControlPayload,
     ContactAddedPayload,
     ContactRequestReceivedPayload,
@@ -24,9 +26,7 @@ from band.client.streaming.client import (
     RoomRemovedPayload,
     SupersedePayload,
     WireEvent,
-    _PAYLOAD_MODELS,
 )
-from band_sdk_core import EventType
 
 
 def make_message_created(**overrides: Any) -> dict[str, Any]:

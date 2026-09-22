@@ -32,11 +32,10 @@ exclusion the other rehydration tests spell out.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from band.client.streaming import DeliveryStatus
-
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -170,27 +169,25 @@ async def test_restart_usage_splits_replay_and_inference(
 
     # Run 1: state a note; the boundary is the server timestamp of its reply, used to
     # scope the run-2 usage read so run-1's own usage record is excluded.
-    async with cell.run_as(identity):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                REMEMBER.format(note=note),
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            # Wait for the reply so turn_boundary() has a timestamp to read.
-            await capture.wait_for_reply(mid, identity.id)
-            boundary = capture.turn_boundary()
+    async with cell.run_as(identity), reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            REMEMBER.format(note=note),
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        # Wait for the reply so turn_boundary() has a timestamp to read.
+        await capture.wait_for_reply(mid, identity.id)
+        boundary = capture.turn_boundary()
 
     # Run 2 (cold): a post-boot recall turn. Non-zero input tokens mean the rehydrated
     # /context was re-sent to the model (replay); non-zero output means a fresh reply
     # (new inference) — the L4 token gate, scoped past the run-1 boundary.
-    async with cell.run_as(identity):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id, RECALL, mention_id=identity.id, mention_name=identity.name
-            )
-            await capture.wait_for_processed(mid, identity.id)
-            usage = await capture.usage(sender_id=identity.id, since=boundary)
+    async with cell.run_as(identity), reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id, RECALL, mention_id=identity.id, mention_name=identity.name
+        )
+        await capture.wait_for_processed(mid, identity.id)
+        usage = await capture.usage(sender_id=identity.id, since=boundary)
 
     usage.assert_nonzero_input_and_output()

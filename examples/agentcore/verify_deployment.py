@@ -54,15 +54,14 @@ import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Self
 
+from band_rest import AsyncRestClient, ChatMessageRequest, CreateMyChatRoomRequestChat
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
+from band_rest.types import ParticipantRequest
 from dotenv import load_dotenv
 
 from band import LogSettings
-from band_rest import ChatMessageRequest
-from band_rest.types import ChatMessageRequestMentionsItem as Mention
-from band_rest import CreateMyChatRoomRequestChat
-from band_rest.types import ParticipantRequest
-from band_rest import AsyncRestClient
 from band.client.streaming import WebSocketClient
 
 logger = logging.getLogger("verify_deployment")
@@ -87,7 +86,7 @@ class TrackingWebSocketClient:
         self._ws = ws
         self._joined_rooms: set[str] = set()
 
-    async def __aenter__(self) -> TrackingWebSocketClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:

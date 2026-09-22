@@ -8,13 +8,20 @@ connection or subscription state, only a REST client.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
-from band.runtime.types import PlatformMessage
 from band_rest.core.api_error import ApiError
+from band_rest.types.chat_message_metadata import ChatMessageMetadata
+
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.runtime.types import PlatformMessage
 
 logger = logging.getLogger(__name__)
+
+
+def _message_metadata(metadata: ChatMessageMetadata | None) -> dict[str, object]:
+    """Normalize a Fern-typed message metadata into the plain dict PlatformMessage carries."""
+    return metadata.model_dump(exclude_none=True) if metadata else {}
 
 
 class MessageLifecycle:
@@ -194,8 +201,8 @@ class MessageLifecycle:
             sender_type=item.sender_type,
             sender_name=item.sender_name or "",
             message_type=item.message_type,
-            metadata=item.metadata or {},
-            created_at=item.inserted_at or datetime.now(timezone.utc),
+            metadata=_message_metadata(item.metadata),
+            created_at=item.inserted_at or datetime.now(UTC),
         )
 
     async def get_stale_processing_messages(
@@ -235,8 +242,8 @@ class MessageLifecycle:
                             sender_type=item.sender_type,
                             sender_name=item.sender_name or "",
                             message_type=item.message_type,
-                            metadata=item.metadata or {},
-                            created_at=item.inserted_at or datetime.now(timezone.utc),
+                            metadata=_message_metadata(item.metadata),
+                            created_at=item.inserted_at or datetime.now(UTC),
                         )
                     )
 

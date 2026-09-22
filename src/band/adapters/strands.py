@@ -34,6 +34,7 @@ except ImportError as error:
 from band_rest.core.api_error import ApiError
 from typing_extensions import Unpack
 
+from band.converters.strands import StrandsHistoryConverter, StrandsMessages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -46,7 +47,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.strands import StrandsHistoryConverter, StrandsMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -56,8 +56,8 @@ from band.runtime.custom_tools import (
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
-    ToolDefinition,
     ToolCallOutcome,
+    ToolDefinition,
     band_tool_errored,
     decode_image_block,
     get_band_tool_category,

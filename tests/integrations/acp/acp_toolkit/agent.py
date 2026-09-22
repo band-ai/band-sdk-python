@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from acp import RequestError
 from acp.agent.connection import AgentSideConnection
 from acp.helpers import (
     plan_entry,
@@ -16,7 +17,6 @@ from acp.helpers import (
     update_plan,
     update_tool_call,
 )
-from acp import RequestError
 from acp.schema import (
     AgentCapabilities,
     InitializeResponse,
@@ -29,7 +29,6 @@ from acp.schema import (
 )
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
-
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 
@@ -286,14 +285,16 @@ class FakeACPAgent:
         if getattr(server_config, "type", None) != "http":
             raise ValueError(f"MCP server {server!r} does not use streamable HTTP")
 
-        async with streamable_http_client(server_config.url) as (
-            read_stream,
-            write_stream,
-            _,
+        async with (
+            streamable_http_client(server_config.url) as (
+                read_stream,
+                write_stream,
+                _,
+            ),
+            ClientSession(read_stream, write_stream) as client,
         ):
-            async with ClientSession(read_stream, write_stream) as client:
-                await client.initialize()
-                result = await client.call_tool(tool_name, arguments)
+            await client.initialize()
+            result = await client.call_tool(tool_name, arguments)
 
         if result.isError:
             raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")

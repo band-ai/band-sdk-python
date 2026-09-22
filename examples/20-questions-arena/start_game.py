@@ -14,14 +14,14 @@ import asyncio
 import logging
 import sys
 
-from dotenv import load_dotenv
 from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
 from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
-
+from dotenv import load_dotenv
 from setup_logging import setup_logging
+
 from band.config import PlatformSettings, load_agent_config
 
 logger = logging.getLogger(__name__)

@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from band_sdk_core import ClaimRegistry, RetryTracker
 
 from band.client.streaming import MessageMetadata
 from band.logging_config import TRACE_CONTEXT, trace_context_scope
 from band.runtime.execution import (
+    BacklogProcessResult,
     Execution,
     ExecutionContext,
     ExecutionState,
-    BacklogProcessResult,
     _error_label,
 )
 from band.runtime.types import ConversationContext, PlatformMessage, SessionConfig
@@ -701,7 +700,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         mock_link_with_next.get_next_message = AsyncMock(
@@ -741,7 +740,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         mock_link_with_next.get_next_message = AsyncMock(return_value=sync_msg)
@@ -783,7 +782,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         mock_link_with_next.get_next_message = AsyncMock(side_effect=[sync_msg, None])
@@ -962,7 +961,7 @@ class TestCrashRecoverySync:
             sender_name=None,
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         ctx = ExecutionContext(
             "room-123",
@@ -997,7 +996,7 @@ class TestCrashRecoverySync:
             metadata={
                 "delivery_status": {"agent-123": {"status": "pending"}},
             },
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(
             side_effect=[pending_msg, None]
@@ -1066,7 +1065,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         ctx = ExecutionContext(
             "room-123",
@@ -1117,7 +1116,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(
             side_effect=[first_message, None]
@@ -1260,7 +1259,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_processed = AsyncMock(return_value=False)
@@ -1319,7 +1318,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_processed = AsyncMock(side_effect=[False, True])
@@ -1354,7 +1353,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_processed = AsyncMock(return_value=False)
@@ -1496,7 +1495,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_processed = AsyncMock(return_value=True)
@@ -1537,7 +1536,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(return_value=sync_msg)
         mock_link_with_next.mark_processing = AsyncMock(return_value=False)
@@ -1576,7 +1575,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(return_value=msg)
         mock_link_with_next.mark_processing = AsyncMock(return_value=False)
@@ -1612,7 +1611,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(return_value=backlog_msg)
         mock_link_with_next.mark_processing = AsyncMock(return_value=False)
@@ -1657,7 +1656,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(return_value=msg)
         mock_link_with_next.mark_processing = AsyncMock(return_value=False)
@@ -1692,7 +1691,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.get_next_message = AsyncMock(side_effect=[None, msg])
         mock_link_with_next.mark_processing = AsyncMock(return_value=False)
@@ -1738,7 +1737,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         mock_link_with_next.get_next_message = AsyncMock(side_effect=[failed_msg, None])
@@ -1776,7 +1775,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         mock_link_with_next.get_next_message = AsyncMock(side_effect=[msg, None])
@@ -1813,7 +1812,7 @@ class TestCrashRecoverySync:
             sender_name="User One",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         mock_link_with_next.mark_processing = AsyncMock(return_value=True)
         mock_link_with_next.mark_failed = AsyncMock(return_value=True)
@@ -2079,7 +2078,7 @@ class TestContextCacheTTL:
             room_id="room-123",
             messages=[{"id": "stale-msg"}],
             participants=ctx.participants,
-            hydrated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+            hydrated_at=datetime.now(UTC) - timedelta(seconds=301),
         )
         ctx._context_hydrated = True
 
@@ -2105,7 +2104,7 @@ class TestContextCacheTTL:
             room_id="room-123",
             messages=[{"id": "stale-msg", "content": "stale"}],
             participants=ctx.participants,
-            hydrated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+            hydrated_at=datetime.now(UTC) - timedelta(seconds=301),
         )
         ctx._context_hydrated = True
 
@@ -2146,7 +2145,7 @@ class TestContextCacheTTL:
             room_id="room-123",
             messages=[{"id": "stale-msg"}],
             participants=[],
-            hydrated_at=datetime.now(timezone.utc) - timedelta(seconds=301),
+            hydrated_at=datetime.now(UTC) - timedelta(seconds=301),
         )
         ctx._context_hydrated = True
 
@@ -2305,7 +2304,7 @@ class TestGracefulStopWithTimeout:
         # Wait for processing to start
         try:
             await asyncio.wait_for(processing_started.wait(), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # May not start if sync takes too long
 
         # Stop without timeout should cancel immediately

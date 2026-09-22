@@ -151,13 +151,13 @@ class AgentToolsProtocol(Protocol):
         format: str,
         *,
         capabilities: frozenset[Capability] | None = None,
-    ) -> list[dict[str, Any]] | list["ToolParam"]:
+    ) -> list[dict[str, Any]] | list[ToolParam]:
         """Get tool schemas in provider-specific format (openai/anthropic)."""
         ...
 
     def get_anthropic_tool_schemas(
         self, *, capabilities: frozenset[Capability] | None = None
-    ) -> list["ToolParam"]:
+    ) -> list[ToolParam]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         ...
 
@@ -262,10 +262,10 @@ class AgentToolsProtocol(Protocol):
     # Task board tools
     async def list_tasks(
         self,
-        state: "TaskListState | None" = None,
+        state: TaskListState | None = None,
         cursor: str | None = None,
         limit: int | None = None,
-    ) -> "ListChatTasksResponse":
+    ) -> ListChatTasksResponse:
         """List the shared tasks on this room's task board, in the Fern
         response envelope."""
         ...
@@ -286,12 +286,12 @@ class AgentToolsProtocol(Protocol):
     async def update_task(
         self,
         id: str,
-        status: "TaskAssignmentStatus | None" = None,
+        status: TaskAssignmentStatus | None = None,
         active_form: str | None = None,
         comment: str | None = None,
         subject: str | None = None,
         detail: str | None = None,
-        state: "TaskLifecycleState | None" = None,
+        state: TaskLifecycleState | None = None,
     ) -> Any:
         """Update a task's status, active_form, comment, subject, detail, or
         lifecycle state."""
@@ -299,7 +299,7 @@ class AgentToolsProtocol(Protocol):
 
     async def get_task_history(
         self, id: str, cursor: str | None = None, limit: int | None = None
-    ) -> "GetChatTaskHistoryResponse":
+    ) -> GetChatTaskHistoryResponse:
         """The append-only history of one task, in the Fern response envelope."""
         ...
 
@@ -332,7 +332,7 @@ class FrameworkAdapter(Protocol):
     SDK ships built-in adapters for LangGraph, Anthropic, etc.
     """
 
-    async def on_event(self, inp: "AgentInput") -> None:
+    async def on_event(self, inp: AgentInput) -> None:
         """
         Process a user/system message.
 
@@ -382,10 +382,10 @@ class Preprocessor(Protocol):
 
     async def process(
         self,
-        ctx: "ExecutionContext",
-        event: "PlatformEvent",
+        ctx: ExecutionContext,
+        event: PlatformEvent,
         agent_id: str,
-    ) -> "AgentInput | None":
+    ) -> AgentInput | None:
         """
         Process platform event into AgentInput.
 

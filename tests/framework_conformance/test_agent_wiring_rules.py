@@ -20,15 +20,15 @@ from unittest.mock import patch
 import pytest
 
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
-from tests.e2e.baseline.toolkit import adapters as adapters_module
-from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 from tests.e2e.baseline.agents import (
-    WITH_ADAPTERS_MARKER,
     PER_ADAPTER_MARKER,
+    WITH_ADAPTERS_MARKER,
     PerAdapter,
     WithAdapters,
     per_adapter,
 )
+from tests.e2e.baseline.toolkit import adapters as adapters_module
+from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 
 
 class FakeItem:

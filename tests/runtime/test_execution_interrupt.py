@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from band.client.streaming import ControlMode
-from band.runtime.execution import ExecutionContext, BacklogProcessResult
+from band.runtime.execution import BacklogProcessResult, ExecutionContext
 from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import BlockingHandler, make_message_event
 

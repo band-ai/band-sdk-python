@@ -342,10 +342,10 @@ class LettaMCPBridge:
                     "server_url": server_url,
                 },
             )
-        except Exception as create_error:
+        except Exception:
             server = await self._find(client, server_name)
             if server is None:
-                raise create_error
+                raise
             logger.info(
                 "MCP server %r create conflicted; recovered committed "
                 "registration (id=%s)",

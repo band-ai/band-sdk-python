@@ -16,7 +16,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from band_mcp import shared as shared_mod
 from band_mcp.config import Config
 from band_mcp.shared import (
@@ -24,8 +23,9 @@ from band_mcp.shared import (
     StandaloneResolver,
     build_standalone_resolver,
 )
+
 from band.core.exceptions import BandToolError
-from band.runtime.tools import ToolDefinition, SendMessageInput, GetParticipantsInput
+from band.runtime.tools import GetParticipantsInput, SendMessageInput, ToolDefinition
 from band.testing.fake_tools import FakeAgentTools
 from tests.mcp.conftest import FakeHumanTools
 

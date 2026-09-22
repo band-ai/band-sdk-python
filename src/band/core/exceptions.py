@@ -24,7 +24,7 @@ class BandConfigError(BandError):
         valid_names: Iterable[str],
         *,
         max_distance: int = 2,
-    ) -> "BandConfigError":
+    ) -> BandConfigError:
         """Build an error message with a typo suggestion if one is close enough.
 
         Args:

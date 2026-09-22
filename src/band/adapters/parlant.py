@@ -12,10 +12,11 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import ClassVar, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import Unpack
 
+from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
@@ -25,7 +26,6 @@ from band.integrations.parlant.tools import (
     set_session_tools,
     was_message_sent,
 )
-from band.converters.parlant import ParlantHistoryConverter, ParlantMessages
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
@@ -35,6 +35,10 @@ if TYPE_CHECKING:
     from parlant.core.sessions import SessionId  # type: ignore[missing-import]
 
 logger = logging.getLogger(__name__)
+
+# Every runtime "from parlant..." import below is deferred (parlant's extra is
+# kept out of this module's unconditional import surface) and is suppressed
+# for both the missing import and the deferred-import lint rule.
 
 
 # Parlant preamble message tag - used to identify acknowledgment messages before tool execution
@@ -353,7 +357,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if self._configure is not None:
             await self._configure(server, agent)
 
-        from parlant.core.application import Application  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
+        from parlant.core.application import (  # type: ignore[missing-import]  # noqa: PLC0415
+            Application,
+        )
 
         return agent, server.container[Application]
 
@@ -415,8 +421,12 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         )
 
         try:
-            from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
-            from parlant.core.sessions import EventSource  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
+            from parlant.core.app_modules.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+                Moderation,
+            )
+            from parlant.core.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+                EventSource,
+            )
 
             # Create customer message event (triggers processing)
             logger.debug("Room %s: Creating customer message event...", room_id)
@@ -444,7 +454,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             )
 
         except Exception as e:
-            logger.error("Error processing message: %s", e, exc_info=True)
+            logger.exception("Error processing message")
             await self._report_error(tools, str(e))
             raise
         finally:
@@ -528,8 +538,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return 0
 
         app = self._app
-        from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
-        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
+        from parlant.core.app_modules.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+            Moderation,
+        )
+        from parlant.core.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+            EventKind,
+            EventSource,
+        )
 
         # First, filter to only complete exchanges
         # A user message is only injected if it has a following assistant response
@@ -630,8 +645,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         app = self._app
         session_id_str = str(session_id)
-        from parlant.core.async_utils import Timeout  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
-        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]  # noqa: PLC0415 -- genuinely deferred; parlant extra kept out of this module's unconditional import surface
+        from parlant.core.async_utils import (  # type: ignore[missing-import]  # noqa: PLC0415
+            Timeout,
+        )
+        from parlant.core.sessions import (  # type: ignore[missing-import]  # noqa: PLC0415
+            EventKind,
+            EventSource,
+        )
 
         current_offset = min_offset
         # Wait up to the total response budget, polling in shorter windows. An empty
@@ -663,14 +683,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 logger.debug(
                     "Room %s: wait_for_more_events returned: %s", room_id, has_update
                 )
-            except Exception as e:
-                logger.error(
-                    "Room %s: Error waiting for update: %s",
-                    room_id,
-                    e,
-                    exc_info=True,
-                )
-                # Check if message was sent via tool before giving up
+            except Exception:
+                logger.exception(
+                    "Room %s: Error waiting for update", room_id
+                )  # Check if message was sent via tool before giving up
                 if was_message_sent(session_id_str):
                     logger.debug(
                         "Room %s: Message was sent via tool, error is acceptable",
@@ -704,13 +720,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     trace_id=None,  # Required by Parlant SDK v3.x
                 )
                 logger.debug("Room %s: Found %s agent events", room_id, len(events))
-            except Exception as e:
-                logger.error(
-                    "Room %s: Error finding events: %s",
-                    room_id,
-                    e,
-                    exc_info=True,
-                )
+            except Exception:
+                logger.exception("Room %s: Error finding events", room_id)
                 return
 
             if not events:
@@ -796,13 +807,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                                 message_content, mentions=[sender_name]
                             )
                             logger.info("Room %s: Message sent successfully", room_id)
-                        except Exception as e:
-                            logger.error(
-                                "Room %s: Error sending message: %s",
-                                room_id,
-                                e,
-                                exc_info=True,
-                            )
+                        except Exception:
+                            logger.exception("Room %s: Error sending message", room_id)
                     else:
                         logger.warning(
                             "Room %s: Empty message content in event",

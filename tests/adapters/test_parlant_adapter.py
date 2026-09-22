@@ -8,9 +8,9 @@ Application container, session management, history injection, and error handling
 """
 
 import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 import sys
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -30,7 +30,7 @@ def sample_message():
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -770,27 +770,29 @@ class TestErrorHandling:
         mock_moderation = MagicMock()
         mock_moderation.NONE = "none"
 
-        with patch.dict(
-            sys.modules,
-            {
-                "parlant.core.app_modules.sessions": MagicMock(
-                    Moderation=mock_moderation
-                ),
-                "parlant.core.sessions": MagicMock(
-                    EventSource=MagicMock(CUSTOMER="customer"),
-                ),
-            },
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "parlant.core.app_modules.sessions": MagicMock(
+                        Moderation=mock_moderation
+                    ),
+                    "parlant.core.sessions": MagicMock(
+                        EventSource=MagicMock(CUSTOMER="customer"),
+                    ),
+                },
+            ),
+            pytest.raises(Exception, match="API error"),
         ):
-            with pytest.raises(Exception, match="API error"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         # Should have tried to report error
         mock_tools.send_event.assert_called()
@@ -818,27 +820,29 @@ class TestErrorHandling:
         mock_moderation.NONE = "none"
 
         with patch("band.adapters.parlant.set_session_tools") as mock_set_tools:
-            with patch.dict(
-                sys.modules,
-                {
-                    "parlant.core.app_modules.sessions": MagicMock(
-                        Moderation=mock_moderation
-                    ),
-                    "parlant.core.sessions": MagicMock(
-                        EventSource=MagicMock(CUSTOMER="customer"),
-                    ),
-                },
+            with (
+                patch.dict(
+                    sys.modules,
+                    {
+                        "parlant.core.app_modules.sessions": MagicMock(
+                            Moderation=mock_moderation
+                        ),
+                        "parlant.core.sessions": MagicMock(
+                            EventSource=MagicMock(CUSTOMER="customer"),
+                        ),
+                    },
+                ),
+                pytest.raises(Exception),
             ):
-                with pytest.raises(Exception):
-                    await adapter.on_message(
-                        msg=sample_message,
-                        tools=mock_tools,
-                        history=[],
-                        participants_msg=None,
-                        contacts_msg=None,
-                        is_session_bootstrap=True,
-                        room_id="room-123",
-                    )
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
 
             # Tools should be cleared in finally block with session_id
             mock_set_tools.assert_any_call("session-123", None)

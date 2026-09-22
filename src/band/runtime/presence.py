@@ -9,23 +9,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from band_sdk_core import RoomMembership, RoomRoster
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.platform.event import (
+    ContactAddedEvent,
+    ContactEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
+    PlatformEvent,
+    ReconnectedEvent,
     RoomAddedEvent,
     RoomDeletedEvent,
     RoomRemovedEvent,
-    ReconnectedEvent,
-    PlatformEvent,
     WebSocketDisconnectedEvent,
-    ContactEvent,
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
 )
 from band.platform.link import BandLink
 from band.runtime.tools import iter_chat_pages
@@ -178,8 +179,8 @@ class RoomPresence:
                 await self._on_platform_event(event)
         except asyncio.CancelledError:
             logger.debug("Event consumer task cancelled")
-        except Exception as e:
-            logger.error("Error in event consumer: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Error in event consumer")
 
     async def stop(self) -> None:
         """

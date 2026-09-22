@@ -40,7 +40,6 @@ from tests.e2e.vscode.workspace import (
     scaffold_workspace,
 )
 
-
 # --- turn_prompt: the one shape every cell submits ----------------------------------
 
 

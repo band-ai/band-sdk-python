@@ -25,10 +25,9 @@ from typing import Any
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import LogSettings
-from band.core.types import Emit
-from band import Agent
+from band import Agent, LogSettings
 from band.adapters import ClaudeSDKAdapter
+from band.core.types import Emit
 
 
 class Settings(BaseSettings):

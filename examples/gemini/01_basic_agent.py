@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-
 from band import Agent, configure_logging
 from band.adapters import GeminiAdapter
 

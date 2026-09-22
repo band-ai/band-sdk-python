@@ -36,7 +36,7 @@ _FlagT = TypeVar("_FlagT", Emit, Capability)
 
 
 def _normalize_flags(
-    value: "_FlagT | Iterable[_FlagT] | None",
+    value: _FlagT | Iterable[_FlagT] | None,
     enum_cls: type[_FlagT],
 ) -> frozenset[_FlagT] | None:
     """Coerce a single member, an iterable, or ``None`` into a frozenset.
@@ -277,7 +277,6 @@ class SimpleAdapter(Generic[H], ABC):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""
-        pass
 
     async def cleanup_all(self) -> None:
         """Override to release adapter-wide resources (clients, servers).
@@ -288,7 +287,6 @@ class SimpleAdapter(Generic[H], ABC):
         runtime subprocess, a self-hosted server, an external registration —
         release here.
         """
-        pass
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""

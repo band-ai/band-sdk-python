@@ -301,6 +301,7 @@ class TestLookupPeers:
                 "handle": f"@peer{index}",
                 "is_contact": False,
                 "source": "internal",
+                "online": True,
             }
             for index in range(3)
         ]

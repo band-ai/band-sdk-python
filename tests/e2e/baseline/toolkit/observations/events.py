@@ -25,7 +25,6 @@ from typing import ClassVar
 from band_rest import ChatMessage
 
 from band.core.types import MessageType, is_usage_event
-
 from tests.e2e.baseline.toolkit.observations.assertions import (
     ContentAssertions,
     assert_nonempty,

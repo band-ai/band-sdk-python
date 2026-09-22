@@ -73,7 +73,7 @@ class StoreMemoryInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_memory_fields(self) -> "StoreMemoryInput":
+    def validate_memory_fields(self) -> StoreMemoryInput:
         band_sdk_core.validate_memory_type_for_system(self.system, self.type)
         validate_subject_scope(self.scope, self.subject_id)
         return self

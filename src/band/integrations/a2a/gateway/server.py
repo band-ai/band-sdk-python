@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from a2a.compat.v0_3.conversions import to_compat_agent_card
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
@@ -13,8 +14,8 @@ from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.routes.rest_routes import create_rest_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from a2a.compat.v0_3.conversions import to_compat_agent_card
 from a2a.utils.constants import PROTOCOL_VERSION_0_3, PROTOCOL_VERSION_CURRENT
+from band_rest import Peer
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -25,7 +26,6 @@ from band.integrations.uvicorn_server import (
     SERVER_STOP_TIMEOUT_S,
     ManagedUvicornServer,
 )
-from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 

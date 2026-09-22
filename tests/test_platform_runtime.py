@@ -1,9 +1,9 @@
 """Tests for PlatformRuntime."""
 
-from band_rest.core.api_error import ApiError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from band_rest.core.api_error import ApiError
 
 from band.core.exceptions import BandConfigError
 from band.runtime.capabilities import FeatureFlag

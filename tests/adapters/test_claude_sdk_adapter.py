@@ -12,40 +12,43 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk._errors import CLIConnectionError
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 from pydantic import BaseModel, Field
 
 from band.adapters.claude_sdk import (
-    ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
     _CLAUDE_SDK_MAX_BUFFER_BYTES,
     _DEFAULT_MODEL,
     _FORCED_DECLINE,
-    PendingApproval,
-    _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
     BAND_BASE_TOOLS,
     BAND_MEMORY_TOOLS,
     BAND_TASK_TOOLS,
+    ClaudeSDKAdapter,
+    PendingApproval,
+    _pre_tool_use_continue_hook,
 )
 from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
+from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     FILE_TOOL_NAMES,
     MAX_INLINE_IMAGE_BYTES,
-    missing_reply_error,
     mcp_tool_names,
+    missing_reply_error,
 )
-from band.core.types import Capability, Emit, PlatformMessage, ToolEventKey
-from claude_agent_sdk._errors import CLIConnectionError
-from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
-from claude_agent_sdk.types import PermissionResultDeny
-from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
@@ -53,7 +56,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 if _CLAUDE_SDK_AVAILABLE:
-    from claude_agent_sdk._errors import CLIConnectionError
     from claude_agent_sdk import (
         AssistantMessage,
         ResultMessage,
@@ -61,6 +63,7 @@ if _CLAUDE_SDK_AVAILABLE:
         ToolUseBlock,
         UserMessage,
     )
+    from claude_agent_sdk._errors import CLIConnectionError
     from claude_agent_sdk.types import PermissionResultDeny, ToolPermissionContext
 
 
@@ -132,7 +135,7 @@ def register_pending_approval(
         tool_name=tool_name,
         tool_input=tool_input if tool_input is not None else {},
         summary=summary or tool_name,
-        created_at=created_at or datetime.now(timezone.utc),
+        created_at=created_at or datetime.now(UTC),
         future=future,
         requester=requester or {"id": "test-user", "name": "Test"},
     )
@@ -180,7 +183,7 @@ def sample_message():
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -2160,7 +2163,7 @@ class TestCanUseToolCallback:
         async def approve_soon():
             await asyncio.sleep(0.05)
             pending = adapter._pending_approvals.get("room-1", {})
-            for token, item in pending.items():
+            for item in pending.values():
                 if not item.future.done():
                     item.future.set_result("accept")
 
@@ -2246,7 +2249,7 @@ class TestOnMessageCommandInterception:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         mock_manager = AsyncMock()
@@ -2285,7 +2288,7 @@ class TestOnMessageCommandInterception:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         await adapter.on_message(
@@ -2322,7 +2325,7 @@ class TestOnMessageCommandInterception:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         with (
@@ -2366,7 +2369,7 @@ class TestOnMessageCommandInterception:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         with (
@@ -2549,7 +2552,7 @@ class TestPendingApprovalEviction:
         old_future = register_pending_approval(
             adapter,
             tool_name="Old",
-            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2020, 1, 1, tzinfo=UTC),
         )
 
         # Now trigger a new approval (should evict old one)

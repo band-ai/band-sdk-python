@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.paths import SRC_ROOT
-
 import pytest
 
 from tests.framework_configs.adapters import ADAPTER_CONFIGS, ADAPTER_EXCLUDED_MODULES
@@ -19,6 +17,7 @@ from tests.framework_configs.converters import (
     CONVERTER_CONFIGS,
     CONVERTER_EXCLUDED_MODULES,
 )
+from tests.paths import SRC_ROOT
 
 
 def _discover_modules(package_dir: Path) -> set[str]:

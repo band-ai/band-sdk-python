@@ -38,24 +38,23 @@ import pytest
 from _pytest.mark.structures import ParameterSet
 
 from band.core.types import AdapterFeatures, Capability
-
 from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.toolkit.adapters import Adapter, Lane, spec_for, specs
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 __all__ = [
-    "WITH_ADAPTERS_MARKER",
-    "PER_ADAPTER_MARKER",
     "LANE_MARKER",
+    "PER_ADAPTER_MARKER",
+    "WITH_ADAPTERS_MARKER",
     "Adapter",
-    "Lane",
     "ExcludedAdapter",
-    "WithAdapters",
+    "Lane",
     "PerAdapter",
+    "WithAdapters",
     "adapter_params",
+    "lane",
     "per_adapter",
     "with_adapters",
-    "lane",
 ]
 
 

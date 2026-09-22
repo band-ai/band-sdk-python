@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
 from band.integrations.opencode import (
     OpencodeClientProtocol,
@@ -25,8 +26,6 @@ from band.integrations.opencode import (
     OpencodeQuestion,
     OpencodeQuestionRequest,
 )
-
-from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
 from band.runtime.formatters import strip_leading_mentions
 
 logger = logging.getLogger(__name__)

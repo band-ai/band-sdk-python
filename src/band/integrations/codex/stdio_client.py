@@ -102,7 +102,7 @@ class CodexStdioClient(BaseJsonRpcClient):
         if self._proc:
             try:
                 await asyncio.wait_for(self._proc.wait(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._proc.kill()
                 await self._proc.wait()
 

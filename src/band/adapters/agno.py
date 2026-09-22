@@ -14,6 +14,7 @@ from agno.media import Image
 from agno.tools.function import ToolResult
 from typing_extensions import Unpack
 
+from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import filter_tool_schemas
@@ -25,7 +26,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.capabilities import with_hub_room_contacts
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (

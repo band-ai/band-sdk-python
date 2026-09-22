@@ -790,12 +790,14 @@ class TestSelfHostedMCPLifecycle:
         mock_client.mcp_servers.list.side_effect = ConnectionError("letta down")
 
         fake_backend = make_fake_mcp_backend()
-        with patch(
-            "band.integrations.letta.mcp.create_band_mcp_backend",
-            AsyncMock(return_value=fake_backend),
+        with (
+            patch(
+                "band.integrations.letta.mcp.create_band_mcp_backend",
+                AsyncMock(return_value=fake_backend),
+            ),
+            pytest.raises(RuntimeError, match="MCP server registration failed"),
         ):
-            with pytest.raises(RuntimeError, match="MCP server registration failed"):
-                await adapter._mcp.ensure_ready(mock_client)
+            await adapter._mcp.ensure_ready(mock_client)
 
         fake_backend.stop.assert_not_awaited()
         assert adapter._mcp.backend is fake_backend

@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from band.docker.launcher import run as launcher_run
 from band.docker.launcher import (
     AGENT_HOME,
     LaunchError,
@@ -18,6 +17,7 @@ from band.docker.launcher import (
     execute,
     resolve_launch,
 )
+from band.docker.launcher import run as launcher_run
 from tests.logsupport import band_log_env, restored_logging
 
 from .fakes import Workspace, make_env

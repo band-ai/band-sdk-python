@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+from a2a.helpers import new_text_message
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.helpers import new_text_message
 from a2a.types import Message, Task
 
 

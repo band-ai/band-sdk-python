@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Coroutine, Iterator
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, TypeVar
 
@@ -662,12 +662,8 @@ def parse_server_timestamp(value: datetime | str | None) -> datetime:
     """Coerce a platform timestamp to an aware UTC stamp (the platform stores UTC)."""
     if value is None:
         raise TypeError("platform message timestamp is missing")
-    stamp = (
-        value
-        if isinstance(value, datetime)
-        else datetime.fromisoformat(value.replace("Z", "+00:00"))
-    )
-    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+    stamp = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
 async def message_server_timestamp(

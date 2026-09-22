@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from acp import RequestError
 from pydantic import BaseModel
 
 from band.core.types import Capability
@@ -27,9 +28,7 @@ from band.integrations.acp.client_adapter import (
 )
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.runtime.formatters import build_participants_message
-
 from tests.integrations.acp.acp_toolkit import FakeACPAgent, acp_adapter, live_line
-from acp import RequestError
 
 # The header is a template ({marker} carries the per-turn nonce); its first
 # line is the stable sentinel tests can look for verbatim.

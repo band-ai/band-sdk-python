@@ -7,7 +7,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-
 from bridge_core.config import (
     AgentConfig,
     AgentCoreTarget,
@@ -189,11 +188,13 @@ class TestBridgeConfigFromEnv:
                 BridgeConfig.from_env()
 
     def test_non_list_json_raises(self) -> None:
-        with patch.dict(
-            os.environ, {"BAND_BRIDGE_AGENTS": '{"agent_id":"a"}'}, clear=False
+        with (
+            patch.dict(
+                os.environ, {"BAND_BRIDGE_AGENTS": '{"agent_id":"a"}'}, clear=False
+            ),
+            pytest.raises(ValueError, match="JSON array"),
         ):
-            with pytest.raises(ValueError, match="JSON array"):
-                BridgeConfig.from_env()
+            BridgeConfig.from_env()
 
     def test_url_overrides(self) -> None:
         payload = json.dumps(
@@ -229,13 +230,15 @@ class TestBridgeConfigFromEnv:
                 }
             ]
         )
-        with patch.dict(
-            os.environ,
-            {"BAND_BRIDGE_AGENTS": payload, "HEALTH_PORT": "abc"},
-            clear=False,
+        with (
+            patch.dict(
+                os.environ,
+                {"BAND_BRIDGE_AGENTS": payload, "HEALTH_PORT": "abc"},
+                clear=False,
+            ),
+            pytest.raises(ValueError, match="HEALTH_PORT"),
         ):
-            with pytest.raises(ValueError, match="HEALTH_PORT"):
-                BridgeConfig.from_env()
+            BridgeConfig.from_env()
 
 
 class TestReconnectConfig:

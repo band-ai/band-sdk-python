@@ -26,21 +26,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import click
 import uvicorn
+from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
 from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.routes.rest_routes import create_rest_routes
-from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,
     InMemoryTaskStore,
 )
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from starlette.applications import Starlette
 from agent import OrchestratorAgent
 from agent_executor import OrchestratorAgentExecutor
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from remote_agent import GatewayClient
+from starlette.applications import Starlette
 
 load_dotenv()
 

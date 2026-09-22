@@ -21,7 +21,6 @@ import subprocess
 import sys
 
 import pytest
-
 from band_mcp import __version__
 
 _BAND_CREDENTIAL_ENV_VARS = (

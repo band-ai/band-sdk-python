@@ -8,7 +8,9 @@ instructions appended for multi-participant chat room behavior.
 from __future__ import annotations
 
 try:
-    from claude_agent_sdk.types import SystemPromptPreset  # type: ignore[import-not-found]
+    from claude_agent_sdk.types import (
+        SystemPromptPreset,  # type: ignore[import-not-found]
+    )
 except ImportError:
     SystemPromptPreset = None  # type: ignore[assignment,misc]
 

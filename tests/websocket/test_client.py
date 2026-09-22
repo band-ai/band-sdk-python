@@ -16,7 +16,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
+import band_sdk_core
 import pytest
+from band_sdk_core import DeadReason, SessionState
 from opentelemetry.sdk.trace import TracerProvider
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.asyncio.server import ServerConnection, serve
@@ -24,25 +26,22 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-import band_sdk_core
-from band_sdk_core import DeadReason, SessionState
-
-from band.credentials import PROXY_MANAGED_API_KEY
 import band.client.streaming.wire as wire_module
 from band.client.streaming import (
     DeliveryStatus,
     MessageCreatedPayload,
-    SupersedePayload,
-    WebSocketDisconnectReason,
-    WebSocketUpgradeError,
-    WireEvent,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
+    SupersedePayload,
     WebSocketClient,
+    WebSocketDisconnectReason,
+    WebSocketUpgradeError,
+    WireEvent,
 )
+from band.credentials import PROXY_MANAGED_API_KEY
 from tests.websocket.conftest import SUCCEEDS, fast_session_policy
 
 # Shared valid payload used by multiple tests
@@ -618,7 +617,6 @@ async def test_resolve_failed_connect_attempt_captures_now_before_probe_latency(
 
     async def slow_probe(websocket_url):
         await asyncio.sleep(probe_delay_s)
-        return None
 
     monkeypatch.setattr(
         "band.client.streaming.client.probe_upgrade_error",
@@ -1324,15 +1322,17 @@ async def test_watchdog_ack_keeps_connection_alive_across_heartbeat_cycles():
     cycle, so the connection survives well past a single dead_threshold_s
     window without the watchdog ever tripping."""
     policy = fast_session_policy(heartbeat_interval_s=0.15, dead_threshold_s=0.4)
-    async with phoenix_peer() as (ws_url, connected):
-        async with WebSocketClient(
+    async with (
+        phoenix_peer() as (ws_url, connected),
+        WebSocketClient(
             ws_url, "test-key", "agent-123", session_policy=policy
-        ) as client:
-            await asyncio.wait_for(connected, timeout=5)
-            await asyncio.sleep(1.0)
-            assert client.client is not None
-            assert client.client.connection is not None
-            assert client.client.connection.close_code is None
+        ) as client,
+    ):
+        await asyncio.wait_for(connected, timeout=5)
+        await asyncio.sleep(1.0)
+        assert client.client is not None
+        assert client.client.connection is not None
+        assert client.client.connection.close_code is None
 
 
 async def test_watchdog_forces_close_and_reconnect_when_ack_withheld():

@@ -15,13 +15,13 @@ import pytest
 from mcp import types
 
 from band.integrations.desktop_app.event_relay import RoomEventBroker
-from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.server import (
     ROOM_VIEW_MIME_TYPE,
     ROOM_VIEW_URI,
     connected_agent_service,
     room_view_tools,
 )
+from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.tools import (
     DEFAULT_ATTENTION,
     MonitorCaller,

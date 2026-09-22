@@ -1,27 +1,31 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-import logging
-import random
 from typing import Any, Literal
 
 from band_sdk_core import (
+    AgentTopicKind,
     DeadReason,
     Session,
     SessionOutcome,
     SessionPolicy,
     SessionState,
     StaleReason,
+    chat_room_topic,
+    room_participants_topic,
 )
 from phoenix_channels_python_client.client import (
-    PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
+    PHXChannelsClient,
 )
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
+
 from band.client.streaming.errors import (
     WebSocketUpgradeError,
     probe_upgrade_error,
@@ -29,7 +33,6 @@ from band.client.streaming.errors import (
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
-from band_sdk_core import AgentTopicKind, chat_room_topic, room_participants_topic
 
 logger = logging.getLogger(__name__)
 
@@ -703,7 +706,7 @@ class WebSocketClient:
                 await callback(validated)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 – intentionally broad to protect event loop
+            except Exception:
                 logger.exception(
                     "[WebSocket] Callback error for %s event", message.event
                 )

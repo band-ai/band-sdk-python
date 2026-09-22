@@ -15,8 +15,8 @@ from uuid import uuid4
 
 from pytest_httpx import HTTPXMock
 
-from band.integrations.letta.prompts import render_tool_enforcement
 from band.core.types import PlatformMessage
+from band.integrations.letta.prompts import render_tool_enforcement
 
 
 def make_platform_message(

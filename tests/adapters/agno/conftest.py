@@ -17,7 +17,6 @@ from typing_extensions import Unpack
 from band.adapters.agno import AgnoAdapter
 from band.core.types import FeatureKwargs, PlatformMessage
 from band.testing import FakeAgentTools
-
 from tests.adapters.agno.helpers import CapturingModel, SchemaTools
 
 

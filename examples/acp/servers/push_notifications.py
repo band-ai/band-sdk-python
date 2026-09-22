@@ -42,9 +42,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
 from band.adapters import ACPServer, BandACPServerAdapter
-from band.integrations.acp import run_acp_server
 from band.config import load_agent_config
-from band.integrations.acp import ACPPushHandler
+from band.integrations.acp import ACPPushHandler, run_acp_server
 
 configure_logging(
     level=logging.INFO,

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol
 
 from band_sdk_core import ClaimRegistry
 
@@ -43,7 +44,7 @@ class ExecutionFactory(Protocol):
     def __call__(
         self,
         room_id: str,
-        link: "BandLink",
+        link: BandLink,
         *,
         hub_room_id: str | None = None,
     ) -> Execution: ...
@@ -92,7 +93,7 @@ class AgentRuntime:
 
     def __init__(
         self,
-        link: "BandLink",
+        link: BandLink,
         agent_id: str,
         on_execute: ExecutionHandler,
         execution_factory: ExecutionFactory | None = None,
@@ -260,7 +261,7 @@ class AgentRuntime:
 
     # --- Control signals ---
 
-    async def handle_control(self, payload: "AgentControlPayload") -> None:
+    async def handle_control(self, payload: AgentControlPayload) -> None:
         """Apply an ``agent.control`` signal (interrupt/stop/play) to executions.
 
         Invoked directly from the WebSocket receive task (via

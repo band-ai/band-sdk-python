@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
 
@@ -21,22 +21,24 @@ from tests.strandskit import text, tool_call, tool_result
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
-from strands import tool as strands_tool  # noqa: E402
-from strands.models.openai import OpenAIModel  # noqa: E402
-from strands.types.content import Messages  # noqa: E402
-from strands.types.exceptions import EventLoopException  # noqa: E402
-from strands.types.streaming import StreamEvent  # noqa: E402
-from strands.types.tools import ToolChoice, ToolSpec  # noqa: E402
+import itertools
 
-from band.adapters.strands import (  # noqa: E402
+from strands import tool as strands_tool
+from strands.models.openai import OpenAIModel
+from strands.types.content import Messages
+from strands.types.exceptions import EventLoopException
+from strands.types.streaming import StreamEvent
+from strands.types.tools import ToolChoice, ToolSpec
+
+from band.adapters.strands import (
     CustomToolBridge,
     StrandsAdapter,
     _result_text,
     _tool_result,
 )
-from band.converters.strands import StrandsHistoryConverter  # noqa: E402
-from band.core.protocols import AgentToolsProtocol  # noqa: E402
-from band.core.types import (  # noqa: E402
+from band.converters.strands import StrandsHistoryConverter
+from band.core.protocols import AgentToolsProtocol
+from band.core.types import (
     USAGE_METADATA_KEY,
     AgentInput,
     Capability,
@@ -46,8 +48,8 @@ from band.core.types import (  # noqa: E402
     TurnUsage,
     is_usage_event,
 )
-from band.runtime.tools import get_tool_description  # noqa: E402
-from band.testing import (  # noqa: E402
+from band.runtime.tools import get_tool_description
+from band.testing import (
     ErrorTurn,
     FakeAgentTools,
     ScriptedStrandsModel,
@@ -72,7 +74,7 @@ def _make_msg(room_id: str, content: str = "Hello") -> PlatformMessage:
         sender_name="Tester",
         message_type="text",
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -139,7 +141,7 @@ def _tool_results(adapter: StrandsAdapter, room_id: str = ROOM) -> list[str]:
 def _alternates(history: list) -> bool:
     """Whether the transcript never puts two same-role turns in a row."""
     roles = [message["role"] for message in history]
-    return all(first != second for first, second in zip(roles, roles[1:]))
+    return all(first != second for first, second in itertools.pairwise(roles))
 
 
 def _errors(tools: FakeAgentTools) -> list[str]:

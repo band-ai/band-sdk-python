@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, PER_ADAPTER_MARKER
+from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, WITH_ADAPTERS_MARKER
 
 
 def _wiring_error(item: pytest.Item) -> str | None:

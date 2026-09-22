@@ -19,16 +19,16 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from typing_extensions import Unpack
 
 from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
     AsyncRestClient,
     ChatEventRequest,
     ChatRoomRequest,
-    DEFAULT_REQUEST_OPTIONS,
 )
 from band.converters.slack import SlackHistoryConverter
 from band.core.protocols import AgentToolsProtocol
@@ -594,7 +594,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         # injects it on us before calling ``on_started``; the inner adapter
         # needs it too (e.g. to dedup its own messages by agent id).
         if self.platform is not None:
-            setattr(self._inner, "platform", self.platform)
+            # setattr rather than assignment: FrameworkAdapter is a Protocol, so
+            # a duck-typed adapter may not declare the attribute.
+            setattr(self._inner, "platform", self.platform)  # noqa: B010
 
         await self._inner.on_started(agent_name, agent_description)
 
@@ -776,9 +778,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         if event.get("bot_id") or event.get("subtype") == "bot_message":
             return
 
-        if event_type == "app_mention":
-            await self._invoke_brain_for_slack_event(app, event)
-        elif event_type == "message" and event.get("channel_type") == "im":
+        if (
+            event_type == "app_mention"
+            or event_type == "message"
+            and event.get("channel_type") == "im"
+        ):
             await self._invoke_brain_for_slack_event(app, event)
 
     async def _invoke_brain_for_slack_event(
@@ -820,7 +824,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                 "slack_thread_ts": thread_ts,
                 "slack_user_id": slack_user,
             },
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         # Mirror the user turn into the Band room for audit visibility.

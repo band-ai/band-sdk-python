@@ -437,7 +437,7 @@ class TestA2AAdapterMessageFlow:
             return_value=stream(task_event(make_task(artifact_text="done")))
         )
         tools = FakeAgentTools()
-        turn = dict(is_session_bootstrap=False, room_id="room-123")
+        turn = {"is_session_bootstrap": False, "room_id": "room-123"}
 
         await adapter.on_message(
             make_platform_message("first"), tools, A2ASessionState(), None, None, **turn

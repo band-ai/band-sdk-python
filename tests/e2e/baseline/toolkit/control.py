@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
-
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -80,7 +79,7 @@ async def running_control_runtime(
     finally:
         try:
             await user_ops.play_agent(room_id)
-        except Exception:  # noqa: BLE001 - teardown must still release the runtime
+        except Exception:
             logger.warning(
                 "control cleanup play failed for room %s", room_id, exc_info=True
             )

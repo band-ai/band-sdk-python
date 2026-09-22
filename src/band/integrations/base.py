@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from band.runtime.execution import ExecutionContext
 
 
-def check_and_format_participants(ctx: "ExecutionContext") -> str | None:
+def check_and_format_participants(ctx: ExecutionContext) -> str | None:
     """
     Check if participants changed and return formatted message if so.
 

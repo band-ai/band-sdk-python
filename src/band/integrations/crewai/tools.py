@@ -21,7 +21,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -162,7 +163,9 @@ def _platform_tool(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> BaseTool:
     """Wrap one ToolSpec as the CrewAI BaseTool instance the crew is handed."""
-    from crewai.tools import BaseTool  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+    from crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        BaseTool,
+    )
 
     class PlatformTool(BaseTool):
         # str(...): pydantic doesn't validate field defaults (no
@@ -196,7 +199,9 @@ def _custom_tool(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> BaseTool:
     """Wrap one CustomToolDef as a CrewAI BaseTool instance."""
-    from crewai.tools import BaseTool  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+    from crewai.tools import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        BaseTool,
+    )
 
     input_model, handler = definition
     tool_name = get_custom_tool_name(input_model)

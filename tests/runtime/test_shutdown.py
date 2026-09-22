@@ -226,7 +226,7 @@ class TestGracefulShutdownHandler:
         stop_started = asyncio.Event()
         stop_finished = asyncio.Event()
 
-        async def slow_stop(*, timeout):  # noqa: ARG001
+        async def slow_stop(*, timeout):
             stop_started.set()
             # Multiple small sleeps give the cancellation a chance to arrive
             # while agent.stop is mid-flight, which is the scenario under test.
@@ -250,7 +250,7 @@ class TestGracefulShutdownHandler:
         # Shielded stop should complete shortly after the outer task was cancelled.
         try:
             await asyncio.wait_for(stop_finished.wait(), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pytest.fail(
                 "agent.stop was cancelled mid-flight; asyncio.shield is missing"
             )

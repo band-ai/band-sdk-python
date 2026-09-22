@@ -38,12 +38,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from band_rest import AsyncRestClient
+from band_rest.types import AgentRegisterRequest
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import LoggingStyle, LogSettings
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
-from band_rest import AsyncRestClient
-from band_rest.types import AgentRegisterRequest
 
 # The bare message format only exists for the standard style, so the style is
 # pinned rather than read from BAND_LOG_CONSOLE_STYLE.

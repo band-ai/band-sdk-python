@@ -19,6 +19,8 @@ import pytest
 from band_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
 from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
+)
+from band_rest.types import (
     ParticipantRequest,
 )
 
@@ -150,7 +152,7 @@ async def _wait_for_agent_message(
 
     try:
         await asyncio.wait_for(done.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Timed out waiting for message (collected %s)", len(messages))
 
     return messages
@@ -249,7 +251,7 @@ class TestClaudeSDKApprovalIntegration:
                 # Wait for agent's response
                 try:
                     await asyncio.wait_for(response_received.wait(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
                 # Verify
@@ -380,7 +382,7 @@ class TestClaudeSDKApprovalIntegration:
                 # Wait for approval notification
                 try:
                     await asyncio.wait_for(approval_seen.wait(), timeout=60.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
                 # Check results

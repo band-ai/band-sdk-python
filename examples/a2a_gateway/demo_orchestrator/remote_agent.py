@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Self
 from uuid import uuid4
 
 import httpx
@@ -97,7 +98,7 @@ class GatewayClient:
             logger.error(error_msg)
             raise RuntimeError(error_msg) from exc
 
-    async def __aenter__(self) -> GatewayClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

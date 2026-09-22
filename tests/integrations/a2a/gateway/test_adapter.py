@@ -20,8 +20,8 @@ from a2a.types import (
     TaskStatus,
 )
 
-from band.core.types import PlatformMessage
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.core.types import PlatformMessage
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.adapter import BandAgentExecutor, GatewayRequest
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
@@ -217,12 +217,14 @@ class TestGatewayExecution:
             pending=make_pending(EventQueueLegacy()),
         )
 
-        with patch(
-            "band.integrations.a2a.gateway.adapter.post_message",
-            AsyncMock(return_value=None),
+        with (
+            patch(
+                "band.integrations.a2a.gateway.adapter.post_message",
+                AsyncMock(return_value=None),
+            ),
+            pytest.raises(ValueError, match="blank"),
         ):
-            with pytest.raises(ValueError, match="blank"):
-                await adapter._send_to_band(request, make_request())
+            await adapter._send_to_band(request, make_request())
 
     @pytest.mark.asyncio
     async def test_keeps_stream_open_for_non_final_updates(self) -> None:

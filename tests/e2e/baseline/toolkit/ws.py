@@ -15,9 +15,9 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Self
 
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
-
 from tests.e2e.baseline.settings import BaselineSettings
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class TrackingWebSocketClient:
         self._ws = ws
         self._joined_rooms: set[str] = set()
 
-    async def __aenter__(self) -> TrackingWebSocketClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:

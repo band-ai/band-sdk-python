@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
@@ -28,8 +28,6 @@ from band.core.exceptions import BandToolError
 from band.core.memory_types import ORGANIZATION_SCOPE_REJECTED_CODE
 from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
-from tests.conftest import make_participant_mock
-from tests.content import BLANK_CONTENT_CASES
 from band.runtime.tools import (
     DEFAULT_FILE_CAPTION,
     FILE_UNAVAILABLE_MESSAGE,
@@ -37,16 +35,16 @@ from band.runtime.tools import (
     MAX_INLINE_TEXT_BYTES,
     MAX_SEND_CONTENT_BYTES,
     TOOL_MODELS,
+    AddParticipantInput,
     AgentTools,
+    CreateChatroomInput,
+    GetParticipantsInput,
+    LookupPeersInput,
+    RemoveParticipantInput,
+    SendEventInput,
     SendMessageInput,
     SendRoomFileInput,
-    SendEventInput,
     StoreMemoryInput,
-    AddParticipantInput,
-    RemoveParticipantInput,
-    LookupPeersInput,
-    GetParticipantsInput,
-    CreateChatroomInput,
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
@@ -55,6 +53,8 @@ from band.runtime.tools import (
     is_mcp_content_result,
     is_room_posting_tool,
 )
+from tests.conftest import make_participant_mock
+from tests.content import BLANK_CONTENT_CASES
 
 
 class TestIsMcpContentResult:
@@ -829,7 +829,7 @@ class TestFileTools:
         evicts it, so the cache never keeps serving metadata it already
         gave up on."""
         expired = _attachment(
-            "file-1", expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)
+            "file-1", expires_at=datetime.now(UTC) - timedelta(seconds=1)
         )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
@@ -853,7 +853,7 @@ class TestFileTools:
             "file-1",
             content_type="text/plain",
             size=5,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         expired_page = _context_response(
             [
@@ -862,8 +862,7 @@ class TestFileTools:
                     [
                         _attachment(
                             "file-1",
-                            expires_at=datetime.now(timezone.utc)
-                            - timedelta(seconds=1),
+                            expires_at=datetime.now(UTC) - timedelta(seconds=1),
                         )
                     ],
                 )

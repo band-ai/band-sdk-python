@@ -30,15 +30,13 @@ from typing import Any
 import pytest
 
 from band.adapters.copilot_sdk import (
-    ASK_USER_ROOM,
     _COPILOT_SDK_AVAILABLE,
+    ASK_USER_ROOM,
     CopilotSDKAdapter,
     CopilotSDKAdapterConfig,
 )
-
-from tests.e2e.baseline.flaky import flaky_infra
-
 from tests.e2e.baseline.agents import Lane, lane
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -62,7 +60,9 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
     bespoke tests don't re-derive it; ``overrides`` layers the one knob each
     test actually cares about (``ask_user=``, ``base_directory=``).
     """
-    from copilot import ProviderConfig  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
+    from copilot import (  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
+        ProviderConfig,
+    )
 
     return CopilotSDKAdapterConfig(
         model=settings.llm_models.anthropic_model,
@@ -331,7 +331,9 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
        still-running client — the borrowed client must survive an adapter's
        full cleanup (``owns_client=False`` contract).
     """
-    from copilot import CopilotClient  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
+    from copilot import (  # noqa: PLC0415 -- copilot_sdk extra; file collects even when absent, skipped via _COPILOT_SDK_AVAILABLE at test time
+        CopilotClient,
+    )
 
     identity = await resource_manager.provision_agent("copilot-shared-client")
     room_a = await resource_manager.provision_room(

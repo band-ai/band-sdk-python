@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -13,7 +13,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 try:
-    import nest_asyncio  # noqa: F401
+    import nest_asyncio
 
     _HAS_NEST_ASYNCIO = True
 except ImportError:
@@ -50,15 +50,15 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from band.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
     get_current_flow_runtime,
 )
-from band.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
-from band.core.types import Capability, Emit, PlatformMessage  # noqa: E402
-from band.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.converters.crewai_flow import CrewAIFlowStateConverter
+from band.core.types import Capability, Emit, PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
 
 
 def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
@@ -71,7 +71,7 @@ def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
         sender_name="Pat",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -837,7 +837,7 @@ class TestRuntimeTools:
                 {
                     "id": "evt-prior",
                     "message_type": "task",
-                    "inserted_at": datetime.now(timezone.utc).isoformat(),
+                    "inserted_at": datetime.now(UTC).isoformat(),
                     "metadata": {ns: prior_payload},
                 }
             ]

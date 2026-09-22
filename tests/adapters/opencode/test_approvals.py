@@ -21,18 +21,16 @@ from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
 from band.testing import FakeAgentTools
-
-
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     RaisingSendTools,
-    run_single_turn,
     event_message_updated,
     event_permission,
     event_question,
     event_session_idle,
     event_text_part,
     make_platform_message,
+    run_single_turn,
     tools_protocol,
     wait_for,
 )
@@ -104,7 +102,7 @@ def make_room_approvals(
             session_id=lambda: "sess-1",
             client=lambda: client,
             tools=lambda: cast(AgentToolsProtocol, tools),
-            turn_mentions=lambda: [],
+            turn_mentions=list,
             release_turn_wait=release_turn_wait,
             fail_turn=fail_turn,
             is_own_band_tool=lambda _permission: False,
@@ -757,7 +755,7 @@ async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
             session_id=lambda: "sess-1",
             client=lambda: client["current"],
             tools=lambda: cast(AgentToolsProtocol, FakeAgentTools()),
-            turn_mentions=lambda: [],
+            turn_mentions=list,
             release_turn_wait=lambda: None,
             fail_turn=lambda _message: None,
             is_own_band_tool=lambda _permission: False,

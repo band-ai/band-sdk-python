@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from band.agent import Agent
@@ -107,7 +108,7 @@ class GracefulShutdown:
 
     def __init__(
         self,
-        agent: "Agent",
+        agent: Agent,
         timeout: float = 30.0,
         on_signal: Callable[[int], None] | None = None,
     ):
@@ -288,8 +289,8 @@ class GracefulShutdown:
                 self.timeout,
             )
             raise
-        except Exception as e:
-            logger.error("Error during shutdown: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Error during shutdown")
 
     async def wait_for_shutdown(self) -> None:
         """
@@ -307,7 +308,7 @@ class GracefulShutdown:
 
     # --- Async context manager ---
 
-    async def __aenter__(self) -> "GracefulShutdown":
+    async def __aenter__(self) -> Self:
         """Enter async context - register signal handlers."""
         self.register_signals()
         return self
@@ -323,7 +324,7 @@ class GracefulShutdown:
 
 
 async def run_with_graceful_shutdown(
-    agent: "Agent",
+    agent: Agent,
     timeout: float = 30.0,
     on_signal: Callable[[int], None] | None = None,
 ) -> None:
