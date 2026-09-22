@@ -14,7 +14,11 @@ from band.exports import lazy_exports
 if TYPE_CHECKING:
     from band.testing.fake_tools import (
         FakeAgentTools as FakeAgentTools,
+    )
+    from band.testing.fake_tools import (
         events_of_type as events_of_type,
+    )
+    from band.testing.fake_tools import (
         reported_failures as reported_failures,
     )
     from band.testing.features import feature_kwargs as feature_kwargs

@@ -875,29 +875,31 @@ class TestErrorHandling:
         mock_moderation = MagicMock()
         mock_moderation.NONE = "none"
 
-        with patch.dict(
-            sys.modules,
-            {
-                "parlant.core.app_modules.sessions": MagicMock(
-                    Moderation=mock_moderation
-                ),
-                "parlant.core.sessions": MagicMock(
-                    EventSource=MagicMock(CUSTOMER="customer", AI_AGENT="ai_agent"),
-                    EventKind=MagicMock(MESSAGE="message"),
-                ),
-                "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
-            },
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "parlant.core.app_modules.sessions": MagicMock(
+                        Moderation=mock_moderation
+                    ),
+                    "parlant.core.sessions": MagicMock(
+                        EventSource=MagicMock(CUSTOMER="customer", AI_AGENT="ai_agent"),
+                        EventKind=MagicMock(MESSAGE="message"),
+                    ),
+                    "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
+                },
+            ),
+            pytest.raises(ConnectionError, match="band down"),
         ):
-            with pytest.raises(ConnectionError, match="band down"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         mock_tools.send_failure.assert_not_awaited()
 

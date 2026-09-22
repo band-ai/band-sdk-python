@@ -32,7 +32,6 @@ from band.adapters.agno import (
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import Capability, Emit, PlatformMessage
 from band.testing import FakeAgentTools, reported_failures
-
 from tests.adapters.agno.helpers import (
     CapturingModel,
     ContactAwareTools,

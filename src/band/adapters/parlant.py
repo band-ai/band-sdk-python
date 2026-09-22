@@ -401,7 +401,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         # Get or create Parlant session for this room (need session_id first)
         try:
             session_id = await self._get_or_create_session(room_id, sender_name)
-        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
+        except Exception as e:
             logger.error("Failed to get/create session for room %s: %s", room_id, e)
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
@@ -467,8 +467,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         except DeliveryFailedError as e:
             reraise_delivery_cause(e)
-        except Exception as e:
-            logger.error("Error processing message: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Error processing message")
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )

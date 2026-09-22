@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
+
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE
 from band.core.types import ALL_CAPABILITIES, Capability, Emit, PlatformMessage
 from band.runtime.tools import AgentTools, BandTool
@@ -974,19 +975,21 @@ class TestErrorHandling:
         adapter = GoogleADKAdapter()
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter, "_create_runner", side_effect=RuntimeError("bad tool schema")
+        with (
+            patch.object(
+                adapter, "_create_runner", side_effect=RuntimeError("bad tool schema")
+            ),
+            pytest.raises(RuntimeError, match="bad tool schema"),
         ):
-            with pytest.raises(RuntimeError, match="bad tool schema"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         mock_tools.send_failure.assert_called_once()
         failure = mock_tools.send_failure.call_args.args[0]

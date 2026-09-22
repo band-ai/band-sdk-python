@@ -267,7 +267,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         contents=self._message_history[room_id], tools=gemini_tools
                     )
                 except Exception as e:
-                    logger.exception("Error calling Gemini: %s", e)
+                    logger.exception("Error calling Gemini")
                     await tools.send_failure(_to_agent_failure(e))
                     raise
 

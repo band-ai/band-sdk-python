@@ -16,7 +16,6 @@ from band.core.types import (
 )
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, reported_failures
-from tests.adapters.usage_events import recorded_usage_payloads
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     FakeOpencodeClient,

@@ -23,7 +23,6 @@ from band.integrations.acp.client_types import (
 from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import ACPToolCall, ACPToolResult, CollectedChunk
 from band.testing import FakeAgentTools, events_of_type, reported_failures
-
 from tests.integrations.acp.conftest import make_platform_message
 
 

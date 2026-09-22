@@ -20,7 +20,7 @@ from band.integrations.opencode import (
 from band.integrations.opencode.types import (
     OpencodeSessionState,
 )
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     RaisingSendTools,
@@ -29,7 +29,6 @@ from tests.adapters.opencode.helpers import (
     event_question,
     event_session_idle,
     event_text_part,
-    events_of_type,
     make_platform_message,
     run_single_turn,
     tools_protocol,

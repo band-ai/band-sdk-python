@@ -14,14 +14,13 @@ from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Capability
 from band.integrations.opencode.types import OpencodeSessionState
 from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
-from band.testing import FakeAgentTools
+from band.testing import FakeAgentTools, events_of_type
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
     event_message_updated,
     event_session_idle,
     event_text_part,
-    events_of_type,
     make_fake_mcp_backend_factory,
     make_platform_message,
     run_single_turn,

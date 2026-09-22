@@ -39,9 +39,9 @@ from band.core.protocols import (
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
 from band.integrations.a2a.protocol import (
+    RETRYABLE_TASK_FAILURE_STATES,
     TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
-    RETRYABLE_TASK_FAILURE_STATES,
     apply_task_stream_event,
     state_name,
     task_id_from_stream_event,
@@ -192,8 +192,8 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             reraise_delivery_cause(e)
         except TurnResultAlreadyReported:
             raise
-        except Exception as e:
-            logger.exception("A2A agent error: %s", e)
+        except Exception:
+            logger.exception("A2A agent error")
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )

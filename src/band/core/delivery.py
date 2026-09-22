@@ -39,7 +39,7 @@ def reraise_delivery_cause(e: DeliveryFailedError) -> NoReturn:
 
 
 async def deliver_reply(
-    tools: "AgentToolsProtocol",
+    tools: AgentToolsProtocol,
     content: str,
     mentions: list[str] | list[dict[str, str]] | None = None,
 ) -> Any:

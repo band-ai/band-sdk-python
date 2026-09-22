@@ -208,19 +208,21 @@ class TestErrorReporting:
         adapter = GeminiAdapter(provider_key="test-key")
         await adapter.on_started("TestBot", "Test bot")
 
-        with patch.object(
-            adapter, "_call_gemini", AsyncMock(side_effect=Exception("boom"))
+        with (
+            patch.object(
+                adapter, "_call_gemini", AsyncMock(side_effect=Exception("boom"))
+            ),
+            pytest.raises(Exception, match="boom"),
         ):
-            with pytest.raises(Exception, match="boom"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         mock_tools.send_failure.assert_called_once()
         failure = mock_tools.send_failure.call_args.args[0]
@@ -241,17 +243,19 @@ class TestErrorReporting:
             503, {"error": {"status": "UNAVAILABLE", "message": "overloaded"}}, None
         )
 
-        with patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)):
-            with pytest.raises(ServerError):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+        with (
+            patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)),
+            pytest.raises(ServerError),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         failure = mock_tools.send_failure.call_args.args[0]
         assert failure.provider == "gemini"
@@ -270,17 +274,19 @@ class TestErrorReporting:
         await adapter.on_started("TestBot", "Test bot")
         error = ServerError(503, {"status": 503, "message": "backend overloaded"}, None)
 
-        with patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)):
-            with pytest.raises(ServerError):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+        with (
+            patch.object(adapter, "_call_gemini", AsyncMock(side_effect=error)),
+            pytest.raises(ServerError),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         mock_tools.send_failure.assert_called_once()
         failure = mock_tools.send_failure.call_args.args[0]

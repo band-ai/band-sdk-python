@@ -71,7 +71,7 @@ def to_failure_event(failure: AgentFailure) -> tuple[str, dict[str, Any]]:
 
 
 async def send_event_safe(
-    tools: "AgentToolsProtocol",
+    tools: AgentToolsProtocol,
     content: str,
     message_type: str,
     metadata: dict[str, Any] | None = None,

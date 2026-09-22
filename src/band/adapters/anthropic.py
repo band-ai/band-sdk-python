@@ -290,7 +290,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         tools=tool_schemas,
                     )
                 except Exception as e:
-                    logger.error("Error calling Anthropic: %s", e, exc_info=True)
+                    logger.exception("Error calling Anthropic")
                     await tools.send_failure(_to_agent_failure(e))
                     raise  # Re-raise so message is marked as failed
 

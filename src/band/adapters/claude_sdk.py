@@ -624,20 +624,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     client = await self._session_manager.get_or_create_session(
                         room_id, resume_session_id=None
                     )
-                except Exception as fresh_exc:
+                except Exception:
                     logger.exception(
-                        "Room %s: Fresh session creation also failed: %s",
-                        room_id,
-                        fresh_exc,
+                        "Room %s: Fresh session creation also failed", room_id
                     )
                     await tools.send_failure(
                         AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                     )
                     raise
             else:
-                logger.exception(
-                    "Room %s: Session creation failed: %s", room_id, resume_exc
-                )
+                logger.exception("Room %s: Session creation failed", room_id)
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )
@@ -731,8 +727,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             )
             raise
 
-        except Exception as e:
-            logger.exception("Error processing message: %s", e)
+        except Exception:
+            logger.exception("Error processing message")
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )

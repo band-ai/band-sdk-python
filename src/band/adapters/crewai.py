@@ -433,7 +433,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             # indistinguishable from a genuine provider failure and must keep
             # failing the delivery so the platform retries it.
             if not (_is_empty_llm_response(e) and reply_tracker.any_tool_ran):
-                logger.error("Error processing message: %s", e, exc_info=True)
+                logger.exception("Error processing message")
                 await tools.send_failure(
                     AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
                 )

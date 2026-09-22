@@ -230,7 +230,7 @@ class FakeAgentTools:
         content, metadata = to_failure_event(failure)
         try:
             return await self.send_event(content, MessageType.ERROR, metadata)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- best-effort like the real send_failure; must never raise inside a caller's own except block
             return {"ok": False, "error": str(exc)}
 
     async def add_participant(

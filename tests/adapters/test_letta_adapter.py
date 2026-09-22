@@ -330,17 +330,19 @@ class TestLettaAdapterOnMessagePerRoom:
         msg = make_platform_message()
         history = LettaSessionState()
 
-        with caplog.at_level(logging.ERROR, logger="band.adapters.letta"):
-            with pytest.raises(TimeoutError):
-                await adapter.on_message(
-                    msg,
-                    tools,
-                    history,
-                    None,
-                    None,
-                    is_session_bootstrap=False,
-                    room_id="room-1",
-                )
+        with (
+            caplog.at_level(logging.ERROR, logger="band.adapters.letta"),
+            pytest.raises(TimeoutError),
+        ):
+            await adapter.on_message(
+                msg,
+                tools,
+                history,
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
         assert not any("timed out" in r.message for r in caplog.records)
         assert any("Error during Letta turn" in r.message for r in caplog.records)

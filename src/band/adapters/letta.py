@@ -298,8 +298,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 async with self._rpc_lock:
                     await self._mcp.ensure_ready(self._client)
                     await self._ensure_agent(room_id, history, tools)
-        except Exception as e:
-            logger.exception("Room %s: Failed to prepare Letta session: %s", room_id, e)
+        except Exception:
+            logger.exception("Room %s: Failed to prepare Letta session", room_id)
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
@@ -438,8 +438,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             reraise_delivery_cause(e)
         except TurnResultAlreadyReported:
             raise
-        except Exception as e:
-            logger.exception("Room %s: Error during Letta turn: %s", room_id, e)
+        except Exception:
+            logger.exception("Room %s: Error during Letta turn", room_id)
             await tools.send_failure(
                 AgentFailure(_PROVIDER, GENERIC_PROVIDER_FAILURE_MESSAGE)
             )
@@ -485,7 +485,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 )
                 room_ctx.pending_seed = []
                 room_ctx.last_interaction = datetime.now(UTC)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Caught and reported here, at the exact call this timeout
                 # bounds -- a TimeoutError surfacing from anywhere else in
                 # this method (e.g. tool-event reporting below) is a
