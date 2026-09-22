@@ -77,7 +77,7 @@ async def main() -> None:
         }
 
         config_path = os.path.join(script_dir, agent_def["file"])
-        with open(config_path, "w") as f:
+        with open(config_path, "w") as f:  # noqa: ASYNC230 -- one-shot sequential provisioning script, nothing else shares this loop
             yaml.dump(config, f, default_flow_style=False)
         logger.info("  Config written to: %s", agent_def["file"])
 
@@ -99,7 +99,7 @@ async def main() -> None:
 
     # Write agent IDs to a cleanup file for later deletion
     cleanup_path = os.path.join(script_dir, ".agent_ids.txt")
-    with open(cleanup_path, "w") as f:
+    with open(cleanup_path, "w") as f:  # noqa: ASYNC230 -- one-shot sequential provisioning script, nothing else shares this loop
         for a in created:
             f.write(f"{a['id']}\n")
     logger.info("\nAgent IDs saved to .agent_ids.txt for cleanup")

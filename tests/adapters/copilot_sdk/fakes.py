@@ -128,7 +128,7 @@ class FakeCopilotSession:
         # raise (there is no non-fatal error path).
         for data in self.turn_events:
             if isinstance(data, SessionErrorData):
-                raise Exception(f"Session error: {data.message}")
+                raise RuntimeError(f"Session error: {data.message}")
         if self.reply_content is None:
             return None
         return SimpleNamespace(data=SimpleNamespace(content=self.reply_content))

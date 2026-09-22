@@ -120,7 +120,7 @@ async def self_registered_sandbox(
         # (verified live: a removed sandbox's `sbx secret ls` still lists it),
         # so it needs its own cleanup too, or the real agent key is left
         # sitting in the host's secret store indefinitely.
-        removal = subprocess.run(
+        removal = subprocess.run(  # noqa: ASYNC221 -- fixture teardown; no concurrent tasks share this loop
             remove_custom_secret_command(sandbox=name, host=args.host),
             capture_output=True,
             text=True,

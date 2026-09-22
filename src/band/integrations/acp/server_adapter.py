@@ -664,11 +664,8 @@ class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
         self, room_id: str, pending: PendingACPPrompt
     ) -> None:
         """Complete a prompt after a short quiet period."""
-        try:
-            await asyncio.sleep(_PROMPT_COMPLETION_GRACE_SECONDS)
-            await self._finish_pending_prompt(room_id, expected=pending, set_done=True)
-        except asyncio.CancelledError:
-            raise
+        await asyncio.sleep(_PROMPT_COMPLETION_GRACE_SECONDS)
+        await self._finish_pending_prompt(room_id, expected=pending, set_done=True)
 
     async def _finish_pending_prompt(
         self,

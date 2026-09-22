@@ -304,7 +304,7 @@ class TestErrorHandling:
         await adapter.on_started("TestBot", "Test bot")
 
         async def failing_stream(*args, **kwargs):
-            raise Exception("Graph error!")
+            raise RuntimeError("Graph error!")
             yield  # Make it async generator
 
         mock_graph = MagicMock()

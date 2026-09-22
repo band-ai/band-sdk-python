@@ -940,7 +940,7 @@ class TestErrorHandling:
             mock_runner = AsyncMock()
 
             async def failing_run(**kwargs):
-                raise Exception("Runner Error")
+                raise RuntimeError("Runner Error")
                 yield
 
             mock_runner.run_async = failing_run

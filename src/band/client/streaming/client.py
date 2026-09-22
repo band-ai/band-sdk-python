@@ -514,7 +514,11 @@ class WebSocketClient:
                 )
                 raise_exc = exc
             case _:
-                raise
+                # Only ever called from the `except Exception as exc:` in
+                # __aenter__ while that handler is still active, so this bare
+                # raise correctly re-raises `exc` via CPython's per-thread
+                # exception state, not lexical scoping.
+                raise  # noqa: PLE0704
 
         if outcome.state is SessionState.Dead:
             self.record_terminal_disconnect(
@@ -528,8 +532,9 @@ class WebSocketClient:
             if raise_exc is exc:
                 # Bare raise: re-raising the exception already being handled
                 # via `raise raise_exc` would add a spurious extra frame to
-                # its traceback.
-                raise
+                # its traceback. Same cross-frame re-raise as the `case _`
+                # above -- only valid while __aenter__'s except is active.
+                raise  # noqa: PLE0704
             # A newly-built WebSocketUpgradeError -- chain it to the
             # original exception, same as the pre-Session code did.
             raise raise_exc from exc

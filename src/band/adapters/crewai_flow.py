@@ -23,7 +23,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, Protocol, Union, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -476,13 +476,13 @@ class FailedDecision(BaseModel):
     error: CrewAIFlowError
 
 
-FlowDecision = Union[
-    DirectResponseDecision,
-    DelegateDecision,
-    WaitingDecision,
-    SynthesizeDecision,
-    FailedDecision,
-]
+FlowDecision = (
+    DirectResponseDecision
+    | DelegateDecision
+    | WaitingDecision
+    | SynthesizeDecision
+    | FailedDecision
+)
 
 
 def _validate_decision(raw: Any) -> FlowDecision:
