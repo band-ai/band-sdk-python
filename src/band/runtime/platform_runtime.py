@@ -322,11 +322,13 @@ class PlatformRuntime:
 
     async def _setup_contact_handling(self) -> None:
         """Set up contact event handling based on config."""
-        if self._contact_config.strategy == ContactEventStrategy.DISABLED:
-            if not self._contact_config.broadcast_changes:
-                logger.debug("Contact handling disabled")
-                return
-            # Even if DISABLED, we may want broadcasts
+        if (
+            self._contact_config.strategy == ContactEventStrategy.DISABLED
+            and not self._contact_config.broadcast_changes
+        ):
+            logger.debug("Contact handling disabled")
+            return
+        # Even if DISABLED, we may want broadcasts
 
         assert self._link is not None
         assert self._runtime is not None

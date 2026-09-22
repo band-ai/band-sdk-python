@@ -1995,15 +1995,19 @@ class ExecutionContext:
         self, event: PlatformEvent, msg_id: str | None, payload: Any
     ) -> bool:
         """Process an event after any required in-flight claim is acquired."""
-        if isinstance(event, MessageEvent) and msg_id and payload:
-            if self._message_processed_for_agent(msg_id, payload.metadata):
-                logger.info(
-                    "Skipping processed replay message %s in room %s",
-                    msg_id,
-                    self.room_id,
-                )
-                self.claims.remember_completed(self.room_id, msg_id)
-                return True
+        if (
+            isinstance(event, MessageEvent)
+            and msg_id
+            and payload
+            and self._message_processed_for_agent(msg_id, payload.metadata)
+        ):
+            logger.info(
+                "Skipping processed replay message %s in room %s",
+                msg_id,
+                self.room_id,
+            )
+            self.claims.remember_completed(self.room_id, msg_id)
+            return True
 
         self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
@@ -2107,15 +2111,18 @@ class ExecutionContext:
             logger.exception(
                 "Error processing %s", event.type
             )  # For messages: mark as failed on server
-            if isinstance(event, MessageEvent) and msg_id:
-                if not await self.link.mark_failed(
+            if (
+                isinstance(event, MessageEvent)
+                and msg_id
+                and not await self.link.mark_failed(
                     self.room_id, msg_id, _error_label(e)
-                ):
-                    logger.warning(
-                        "ExecutionContext %s: Failed to mark message %s as failed",
-                        self.room_id,
-                        msg_id,
-                    )
+                )
+            ):
+                logger.warning(
+                    "ExecutionContext %s: Failed to mark message %s as failed",
+                    self.room_id,
+                    msg_id,
+                )
             return True
 
         finally:

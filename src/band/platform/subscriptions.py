@@ -291,13 +291,12 @@ class SubscriptionManager:
             # unknown (e.g. cancelled after PHX's own join call started) --
             # record_agent_topic_join_ambiguous resolves core straight to
             # NeedsReconciliation instead of Absent.
-            if not settled:
-                if self._subscriptions.record_agent_topic_join_ambiguous(
-                    topic=topic, ticket=ticket
-                ):
-                    self._mark_needing_reconciliation(
-                        topic, self._agent_topics_needing_reconciliation, ws
-                    )
+            if not settled and self._subscriptions.record_agent_topic_join_ambiguous(
+                topic=topic, ticket=ticket
+            ):
+                self._mark_needing_reconciliation(
+                    topic, self._agent_topics_needing_reconciliation, ws
+                )
 
     async def unsubscribe_room(self, ws: WebSocketClient, room_id: str) -> None:
         ticket = self._subscriptions.unsubscribe_room(room_id=room_id)

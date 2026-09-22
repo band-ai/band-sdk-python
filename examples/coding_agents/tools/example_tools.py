@@ -69,12 +69,13 @@ def _safe_eval(node: ast.AST, depth: int = 0) -> float | int:
         left = _safe_eval(node.left, depth + 1)
         right = _safe_eval(node.right, depth + 1)
         # Bounds check for pow to prevent resource exhaustion
-        if op_type is ast.Pow:
-            if abs(left) > _MAX_POW_BASE or abs(right) > _MAX_POW_EXPONENT:
-                raise ValueError(
-                    f"Pow operands too large (max base: {_MAX_POW_BASE}, "
-                    f"max exponent: {_MAX_POW_EXPONENT})"
-                )
+        if op_type is ast.Pow and (
+            abs(left) > _MAX_POW_BASE or abs(right) > _MAX_POW_EXPONENT
+        ):
+            raise ValueError(
+                f"Pow operands too large (max base: {_MAX_POW_BASE}, "
+                f"max exponent: {_MAX_POW_EXPONENT})"
+            )
         return _OPERATORS[op_type](left, right)
     elif isinstance(node, ast.UnaryOp):
         op_type = type(node.op)

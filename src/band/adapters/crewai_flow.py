@@ -279,9 +279,12 @@ class RestCrewAIFlowStateSource:
                 event_key = self._event_cache_key(item)
                 if event_key in entry.seen_event_ids:
                     continue
-                if entry.latest_inserted_at is not None and inserted is not None:
-                    if inserted < entry.latest_inserted_at:
-                        continue
+                if (
+                    entry.latest_inserted_at is not None
+                    and inserted is not None
+                    and inserted < entry.latest_inserted_at
+                ):
+                    continue
                 if self._is_task_event(item, metadata_namespace):
                     new_events.append(item)
             if len(data) < self._page_size:
@@ -1569,11 +1572,12 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             )
 
         # ---- metadata_namespace -------------------------------------------
-        if metadata_namespace is not None:
-            if not isinstance(metadata_namespace, str) or not metadata_namespace:
-                raise BandConfigError(
-                    "metadata_namespace must be a non-empty string or None"
-                )
+        if metadata_namespace is not None and (
+            not isinstance(metadata_namespace, str) or not metadata_namespace
+        ):
+            raise BandConfigError(
+                "metadata_namespace must be a non-empty string or None"
+            )
 
         # ---- max_delegation_rounds ----------------------------------------
         if not isinstance(max_delegation_rounds, int) or isinstance(

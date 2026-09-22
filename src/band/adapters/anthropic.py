@@ -402,14 +402,15 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "input": block.input,
                     }
                 )
-            elif isinstance(block, TextBlock):
-                if block.text:  # Only include non-empty text
-                    serialized.append(
-                        {
-                            "type": "text",
-                            "text": block.text,
-                        }
-                    )
+            elif (
+                isinstance(block, TextBlock) and block.text
+            ):  # Only include non-empty text
+                serialized.append(
+                    {
+                        "type": "text",
+                        "text": block.text,
+                    }
+                )
         return serialized
 
     # --- Copied from BandAnthropicAgent._process_tool_calls ---

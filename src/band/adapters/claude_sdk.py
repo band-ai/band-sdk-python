@@ -1429,13 +1429,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         mention: list[str] = [sender["id"]]
 
         # Authorization: /approve and /decline require sender to be authorized
-        if command in ("approve", "decline") and self.approval_authorized_senders:
-            if sender["id"] not in self.approval_authorized_senders:
-                await tools.send_message(
-                    "You are not authorized to approve or decline tool use.",
-                    mentions=mention,
-                )
-                return
+        if (
+            command in ("approve", "decline")
+            and self.approval_authorized_senders
+            and sender["id"] not in self.approval_authorized_senders
+        ):
+            await tools.send_message(
+                "You are not authorized to approve or decline tool use.",
+                mentions=mention,
+            )
+            return
 
         # --- /approvals: list pending ---
         if command == "approvals":

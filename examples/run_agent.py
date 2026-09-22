@@ -94,15 +94,14 @@ def build_contact_config(
 
         async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
             """Auto-approve all contact requests."""
-            if isinstance(event, ContactRequestReceivedEvent):
-                if event.payload:
-                    logger.info(
-                        "Auto-approving contact request from %s",
-                        event.payload.from_handle,
-                    )
-                    await tools.respond_contact_request(
-                        "approve", request_id=event.payload.id
-                    )
+            if isinstance(event, ContactRequestReceivedEvent) and event.payload:
+                logger.info(
+                    "Auto-approving contact request from %s",
+                    event.payload.from_handle,
+                )
+                await tools.respond_contact_request(
+                    "approve", request_id=event.payload.id
+                )
 
         return ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
