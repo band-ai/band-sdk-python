@@ -49,7 +49,7 @@ def make_platform_message(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -3483,7 +3483,7 @@ class TestHistoryInjection:
                     "request_id": 1,
                     "method": "item/tool/call",
                     "summary": "test",
-                    "created_at": datetime.now(),
+                    "created_at": datetime.now(UTC),
                     "future": fut,
                 },
             )(),

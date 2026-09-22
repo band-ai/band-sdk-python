@@ -8,7 +8,7 @@ test double.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -45,7 +45,7 @@ def make_platform_message(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 

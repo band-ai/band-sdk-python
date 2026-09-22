@@ -8,7 +8,7 @@ import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -328,5 +328,5 @@ def _message(content: str, room_id: str) -> PlatformMessage:
         sender_name=LIVE_SENDER_NAME,
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )

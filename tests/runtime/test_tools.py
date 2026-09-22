@@ -894,7 +894,10 @@ class TestFileTools:
         """A naive (offset-less) expires_at -- the Fern model doesn't enforce
         one -- must be treated as UTC, not raise on comparison to aware
         now()."""
-        expired = _attachment("file-1", expires_at=datetime(2020, 1, 1))  # no tzinfo
+        expired = _attachment(
+            "file-1",
+            expires_at=datetime(2020, 1, 1),  # noqa: DTZ001 -- naive on purpose, see docstring
+        )
         _mock_attachment_page(mock_rest_client, expired)
         tools = AgentTools("room-123", mock_rest_client)
 

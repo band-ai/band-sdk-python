@@ -212,7 +212,7 @@ class Conductor:
     def _room_title(self) -> str:
         """A readable, timestamped room name (topic + local date-time)."""
         topic = re.sub(r"^(?:a|an)\s+", "", self.settings.demo_topic).strip()
-        stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+        stamp = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
         return f"Design Review — {topic} — {stamp}"
 
     def _mention(self, participant_id: str) -> Mention:

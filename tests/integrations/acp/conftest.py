@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -123,7 +123,7 @@ def make_platform_message(
         sender_name=sender_name,
         message_type=message_type,
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 

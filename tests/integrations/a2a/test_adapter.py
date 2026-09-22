@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -38,7 +38,7 @@ def make_platform_message(content: str = "Hello") -> PlatformMessage:
         sender_name="Test User",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 

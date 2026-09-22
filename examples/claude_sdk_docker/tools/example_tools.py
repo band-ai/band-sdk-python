@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ast
 import operator
-from datetime import datetime
+from datetime import UTC, datetime
 from random import randint
 from typing import Any
 
@@ -130,7 +130,7 @@ async def calculator(args: dict[str, Any]) -> dict[str, Any]:
 @tool("get_time", "Get current date/time", {})
 async def get_time(_args: dict[str, Any]) -> dict[str, Any]:
     """Returns current time in ISO format."""
-    return {"content": [{"type": "text", "text": datetime.now().isoformat()}]}
+    return {"content": [{"type": "text", "text": datetime.now(UTC).isoformat()}]}
 
 
 @tool("random_number", "Generate random number", {"min": int, "max": int})
