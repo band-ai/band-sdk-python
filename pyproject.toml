@@ -480,6 +480,13 @@ extend-select = ["PLC0415"]
 # risk breaking callers that catch ValueError around config parsing.
 ignore = ["TRY004"]
 
+[tool.ruff.lint.per-file-ignores]
+# examples/ uses a deliberate NN_topic.py numbering convention for tutorial
+# ordering, referenced by exact filename throughout README.md and
+# docs/adapters/*.md. No rename can satisfy both that convention and N999
+# (a leading digit is never a legal Python identifier).
+"examples/**" = ["N999"]
+
 [tool.pyrefly]
 project_includes = [
     "src/**/*.py",              # Only check source files
