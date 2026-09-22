@@ -10,8 +10,7 @@ runs:
   using: composite
   steps:
     - name: Configure git to use HTTPS for GitHub
-      shell: bash
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      uses: ./.github/actions/git-https-auth
 
     - name: Install uv (with cache) and Python
       uses: astral-sh/setup-uv@v7
