@@ -161,24 +161,26 @@ class OmpACPAdapter(ACPClientAdapter):
                 name=OMP_APPROVAL_FORM_TOOL_NAME,
                 arguments={"message": message},
             )
-            options = (
-                PermissionOption(
-                    optionId=OMP_APPROVE_OPTION_ID,
-                    name=OMP_FORM_APPROVE,
-                    kind="allow_once",
-                ),
-                PermissionOption(
-                    optionId=OMP_DENY_OPTION_ID,
-                    name=OMP_FORM_DENY,
-                    kind="reject_once",
-                ),
-            )
-            option_id = await self._resolve_permission_option(
-                call=synthetic_call,
-                options=options,
-                room_id=room_id,
-                session_id=session_id,
-            )
+            option_id: str | None = None
+            if self._resolve_permission is not None:
+                options = (
+                    PermissionOption(
+                        optionId=OMP_APPROVE_OPTION_ID,
+                        name=OMP_FORM_APPROVE,
+                        kind="allow_once",
+                    ),
+                    PermissionOption(
+                        optionId=OMP_DENY_OPTION_ID,
+                        name=OMP_FORM_DENY,
+                        kind="reject_once",
+                    ),
+                )
+                option_id = await self._resolve_permission_option(
+                    call=synthetic_call,
+                    options=options,
+                    room_id=room_id,
+                    session_id=session_id,
+                )
             if option_id == OMP_APPROVE_OPTION_ID:
                 return AcceptElicitationResponse(
                     action="accept",

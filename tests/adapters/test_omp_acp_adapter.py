@@ -176,6 +176,27 @@ class TestOmpDeviceCallNormalization:
 
 class TestOmpElicitationHandler:
     @pytest.mark.asyncio
+    async def test_approve_form_declines_without_permission_resolver(self) -> None:
+        adapter = OmpACPAdapter()
+        emitter = MagicMock()
+        emitter.open_permission = AsyncMock()
+        handler = adapter._make_elicitation_handler(emitter, "room-1", "sess-1")
+        schema = {
+            "properties": {
+                "choice": {"enum": [OMP_FORM_APPROVE, OMP_FORM_DENY]},
+            }
+        }
+
+        response = await handler(
+            message="Allow destructive action?",
+            mode="form",
+            requested_schema=schema,
+        )
+
+        assert isinstance(response, DeclineElicitationResponse)
+        emitter.open_permission.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_approve_form_accepts_when_resolver_approves(self) -> None:
         adapter = OmpACPAdapter()
 
