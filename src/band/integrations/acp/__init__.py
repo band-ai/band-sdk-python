@@ -45,7 +45,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from band.integrations.acp.client_adapter import ACPClientAdapter
-    from band.integrations.acp.session_config import ACPConfigRequest
     from band.integrations.acp.client_types import (
         ACPClientSessionState,
         BandACPClient,
@@ -55,6 +54,7 @@ if TYPE_CHECKING:
     from band.integrations.acp.router import AgentRouter
     from band.integrations.acp.server import ACPServer, run_acp_server
     from band.integrations.acp.server_adapter import BandACPServerAdapter
+    from band.integrations.acp.session_config import ACPConfigRequest
     from band.integrations.acp.types import (
         ACPSessionState,
         CollectedChunk,
@@ -63,8 +63,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ACPClientAdapter",
-    "ACPConfigRequest",
     "ACPClientSessionState",
+    "ACPConfigRequest",
     "ACPPushHandler",
     "ACPServer",
     "ACPSessionState",

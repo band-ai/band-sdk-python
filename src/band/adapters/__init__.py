@@ -36,8 +36,10 @@ if TYPE_CHECKING:
         A2AGatewayAdapterConfig as A2AGatewayAdapterConfig,
     )
     from band.adapters.acp import (
-        ACPConfigRequest as ACPConfigRequest,
         ACPClientAdapter as ACPClientAdapter,
+    )
+    from band.adapters.acp import (
+        ACPConfigRequest as ACPConfigRequest,
     )
     from band.adapters.acp import (
         ACPServer as ACPServer,

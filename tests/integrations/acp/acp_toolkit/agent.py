@@ -31,9 +31,10 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
-from band.integrations.acp.session_config import SessionConfigOption
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+
+from band.integrations.acp.session_config import SessionConfigOption
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 ConfigOptionHandler = Callable[

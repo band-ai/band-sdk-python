@@ -16,9 +16,9 @@ from acp.schema import (
 
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.session_config import (
-    ACPConfigRequest,
-    ACPConfigError,
     RESOLVER_CONFIG_OPTION_ID,
+    ACPConfigError,
+    ACPConfigRequest,
     SessionConfigOption,
     apply_session_config_selections,
 )
@@ -328,7 +328,6 @@ class TestACPConfigurationHarness:
                     second_resolver_started.set()
                 case room_id:
                     raise AssertionError(f"Unexpected room: {room_id}")
-            return None
 
         async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
             first_turn = asyncio.create_task(session.send("First", room="room-1"))
@@ -355,7 +354,6 @@ class TestACPConfigurationHarness:
             assert request.room_id == "room-1"
             resolver_started.set()
             await release_resolver.wait()
-            return None
 
         async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
             first_turn = asyncio.create_task(session.send("First"))
@@ -387,7 +385,6 @@ class TestACPConfigurationHarness:
             if resolver_calls == 1:
                 first_resolver_started.set()
                 await asyncio.Event().wait()
-            return None
 
         async with acp_adapter(agent, resolve_session_config=resolve_config) as session:
             interrupted_turn = asyncio.create_task(session.send("Interrupted"))

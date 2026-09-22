@@ -47,16 +47,16 @@ from band.integrations.acp.client_types import (
     BandACPClient,
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
-from band.integrations.acp.types import ACPToolCall
 from band.integrations.acp.session_config import (
+    RESOLVER_CONFIG_OPTION_ID,
     ACPConfigError,
     ACPConfigRequest,
-    RESOLVER_CONFIG_OPTION_ID,
     SessionConfigOption,
     SessionConfigResolver,
     apply_session_config_selections,
     session_config_options,
 )
+from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,

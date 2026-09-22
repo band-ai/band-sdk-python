@@ -51,7 +51,7 @@ from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent, configure_logging
-from band.adapters import ACPConfigRequest, ACPClientAdapter
+from band.adapters import ACPClientAdapter, ACPConfigRequest
 from band.config import load_agent_config
 from band.integrations.acp.session_config import flatten_select_options
 
