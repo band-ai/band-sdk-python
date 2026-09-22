@@ -1,5 +1,6 @@
 """Tests for composition layer types."""
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
 import pytest
@@ -79,7 +80,7 @@ class TestPlatformMessage:
             created_at=datetime.now(UTC),
         )
 
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             msg.content = "Modified"
 
 
@@ -227,5 +228,5 @@ class TestAgentInput:
             room_id="room-1",
         )
 
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             inp.room_id = "modified"

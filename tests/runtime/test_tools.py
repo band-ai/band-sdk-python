@@ -2324,7 +2324,7 @@ class TestToolInputModels:
 
     def test_send_event_input_validates_type(self):
         """SendEventInput should validate message_type."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError, match="literal_error"):
             SendEventInput(content="Test", message_type="invalid")
 
     def test_add_participant_input_defaults(self):

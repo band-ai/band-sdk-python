@@ -457,12 +457,12 @@ class SubscriptionManager:
             if not self._is_current_session(ws):
                 return
             await self._leave_channel(
-                lambda: ws.leave_chat_room_channel(room_id),
+                lambda: ws.leave_chat_room_channel(room_id),  # noqa: B023 -- _leave_channel awaits this immediately, before the loop advances
                 description=f"best-effort reconciliation leave of chat_room:{room_id}",
                 level=logging.DEBUG,
             )
             await self._leave_channel(
-                lambda: ws.leave_room_participants_channel(room_id),
+                lambda: ws.leave_room_participants_channel(room_id),  # noqa: B023 -- see above
                 description=(
                     f"best-effort reconciliation leave of room_participants:{room_id}"
                 ),
@@ -486,7 +486,7 @@ class SubscriptionManager:
                 else ws.leave_agent_contacts_channel
             )
             await self._leave_channel(
-                lambda: leave(agent_id),
+                lambda: leave(agent_id),  # noqa: B023 -- _leave_channel awaits this immediately, before the loop advances
                 description=f"best-effort reconciliation leave of {topic}",
                 level=logging.DEBUG,
             )

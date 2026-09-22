@@ -832,7 +832,7 @@ class TestErrorHandling:
                         ),
                     },
                 ),
-                pytest.raises(Exception),
+                pytest.raises(Exception),  # noqa: B017 -- create_customer_message's side_effect is a bare Exception("API error")
             ):
                 await adapter.on_message(
                     msg=sample_message,

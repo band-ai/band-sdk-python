@@ -459,5 +459,5 @@ async def test_spawn_process_safety(acp_client: BandACPClient) -> None:
     """Should handle __aenter__ failure gracefully for bad command."""
 
     ctx = spawn_agent_process(acp_client, "nonexistent-acp-command-12345")
-    with pytest.raises(Exception):
+    with pytest.raises(FileNotFoundError):
         await ctx.__aenter__()
