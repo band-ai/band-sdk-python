@@ -17,8 +17,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-
 from settings import OpenCodeExampleSettings
+
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Capability, Emit

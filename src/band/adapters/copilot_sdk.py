@@ -534,7 +534,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             session = await self._session_manager.client.resume_session(
                 stored_id, **kwargs
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: resume failed for session %s: %s — creating fresh",
                 room_id,
@@ -617,7 +617,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         rendered = render_room_question(request)
         try:
             await room_tools.send_message(rendered, mentions=[turn.sender_mention])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: ask_user question delivery failed: %s", room_id, exc
             )
@@ -958,7 +958,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             await tools.send_event(
                 content=content, message_type=message_type, metadata=metadata
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, exc)
             return False
         return True

@@ -35,7 +35,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 
-
 logger = logging.getLogger(__name__)
 
 

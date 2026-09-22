@@ -6,14 +6,11 @@ import asyncio
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
-
 from band_sdk_core import RoomMembership
-
-from band.runtime.presence import RoomPresence
 
 # Import test helpers from conftest
 from band.platform.event import ReconnectedEvent, WebSocketDisconnectedEvent
-
+from band.runtime.presence import RoomPresence
 from tests.conftest import (
     make_message_event,
     make_room_added_event,

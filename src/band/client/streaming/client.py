@@ -1,27 +1,32 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-import logging
-import random
 from typing import Any, Literal
 
 from band_sdk_core import (
+    AgentTopicKind,
     DeadReason,
     Session,
     SessionOutcome,
     SessionPolicy,
     SessionState,
     StaleReason,
+    chat_room_topic,
+    room_participants_topic,
 )
 from phoenix_channels_python_client.client import (
-    PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
+    PHXChannelsClient,
 )
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
+from pydantic import Field
+
 from band.client.streaming.errors import (
     WebSocketUpgradeError,
     probe_upgrade_error,
@@ -29,7 +34,6 @@ from band.client.streaming.errors import (
 from band.client.streaming.watchdog import HeartbeatWatchdog
 from band.client.streaming.wire import WirePayload
 from band.logging_config import core_issues, trace_context_extra
-from band_sdk_core import AgentTopicKind, chat_room_topic, room_participants_topic
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +99,7 @@ class ControlMode(StrEnum):
 class MessageMetadata(WirePayload):
     """Metadata within message_created / message_updated payloads."""
 
-    mentions: list[Mention] = []
+    mentions: list[Mention] = Field(default_factory=list)
     status: str | None = None
     # Per-recipient delivery state, populated on `message_updated` as recipients
     # process the message. Keyed by recipient (agent) id; each value carries a
@@ -510,7 +514,11 @@ class WebSocketClient:
                 )
                 raise_exc = exc
             case _:
-                raise
+                # Only ever called from the `except Exception as exc:` in
+                # __aenter__ while that handler is still active, so this bare
+                # raise correctly re-raises `exc` via CPython's per-thread
+                # exception state, not lexical scoping.
+                raise  # noqa: PLE0704
 
         if outcome.state is SessionState.Dead:
             self.record_terminal_disconnect(
@@ -524,8 +532,9 @@ class WebSocketClient:
             if raise_exc is exc:
                 # Bare raise: re-raising the exception already being handled
                 # via `raise raise_exc` would add a spurious extra frame to
-                # its traceback.
-                raise
+                # its traceback. Same cross-frame re-raise as the `case _`
+                # above -- only valid while __aenter__'s except is active.
+                raise  # noqa: PLE0704
             # A newly-built WebSocketUpgradeError -- chain it to the
             # original exception, same as the pre-Session code did.
             raise raise_exc from exc
@@ -605,7 +614,7 @@ class WebSocketClient:
 
             try:
                 await self.client.__aenter__()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- normalizes an arbitrary transport/parse failure into a typed client error
                 delay = await self._resolve_failed_connect_attempt(exc, epoch)
                 await asyncio.sleep(delay)
             else:
@@ -703,7 +712,7 @@ class WebSocketClient:
                 await callback(validated)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 – intentionally broad to protect event loop
+            except Exception:
                 logger.exception(
                     "[WebSocket] Callback error for %s event", message.event
                 )

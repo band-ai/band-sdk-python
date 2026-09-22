@@ -17,9 +17,9 @@ from band.core.types import Capability
 from band.runtime.execution import ExecutionContext
 from band.runtime.runtime import AgentRuntime
 from band.runtime.tools import (
-    AgentTools,
     CONTACT_TOOL_NAMES,
     MEMORY_TOOL_NAMES,
+    AgentTools,
     iter_tool_definitions,
 )
 

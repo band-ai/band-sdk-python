@@ -20,15 +20,15 @@ from unittest.mock import patch
 import pytest
 
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
-from tests.e2e.baseline.toolkit import adapters as adapters_module
-from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 from tests.e2e.baseline.agents import (
-    WITH_ADAPTERS_MARKER,
     PER_ADAPTER_MARKER,
+    WITH_ADAPTERS_MARKER,
     PerAdapter,
     WithAdapters,
     per_adapter,
 )
+from tests.e2e.baseline.toolkit import adapters as adapters_module
+from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 
 
 class FakeItem:
@@ -228,9 +228,11 @@ def test_peer_must_be_a_live_adapter() -> None:
     pending_spec = replace(
         spec_for(Adapter.LANGGRAPH), e2e_pending="synthetic: backend not CI-wired"
     )
-    with patch.dict(adapters_module._REGISTRY, {Adapter.LANGGRAPH: pending_spec}):
-        with pytest.raises(ValueError, match="pending adapter"):
-            per_adapter(peer=Adapter.LANGGRAPH)
+    with (
+        patch.dict(adapters_module._REGISTRY, {Adapter.LANGGRAPH: pending_spec}),
+        pytest.raises(ValueError, match="pending adapter"),
+    ):
+        per_adapter(peer=Adapter.LANGGRAPH)
 
 
 # --- e2e_pending allowlist ----------------------------------------------------------------

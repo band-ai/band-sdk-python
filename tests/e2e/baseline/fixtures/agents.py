@@ -19,12 +19,11 @@ from contextlib import asynccontextmanager
 import pytest
 
 from band.core.types import AdapterFeatures
-
 from tests.e2e.baseline.agents import (
     PER_ADAPTER_MARKER,
     Adapter,
-    WithAdapters,
     PerAdapter,
+    WithAdapters,
 )
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (

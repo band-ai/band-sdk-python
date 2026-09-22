@@ -42,7 +42,9 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
         # band.integrations.acp.client_types imports client_runtime, which
         # imports the optional `acp` extra (agent-client-protocol) at module
         # top level — deferred so this converter stays importable without it.
-        from band.integrations.acp.client_types import ACPClientSessionState  # noqa: PLC0415
+        from band.integrations.acp.client_types import (  # noqa: PLC0415
+            ACPClientSessionState,
+        )
 
         room_to_session: dict[str, str] = {}
 

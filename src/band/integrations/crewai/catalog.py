@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, field_validator
 
@@ -28,7 +29,6 @@ from band.runtime.tools import (
     serialize_tool_result,
     validate_tool_arguments,
 )
-
 
 # --- Rendering a tool result as the text CrewAI hands the model ---
 

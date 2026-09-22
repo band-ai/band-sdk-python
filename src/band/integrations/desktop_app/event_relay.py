@@ -8,10 +8,10 @@ import hashlib
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable, Iterator
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict

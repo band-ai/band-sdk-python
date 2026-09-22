@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from band_rest.core.api_error import ApiError
 
 from band.cli.trigger import (
     _format_api_error,
@@ -15,9 +15,7 @@ from band.cli.trigger import (
     main,
     run,
 )
-from band_rest.core.api_error import ApiError
 from tests.logsupport import band_log_env, restored_logging
-
 
 # --- Helpers ---
 
@@ -589,7 +587,7 @@ class TestMain:
         with (
             patch(
                 "band.cli.trigger.asyncio.run",
-                side_effect=_fake_asyncio_run(side_effect=asyncio.TimeoutError()),
+                side_effect=_fake_asyncio_run(side_effect=TimeoutError()),
             ),
             pytest.raises(SystemExit) as exc_info,
         ):
@@ -614,7 +612,7 @@ class TestMain:
         with (
             patch(
                 "band.cli.trigger.asyncio.run",
-                side_effect=_fake_asyncio_run(side_effect=asyncio.TimeoutError()),
+                side_effect=_fake_asyncio_run(side_effect=TimeoutError()),
             ),
             pytest.raises(SystemExit),
         ):

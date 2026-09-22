@@ -10,7 +10,7 @@ message history management, tool execution, custom tools, and error handling.
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,7 +56,7 @@ def sample_message():
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -651,17 +651,19 @@ class TestToolExecution:
 
         mock_tools.execute_tool_call.return_value = {"status": "success"}
         call_anthropic = AsyncMock(side_effect=[resp1, RuntimeError("boom")])
-        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
-            with pytest.raises(RuntimeError, match="boom"):
-                await adapter.on_message(
-                    msg=sample_message,
-                    tools=mock_tools,
-                    history=[],
-                    participants_msg=None,
-                    contacts_msg=None,
-                    is_session_bootstrap=True,
-                    room_id="room-123",
-                )
+        with (
+            patch.object(adapter, "_call_anthropic", new=call_anthropic),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
         usage_payloads = sent_usage_payloads(mock_tools)
         assert usage_payloads == [

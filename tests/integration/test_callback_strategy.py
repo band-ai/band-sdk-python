@@ -14,13 +14,13 @@ import logging
 from typing import Any
 from unittest.mock import MagicMock
 
-from band.platform.event import (
-    ContactRequestReceivedEvent,
-    ContactAddedEvent,
-)
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
     ContactAddedPayload,
+    ContactRequestReceivedPayload,
+)
+from band.platform.event import (
+    ContactAddedEvent,
+    ContactRequestReceivedEvent,
 )
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.contact_tools import ContactTools
@@ -45,13 +45,13 @@ async def cleanup_contact_state(api_client, api_client_2):
     # Agent 1: Remove contact with Agent 2 if exists
     try:
         await api_client.agent_api_contacts.remove_agent_contact(handle=agent2_handle)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     # Agent 2: Remove contact with Agent 1 if exists
     try:
         await api_client_2.agent_api_contacts.remove_agent_contact(handle=agent1_handle)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     # Cancel/reject any pending requests
@@ -59,14 +59,14 @@ async def cleanup_contact_state(api_client, api_client_2):
         await api_client.agent_api_contacts.respond_to_agent_contact_request(
             action="cancel", handle=agent2_handle
         )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     try:
         await api_client_2.agent_api_contacts.respond_to_agent_contact_request(
             action="cancel", handle=agent1_handle
         )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     # Reject any received requests
@@ -80,7 +80,7 @@ async def cleanup_contact_state(api_client, api_client_2):
                 await api_client.agent_api_contacts.respond_to_agent_contact_request(
                     action="reject", request_id=req.id
                 )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     try:
@@ -93,7 +93,7 @@ async def cleanup_contact_state(api_client, api_client_2):
                 await api_client_2.agent_api_contacts.respond_to_agent_contact_request(
                     action="reject", request_id=req.id
                 )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     await asyncio.sleep(0.3)

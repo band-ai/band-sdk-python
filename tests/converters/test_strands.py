@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
-from band.converters.strands import StrandsHistoryConverter  # noqa: E402
-from tests.strandskit import outline, text, tool_call, tool_result  # noqa: E402
+from band.converters.strands import StrandsHistoryConverter
+from tests.strandskit import outline, text, tool_call, tool_result
 
 
 class TestToolEventFormat:
@@ -160,8 +160,10 @@ class TestToolPairIntegrity:
 
         assert outline(result) == [
             "assistant: toolUse(call-a) toolUse(call-b)",
-            "user: toolResult(call-a, success) toolResult(call-b, success) "
-            "text([Alice]: also, hello)",
+            (
+                "user: toolResult(call-a, success) toolResult(call-b, success) "
+                "text([Alice]: also, hello)"
+            ),
         ]
 
     def test_missing_tool_result_is_answered_with_a_synthetic_error(self):
@@ -224,8 +226,10 @@ class TestToolPairIntegrity:
 
         assert outline(result) == [
             "assistant: toolUse(call-a) toolUse(call-b) toolUse(call-c)",
-            "user: toolResult(call-a, success) toolResult(call-b, success) "
-            "toolResult(call-c, success)",
+            (
+                "user: toolResult(call-a, success) toolResult(call-b, success) "
+                "toolResult(call-c, success)"
+            ),
         ]
 
     def test_partially_answered_parallel_calls_are_completed_in_place(self):

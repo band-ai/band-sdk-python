@@ -85,9 +85,11 @@ def test_pipeline_publishes_no_global_provider(
     with restored_logging(), band_log_env(monkeypatch, FILE=None):
         with otel_setup.telemetry(SERVICE):
             pass
-        with otel_setup.telemetry(SERVICE) as second:
-            with second.tracer.start_as_current_span("probe") as span:
-                assert span.is_recording()
+        with (
+            otel_setup.telemetry(SERVICE) as second,
+            second.tracer.start_as_current_span("probe") as span,
+        ):
+            assert span.is_recording()
 
     assert not isinstance(trace.get_tracer_provider(), TracerProvider)
 

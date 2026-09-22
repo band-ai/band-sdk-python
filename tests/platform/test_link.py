@@ -14,6 +14,8 @@ from band_rest import (
     UnprocessableEntityError,
 )
 from band_rest.core.api_error import ApiError
+from band_rest.types.chat_message_metadata import ChatMessageMetadata
+from band_sdk_core import AgentTopicStatus, DeadReason, SessionState, chat_room_topic
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 
 from band.client.streaming import (
@@ -38,8 +40,6 @@ from band.platform.event import (
     WebSocketDisconnectedEvent,
 )
 from band.platform.link import BandLink
-from band_sdk_core import AgentTopicStatus, DeadReason, SessionState, chat_room_topic
-
 from tests.conftest import make_message_event
 from tests.platform.conftest import (
     AllTopicsExcept,
@@ -1164,7 +1164,7 @@ class TestGetNextMessage:
             sender_type="User",
             sender_name="User One",
             message_type="text",
-            metadata={"mentions": []},
+            metadata=ChatMessageMetadata.model_validate({"mentions": []}),
             inserted_at=None,
         )
         link.rest.agent_api_messages.get_agent_next_message = AsyncMock(

@@ -26,6 +26,7 @@ import typer
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from band.core.types import Capability
 from band.integrations.mcp.engine import (
     EngineSpec,
     SendEventWideInput,
@@ -34,14 +35,12 @@ from band.integrations.mcp.engine import (
     extend_with_chat_id,
     pin_existing_chat_id,
 )
-from band.core.types import Capability
 from band.runtime.tools import (
     EVENT_TOOL_NAMES,
     Surface,
     classify_room_binding,
     iter_tool_definitions,
 )
-
 from band_mcp import __version__
 from band_mcp.config import (
     DEFAULT_SCOPE,

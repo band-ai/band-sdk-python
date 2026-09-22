@@ -153,7 +153,7 @@ def _handle_signal(sig: signal.Signals) -> None:
 async def main() -> None:
     """Run the Letta agent from YAML configuration."""
     LogSettings().for_application().configure()
-    global _shutdown_event  # noqa: PLW0603 — module-level event for signal handlers
+    global _shutdown_event
     _shutdown_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()

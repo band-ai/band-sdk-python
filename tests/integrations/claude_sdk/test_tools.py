@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from pydantic import BaseModel
 
 from band.integrations.claude_sdk.tools import (

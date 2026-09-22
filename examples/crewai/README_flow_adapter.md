@@ -82,7 +82,7 @@ await flow.kickoff_async(inputs)
         "sender_name": "display name",
         "message_type": "text",
     },
-    "current_message": { ... },  # same shape as message
+    "current_message": {...},  # same shape as message
     "requester": {
         "id": "user-or-agent-id",
         "name": "display name",

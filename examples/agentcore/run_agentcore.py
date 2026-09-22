@@ -36,6 +36,6 @@ load_dotenv(
     )
 )
 
-from bridge_core.bridge import main  # noqa: E402
+from bridge_core.bridge import main
 
 asyncio.run(main())

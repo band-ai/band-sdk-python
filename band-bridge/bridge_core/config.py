@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -34,7 +34,7 @@ class HTTPTarget(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("HTTPTarget.url must be non-empty")
-        if not (v.startswith("http://") or v.startswith("https://")):
+        if not (v.startswith(("http://", "https://"))):
             raise ValueError("HTTPTarget.url must start with http:// or https://")
         return v
 
@@ -79,7 +79,7 @@ class AgentCoreTarget(BaseModel):
 
 
 Target = Annotated[
-    Union[HTTPTarget, AgentCoreTarget],
+    HTTPTarget | AgentCoreTarget,
     Field(discriminator="type"),
 ]
 

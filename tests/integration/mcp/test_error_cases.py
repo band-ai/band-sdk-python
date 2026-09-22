@@ -10,6 +10,7 @@ without a room id, and bad credentials. Run with:
 from __future__ import annotations
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from tests.integration.mcp.conftest import LiveHarness, requires_api
 
@@ -17,7 +18,7 @@ from tests.integration.mcp.conftest import LiveHarness, requires_api
 @requires_api
 async def test_unknown_tool_name_is_rejected(harness: LiveHarness) -> None:
     """Calling a tool that was never registered raises."""
-    with pytest.raises(Exception):
+    with pytest.raises(ToolError, match="Unknown tool"):
         await harness.call_raw("band_does_not_exist")
 
 
@@ -45,7 +46,7 @@ async def test_resolve_unknown_handle_is_handled(harness: LiveHarness) -> None:
         result = await harness.call(
             "band_resolve_handle", handle="@definitely-not-a-real-handle-xyz"
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- an API-level 404/422 surfacing as an exception is the behavior under test
         # An API-level 404/422 surfacing as an exception is acceptable.
         return
     # Otherwise we should get a structured (non-crashing) response -- not just

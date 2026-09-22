@@ -18,14 +18,12 @@ import asyncio
 import contextlib
 import logging
 from asyncio import timeout as asyncio_timeout
-from collections.abc import Iterator
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable, Iterator
+from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
     Protocol,
     runtime_checkable,
 )
@@ -47,19 +45,18 @@ from band.platform.event import (
     PlatformEvent,
     ReconnectedEvent,
 )
-
-from band.runtime.types import (
-    ConversationContext,
-    PlatformMessage,
-    ParticipantAddedCallback,
-    ParticipantRemovedCallback,
-    SessionConfig,
-    SYNTHETIC_SENDER_TYPE,
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
-)
 from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import build_participants_message, format_history_for_llm
 from band.runtime.participants import log_roster_call, log_roster_error
+from band.runtime.types import (
+    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    SYNTHETIC_SENDER_TYPE,
+    ConversationContext,
+    ParticipantAddedCallback,
+    ParticipantRemovedCallback,
+    PlatformMessage,
+    SessionConfig,
+)
 from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
@@ -228,7 +225,7 @@ class ExecutionContext:
     def __init__(
         self,
         room_id: str,
-        link: "BandLink",
+        link: BandLink,
         on_execute: ExecutionHandler,
         config: SessionConfig | None = None,
         agent_id: str | None = None,
@@ -587,7 +584,7 @@ class ExecutionContext:
         try:
             await asyncio.wait_for(self._idle_event.wait(), timeout=timeout)
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 
     async def on_event(self, event: PlatformEvent) -> None:
@@ -836,7 +833,7 @@ class ExecutionContext:
             if response.data is not None:
                 self.set_participants([p.model_dump() for p in response.data])
             self._participants_loaded = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             # Catches both the REST call (any exception) and set_participants
             # (ValueError on a duplicate id) -- band_sdk_core failures carry
             # .issues/.trace_context, which a bare "%s" would only stringify.
@@ -875,7 +872,7 @@ class ExecutionContext:
                 room_id=self.room_id,
                 messages=[],
                 participants=participants,
-                hydrated_at=datetime.now(timezone.utc),
+                hydrated_at=datetime.now(UTC),
             )
             self._context_hydrated = True
             return
@@ -900,7 +897,7 @@ class ExecutionContext:
                 room_id=self.room_id,
                 messages=messages,
                 participants=self._roster.list(),
-                hydrated_at=datetime.now(timezone.utc),
+                hydrated_at=datetime.now(UTC),
             )
             self._context_hydrated = True
 
@@ -910,13 +907,13 @@ class ExecutionContext:
                 len(self._context_cache.participants),
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- runtime loop must log and continue rather than crash the agent process
             logger.warning("Context hydration failed: %s", e)
             self._context_cache = ConversationContext(
                 room_id=self.room_id,
                 messages=[],
                 participants=self._roster.list(),
-                hydrated_at=datetime.now(timezone.utc),
+                hydrated_at=datetime.now(UTC),
             )
             self._context_hydrated = True
 
@@ -930,7 +927,7 @@ class ExecutionContext:
             return True
 
         age_seconds = (
-            datetime.now(timezone.utc) - self._context_cache.hydrated_at
+            datetime.now(UTC) - self._context_cache.hydrated_at
         ).total_seconds()
         return age_seconds > ttl_seconds
 
@@ -978,7 +975,7 @@ class ExecutionContext:
             room_id=self.room_id,
             messages=[],
             participants=self._roster.list(),
-            hydrated_at=datetime.now(timezone.utc),
+            hydrated_at=datetime.now(UTC),
         )
 
     async def get_context(self, force_refresh: bool = False) -> ConversationContext:
@@ -1033,13 +1030,8 @@ class ExecutionContext:
 
         try:
             await self._on_participant_added(self.room_id, event)
-        except Exception as e:
-            logger.error(
-                "on_participant_added error for %s: %s",
-                self.room_id,
-                e,
-                exc_info=True,
-            )
+        except Exception:
+            logger.exception("on_participant_added error for %s", self.room_id)
 
     async def _notify_participant_removed(self, event: ParticipantRemovedEvent) -> None:
         """Fire optional participant-removed callback without breaking execution."""
@@ -1048,13 +1040,8 @@ class ExecutionContext:
 
         try:
             await self._on_participant_removed(self.room_id, event)
-        except Exception as e:
-            logger.error(
-                "on_participant_removed error for %s: %s",
-                self.room_id,
-                e,
-                exc_info=True,
-            )
+        except Exception:
+            logger.exception("on_participant_removed error for %s", self.room_id)
 
     # --- Internal processing ---
 
@@ -1102,7 +1089,7 @@ class ExecutionContext:
                     # propagates directly into `queue.get()`.
                     async with asyncio.timeout(self.config.idle_resync_seconds):
                         event = await self.queue.get()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if self._stopped:
                         # Efficiency: a stopped room would only get /next->204.
                         logger.debug(
@@ -1140,9 +1127,8 @@ class ExecutionContext:
 
         except asyncio.CancelledError:
             logger.debug("ExecutionContext %s cancelled", self.room_id)
-        except Exception as e:
-            logger.exception("ExecutionContext %s error: %s", self.room_id, e)
-
+        except Exception:
+            logger.exception("ExecutionContext %s error", self.room_id)
         logger.debug("ExecutionContext %s loop exited", self.room_id)
 
     async def _retry_pending_processed_acks(self) -> bool:
@@ -1254,8 +1240,8 @@ class ExecutionContext:
                     )
                     break
 
-        except Exception as e:
-            logger.exception("ExecutionContext %s: Sync error: %s", self.room_id, e)
+        except Exception:
+            logger.exception("ExecutionContext %s: Sync error", self.room_id)
             return False
 
         logger.debug("ExecutionContext %s: Synchronization complete", self.room_id)
@@ -1382,11 +1368,10 @@ class ExecutionContext:
                 if self._retry_tracker.is_permanently_failed(next_msg.id):
                     break
 
-        except Exception as e:
+        except Exception:
             logger.exception(
-                "ExecutionContext %s: Error during /next resync: %s",
+                "ExecutionContext %s: Error during /next resync",
                 self.room_id,
-                e,
             )
             return False
 
@@ -1507,7 +1492,7 @@ class ExecutionContext:
             created_at_str = (
                 msg.created_at.isoformat()
                 if msg.created_at
-                else datetime.now(timezone.utc).isoformat()
+                else datetime.now(UTC).isoformat()
             )
 
             # Normalize metadata.mentions to include username field
@@ -1580,9 +1565,7 @@ class ExecutionContext:
 
         except Exception as e:
             # FAILURE: Mark as failed on server
-            logger.error(
-                "Error processing backlog message %s: %s", msg_id, e, exc_info=True
-            )
+            logger.exception("Error processing backlog message %s", msg_id)
             if not await self.link.mark_failed(self.room_id, msg_id, _error_label(e)):
                 logger.warning(
                     "ExecutionContext %s: Failed to mark backlog message %s as failed",
@@ -1993,9 +1976,7 @@ class ExecutionContext:
 
                 if self.claims.is_ack_pending(self.room_id, msg_id):
                     logger.debug("Retrying processed ack for message %s", msg_id)
-                    if await self._retry_processed_ack(msg_id):
-                        return True
-                    return False
+                    return bool(await self._retry_processed_ack(msg_id))
 
                 with self._claim_message(msg_id) as acquired:
                     if not acquired:
@@ -2014,15 +1995,19 @@ class ExecutionContext:
         self, event: PlatformEvent, msg_id: str | None, payload: Any
     ) -> bool:
         """Process an event after any required in-flight claim is acquired."""
-        if isinstance(event, MessageEvent) and msg_id and payload:
-            if self._message_processed_for_agent(msg_id, payload.metadata):
-                logger.info(
-                    "Skipping processed replay message %s in room %s",
-                    msg_id,
-                    self.room_id,
-                )
-                self.claims.remember_completed(self.room_id, msg_id)
-                return True
+        if (
+            isinstance(event, MessageEvent)
+            and msg_id
+            and payload
+            and self._message_processed_for_agent(msg_id, payload.metadata)
+        ):
+            logger.info(
+                "Skipping processed replay message %s in room %s",
+                msg_id,
+                self.room_id,
+            )
+            self.claims.remember_completed(self.room_id, msg_id)
+            return True
 
         self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
@@ -2123,17 +2108,21 @@ class ExecutionContext:
             return True
 
         except Exception as e:
-            logger.exception("Error processing %s: %s", event.type, e)
-            # For messages: mark as failed on server
-            if isinstance(event, MessageEvent) and msg_id:
-                if not await self.link.mark_failed(
+            logger.exception(
+                "Error processing %s", event.type
+            )  # For messages: mark as failed on server
+            if (
+                isinstance(event, MessageEvent)
+                and msg_id
+                and not await self.link.mark_failed(
                     self.room_id, msg_id, _error_label(e)
-                ):
-                    logger.warning(
-                        "ExecutionContext %s: Failed to mark message %s as failed",
-                        self.room_id,
-                        msg_id,
-                    )
+                )
+            ):
+                logger.warning(
+                    "ExecutionContext %s: Failed to mark message %s as failed",
+                    self.room_id,
+                    msg_id,
+                )
             return True
 
         finally:

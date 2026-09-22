@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -13,7 +13,7 @@ from band.integrations.desktop_app.event_relay import RelayStatus
 from band.integrations.desktop_app.tools import DEFAULT_ATTENTION, AttentionMode
 from band.runtime.formatters import replace_uuid_mentions
 
-EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
+EPOCH = datetime.fromtimestamp(0, tz=UTC)
 
 
 def bare_handle(value: str | None) -> str:
@@ -33,7 +33,7 @@ def parse_timestamp(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 class RoomParticipantType(StrEnum):
@@ -132,7 +132,7 @@ class RoomMessage(BaseModel):
     def _assume_utc(cls, value: datetime | None) -> datetime | None:
         if value is None or value.tzinfo is not None:
             return value
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
 
     @property
     def at(self) -> datetime:
@@ -248,7 +248,7 @@ class RoomTranscript(BaseModel):
     monitoring: MonitoringStatus = Field(default_factory=MonitoringStatus)
     host: HostProfile = Field(default_factory=HostProfile)
     refreshed_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
     )
 
     @property

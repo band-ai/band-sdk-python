@@ -15,13 +15,13 @@ import pytest
 from mcp import types
 
 from band.integrations.desktop_app.event_relay import RoomEventBroker
-from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.server import (
     ROOM_VIEW_MIME_TYPE,
     ROOM_VIEW_URI,
     connected_agent_service,
     room_view_tools,
 )
+from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.tools import (
     DEFAULT_ATTENTION,
     MonitorCaller,
@@ -138,7 +138,7 @@ class TestMountedView:
             pytest.skip("node is not installed")
         script = files("band.integrations.desktop_app.assets") / "room-view.js"
         with as_file(script) as path:
-            assert subprocess.run([node, "--check", path]).returncode == 0
+            assert subprocess.run([node, "--check", path], check=False).returncode == 0
 
     def test_it_is_self_contained(self) -> None:
         """The sandbox blocks every external origin, so nothing may be fetched."""

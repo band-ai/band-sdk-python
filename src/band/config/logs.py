@@ -12,9 +12,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from band.logging_config import (
     FileStyle,
     FormatStyle,
-    LogLevel,
     LoggingConfig,
     LoggingStyle,
+    LogLevel,
     LogStream,
     build_logging_config,
     coerce_log_level_name,

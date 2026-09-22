@@ -8,15 +8,15 @@ by ``test_letta_adapter.py``, ``test_letta_mcp.py``, and
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from pytest_httpx import HTTPXMock
 
-from band.integrations.letta.prompts import render_tool_enforcement
 from band.core.types import PlatformMessage
+from band.integrations.letta.prompts import render_tool_enforcement
 
 
 def make_platform_message(
@@ -31,7 +31,7 @@ def make_platform_message(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 

@@ -53,7 +53,7 @@ keys on this three-way: enum ⇔ registry ⇔ discovered module).
 ```python notest
 class Adapter(StrEnum):
     ...
-    MYFRAMEWORK = "myframework"   # == src/band/adapters/myframework.py
+    MYFRAMEWORK = "myframework"  # == src/band/adapters/myframework.py
 ```
 
 ## Step 2 — Add the `@adapter` builder
@@ -82,9 +82,11 @@ def _build_myframework(
 
     return MyframeworkAdapter(
         model=s.llm_models.openai_model,
-        prompt=prompt,            # map to whatever arg your framework uses:
-                                  # prompt / custom_section / system_prompt / instructions
-        additional_tools=_custom_tool_defs(tools),  # translate ToolSpec -> CustomToolDef; or _reject_tools(...) — see Step 5
+        prompt=prompt,  # map to whatever arg your framework uses:
+        # prompt / custom_section / system_prompt / instructions
+        additional_tools=_custom_tool_defs(
+            tools
+        ),  # translate ToolSpec -> CustomToolDef; or _reject_tools(...) — see Step 5
         features=features,
     )
 ```

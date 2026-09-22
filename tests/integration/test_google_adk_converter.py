@@ -17,8 +17,8 @@ import pytest
 from band_rest import ChatEventRequest, ChatMessageRequest
 from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
-from tests.integration.conftest import requires_api
 from band.converters.google_adk import GoogleADKHistoryConverter
+from tests.integration.conftest import requires_api
 
 logger = logging.getLogger(__name__)
 

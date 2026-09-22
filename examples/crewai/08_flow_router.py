@@ -26,10 +26,11 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-
-from band import Agent  # noqa: E402, configure_logging
-from band.adapters import CrewAIFlowAdapter  # noqa: E402
-from band import configure_logging  # noqa: E402
+from band import (
+    Agent,
+    configure_logging,
+)
+from band.adapters import CrewAIFlowAdapter
 
 configure_logging(logging.INFO, extra_loggers={"band_crewai_agent": logging.INFO})
 logger = logging.getLogger(__name__)

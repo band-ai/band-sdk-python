@@ -2,14 +2,13 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from band.client.streaming import MessageCreatedPayload, MessageMetadata
 from band.core.protocols import Preprocessor
 from band.core.types import AgentInput, HistoryProvider
 from band.platform.event import (
     MessageEvent,
-    RoomAddedEvent,
     ParticipantAddedEvent,
+    RoomAddedEvent,
 )
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.types import SessionConfig

@@ -7,7 +7,6 @@ from contextlib import suppress
 from typing import Any
 from unittest.mock import patch
 
-
 from band.adapters.opencode import OpencodeAdapter
 from band.core.types import (
     Emit,
@@ -15,21 +14,19 @@ from band.core.types import (
 )
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
-from tests.adapters.usage_events import recorded_usage_payloads
-
-
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
-    make_fake_mcp_backend_factory,
     event_message_updated,
     event_session_idle,
     event_text_part,
+    make_fake_mcp_backend_factory,
     make_platform_message,
     run_single_turn,
     tools_protocol,
     wait_for,
 )
+from tests.adapters.usage_events import recorded_usage_payloads
 
 
 async def test_watch_task_drains_the_turn_that_started_it() -> None:

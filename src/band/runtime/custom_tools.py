@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -43,8 +44,7 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
         SearchWebInput -> "searchweb"
     """
     name = input_model.__name__
-    if name.endswith("Input"):
-        name = name[:-5]  # Remove "Input" suffix
+    name = name.removesuffix("Input")  # Remove "Input" suffix
     return name.lower()
 
 

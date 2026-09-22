@@ -29,9 +29,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from band.client.streaming import MessageCreatedPayload
-
 from band.core.types import MessageType
-
 from tests.e2e.baseline.toolkit.observations.assertions import ContentAssertions
 
 
@@ -68,7 +66,7 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
                 f"loop, not model reply batching:\n{haystack}"
             )
 
-    def mentioning(self, participant_id: str) -> "Replies":
+    def mentioning(self, participant_id: str) -> Replies:
         """The subset of replies that mention ``participant_id`` (by metadata).
 
         Re-wraps the filter so the tolerant assertion methods survive (a bare
@@ -89,7 +87,7 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
                 f"expected a reply mentioning {participant_id} (by metadata), but none did"
             )
 
-    def from_sender(self, sender_id: str) -> "Replies":
+    def from_sender(self, sender_id: str) -> Replies:
         """The subset of replies authored by ``sender_id``.
 
         Scope an assertion to one participant's own messages when several agents
@@ -108,7 +106,7 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
         """
         return len(self)
 
-    def since(self, cursor: int) -> "Replies":
+    def since(self, cursor: int) -> Replies:
         """The replies captured after ``cursor`` (from ``snapshot``), as a ``Replies``.
 
         Re-wraps the slice so the tolerant assertion methods survive (a bare slice

@@ -32,13 +32,14 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+
+import uvicorn
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from starlette.applications import Starlette
 
 from band import Agent, LogSettings
 from band.adapters import AnthropicAdapter
 from band.integrations.slack import SlackAdapter, SlackApp
-import uvicorn
-from starlette.applications import Starlette
 
 # slack_sdk raised alongside band, not a bare LogSettings().configure(): this
 # driver exists to debug the bridge, and slack_sdk's own INFO diagnostics are

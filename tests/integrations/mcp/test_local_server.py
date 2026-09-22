@@ -31,7 +31,6 @@ from band.integrations.mcp.local_server import (
 )
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.tools import AgentTools
-
 from tests.lifecycle import elapsed, held_open, running
 
 
@@ -209,11 +208,13 @@ class TestLocalMcpServer:
         async with running(server):
             assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
-            async with sse_client(server.url) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    await _session_lists_only_echo(session)
-                    await _call_echo(session, "hello")
+            async with (
+                sse_client(server.url) as (read_stream, write_stream),
+                ClientSession(read_stream, write_stream) as session,
+            ):
+                await session.initialize()
+                await _session_lists_only_echo(session)
+                await _call_echo(session, "hello")
 
     @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
     @pytest.mark.asyncio
@@ -241,11 +242,13 @@ class TestLocalMcpServer:
 
             async def connect(ready: asyncio.Event) -> None:
                 with suppress(Exception):
-                    async with sse_client(server.url) as (read_stream, write_stream):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            ready.set()
-                            await asyncio.sleep(60)  # never closes on its own
+                    async with (
+                        sse_client(server.url) as (read_stream, write_stream),
+                        ClientSession(read_stream, write_stream) as session,
+                    ):
+                        await session.initialize()
+                        ready.set()
+                        await asyncio.sleep(60)  # never closes on its own
 
             async with held_open(connect):
                 stop_elapsed = await elapsed(server.stop())
@@ -272,15 +275,17 @@ class TestLocalMcpServer:
         async with running(server):
             assert server.http_url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
-            async with streamablehttp_client(server.http_url) as (
-                read_stream,
-                write_stream,
-                _,
+            async with (
+                streamablehttp_client(server.http_url) as (
+                    read_stream,
+                    write_stream,
+                    _,
+                ),
+                ClientSession(read_stream, write_stream) as session,
             ):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    await _session_lists_only_echo(session)
-                    await _call_echo(session, "hello")
+                await session.initialize()
+                await _session_lists_only_echo(session)
+                await _call_echo(session, "hello")
 
     @pytest.mark.asyncio
     async def test_stop_cleans_up_state_even_if_serve_task_crashed(self) -> None:
@@ -449,12 +454,14 @@ class TestLocalMcpServer:
 
         await server.start()
         await server.stop()
-        async with running(server):
-            async with streamablehttp_client(server.http_url) as (
+        async with (
+            running(server),
+            streamablehttp_client(server.http_url) as (
                 read_stream,
                 write_stream,
                 _,
-            ):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    await _call_echo(session, "hi")
+            ),
+            ClientSession(read_stream, write_stream) as session,
+        ):
+            await session.initialize()
+            await _call_echo(session, "hi")

@@ -58,7 +58,7 @@ class _FlagEnum(StrEnum):
     way everywhere else they are used (e.g. ``SUPPORTED_EMIT`` set algebra).
     """
 
-    def __or__(self, other: "Self | frozenset[Self]") -> frozenset[Self]:
+    def __or__(self, other: Self | frozenset[Self]) -> frozenset[Self]:
         # Only guards a member on at least one side of `|`. Two already-combined
         # frozensets of different _FlagEnum subclasses (e.g. `(Emit.A | Emit.B) |
         # (Capability.C | Capability.D)`) are both plain `frozenset` by then, so
@@ -407,7 +407,7 @@ class HistoryProvider:
 
     raw: list[dict[str, Any]]
 
-    def convert(self, converter: "HistoryConverter[T]") -> T:
+    def convert(self, converter: HistoryConverter[T]) -> T:
         """
         Convert history using provided converter.
 
@@ -436,7 +436,7 @@ class AgentInput:
     """
 
     msg: PlatformMessage
-    tools: "AgentToolsProtocol"  # Protocol for testability (FakeAgentTools)
+    tools: AgentToolsProtocol  # Protocol for testability (FakeAgentTools)
     history: HistoryProvider
     participants_msg: str | None
     contacts_msg: str | None  # Contact changes broadcast message

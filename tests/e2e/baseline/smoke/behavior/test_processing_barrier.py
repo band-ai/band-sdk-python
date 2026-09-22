@@ -30,7 +30,6 @@ import logging
 import pytest
 
 from band.client.streaming import DeliveryStatus
-
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager

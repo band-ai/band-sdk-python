@@ -36,7 +36,7 @@ _FlagT = TypeVar("_FlagT", Emit, Capability)
 
 
 def _normalize_flags(
-    value: "_FlagT | Iterable[_FlagT] | None",
+    value: _FlagT | Iterable[_FlagT] | None,
     enum_cls: type[_FlagT],
 ) -> frozenset[_FlagT] | None:
     """Coerce a single member, an iterable, or ``None`` into a frozenset.
@@ -60,7 +60,7 @@ def _describe(values: Iterable[Emit] | Iterable[Capability]) -> str:
     return ", ".join(sorted(v.value for v in values)) or "(none)"
 
 
-class SimpleAdapter(Generic[H], ABC):
+class SimpleAdapter(ABC, Generic[H]):
     """
     Simple base class for framework adapters.
 
@@ -272,12 +272,11 @@ class SimpleAdapter(Generic[H], ABC):
                 message_type=USAGE_EVENT_TYPE,
                 metadata={USAGE_METADATA_KEY: usage.to_dict()},
             )
-        except Exception as e:  # best-effort: usage reporting must never crash a turn
+        except Exception as e:  # best-effort: usage reporting must never crash a turn  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send usage event: %s", e)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""
-        pass
 
     async def cleanup_all(self) -> None:
         """Override to release adapter-wide resources (clients, servers).
@@ -288,7 +287,6 @@ class SimpleAdapter(Generic[H], ABC):
         runtime subprocess, a self-hosted server, an external registration —
         release here.
         """
-        pass
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""

@@ -26,7 +26,6 @@ import asyncio
 import pytest
 
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload
-
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 
 ROOM = "room-x"

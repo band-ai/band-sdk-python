@@ -45,12 +45,11 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from band.core.task_types import TaskAssignmentStatus
 from band.core.types import AdapterFeatures, Capability, Emit
-
 from tests.e2e.baseline.agents import Adapter, with_adapters
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     task_board_delegation_instruction,

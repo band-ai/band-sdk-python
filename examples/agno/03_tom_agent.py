@@ -43,11 +43,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from band import Agent, LogSettings
 from band.adapters import AgnoAdapter
 
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
-
 
 logger = logging.getLogger(__name__)
 

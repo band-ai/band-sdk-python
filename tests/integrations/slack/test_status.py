@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -29,7 +29,6 @@ from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp
 from band.runtime.tools import AgentTools
 from band.testing.platform import platform_connection_stub
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -239,7 +238,7 @@ async def test_setstatus_failure_is_swallowed():
     slack.chat_postMessage = AsyncMock(return_value={"ok": True})
 
     brain = _ReplyingBrain(reply="still works")
-    adapter, _, rest = _make_adapter(inner=brain, slack_client=slack)
+    adapter, _, _rest = _make_adapter(inner=brain, slack_client=slack)
     await adapter.on_started("Bot", "")
     app = adapter.apps[0]
 
@@ -278,7 +277,7 @@ async def test_ws_message_in_bound_room_also_sets_and_clears_status():
         sender_name="Peer X",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -301,7 +300,7 @@ async def test_ws_message_in_unbound_room_does_not_touch_status():
     """Status indicator is only meaningful for Slack-mirrored rooms."""
     # Non-replying brain so we don't trip AgentTools' mention validator
     # on the unbound-room path.
-    adapter, slack, rest = _make_adapter(inner=_ReplyingBrain(reply=""))
+    adapter, slack, _rest = _make_adapter(inner=_ReplyingBrain(reply=""))
     await adapter.on_started("Bot", "")
 
     real_tools = AgentTools(room_id="unrelated-room", rest=MagicMock(), participants=[])
@@ -314,7 +313,7 @@ async def test_ws_message_in_unbound_room_does_not_touch_status():
         sender_name="Peer",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,

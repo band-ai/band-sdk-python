@@ -16,10 +16,11 @@ import os
 import re
 import subprocess
 from collections import Counter
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Generator
+from typing import Any
 from urllib.parse import urlparse
 
 from filelock import FileLock, Timeout
@@ -109,7 +110,7 @@ class RepoInitResult(BaseModel):
 
 def is_ssh_url(url: str) -> bool:
     """Return True when a git remote URL uses SSH."""
-    return url.startswith("git@") or url.startswith("ssh://")
+    return url.startswith(("git@", "ssh://"))
 
 
 def is_https_url(url: str) -> bool:

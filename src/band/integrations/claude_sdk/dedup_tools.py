@@ -216,7 +216,7 @@ class DedupingAgentTools:
     ) -> None:
         try:
             result = task.result()
-        except BaseException:
+        except BaseException:  # noqa: BLE001 -- also catches CancelledError from a task cancelled mid-dedup during shutdown
             should_cache = False
             result = None
         else:

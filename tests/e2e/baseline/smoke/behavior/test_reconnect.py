@@ -13,8 +13,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from band.testing import force_transport_disconnect
 
+from band.testing import force_transport_disconnect
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     REPLY_PROMPT,

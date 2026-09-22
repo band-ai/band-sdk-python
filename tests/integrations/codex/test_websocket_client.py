@@ -51,19 +51,20 @@ class FakeCodexWebSocket:
                 )
                 return
 
-            if self.scenario in {"retry_once", "always_overload"}:
-                if self.scenario == "always_overload" or not self.sent_overload_once:
-                    self.sent_overload_once = True
-                    await self._emit(
-                        {
-                            "id": message["id"],
-                            "error": {
-                                "code": -32001,
-                                "message": "Server overloaded; retry later.",
-                            },
-                        }
-                    )
-                    return
+            if self.scenario in {"retry_once", "always_overload"} and (
+                self.scenario == "always_overload" or not self.sent_overload_once
+            ):
+                self.sent_overload_once = True
+                await self._emit(
+                    {
+                        "id": message["id"],
+                        "error": {
+                            "code": -32001,
+                            "message": "Server overloaded; retry later.",
+                        },
+                    }
+                )
+                return
 
             await self._emit(
                 {"id": message["id"], "result": {"thread": {"id": "thr_ws"}}}

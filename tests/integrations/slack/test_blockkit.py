@@ -27,7 +27,6 @@ from band.integrations.slack.block_kit import (
 from band.integrations.slack.types import SlackRoomBinding
 from band.runtime.tools import AgentTools, ToolCallOutcome
 
-
 # ── humanize_tool_name ──────────────────────────────────────────────────────
 
 
@@ -345,11 +344,13 @@ async def test_super_exception_marks_task_error_and_reraises():
 
     # BandToolError (and anything else that propagates out of the
     # structured call) must mark the task ERROR and re-raise.
-    with patch.object(
-        AgentTools, "execute_tool_call_structured", AsyncMock(side_effect=err)
+    with (
+        patch.object(
+            AgentTools, "execute_tool_call_structured", AsyncMock(side_effect=err)
+        ),
+        pytest.raises(RuntimeError, match="boom"),
     ):
-        with pytest.raises(RuntimeError, match="boom"):
-            await tools.execute_tool_call("band_lookup_peers", {})
+        await tools.execute_tool_call("band_lookup_peers", {})
 
     task = tools._plan.tasks[0]
     assert task.state == TaskState.ERROR

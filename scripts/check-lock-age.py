@@ -40,7 +40,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-
 # Band-published PyPI packages (PEP 503 canonical names). Ownership, not
 # trust-by-name-pattern: extend only for packages this org actually releases.
 FIRST_PARTY = frozenset(
@@ -69,7 +68,7 @@ def parse_upload_time(value: object) -> datetime | None:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     return None
 
 
@@ -135,7 +134,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.cutoff is not None:
-        cutoff = datetime.fromisoformat(args.cutoff.replace("Z", "+00:00"))
+        cutoff = datetime.fromisoformat(args.cutoff)
         if cutoff.tzinfo is None:
             cutoff = cutoff.replace(tzinfo=UTC)
     else:

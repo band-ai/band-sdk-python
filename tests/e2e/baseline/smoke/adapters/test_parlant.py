@@ -23,9 +23,9 @@ Run with:
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Lane, lane
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory

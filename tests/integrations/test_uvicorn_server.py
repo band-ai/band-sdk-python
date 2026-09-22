@@ -16,7 +16,6 @@ from sse_starlette.sse import AppStatus
 
 import band.integrations.uvicorn_server as uvicorn_server_module
 from band.integrations.uvicorn_server import ManagedUvicornServer, wait_until_started
-
 from tests.lifecycle import backgrounded, running
 
 

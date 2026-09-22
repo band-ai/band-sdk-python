@@ -9,12 +9,13 @@ Tests cover:
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from band.runtime.types import SessionConfig
+import pytest
+
 from band.runtime.execution import ExecutionContext
+from band.runtime.types import SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event
@@ -122,7 +123,7 @@ class TestGetHistoryForLLMHydrationEnabled:
         mock_msg1.sender_type = "User"
         mock_msg1.sender_name = "Alice"
         mock_msg1.message_type = "text"
-        mock_msg1.inserted_at = datetime.now(timezone.utc).isoformat()
+        mock_msg1.inserted_at = datetime.now(UTC).isoformat()
 
         mock_msg2 = MagicMock()
         mock_msg2.id = "msg-2"
@@ -131,7 +132,7 @@ class TestGetHistoryForLLMHydrationEnabled:
         mock_msg2.sender_type = "Agent"
         mock_msg2.sender_name = "TestBot"
         mock_msg2.message_type = "text"
-        mock_msg2.inserted_at = datetime.now(timezone.utc).isoformat()
+        mock_msg2.inserted_at = datetime.now(UTC).isoformat()
 
         link.rest.agent_api_context = MagicMock()
         link.rest.agent_api_context.get_agent_chat_context = AsyncMock(

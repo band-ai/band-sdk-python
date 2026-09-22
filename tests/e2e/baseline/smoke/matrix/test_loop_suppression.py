@@ -22,9 +22,9 @@ making model-driven reply batching part of the contract.
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     REPLY_PROMPT,
     liveness_probe,

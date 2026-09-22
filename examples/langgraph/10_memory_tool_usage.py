@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-
 from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
 from band.core.types import Capability

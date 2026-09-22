@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, AsyncIterator, Protocol
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
@@ -284,14 +285,12 @@ class HttpOpencodeClient(OpencodeClientProtocol):
                 if line.startswith("id:"):
                     event_id_seen = True
                     event_id = line[3:]
-                    if event_id.startswith(" "):
-                        event_id = event_id[1:]
+                    event_id = event_id.removeprefix(" ")
                     continue
 
                 if line.startswith("data:"):
                     data = line[5:]
-                    if data.startswith(" "):
-                        data = data[1:]
+                    data = data.removeprefix(" ")
                     data_lines.append(data)
 
     async def close(self) -> None:

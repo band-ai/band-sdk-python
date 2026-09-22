@@ -29,13 +29,12 @@ from band.integrations.mcp.engine import (
     build_resolved_band_mcp_tool_registrations,
 )
 from band.runtime.tools import (
+    TOOL_DEFINITIONS,
     AgentTools,
     HumanTools,
-    TOOL_DEFINITIONS,
     ToolDefinition,
     iter_tool_definitions,
 )
-
 
 # Pre-Phase-1 agent tool-name set (snapshot). Changing the agent surface
 # belongs in a different ticket; if this list drifts, either the test or

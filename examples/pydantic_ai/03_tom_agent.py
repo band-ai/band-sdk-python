@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
+
 from band import Agent, configure_logging
 from band.adapters import PydanticAIAdapter
 

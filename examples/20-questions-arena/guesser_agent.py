@@ -35,8 +35,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 sys.path.insert(0, os.path.dirname(__file__))
 
 from prompts import create_llm, create_llm_by_name, generate_guesser_prompt
-
 from setup_logging import setup_logging
+
 from band import Agent
 from band.adapters import LangGraphAdapter
 

@@ -30,6 +30,7 @@ def behaviour() -> dict[str, Any]:
     with as_file(script) as path:
         run = subprocess.run(
             [node, str(DRIVER), str(path)],
+            check=False,
             capture_output=True,
             text=True,
         )

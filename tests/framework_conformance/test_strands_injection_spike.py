@@ -57,7 +57,7 @@ FRAMEWORK FACTS (verified against strands-agents 1.50.1)
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import cast
 
 import pytest
@@ -65,10 +65,10 @@ from pydantic import BaseModel
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
-from band.adapters.strands import StrandsAdapter  # noqa: E402
-from band.core.protocols import AgentToolsProtocol  # noqa: E402
-from band.core.types import Emit, PlatformMessage  # noqa: E402
-from band.testing import (  # noqa: E402
+from band.adapters.strands import StrandsAdapter
+from band.core.protocols import AgentToolsProtocol
+from band.core.types import Emit, PlatformMessage
+from band.testing import (
     FakeAgentTools,
     ScriptedStrandsModel,
     TextTurn,
@@ -92,7 +92,7 @@ def _make_msg(room_id: str) -> PlatformMessage:
         sender_name="Tester",
         message_type="text",
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
