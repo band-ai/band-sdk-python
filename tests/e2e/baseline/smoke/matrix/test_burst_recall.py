@@ -23,11 +23,10 @@ A stronger sibling of ``test_recalls_within_session`` (single fact, two turns). 
 from __future__ import annotations
 
 import pytest
-from tests.e2e.baseline.flaky import flaky_model
 
 from band.client.streaming import DeliveryStatus
-
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL_ALL_FACTS,

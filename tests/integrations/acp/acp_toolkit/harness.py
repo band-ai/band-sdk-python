@@ -8,7 +8,7 @@ import socket
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -21,7 +21,6 @@ from band.integrations.acp.client_adapter import ACPClientAdapter
 from band.integrations.acp.client_types import ACPClientSessionState
 from band.integrations.acp.types import ToolCallRoomEvent, ToolResultRoomEvent
 from band.testing import FakeAgentTools
-
 from tests.integrations.acp.acp_toolkit.agent import FakeACPAgent
 
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
@@ -347,5 +346,5 @@ def _message(content: str, room_id: str) -> PlatformMessage:
         sender_name=LIVE_SENDER_NAME,
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )

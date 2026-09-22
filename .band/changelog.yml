@@ -12,7 +12,6 @@ announce:
     channel: integrations
     mode: live
   discord:
-    # channel is a label only — the webhook fixes the real target, which in
-    # draft mode is the private review channel a human forwards from.
     enabled: true
-    mode: draft
+    channel: announcements
+    mode: live

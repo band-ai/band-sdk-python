@@ -26,21 +26,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import click
 import uvicorn
+from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
 from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.routes.rest_routes import create_rest_routes
-from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,
     InMemoryTaskStore,
 )
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from starlette.applications import Starlette
 from agent import OrchestratorAgent
 from agent_executor import OrchestratorAgentExecutor
 from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from remote_agent import GatewayClient
+from starlette.applications import Starlette
 
 load_dotenv()
 
@@ -94,7 +94,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
                 logger.info("Discovered %s peers from gateway", len(available_peers))
             else:
                 logger.warning("No peers discovered from gateway")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
             logger.warning("Could not discover peers from gateway: %s", e)
 
     logger.info("Starting Demo Orchestrator Agent on %s:%s", host, port)
@@ -181,7 +181,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
         # Run server
         uvicorn.run(server, host=host, port=port)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         logger.error("Error starting server: %s", e)
         sys.exit(1)
 

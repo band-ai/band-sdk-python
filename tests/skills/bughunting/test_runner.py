@@ -18,7 +18,7 @@ import signal
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -27,9 +27,8 @@ import pytest
 import yaml
 from band_rest.types.chat_message import ChatMessage
 
-from band.client.streaming import MessageCreatedPayload
-
 import tests.e2e.baseline.toolkit.capture as capture_module
+from band.client.streaming import MessageCreatedPayload
 from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.observations.tool_calls import ToolCall, ToolCalls
 from tests.paths import REPO_ROOT
@@ -136,7 +135,7 @@ class UserOps:
                 sender_type="User",
                 # Distinct per message, so a step's tool window is provably its own.
                 inserted_at=datetime(
-                    2001, 1, 1, 0, 0, 0, 100000 * len(self.sent) + 100000, timezone.utc
+                    2001, 1, 1, 0, 0, 0, 100000 * len(self.sent) + 100000, UTC
                 ),
             )
         )
@@ -659,7 +658,7 @@ async def test_each_step_uses_its_own_tool_boundary(
     ]
     # Only the tool-asserting step reads tool events, scoped to its own trigger.
     assert [read["since"] for read in capture.tool_reads] == [
-        datetime(2001, 1, 1, 0, 0, 0, 200000, tzinfo=timezone.utc)
+        datetime(2001, 1, 1, 0, 0, 0, 200000, tzinfo=UTC)
     ]
     assert capture.tool_reads[0]["include_memory"] is True
 
@@ -673,7 +672,7 @@ async def test_a_step_fails_when_a_promised_tool_never_fired(
 
     with pytest.raises(AssertionError, match="expected tool 'band_send_message'"):
         await runner.assert_step_tools(
-            step, running_example(runner, None), capture, datetime.now(timezone.utc)
+            step, running_example(runner, None), capture, datetime.now(UTC)
         )
 
 
@@ -684,7 +683,7 @@ async def test_a_step_fails_when_too_few_tools_fired(runner: ModuleType) -> None
 
     with pytest.raises(AssertionError, match=r"at least 3 tool call\(s\), observed 1"):
         await runner.assert_step_tools(
-            step, running_example(runner, None), capture, datetime.now(timezone.utc)
+            step, running_example(runner, None), capture, datetime.now(UTC)
         )
 
 

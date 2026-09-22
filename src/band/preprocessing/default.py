@@ -8,15 +8,15 @@ from typing import Any
 
 from band.core.protocols import Preprocessor
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.integrations.base import check_and_format_participants
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
-from band.runtime.tools import AgentTools
 from band.runtime.formatters import (
     format_history_for_llm,
     messages_before,
     replace_uuid_mentions,
 )
-from band.integrations.base import check_and_format_participants
+from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +77,7 @@ class DefaultPreprocessor(Preprocessor):
             sender_name=sender_name,
             message_type=msg_data.message_type,
             metadata=msg_data.metadata,  # Pass through as-is (Any type)
-            created_at=datetime.fromisoformat(
-                msg_data.inserted_at.replace("Z", "+00:00")
-            ),
+            created_at=datetime.fromisoformat(msg_data.inserted_at),
         )
 
         is_bootstrap = not ctx.is_llm_initialized
@@ -151,6 +149,6 @@ class DefaultPreprocessor(Preprocessor):
                 len(history) if history else 0,
             )
             return history or []
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- best-effort event emission must not crash the turn/link
             logger.warning("Room %s: Failed to load history: %s", ctx.room_id, e)
             return []

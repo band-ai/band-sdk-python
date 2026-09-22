@@ -48,6 +48,7 @@ def _emit_lane_matrix(lane: str, os_id: str) -> subprocess.CompletedProcess[str]
     """
     return subprocess.run(
         [sys.executable, str(_EMIT_LANE_MATRIX)],
+        check=False,
         cwd=REPO_ROOT,
         env={
             **os.environ,
@@ -111,6 +112,7 @@ def _read_mentions(
         (tmp_path / _ROSTER).write_text(roster)
     return subprocess.run(
         ["bash", script.name],
+        check=False,
         cwd=tmp_path,
         env={**os.environ, "GITHUB_OUTPUT": str(tmp_path / "out.txt")},
         capture_output=True,

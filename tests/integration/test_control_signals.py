@@ -108,7 +108,7 @@ async def control_runtime(shared_user_owned_room, shared_agent1_info):
     finally:
         try:
             await _post(f"{_API}/me/chats/{shared_user_owned_room}/agents/play")
-        except Exception:  # noqa: BLE001 - best-effort un-park
+        except Exception:
             logger.warning("teardown play failed", exc_info=True)
         await runtime.stop()
 
@@ -126,7 +126,7 @@ class TestControlSignalsIntegration:
         self, control_runtime, user_api_client
     ):
         """Stop silences the agent in the room; play replays the missed mention."""
-        runtime, handler, agent_id, chat_id = control_runtime
+        _runtime, handler, agent_id, chat_id = control_runtime
 
         # STOP (room-scope; the user owns this room)
         stop = await _post(f"{_API}/me/chats/{chat_id}/agents/stop")
@@ -157,7 +157,7 @@ class TestControlSignalsIntegration:
         self, control_runtime, user_api_client
     ):
         """Interrupt cancels a cycle already in flight; nothing is delivered."""
-        runtime, handler, agent_id, chat_id = control_runtime
+        _runtime, handler, agent_id, chat_id = control_runtime
 
         # Make sure we start un-stopped, then arm the handler to hang mid-cycle.
         await _post(f"{_API}/me/chats/{chat_id}/agents/play")

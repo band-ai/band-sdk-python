@@ -3,28 +3,29 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from functools import partial
 import logging
 import re
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from functools import partial
 from typing import Any, ClassVar
 from uuid import uuid4
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Task, TaskState, TaskStatus
+from band_rest import Peer
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
 from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
     AsyncRestClient,
     ChatEventRequest,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
     ChatRoomRequest,
-    DEFAULT_REQUEST_OPTIONS,
     ParticipantRequest,
 )
 from band.converters.a2a_gateway import GatewayHistoryConverter
@@ -32,12 +33,11 @@ from band.core.content import BLANK_CONTENT_ERROR
 from band.core.protocols import FAILURE_CODE_TIMEOUT, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
-from band.platform.posting import post_event, post_message
-from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
+from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.integrations.a2a.protocol import snapshot_task
-from band_rest import Peer
+from band.platform.posting import post_event, post_message
 
 logger = logging.getLogger(__name__)
 

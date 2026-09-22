@@ -6,14 +6,14 @@ from band import (
     AdapterFeatures,
     AgentRuntime,
     AgentTools,
-    Capability,
-    Emit,
-    ExecutionContext,
     BandConfigError,
     BandConnectionError,
     BandError,
     BandLink,
     BandToolError,
+    Capability,
+    Emit,
+    ExecutionContext,
 )
 
 
@@ -65,7 +65,10 @@ def test_adapter_features_constructible():
 
 def test_can_import_letta_adapter_via_lazy_loader():
     """LettaAdapter resolves through the adapters lazy loader."""
-    from band.adapters import LettaAdapter, LettaAdapterConfig  # noqa: PLC0415 -- pins the exact import path this test exercises
+    from band.adapters import (  # noqa: PLC0415 -- pins the exact import path this test exercises
+        LettaAdapter,
+        LettaAdapterConfig,
+    )
 
     assert LettaAdapter is not None
     assert LettaAdapterConfig is not None

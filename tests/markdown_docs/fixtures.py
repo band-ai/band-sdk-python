@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import inspect
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -51,7 +51,7 @@ def _stub_offline_rest(
         if isinstance(body, dict):
             captured_json.append(body)
 
-        payload = _payload_for_path(path, datetime.now(timezone.utc).isoformat())
+        payload = _payload_for_path(path, datetime.now(UTC).isoformat())
 
         class _Response:
             status_code = 200
@@ -113,7 +113,6 @@ def _prepare_markdown_docs_runtime(
         close = getattr(coro, "close", None)
         if callable(close):
             close()
-        return None
 
     monkeypatch.setattr(asyncio, "run", noop_run)
 

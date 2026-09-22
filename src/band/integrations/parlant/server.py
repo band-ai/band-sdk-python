@@ -176,7 +176,7 @@ async def _close_startup_context(server: p.Server, exc: BaseException) -> None:
         return
     try:
         await startup_cm.__aexit__(type(exc), exc, exc.__traceback__)
-    except BaseException:
+    except BaseException:  # noqa: BLE001, S110 -- also swallows CancelledError during shutdown, see comment below
         # BaseException, not Exception: must also swallow CancelledError, since
         # it may already have unwound itself. The server-owned exit stack below is
         # independent and remains safe to close.

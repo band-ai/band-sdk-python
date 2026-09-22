@@ -65,8 +65,11 @@ Mention:
 
 ```python notest
 PlatformEvent = (
-    MessageEvent | RoomAddedEvent | RoomRemovedEvent
-    | ParticipantAddedEvent | ParticipantRemovedEvent
+    MessageEvent
+    | RoomAddedEvent
+    | RoomRemovedEvent
+    | ParticipantAddedEvent
+    | ParticipantRemovedEvent
 )
 ```
 

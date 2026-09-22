@@ -17,7 +17,7 @@ conftest when building oneshot/REST-side fixtures.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -95,7 +95,7 @@ def platform_msg(
         sender_name=None,
         message_type="user",
         metadata=None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -116,7 +116,7 @@ def ctx_item(
         sender_name=sender_name,
         message_type="user",
         metadata={},
-        inserted_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+        inserted_at=datetime(2026, 5, 21, 10, 0, tzinfo=UTC),
     )
 
 
@@ -165,11 +165,11 @@ def make_link_mock(
         data=AgentMe(
             handle="test/bot",
             id="agent-1",
-            inserted_at=datetime.now(timezone.utc),
+            inserted_at=datetime.now(UTC),
             name=agent_name,
             description=agent_description,
             owner_uuid="owner-1",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
             feature_flags=feature_flags or {},
         )
     )

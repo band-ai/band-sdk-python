@@ -15,25 +15,27 @@ import json
 import logging
 import re
 import warnings
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, ClassVar, Literal, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
-        ClaudeSDKClient,
-        ClaudeAgentOptions,
         AssistantMessage,
+        ClaudeAgentOptions,
+        ClaudeSDKClient,
+        ResultMessage,
         TextBlock,
         ThinkingBlock,
-        ToolUseBlock,
         ToolResultBlock,
-        ResultMessage,
+        ToolUseBlock,
         UserMessage,
     )
-    from claude_agent_sdk._errors import CLIConnectionError  # type: ignore[import-not-found]
+    from claude_agent_sdk._errors import (
+        CLIConnectionError,  # type: ignore[import-not-found]
+    )
     from claude_agent_sdk.types import (  # type: ignore[import-not-found]
         CanUseTool,
         HookContext,
@@ -52,6 +54,11 @@ except ImportError:
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
+from band.converters.claude_sdk import (
+    SESSION_ID_METADATA_KEY,
+    ClaudeSDKHistoryConverter,
+    ClaudeSDKSessionState,
+)
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -66,20 +73,15 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.claude_sdk import (
-    SESSION_ID_METADATA_KEY,
-    ClaudeSDKHistoryConverter,
-    ClaudeSDKSessionState,
-)
-from band.integrations.mcp.backends import (
-    BandMCPBackend,
-    create_band_mcp_backend,
-)
-from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
-from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
 from band.integrations.claude_sdk.dedup_tools import (
     DEFAULT_DEDUP_TTL_SECONDS,
     DedupingAgentTools,
+)
+from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
+from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
+from band.integrations.mcp.backends import (
+    BandMCPBackend,
+    create_band_mcp_backend,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -885,7 +887,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 content=content() if callable(content) else content,
                 message_type=message_type,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to send %s event: %s", message_type, e)
 
     async def _narrate_thinking(
@@ -1048,7 +1050,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 message_type="task",
                 metadata={SESSION_ID_METADATA_KEY: session_id},
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Room %s: Failed to persist session_id: %s", room_id, e)
 
     async def _on_tool_result(
@@ -1288,7 +1290,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         try:
             await tools.send_message(message, mentions=mentions)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.log(log_level, "Room %s: %s: %s", room_id, failure_note, e)
             return False
 
@@ -1337,7 +1339,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_name=tool_name,
             tool_input=tool_input,
             summary=summary,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             future=loop.create_future(),
             requester=requester or {"id": "", "name": ""},
         )
@@ -1369,7 +1371,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     "Use `/approvals` to list pending approvals.",
                     mentions=mention,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning(
                     "Room %s: Failed to send approval notification — declining", room_id
                 )
@@ -1399,7 +1401,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 self._record_notified_decline(room_id, tool_use_id)
             return PermissionResultDeny(message="User declined tool use")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             decision: ApprovalDecision = self.approval_timeout_decision
             notified = False
             if tools:
@@ -1463,13 +1465,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         mention: list[str] = [sender["id"]]
 
         # Authorization: /approve and /decline require sender to be authorized
-        if command in ("approve", "decline") and self.approval_authorized_senders:
-            if sender["id"] not in self.approval_authorized_senders:
-                await tools.send_message(
-                    "You are not authorized to approve or decline tool use.",
-                    mentions=mention,
-                )
-                return
+        if (
+            command in ("approve", "decline")
+            and self.approval_authorized_senders
+            and sender["id"] not in self.approval_authorized_senders
+        ):
+            await tools.send_message(
+                "You are not authorized to approve or decline tool use.",
+                mentions=mention,
+            )
+            return
 
         # --- /approvals: list pending ---
         if command == "approvals":
@@ -1477,7 +1482,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 await tools.send_message("No pending approvals.", mentions=mention)
                 return
             lines = ["Pending approvals:"]
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for token, item in list(pending.items()):
                 age_s = int((now - item.created_at).total_seconds())
                 lines.append(f"- `{token}`: {item.summary} ({age_s}s ago)")

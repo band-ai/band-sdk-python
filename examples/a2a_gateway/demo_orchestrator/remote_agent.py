@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Self
 from uuid import uuid4
 
 import httpx
@@ -42,7 +43,7 @@ class GatewayClient:
             response = await http_client.get(f"{self.gateway_url}/peers")
             response.raise_for_status()
             return response.json().get("peers", [])
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
             logger.warning("Could not fetch peers from gateway: %s", exc)
             return []
 
@@ -60,7 +61,7 @@ class GatewayClient:
                 )
                 await client.close()
             return True
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
             logger.debug("Peer %s not available: %s", peer_id, exc)
             return False
 
@@ -97,7 +98,7 @@ class GatewayClient:
             logger.error(error_msg)
             raise RuntimeError(error_msg) from exc
 
-    async def __aenter__(self) -> GatewayClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

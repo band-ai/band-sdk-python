@@ -13,12 +13,13 @@ import json
 import logging
 import re
 import uuid
-from typing import ClassVar, TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from band_sdk_core import AgentFailure
 from pydantic import ValidationError
 from typing_extensions import Unpack
 
+from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
@@ -30,7 +31,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -119,10 +119,18 @@ def _require_adk() -> tuple[type, type, type, Any]:
         ImportError: If google-adk is not installed.
     """
     try:
-        from google.adk import Agent as ADKAgent  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
-        from google.adk.runners import InMemoryRunner  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
-        from google.adk.tools import BaseTool  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
-        from google.genai import types  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+        from google.adk import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            Agent as ADKAgent,
+        )
+        from google.adk.runners import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            InMemoryRunner,
+        )
+        from google.adk.tools import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            BaseTool,
+        )
+        from google.genai import (  # noqa: PLC0415 -- genuinely deferred; google_adk extra kept out of this module's unconditional import surface
+            types,
+        )
     except ImportError as exc:
         raise ImportError(
             "google-adk is required for GoogleADKAdapter. "
@@ -571,7 +579,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 if Emit.TOOL_CALLS in self.features.emit:
                     try:
                         await self._report_event(event, tools)
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                         logger.warning("Failed to report event: %s", e)
 
                 if event.is_final_response():
@@ -710,7 +718,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_call event: %s", e)
 
         function_responses = event.get_function_responses()
@@ -730,5 +738,5 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_result event: %s", e)

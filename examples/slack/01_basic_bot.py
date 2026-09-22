@@ -65,12 +65,12 @@ import logging
 import os
 
 from dotenv import load_dotenv
+from starlette.applications import Starlette
 
 from band import Agent, Emit, configure_logging
 from band.adapters import AnthropicAdapter
 from band.config import load_agent_config
 from band.integrations.slack import SlackAdapter, SlackApp
-from starlette.applications import Starlette
 
 configure_logging(logging.INFO, extra_loggers={"slack_sdk": logging.INFO})
 logger = logging.getLogger(__name__)

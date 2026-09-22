@@ -12,10 +12,12 @@ from a2a.client import Client, ClientConfig, ClientFactory
 from a2a.helpers import get_message_text, new_text_message
 from a2a.types import (
     Message as A2AMessage,
+)
+from a2a.types import (
     Role,
     SendMessageRequest,
-    SubscribeToTaskRequest,
     StreamResponse,
+    SubscribeToTaskRequest,
     Task,
     TaskState,
 )
@@ -461,5 +463,5 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                             state_name(current_state),
                         )
                     break  # Only need first event to get current state
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- A2A JSON-RPC handler must return an error response, not crash on an unexpected exception
             logger.warning("Could not resubscribe to A2A task %s: %s", task_id, e)

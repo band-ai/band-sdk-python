@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from math import ceil
 from typing import Any
 
@@ -88,10 +88,7 @@ def mentioned_message(
 
 def ids(messages: list[Any]) -> list[str]:
     """Message ids, whether the caller holds models or serialized payloads."""
-    return [
-        item["id"] if isinstance(item, dict) else item.id  # noqa: SIM401
-        for item in messages
-    ]
+    return [item["id"] if isinstance(item, dict) else item.id for item in messages]
 
 
 class FakeTranscriptTools:
@@ -151,14 +148,14 @@ def transcript(*reads: Any) -> FakeTranscriptTools:
 
 def real_clock() -> datetime:
     """Wall time, which is what a room runs on unless a test winds its own."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
 class Clock:
     """A hand-wound clock, for behaviour that only shows up over minutes."""
 
-    at: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    at: datetime = datetime(2026, 1, 1, tzinfo=UTC)
 
     def __call__(self) -> datetime:
         return self.at

@@ -20,9 +20,8 @@ import asyncio
 import logging
 
 from pydantic import BaseModel, Field
-
-
 from settings import OpenCodeExampleSettings
+
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Emit

@@ -15,7 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, Coroutine, TypeVar
+from collections.abc import Coroutine
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 

@@ -169,12 +169,11 @@ Use modern Python type annotation syntax:
 
 ```python
 # Use pipe unions (Python 3.10+)
-def process(value: str | None) -> list[str]:
-    ...
+def process(value: str | None) -> list[str]: ...
+
 
 # Use subscripted generics
-def get_items() -> dict[str, list[int]]:
-    ...
+def get_items() -> dict[str, list[int]]: ...
 ```
 
 ## Running Integration Tests

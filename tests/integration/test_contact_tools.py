@@ -39,14 +39,14 @@ async def cleanup_contact_state(api_client, api_client_2):
     try:
         await api_client.agent_api_contacts.remove_agent_contact(handle=agent2_handle)
         logger.info("  Agent 1 removed contact with Agent 2")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     # Agent 2: Remove contact with Agent 1 if exists
     try:
         await api_client_2.agent_api_contacts.remove_agent_contact(handle=agent1_handle)
         logger.info("  Agent 2 removed contact with Agent 1")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- idempotent cleanup; absence of the contact/request is expected, not an error
         pass
 
     # Agent 1: Cancel any SENT pending requests to Agent 2
@@ -56,7 +56,7 @@ async def cleanup_contact_state(api_client, api_client_2):
             handle=agent2_handle,
         )
         logger.info("  Agent 1 canceled pending request to Agent 2")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- idempotent cleanup; absence of the contact/request is expected, not an error
         logger.debug("  No sent request to cancel from Agent 1: %s", e)
 
     # Agent 2: Cancel any SENT pending requests to Agent 1
@@ -66,7 +66,7 @@ async def cleanup_contact_state(api_client, api_client_2):
             handle=agent1_handle,
         )
         logger.info("  Agent 2 canceled pending request to Agent 1")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- idempotent cleanup; absence of the contact/request is expected, not an error
         logger.debug("  No sent request to cancel from Agent 2: %s", e)
 
     # Agent 1: Reject any RECEIVED pending requests from Agent 2
@@ -82,7 +82,7 @@ async def cleanup_contact_state(api_client, api_client_2):
                     request_id=req.id,
                 )
                 logger.info("  Agent 1 rejected pending request from Agent 2")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- idempotent cleanup; absence of the contact/request is expected, not an error
         logger.debug("  No received requests to reject at Agent 1: %s", e)
 
     # Agent 2: Reject any RECEIVED pending requests from Agent 1
@@ -98,7 +98,7 @@ async def cleanup_contact_state(api_client, api_client_2):
                     request_id=req.id,
                 )
                 logger.info("  Agent 2 rejected pending request from Agent 1")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- idempotent cleanup; absence of the contact/request is expected, not an error
         logger.debug("  No received requests to reject at Agent 2: %s", e)
 
     await asyncio.sleep(0.3)

@@ -14,7 +14,6 @@ import asyncio
 
 from band.platform.link import BandLink
 from band.testing import JoinOutcome, fake_phoenix_server
-
 from tests.conftest import spy_on_reconciliation_drain
 
 

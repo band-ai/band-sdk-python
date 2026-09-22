@@ -17,13 +17,10 @@ from band.core.types import (
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools, reported_failures
 from tests.adapters.usage_events import recorded_usage_payloads
-
-
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     FakeOpencodeClient,
     TaskEventFailingTools,
-    run_single_turn,
     event_message_updated,
     event_message_updated_with_tokens,
     event_part_delta,
@@ -35,9 +32,11 @@ from tests.adapters.opencode.helpers import (
     event_tool_part,
     event_user_message_updated,
     make_platform_message,
+    run_single_turn,
     tools_protocol,
     wait_for,
 )
+from tests.adapters.usage_events import recorded_usage_payloads
 
 
 async def test_prompt_submission_failure_does_not_leave_room_stuck(

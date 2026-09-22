@@ -9,8 +9,8 @@ import logging
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import httpx
 from band_sdk_core import AgentFailure
@@ -690,7 +690,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             if mcp_backend is not None and client is not None:
                 try:
                     await client.disconnect_mcp_server(self._mcp_server_name)
-                except Exception:
+                except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.debug(
                         "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
                         self._mcp_server_name,
@@ -934,7 +934,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
         try:
             await self._await_turn(room_state, turn_future)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "OpenCode turn timed out for room %s (session=%s)",
                 room_id,
@@ -1034,7 +1034,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     asyncio.shield(turn_future), max(deadline() - loop.time(), 0.0)
                 )
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Genuinely out of compute budget with nobody deliberating.
                 if not approvals.awaiting_human() and deadline() <= loop.time():
                     raise
@@ -1086,7 +1086,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if room_state.tools is None or not room_state.session_id:
             return
 
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         # Best-effort bookkeeping: a transient post failure must not abort the
         # turn before the model runs (the outer on_message handler would catch
         # it and drop the user's message). Leave persisted_session_id unset on

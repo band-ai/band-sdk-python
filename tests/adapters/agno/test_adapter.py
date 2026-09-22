@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 import warnings
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -61,7 +61,7 @@ def _msg(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -261,7 +261,7 @@ class TestBandInstructionInjection:
         self, make_started_adapter
     ):
         # Band guidance is injected in on_started, not lazily on first message.
-        adapter, agent = await make_started_adapter()
+        _adapter, agent = await make_started_adapter()
 
         # The Band operating contract frames the agent via ``description`` (ahead of
         # the developer's own ``instructions``), not via ``additional_context``.
@@ -838,7 +838,7 @@ class TestFeatureFilters:
     """include_tools/exclude_tools/include_categories gate which Band tools
     are wired (parity with LangGraph)."""
 
-    ALL_SCHEMAS = [
+    ALL_SCHEMAS: ClassVar[list[dict[str, Any]]] = [
         openai_tool_schema("band_send_message"),  # chat
         openai_tool_schema("band_lookup_peers"),  # chat
         openai_tool_schema("band_store_memory"),  # memory
@@ -906,7 +906,7 @@ class TestRunFailureReporting:
         # returns a normal-looking RunOutput with status=error. The adapter
         # must surface it as a failure — otherwise the runtime marks the
         # message processed and the turn dies silently with no reply.
-        adapter, agent = await make_started_adapter(
+        adapter, _agent = await make_started_adapter(
             response=RunOutput(
                 content="api dsn leaked: secret-token", status=RunStatus.error
             )
@@ -937,7 +937,7 @@ class TestRunFailureReporting:
         # RunErrorEvent — the stream never yields a final RunOutput. The
         # adapter must raise on it instead of returning None (a "successful"
         # empty turn).
-        adapter, agent = await make_started_adapter(
+        adapter, _agent = await make_started_adapter(
             emit=Emit.TOOL_CALLS,
             events=[RunErrorEvent(content="api dsn leaked: secret-token")],
         )

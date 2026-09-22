@@ -8,9 +8,10 @@ import logging
 import os
 import time as _time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import ClassVar, Any, Callable, Literal, NamedTuple, Protocol
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Literal, NamedTuple, Protocol
 
 from band_sdk_core import AgentFailure
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
@@ -66,13 +67,13 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.formatters import strip_leading_mentions
+from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     image_block_placeholder,
     is_image_passthrough_result,
     is_room_posting_tool,
     redact_tool_call_args,
 )
-from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -1111,7 +1112,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 turn_start=turn_start,
             )
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "Codex turn timed out after %ss (thread=%s, turn=%s)",
                 self.config.turn_timeout_s,
@@ -1183,7 +1184,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 if timeout is not None:
                     try:
                         await asyncio.wait_for(close_coro, timeout=timeout)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "Codex client.close() exceeded %ss timeout; "
                             "dropping client reference",
@@ -1346,7 +1347,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 metadata={
                     "codex_thread_id": thread_id,
                     "codex_room_id": room_id,
-                    "codex_created_at": datetime.now(timezone.utc).isoformat(),
+                    "codex_created_at": datetime.now(UTC).isoformat(),
                     "codex_transport": self.config.transport,
                 },
                 log_label="thread mapped task event",
@@ -2237,7 +2238,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             request_id=event.id,
             method=event.method,
             summary=summary,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             future=loop.create_future(),
             session_key=self._session_approval_key(event.method, params),
         )
@@ -2330,7 +2331,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if decision_raw in {"accept", "acceptForSession"}:
                 return decision_raw  # type: ignore[return-value]
             return "decline"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timeout_decision = self.config.approval_timeout_decision
             try:
                 await tools.send_message(
@@ -2657,7 +2658,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             method=method,
             decision=decision,
             decided_by=decided_by,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             summary=summary,
             session_level=session_level,
         )
@@ -3012,7 +3013,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 await deliver_reply(tools, "No pending approvals.", mentions=mention)
                 return True
             lines = ["Pending approvals:"]
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for token, item in list(pending.items()):
                 age_s = int((now - item.created_at).total_seconds())
                 lines.append(f"- {token}: {item.summary} ({age_s}s)")
@@ -3177,7 +3178,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     # This mapping bridges the two.  If the Codex protocol renames tags,
     # update both this mapping and _canonical_sandbox_key's aliases.
     # Reference: codex-app-server protocol types (thread/start, turn/start).
-    _SANDBOX_MODE_TO_POLICY_TYPE: dict[str, str] = {
+    _SANDBOX_MODE_TO_POLICY_TYPE: ClassVar[dict[str, str]] = {
         "read-only": "readOnly",
         "workspace-write": "workspaceWrite",
         "danger-full-access": "dangerFullAccess",

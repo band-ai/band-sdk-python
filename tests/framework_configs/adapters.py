@@ -10,36 +10,41 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 from band.adapters.claude_sdk import (
     _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK,
+)
+from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
+)
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.copilot_sdk import (
+    _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK,
+)
+from band.adapters.copilot_sdk import (
+    CopilotSDKAdapter,
+    CopilotSDKAdapterConfig,
 )
 
 # Both classes construct with crewai absent; do not fake the package via
 # ``sys.modules`` instead — see ``tests/test_module_isolation.py``.
 from band.adapters.crewai import CrewAIAdapter
 from band.adapters.crewai_flow import CrewAIFlowAdapter
-from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.adapters.copilot_sdk import (
-    _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK,
-    CopilotSDKAdapter,
-    CopilotSDKAdapterConfig,
-)
 from band.adapters.google_adk import GoogleADKAdapter
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.adapters.parlant import ParlantAdapter
+from band.core.types import ALL_CAPABILITIES, AdapterFeatures, Capability
 from band.integrations.crewai.tools import NoopReporter, build_band_crewai_tools
+from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 
 __all__ = [
-    "AdapterConfig",
     "ADAPTER_CONFIGS",
     "ADAPTER_EXCLUDED_MODULES",
+    "AdapterConfig",
     "AdvertisedArgTextProbe",
 ]
 
@@ -138,7 +143,9 @@ async def pydantic_ai_probe_tools() -> dict[str, Any]:
     Kept here rather than inline in a test so the walk through pydantic-ai's
     internals lives in exactly one place.
     """
-    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+    from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+        PydanticAIAdapter,
+    )
 
     adapter = PydanticAIAdapter(
         model="test",
@@ -193,13 +200,17 @@ async def _crewai_advertised_arg_text() -> dict[str, dict[str, str | None]]:
 
 
 def _anthropic_factory(**kw: Any) -> Any:
-    from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
+    from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
+        AnthropicAdapter,
+    )
 
     return AnthropicAdapter(**kw)
 
 
 def _langgraph_factory(**kw: Any) -> Any:
-    from band.adapters.langgraph import LangGraphAdapter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+    from band.adapters.langgraph import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+        LangGraphAdapter,
+    )
 
     if "llm" not in kw and "graph_factory" not in kw and "graph" not in kw:
         kw["llm"] = MagicMock()
@@ -245,7 +256,9 @@ def _claude_sdk_factory(**kw: Any) -> Any:
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+    from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+        PydanticAIAdapter,
+    )
 
     if "model" not in kw:
         kw["model"] = _PYDANTIC_AI_INJECTED_MODEL
@@ -253,7 +266,9 @@ def _pydantic_ai_factory(**kw: Any) -> Any:
 
 
 def _strands_factory(**kw: Any) -> Any:
-    from band.adapters.strands import StrandsAdapter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
+    from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
+        StrandsAdapter,
+    )
 
     if "model" not in kw:
         kw["model"] = _STRANDS_INJECTED_MODEL
@@ -280,7 +295,9 @@ def _codex_factory(**kw: Any) -> Any:
 
 
 def _letta_factory(**kw: Any) -> Any:
-    from band.adapters.letta import LettaAdapter  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file configures
+    from band.adapters.letta import (  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file configures
+        LettaAdapter,
+    )
 
     return LettaAdapter(**kw)
 
@@ -293,7 +310,9 @@ def _opencode_factory(**kw: Any) -> Any:
 
 
 def _agno_factory(**kw: Any) -> Any:
-    from band.adapters.agno import AgnoAdapter  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+    from band.adapters.agno import (  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+        AgnoAdapter,
+    )
 
     # AgnoAdapter takes a developer-built Agno Agent; inject a stand-in so the
     # adapter can be constructed without a real model/API key.
@@ -303,7 +322,9 @@ def _agno_factory(**kw: Any) -> Any:
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
+    from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
+        GeminiAdapter,
+    )
 
     return GeminiAdapter(**kw)
 
@@ -329,7 +350,9 @@ _STRANDS_INJECTED_MODEL = "strands-conformance-model"
 
 
 def _build_anthropic_config() -> AdapterConfig:
-    from band.adapters.anthropic import AnthropicAdapter  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
+    from band.adapters.anthropic import (  # noqa: PLC0415 -- isolates the anthropic extra from the other frameworks this file configures
+        AnthropicAdapter,
+    )
 
     return AdapterConfig(
         framework_id="anthropic",
@@ -353,7 +376,9 @@ def _build_anthropic_config() -> AdapterConfig:
 
 
 def _build_langgraph_config() -> AdapterConfig:
-    from band.adapters.langgraph import LangGraphAdapter  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+    from band.adapters.langgraph import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+        LangGraphAdapter,
+    )
 
     return AdapterConfig(
         framework_id="langgraph",
@@ -525,7 +550,9 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
 
 
 def _build_pydantic_ai_config() -> AdapterConfig:
-    from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+    from band.adapters.pydantic_ai import (  # noqa: PLC0415 -- isolates the pydantic_ai extra from the other frameworks this file configures
+        PydanticAIAdapter,
+    )
 
     return AdapterConfig(
         framework_id="pydantic_ai",
@@ -558,7 +585,9 @@ def _build_pydantic_ai_config() -> AdapterConfig:
 
 
 def _build_strands_config() -> AdapterConfig:
-    from band.adapters.strands import StrandsAdapter  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
+    from band.adapters.strands import (  # noqa: PLC0415 -- isolates the strands extra from the other frameworks this file configures
+        StrandsAdapter,
+    )
 
     return AdapterConfig(
         framework_id="strands",
@@ -637,7 +666,10 @@ def _build_codex_config() -> AdapterConfig:
 
 
 def _build_letta_config() -> AdapterConfig:
-    from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file configures
+    from band.adapters.letta import (  # noqa: PLC0415 -- isolates the letta extra from the other frameworks this file configures
+        LettaAdapterConfig,
+        LettaMCPConfig,
+    )
 
     return AdapterConfig(
         framework_id="letta",
@@ -717,7 +749,9 @@ def _build_agno_config() -> AdapterConfig:
 
 
 def _build_gemini_config() -> AdapterConfig:
-    from band.adapters.gemini import GeminiAdapter  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
+    from band.adapters.gemini import (  # noqa: PLC0415 -- isolates the gemini extra from the other frameworks this file configures
+        GeminiAdapter,
+    )
 
     return AdapterConfig(
         framework_id="gemini",

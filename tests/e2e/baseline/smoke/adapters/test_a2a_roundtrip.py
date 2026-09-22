@@ -23,7 +23,6 @@ import pytest
 
 from band.integrations.a2a import A2AAdapter
 from band.integrations.a2a.gateway import A2AGatewayAdapter
-
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.settings import BaselineSettings

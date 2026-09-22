@@ -8,9 +8,9 @@ job. One instance lives per server process, keyed by room id throughout.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
 
 from band.integrations.desktop_app.room import MonitoringStatus
 from band.integrations.desktop_app.tools import DEFAULT_ATTENTION, AttentionMode

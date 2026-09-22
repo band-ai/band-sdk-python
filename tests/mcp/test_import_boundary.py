@@ -44,9 +44,12 @@ def _imports_mcp_package(source: str) -> bool:
         if isinstance(node, ast.Import):
             if any(alias.name.split(".")[0] == "mcp" for alias in node.names):
                 return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.split(".")[0] == "mcp":
-                return True
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.split(".")[0] == "mcp"
+        ):
+            return True
     return False
 
 

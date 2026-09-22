@@ -6,8 +6,8 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import ClassVar, Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
@@ -225,7 +225,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         is already rejected at config construction — see LettaAdapterConfig).
         """
         try:
-            from letta_client import AsyncLetta  # type: ignore[import-not-found]  # optional dependency  # noqa: PLC0415
+            from letta_client import (  # type: ignore[import-not-found]  # optional dependency  # noqa: PLC0415
+                AsyncLetta,
+            )
         except ImportError:
             raise ImportError(
                 "letta-client is required for LettaAdapter. "
@@ -482,7 +484,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     timeout=self.config.turn_timeout_s,
                 )
                 room_ctx.pending_seed = []
-                room_ctx.last_interaction = datetime.now(timezone.utc)
+                room_ctx.last_interaction = datetime.now(UTC)
             except asyncio.TimeoutError:
                 # Caught and reported here, at the exact call this timeout
                 # bounds -- a TimeoutError surfacing from anywhere else in
@@ -699,7 +701,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             await self._update_instruction_block(agent_id, room_id)
             await self._verify_mcp_tools_attached(agent_id)
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: Failed to resume agent %s: %s", room_id, agent_id, e
             )
@@ -764,7 +766,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     logger.info(
                         "Room %s: Resumed conversation %s", room_id, conversation_id
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning(
                     "Room %s: Failed to resume conversation %s: %s",
                     room_id,
@@ -909,7 +911,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 await self._client.agents.tools.attach(
                     agent_id=agent_id, tool_id=tool_id
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 if self._is_stale_tool_error(e):
                     logger.warning(
                         "Agent %s: MCP tool %s is gone from the org "
@@ -981,7 +983,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         """
         try:
             attached_ids = await self._list_attached_tool_ids(agent_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to verify MCP tools for agent %s: %s", agent_id, e)
             return False
 
@@ -1028,7 +1030,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     agent_id,
                 )
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 # Label not found on this agent, try next
                 logger.debug(
                     "Room %s: Block %r not found for agent %s, trying next",
@@ -1053,7 +1055,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 room_id,
                 agent_id,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning(
                 "Room %s: Could not update or create instruction block: %s",
                 room_id,
@@ -1077,7 +1079,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             metadata: dict[str, Any] = {
                 "letta_agent_id": agent_id,
                 "letta_room_id": room_id,
-                "letta_created_at": datetime.now(timezone.utc).isoformat(),
+                "letta_created_at": datetime.now(UTC).isoformat(),
             }
             if conversation_id:
                 metadata["letta_conversation_id"] = conversation_id
@@ -1086,7 +1088,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 message_type="task",
                 metadata=metadata,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Failed to emit task event: %s", e)
 
     # ------------------------------------------------------------------
@@ -1193,10 +1195,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     @staticmethod
     def _format_time_ago(dt: datetime) -> str:
         """Format a datetime as a human-readable time-ago string."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Ensure dt is timezone-aware for comparison
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         delta = now - dt
         total_seconds = int(delta.total_seconds())
         if total_seconds < 60:

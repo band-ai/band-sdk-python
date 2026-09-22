@@ -34,9 +34,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext
-
 from typing_extensions import Unpack
 
+from band.converters.pydantic_ai import (
+    PydanticAIHistoryConverter,
+    PydanticAIMessages,
+)
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -51,10 +54,6 @@ from band.core.types import (
     PlatformMessage,
     ToolEventKey,
     TurnUsage,
-)
-from band.converters.pydantic_ai import (
-    PydanticAIHistoryConverter,
-    PydanticAIMessages,
 )
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -373,7 +372,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         ) -> dict[str, Any] | str:
             try:
                 return await ctx.deps.send_message(content, mentions)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error sending message: {e}"
 
         agent.tool(band_send_message)
@@ -387,7 +386,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         ) -> dict[str, Any] | str:
             try:
                 return await ctx.deps.send_event(content, message_type, metadata)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error sending event: {e}"
 
         agent.tool(band_send_event)
@@ -400,7 +399,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         ) -> dict[str, Any] | str:
             try:
                 return await ctx.deps.add_participant(identifier, role)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error adding participant '{identifier}': {e}"
 
         agent.tool(band_add_participant)
@@ -412,7 +411,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         ) -> dict[str, Any] | str:
             try:
                 return await ctx.deps.remove_participant(identifier)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error removing participant '{identifier}': {e}"
 
         agent.tool(band_remove_participant)
@@ -427,7 +426,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 return serialize_tool_result(
                     await ctx.deps.lookup_peers(page, page_size)
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error looking up peers: {e}"
 
         agent.tool(band_lookup_peers)
@@ -438,7 +437,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         ) -> list[dict[str, Any]] | str:
             try:
                 return await ctx.deps.get_participants()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error getting participants: {e}"
 
         agent.tool(band_get_participants)
@@ -450,7 +449,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         ) -> str:
             try:
                 return await ctx.deps.create_chatroom(task_id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
         agent.tool(band_create_chatroom)
@@ -468,7 +467,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     return serialize_tool_result(
                         await ctx.deps.list_contacts(page, page_size)
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing contacts: {e}"
 
             agent.tool(band_list_contacts)
@@ -481,7 +480,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) -> dict[str, Any] | str:
                 try:
                     return await ctx.deps.add_contact(handle, message)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error adding contact '{handle}': {e}"
 
             agent.tool(band_add_contact)
@@ -494,7 +493,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) -> dict[str, Any] | str:
                 try:
                     return await ctx.deps.remove_contact(handle, contact_id)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error removing contact: {e}"
 
             agent.tool(band_remove_contact)
@@ -512,7 +511,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             page, page_size, sent_status
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing contact requests: {e}"
 
             agent.tool(band_list_contact_requests)
@@ -536,13 +535,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     )
                     logger.info("band_respond_contact_request result: %s", result)
                     return result
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.error("band_respond_contact_request error: %s", e)
                     error_msg = f"Error responding to contact request: {e}"
                     # Auto-send error event so it's visible in the room
                     try:
                         await ctx.deps.send_event(error_msg, "error")
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110 -- best-effort error-reporting fallback; must not raise if sending the error event itself fails
                         pass  # Don't fail if error reporting fails
                     return error_msg
 
@@ -575,7 +574,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         status=status,
                     )
                     return serialize_tool_result(response)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing memories: {e}"
 
             agent.tool(band_list_memories)
@@ -605,7 +604,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             metadata=metadata,
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error storing memory: {e}"
 
             agent.tool(band_store_memory)
@@ -617,7 +616,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) -> dict[str, Any] | str:
                 try:
                     return serialize_tool_result(await ctx.deps.get_memory(memory_id))
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting memory: {e}"
 
             agent.tool(band_get_memory)
@@ -631,7 +630,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     return serialize_tool_result(
                         await ctx.deps.supersede_memory(memory_id)
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error superseding memory: {e}"
 
             agent.tool(band_supersede_memory)
@@ -645,7 +644,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     return serialize_tool_result(
                         await ctx.deps.archive_memory(memory_id)
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error archiving memory: {e}"
 
             agent.tool(band_archive_memory)
@@ -666,7 +665,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             state=state, cursor=cursor, limit=limit
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing tasks: {e}"
 
             agent.tool(band_list_tasks)
@@ -684,7 +683,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             subject, detail=detail, supersedes_id=supersedes_id
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error creating task '{subject}': {e}"
 
             agent.tool(band_create_task)
@@ -706,7 +705,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             id, include=cast(Literal["history"] | None, include)
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting task '{id}': {e}"
 
             agent.tool(band_get_task)
@@ -734,7 +733,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             state=state,
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error updating task '{id}': {e}"
 
             agent.tool(band_update_task)
@@ -750,7 +749,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     return serialize_tool_result(
                         await ctx.deps.get_task_history(id, cursor=cursor, limit=limit)
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting task history for '{id}': {e}"
 
             agent.tool(band_get_task_history)
@@ -767,7 +766,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             include=cast(Literal["history"] | None, include)
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error getting board: {e}"
 
             agent.tool(band_get_board)
@@ -784,7 +783,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             goal_title=goal_title, goal_summary=goal_summary
                         )
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error setting board: {e}"
 
             agent.tool(band_set_board)
@@ -799,7 +798,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             ) -> dict[str, Any] | str:
                 try:
                     return await ctx.deps.list_room_files(cursor)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error listing room files: {e}"
 
             agent.tool(band_list_room_files)
@@ -819,7 +818,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                             )
                         ]
                     return result
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error reading room file: {e}"
 
             agent.tool(band_read_room_file)
@@ -836,7 +835,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     return await ctx.deps.send_room_file(
                         content, filename, caption, mentions
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     return f"Error sending room file '{filename}': {e}"
 
             agent.tool(band_send_room_file)
@@ -967,7 +966,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                     ),
                                     message_type="tool_call",
                                 )
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning("Failed to send tool_call event: %s", e)
                     elif isinstance(event, FunctionToolResultEvent):
                         # Custom tools count as terminal only if they opted in
@@ -1007,7 +1006,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                     ),
                                     message_type="tool_result",
                                 )
-                            except Exception as e:
+                            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                                 logger.warning(
                                     "Failed to send tool_result event: %s", e
                                 )
@@ -1133,7 +1132,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         """
         try:
             usage = result.usage
-        except Exception as e:  # pragma: no cover - defensive; usage is best-effort
+        except Exception as e:  # pragma: no cover - defensive; usage is best-effort  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
             logger.warning("Could not read pydantic-ai run usage: %s", e)
             return TurnUsage()
         return PydanticAIAdapter._usage_from_usage_obj(usage)

@@ -16,6 +16,7 @@ from anthropic.types import Message, MessageParam, TextBlock, ToolParam, ToolUse
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
+from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.core.exceptions import BandConfigError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -27,7 +28,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tools_to_schemas,
@@ -414,14 +414,15 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         "input": block.input,
                     }
                 )
-            elif isinstance(block, TextBlock):
-                if block.text:  # Only include non-empty text
-                    serialized.append(
-                        {
-                            "type": "text",
-                            "text": block.text,
-                        }
-                    )
+            elif (
+                isinstance(block, TextBlock) and block.text
+            ):  # Only include non-empty text
+                serialized.append(
+                    {
+                        "type": "text",
+                        "text": block.text,
+                    }
+                )
         return serialized
 
     # --- Copied from BandAnthropicAgent._process_tool_calls ---
@@ -466,7 +467,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning(
                         "Failed to send tool_call event: %s",
                         e,
@@ -489,7 +490,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         else result
                     )
                 is_error = False
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 content = result_str = f"Error: {e}"
                 is_error = True
                 logger.error("Tool %s failed: %s", tool_name, e)
@@ -508,7 +509,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning(
                         "Failed to send tool_result event: %s",
                         e,

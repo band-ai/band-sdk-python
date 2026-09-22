@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -40,7 +40,6 @@ from tests.adapters.lettakit import (
     make_tool_call_message,
     make_tool_return_message,
 )
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Initialization
@@ -1028,7 +1027,7 @@ class TestRejoinContext:
         adapter._mcp.tool_ids = []
         adapter._mcp.server_id = "mcp-server-1"
 
-        last_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        last_time = datetime.now(UTC) - timedelta(hours=2)
         adapter._rooms["room-1"] = RoomContext(
             agent_id="agent-1",
             last_interaction=last_time,
@@ -1211,31 +1210,31 @@ class TestMemoryConsolidation:
 
 class TestFormatTimeAgo:
     def test_seconds(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(seconds=30)
+        dt = datetime.now(UTC) - timedelta(seconds=30)
         assert "30s" == LettaAdapter._format_time_ago(dt)
 
     def test_minutes(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(minutes=5)
+        dt = datetime.now(UTC) - timedelta(minutes=5)
         assert "5m" == LettaAdapter._format_time_ago(dt)
 
     def test_hours(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(hours=3)
+        dt = datetime.now(UTC) - timedelta(hours=3)
         assert "3h" == LettaAdapter._format_time_ago(dt)
 
     def test_one_hour(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(hours=1)
+        dt = datetime.now(UTC) - timedelta(hours=1)
         assert "1 hour" == LettaAdapter._format_time_ago(dt)
 
     def test_days(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(days=5)
+        dt = datetime.now(UTC) - timedelta(days=5)
         assert "5d" == LettaAdapter._format_time_ago(dt)
 
     def test_one_day(self) -> None:
-        dt = datetime.now(timezone.utc) - timedelta(days=1)
+        dt = datetime.now(UTC) - timedelta(days=1)
         assert "1 day" == LettaAdapter._format_time_ago(dt)
 
     def test_naive_datetime_treated_as_utc(self) -> None:
-        dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
+        dt = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10)
         result = LettaAdapter._format_time_ago(dt)
         assert "10m" == result
 

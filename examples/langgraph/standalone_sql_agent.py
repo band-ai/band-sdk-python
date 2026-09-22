@@ -121,7 +121,7 @@ def download_chinook_db():
         urllib.request.urlretrieve(url, db_path)
         logger.info("Downloaded database to %s", db_path)
         return db_path
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
         logger.error("Error downloading database: %s", e)
         logger.info("Creating minimal test database instead...")
 

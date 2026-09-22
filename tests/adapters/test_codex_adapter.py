@@ -7,12 +7,11 @@ import json
 import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 import pytest
-
 from pydantic import BaseModel
 
 from band.adapters.codex import (
@@ -54,7 +53,7 @@ def make_platform_message(
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -182,7 +181,7 @@ class FakeCodexClient:
 
     async def recv_event(self, timeout_s: float | None = None) -> RpcEvent:
         if not self._events:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         return self._events.popleft()
 
     async def respond(self, request_id: int | str, result: dict[str, Any]) -> None:
@@ -200,7 +199,6 @@ class FakeCodexClient:
 
     async def close(self) -> None:
         self.closed = True
-        return None
 
 
 def _event_notification(method: str, params: dict[str, Any]) -> RpcEvent:
@@ -3543,7 +3541,7 @@ class TestHistoryInjection:
                     "request_id": 1,
                     "method": "item/tool/call",
                     "summary": "test",
-                    "created_at": datetime.now(),
+                    "created_at": datetime.now(UTC),
                     "future": fut,
                 },
             )(),
@@ -6486,7 +6484,7 @@ class TestCleanupOnCancel:
                 request_id=42,
                 method="item/commandExecution/requestApproval",
                 summary="rm -rf /",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 future=approval_future,
                 session_key="cmd:rm -rf /",
             ),

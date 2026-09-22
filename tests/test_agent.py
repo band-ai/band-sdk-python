@@ -1,11 +1,11 @@
 """Tests for Agent compositor."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from band.agent import Agent, DEFAULT_SHUTDOWN_TIMEOUT
+from band.agent import DEFAULT_SHUTDOWN_TIMEOUT, Agent
 from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
@@ -15,9 +15,9 @@ from band.client.streaming import (
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, AgentInput, Capability
 from band.platform.event import MessageEvent, ParticipantAddedEvent, RoomAddedEvent
+from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.capabilities import FeatureFlag
 from band.runtime.types import AgentConfig, ConversationContext, SessionConfig
-from band.preprocessing.default import DefaultPreprocessor
 from band.testing.platform import platform_connection_stub
 
 
@@ -581,7 +581,6 @@ class TestStartupRaceCondition:
 
             async def initialize(self) -> None:
                 """Initialize without starting message processing."""
-                pass
 
             def claim_single_instance(self) -> None:
                 pass
@@ -601,7 +600,7 @@ class TestStartupRaceCondition:
                         room_id="room-123",
                         messages=[],
                         participants=[],
-                        hydrated_at=datetime.now(timezone.utc),
+                        hydrated_at=datetime.now(UTC),
                     )
                 )
                 mock_ctx.participants = []
@@ -619,8 +618,8 @@ class TestStartupRaceCondition:
                         message_type="text",
                         metadata=MessageMetadata(mentions=[], status="sent"),
                         chat_room_id="room-123",
-                        inserted_at=datetime.now(timezone.utc).isoformat(),
-                        updated_at=datetime.now(timezone.utc).isoformat(),
+                        inserted_at=datetime.now(UTC).isoformat(),
+                        updated_at=datetime.now(UTC).isoformat(),
                     ),
                 )
 

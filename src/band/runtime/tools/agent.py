@@ -12,8 +12,8 @@ import hashlib
 import logging
 import re
 import warnings
-from datetime import datetime, timezone
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import band_sdk_core
@@ -21,21 +21,17 @@ from async_lru import alru_cache
 from pydantic import BaseModel
 
 from band.client.rest import (
+    DEFAULT_REQUEST_OPTIONS,
     AgentMemoryCreateRequest,
     ChatEventRequest,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
     ChatRoomRequest,
-    DEFAULT_REQUEST_OPTIONS,
     NotFoundError,
     ParticipantRequest,
     UnprocessableEntityError,
 )
-from band.platform.posting import post_event, post_message
 from band.config.settings import RuntimeSettings
-from band.runtime.capabilities import with_hub_room_contacts
-from band.runtime.context_serialization import context_item_to_dict
-from band.runtime.participants import log_roster_call, participant_snapshot
 from band.core.content import has_visible_content
 from band.core.exceptions import BandToolError
 from band.core.memory_types import (
@@ -56,6 +52,10 @@ from band.core.task_types import (
 from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import Capability, MessageType
 from band.core.validation import at_least_one_of
+from band.platform.posting import post_event, post_message
+from band.runtime.capabilities import with_hub_room_contacts
+from band.runtime.context_serialization import context_item_to_dict
+from band.runtime.participants import log_roster_call, participant_snapshot
 from band.runtime.tools.registry import (
     TOOL_DEFINITIONS,
     TOOL_MODELS,
@@ -239,8 +239,8 @@ class AttachmentCache(Protocol):
     """
 
     async def __call__(
-        self, room_id: str, rest: "AsyncRestClient", file_id: str
-    ) -> "Attachment": ...
+        self, room_id: str, rest: AsyncRestClient, file_id: str
+    ) -> Attachment: ...
     def cache_invalidate(self, *args: Any, **kwargs: Any) -> bool: ...
     def cache_contains(self, *args: Any, **kwargs: Any) -> bool: ...
     def cache_info(self) -> Any: ...
@@ -278,7 +278,7 @@ class AgentTools(AgentToolsProtocol):
     def __init__(
         self,
         room_id: str,
-        rest: "AsyncRestClient",
+        rest: AsyncRestClient,
         participants: list[dict[str, Any]] | None = None,
         *,
         hub_room_id: str | None = None,
@@ -321,7 +321,7 @@ class AgentTools(AgentToolsProtocol):
         return available_mention_handles(self.participants, self._agent_id)
 
     @classmethod
-    def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
+    def from_context(cls, ctx: ExecutionContext) -> AgentTools:
         """
         Create AgentTools from an ExecutionContext.
 
@@ -1090,7 +1090,7 @@ class AgentTools(AgentToolsProtocol):
 
     @staticmethod
     async def _list_message_page(
-        room_id: str, rest: "AsyncRestClient", cursor: str | None
+        room_id: str, rest: AsyncRestClient, cursor: str | None
     ) -> Any:
         """Fetch one page of a room's message history, attachments included.
 
@@ -1153,8 +1153,8 @@ class AgentTools(AgentToolsProtocol):
 
     @staticmethod
     async def _fetch_attachment_uncached(
-        room_id: str, rest: "AsyncRestClient", file_id: str
-    ) -> "Attachment":
+        room_id: str, rest: AsyncRestClient, file_id: str
+    ) -> Attachment:
         """Locate an attachment by id, exhausting pagination (like
         ``_lookup_peer``) instead of returning one page: the target file may
         be older than the first page, and there is no dedicated "get
@@ -1171,7 +1171,7 @@ class AgentTools(AgentToolsProtocol):
         raise BandToolError(FILE_UNAVAILABLE_MESSAGE)
 
     @staticmethod
-    @functools.lru_cache(maxsize=None)
+    @functools.cache
     def _attachment_cache() -> AttachmentCache:
         """Build the ``alru_cache``-wrapped lookup once, lazily, on first use.
 
@@ -1211,7 +1211,7 @@ class AgentTools(AgentToolsProtocol):
         return {"data": attachments, "next_cursor": response.metadata.next_cursor}
 
     @staticmethod
-    def _attachment_expired(attachment: "Attachment") -> bool:
+    def _attachment_expired(attachment: Attachment) -> bool:
         """True once ``expires_at`` has passed. A naive value (no offset --
         the Fern model doesn't enforce one) is treated as UTC, the platform's
         only timezone, rather than raising on a naive/aware comparison."""
@@ -1219,10 +1219,10 @@ class AgentTools(AgentToolsProtocol):
         if expires_at is None:
             return False
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        return expires_at <= datetime.now(timezone.utc)
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return expires_at <= datetime.now(UTC)
 
-    async def _find_attachment(self, file_id: str) -> "Attachment":
+    async def _find_attachment(self, file_id: str) -> Attachment:
         """Locate an attachment by id -- see ``_attachment_cache`` for the
         cached page-walk this delegates to.
 
@@ -1418,7 +1418,7 @@ class AgentTools(AgentToolsProtocol):
         state: TaskListState | None = None,
         cursor: str | None = None,
         limit: int | None = None,
-    ) -> "ListChatTasksResponse":
+    ) -> ListChatTasksResponse:
         """
         List the shared tasks on this room's task board, ordered by number.
 
@@ -1567,7 +1567,7 @@ class AgentTools(AgentToolsProtocol):
 
     async def get_task_history(
         self, id: str, cursor: str | None = None, limit: int | None = None
-    ) -> "GetChatTaskHistoryResponse":
+    ) -> GetChatTaskHistoryResponse:
         """
         The append-only history of one task, oldest first.
 
@@ -1785,7 +1785,7 @@ class AgentTools(AgentToolsProtocol):
         format: str,
         *,
         capabilities: frozenset[Capability] | None = None,
-    ) -> list[dict[str, Any]] | list["ToolParam"]:
+    ) -> list[dict[str, Any]] | list[ToolParam]:
         """
         Get tool schemas in provider-specific format.
 
@@ -1850,7 +1850,7 @@ class AgentTools(AgentToolsProtocol):
         self,
         *,
         capabilities: frozenset[Capability] | None = None,
-    ) -> list["ToolParam"]:
+    ) -> list[ToolParam]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         return cast(
             list["ToolParam"],
@@ -1919,7 +1919,7 @@ class AgentTools(AgentToolsProtocol):
                 )
         except ValueError as error:
             return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
             msg = f"Error validating {tool_name} arguments: {e}"
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
@@ -1936,6 +1936,6 @@ class AgentTools(AgentToolsProtocol):
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- BandToolError already re-raised above; this converts any other exception into a structured ToolCallOutcome(ok=False)
             msg = f"Error executing {tool_name}: {e}"
             return ToolCallOutcome(value=msg, ok=False, error_message=msg)

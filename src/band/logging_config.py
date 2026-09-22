@@ -216,7 +216,7 @@ class OwnerOnlyCreate:
     call, the same rule :func:`create_log_directory` follows.
     """
 
-    baseFilename: str  # noqa: N815 - the attribute logging.FileHandler defines
+    baseFilename: str
 
     def _open(self) -> IO[Any]:
         try:
@@ -916,7 +916,9 @@ def _build_json_formatter(
     # _TraceContextFilter always sets record.trace_context; without this,
     # JsonFormatter's default (any non-reserved attribute is a free "extra")
     # would leak it into output even when json_fields excludes it.
-    from pythonjsonlogger.core import RESERVED_ATTRS  # noqa: PLC0415 -- logging extra, guarded above
+    from pythonjsonlogger.core import (  # noqa: PLC0415 -- logging extra, guarded above
+        RESERVED_ATTRS,
+    )
 
     fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
     json_formatter: LoggingConfig = {

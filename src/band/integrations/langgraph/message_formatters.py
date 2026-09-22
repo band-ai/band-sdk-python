@@ -5,7 +5,8 @@ Transforms MessageCreatedPayload (from WebSocket) into the format needed
 for your graph's state.
 """
 
-from typing import Dict, Any, Protocol
+from typing import Any, Protocol
+
 from band.client.streaming import MessageCreatedPayload
 
 
@@ -18,7 +19,7 @@ class MessageFormatter(Protocol):
 
     def __call__(
         self, message: MessageCreatedPayload, sender_name: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Convert platform message to graph input.
 
         Args:
@@ -33,7 +34,7 @@ class MessageFormatter(Protocol):
 
 def default_messages_state_formatter(
     message: MessageCreatedPayload, sender_name: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Default formatter for MessagesState (LangGraph standard).
 
     Formats messages into the standard LangGraph MessagesState format:

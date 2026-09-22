@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -137,7 +137,7 @@ class TestOnCleanup:
             (f"room-{i}", None) for i in range(_BOOTSTRAP_TRACKING_WARN_THRESHOLD)
         )
 
-        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
+        mock_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with (
@@ -244,7 +244,7 @@ class TestOnCleanup:
                 sender_name="Alice",
                 message_type="text",
                 metadata={},
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
             tools=mock_tools,
             history=[HumanMessage(content="hydrated prior turn")],
@@ -266,7 +266,7 @@ class TestOnCleanup:
                 sender_name="Alice",
                 message_type="text",
                 metadata={},
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
             tools=mock_tools,
             history=[HumanMessage(content="hydrated prior turn")],
@@ -305,7 +305,7 @@ class TestErrorHandling:
         await adapter.on_started("TestBot", "Test bot")
 
         async def failing_stream(*args, **kwargs):
-            raise Exception("Graph error!")
+            raise RuntimeError("Graph error!")
             yield  # Make it async generator
 
         mock_graph = MagicMock()

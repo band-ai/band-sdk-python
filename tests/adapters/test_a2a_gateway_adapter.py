@@ -8,9 +8,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from band_rest import Peer
 
 from band.integrations.a2a.gateway import A2AGatewayAdapter
-from band_rest import Peer
 
 
 class TestA2AGatewayContextIdFlow:
@@ -33,6 +33,7 @@ class TestA2AGatewayContextIdFlow:
             handle="test/weather-agent",
             is_contact=False,
             source="registry",
+            online=True,
         )
         adapter._peers = {"weather-agent": weather_peer}
         adapter._peers_by_uuid = {"uuid-weather": weather_peer}
@@ -118,6 +119,7 @@ class TestA2AGatewayContextIdFlow:
             handle="test/data-agent",
             is_contact=False,
             source="registry",
+            online=True,
         )
         adapter._peers["data-agent"] = data_peer
         adapter._peers_by_uuid["uuid-data"] = data_peer

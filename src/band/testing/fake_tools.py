@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import band_sdk_core
@@ -415,7 +415,7 @@ class FakeAgentTools:
             thought=thought,
             subject_id=subject_id,
             metadata=metadata,
-            inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            inserted_at=datetime(2025, 1, 1, tzinfo=UTC),
         ).model_dump()
         self.memories.append(memory)
         return deepcopy(memory)
@@ -540,7 +540,7 @@ class FakeAgentTools:
         points its ``superseded_by_id`` at the new task, like the real API.
         """
         self._task_seq += 1
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         new_id = str(uuid.uuid4())
         task = Task(
             id=new_id,
@@ -580,7 +580,7 @@ class FakeAgentTools:
         """Apply the given fields to the stored task, joining the fake actor's
         assignment on first status/active_form write, like the real tool."""
         task = self._find_task(id)
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         if subject is not None:
             task["subject"] = subject
         if detail is not None:
@@ -634,7 +634,7 @@ class FakeAgentTools:
     async def set_board(
         self, goal_title: str | None = None, goal_summary: str | None = None
     ) -> dict[str, Any]:
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         if goal_title is not None:
             self.board["goal_title"] = goal_title
         if goal_summary is not None:

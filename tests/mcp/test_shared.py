@@ -16,7 +16,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from band_mcp import shared as shared_mod
 from band_mcp.config import Config
 from band_mcp.shared import (
@@ -24,8 +23,9 @@ from band_mcp.shared import (
     StandaloneResolver,
     build_standalone_resolver,
 )
+
 from band.core.exceptions import BandToolError
-from band.runtime.tools import ToolDefinition, SendMessageInput, GetParticipantsInput
+from band.runtime.tools import GetParticipantsInput, SendMessageInput, ToolDefinition
 from band.testing.fake_tools import FakeAgentTools
 from tests.mcp.conftest import FakeHumanTools
 
@@ -105,13 +105,15 @@ async def test_invoke_human_dispatches_to_singleton():
 async def test_invoke_human_raises_and_warns_when_unavailable(caplog):
     resolver = StandaloneResolver(human_tools=None)
 
-    with caplog.at_level(logging.WARNING, logger="band_mcp.shared"):
-        with pytest.raises(RuntimeError, match="human tools not available"):
-            await resolver.invoke(
-                _definition("band_get_my_profile", "get_my_profile", surface="human"),
-                None,
-                {},
-            )
+    with (
+        caplog.at_level(logging.WARNING, logger="band_mcp.shared"),
+        pytest.raises(RuntimeError, match="human tools not available"),
+    ):
+        await resolver.invoke(
+            _definition("band_get_my_profile", "get_my_profile", surface="human"),
+            None,
+            {},
+        )
     assert any("human tools not available" in r.message for r in caplog.records)
 
 

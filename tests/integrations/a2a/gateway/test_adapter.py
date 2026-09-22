@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -21,9 +21,9 @@ from a2a.types import (
     TaskStatus,
 )
 
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.protocols import FAILURE_CODE_TIMEOUT
 from band.core.types import PlatformMessage
-from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.adapter import (
     BandAgentExecutor,
@@ -50,7 +50,7 @@ def make_platform_message(
         sender_name="Weather Agent",
         message_type=message_type,
         metadata=metadata if metadata is not None else {},
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -224,12 +224,14 @@ class TestGatewayExecution:
             pending=make_pending(EventQueueLegacy()),
         )
 
-        with patch(
-            "band.integrations.a2a.gateway.adapter.post_message",
-            AsyncMock(return_value=None),
+        with (
+            patch(
+                "band.integrations.a2a.gateway.adapter.post_message",
+                AsyncMock(return_value=None),
+            ),
+            pytest.raises(ValueError, match="blank"),
         ):
-            with pytest.raises(ValueError, match="blank"):
-                await adapter._send_to_band(request, make_request())
+            await adapter._send_to_band(request, make_request())
 
     @pytest.mark.asyncio
     async def test_keeps_stream_open_for_non_final_updates(self) -> None:

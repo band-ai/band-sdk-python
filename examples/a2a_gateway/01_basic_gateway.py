@@ -88,7 +88,7 @@ async def main() -> None:
     try:
         agent_id, api_key = load_agent_config("gateway_agent")
         logger.info("Loaded gateway credentials from agent_config.yaml")
-    except Exception:
+    except Exception:  # noqa: BLE001 -- example logs the error and continues/exits cleanly instead of a raw traceback
         if not settings.band_api_key:
             raise ValueError(
                 "Configure 'gateway_agent' in agent_config.yaml, or set "

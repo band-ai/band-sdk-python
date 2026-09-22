@@ -12,11 +12,12 @@ import asyncio
 import logging
 import warnings
 from contextvars import ContextVar
-from typing import ClassVar, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
 from typing_extensions import Unpack
 
+from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.core.protocols import (
     GENERIC_PROVIDER_FAILURE_MESSAGE,
     AgentToolsProtocol,
@@ -24,7 +25,6 @@ from band.core.protocols import (
 )
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import Capability, Emit, FeatureKwargs, PlatformMessage
-from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.integrations.crewai import (
     CrewAIToolContext,
     EmitToolCallsReporter,
@@ -85,9 +85,15 @@ def _silence_lite_agent_error_panel() -> None:
     """
     try:
         # event_listener is imported for its side effect: registering the handlers.
-        from crewai.events import crewai_event_bus  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
-        from crewai.events.event_listener import event_listener  # noqa: F401, PLC0415 -- crewai extra, absent from the standard dev venv
-        from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+        from crewai.events import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            crewai_event_bus,
+        )
+        from crewai.events.event_listener import (  # noqa: F401, PLC0415 -- crewai extra, absent from the standard dev venv
+            event_listener,
+        )
+        from crewai.events.types.agent_events import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            LiteAgentExecutionErrorEvent,
+        )
 
         handlers = crewai_event_bus._sync_handlers.get(
             LiteAgentExecutionErrorEvent, frozenset()
@@ -199,8 +205,12 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Initialize CrewAI agent after metadata is fetched."""
         try:
-            from crewai import Agent as CrewAIAgent  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
-            from crewai import LLM  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+            from crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+                LLM,
+            )
+            from crewai import (  # noqa: PLC0415 -- crewai extra, absent from the standard dev venv
+                Agent as CrewAIAgent,
+            )
         except ImportError as e:
             raise ImportError(
                 "crewai is required for CrewAI adapter.\n"
@@ -477,7 +487,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     async def _kickoff_with_empty_response_retry(
         self,
-        agent: "CrewAIAgent",
+        agent: CrewAIAgent,
         prompt: str,
         reply_tracker: ReplyTracker,
         room_id: str,

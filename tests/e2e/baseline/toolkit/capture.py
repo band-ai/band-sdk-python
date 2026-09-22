@@ -40,7 +40,7 @@ import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from band_rest import AsyncRestClient
@@ -52,7 +52,6 @@ from band.client.streaming import (
     WebSocketClient,
 )
 from band.core.types import MessageType
-
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.observations import (
     Errors,
@@ -61,8 +60,8 @@ from tests.e2e.baseline.toolkit.observations import (
     MemoryObservation,
     MemoryToolCalls,
     Replies,
-    TaskToolCalls,
     Tasks,
+    TaskToolCalls,
     Thoughts,
     ToolCalls,
     ToolResults,
@@ -191,7 +190,7 @@ class ReplyCapture:
         # Normalize a trailing Z before parsing, matching the src/band convention.
         raw = self.messages[-1].inserted_at.replace("Z", "+00:00")
         stamp = datetime.fromisoformat(raw)
-        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
     def _delivery_error(self, message_id: str, recipient_id: str) -> str:
         """Best-effort last-attempt error string, for failure diagnostics."""

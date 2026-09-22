@@ -4,10 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from band.client.streaming import (
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
     WireEvent,
 )
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -43,7 +43,7 @@ def sample_message():
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -941,8 +941,8 @@ class TestErrorHandling:
             mock_runner = AsyncMock()
 
             async def failing_run(**kwargs):
-                raise Exception("Runner Error")
-                yield  # noqa: B901 - yield after raise to make async generator
+                raise RuntimeError("Runner Error")
+                yield
 
             mock_runner.run_async = failing_run
             mock_runner.close = AsyncMock()
@@ -1459,7 +1459,7 @@ class TestConcurrentMessages:
             sender_name="Alice",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         msg_b = PlatformMessage(
             id="msg-b",
@@ -1470,7 +1470,7 @@ class TestConcurrentMessages:
             sender_name="Bob",
             message_type="text",
             metadata={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         with patch.object(adapter, "_create_runner") as mock_create:

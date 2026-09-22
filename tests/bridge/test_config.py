@@ -7,7 +7,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-
 from bridge_core.config import (
     AgentConfig,
     AgentCoreTarget,
@@ -179,21 +178,27 @@ class TestBridgeConfigFromEnv:
 
     def test_missing_env_var_raises(self) -> None:
         env = {k: v for k, v in os.environ.items() if k != "BAND_BRIDGE_AGENTS"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="BAND_BRIDGE_AGENTS"):
-                BridgeConfig.from_env()
+        with (
+            patch.dict(os.environ, env, clear=True),
+            pytest.raises(ValueError, match="BAND_BRIDGE_AGENTS"),
+        ):
+            BridgeConfig.from_env()
 
     def test_invalid_json_raises(self) -> None:
-        with patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": "not json"}, clear=False):
-            with pytest.raises(ValueError, match="not valid JSON"):
-                BridgeConfig.from_env()
+        with (
+            patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": "not json"}, clear=False),
+            pytest.raises(ValueError, match="not valid JSON"),
+        ):
+            BridgeConfig.from_env()
 
     def test_non_list_json_raises(self) -> None:
-        with patch.dict(
-            os.environ, {"BAND_BRIDGE_AGENTS": '{"agent_id":"a"}'}, clear=False
+        with (
+            patch.dict(
+                os.environ, {"BAND_BRIDGE_AGENTS": '{"agent_id":"a"}'}, clear=False
+            ),
+            pytest.raises(ValueError, match="JSON array"),
         ):
-            with pytest.raises(ValueError, match="JSON array"):
-                BridgeConfig.from_env()
+            BridgeConfig.from_env()
 
     def test_url_overrides(self) -> None:
         payload = json.dumps(
@@ -229,13 +234,15 @@ class TestBridgeConfigFromEnv:
                 }
             ]
         )
-        with patch.dict(
-            os.environ,
-            {"BAND_BRIDGE_AGENTS": payload, "HEALTH_PORT": "abc"},
-            clear=False,
+        with (
+            patch.dict(
+                os.environ,
+                {"BAND_BRIDGE_AGENTS": payload, "HEALTH_PORT": "abc"},
+                clear=False,
+            ),
+            pytest.raises(ValueError, match="HEALTH_PORT"),
         ):
-            with pytest.raises(ValueError, match="HEALTH_PORT"):
-                BridgeConfig.from_env()
+            BridgeConfig.from_env()
 
 
 class TestReconnectConfig:

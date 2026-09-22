@@ -27,7 +27,6 @@ import logging
 
 from dotenv import load_dotenv
 
-
 from band import Agent, configure_logging
 from band.adapters import GoogleADKAdapter
 

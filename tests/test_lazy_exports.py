@@ -96,4 +96,4 @@ def test_unknown_attribute_raises_attribute_error() -> None:
     import band.adapters  # noqa: PLC0415 -- pins the exact import path this test exercises
 
     with pytest.raises(AttributeError, match="NoSuchAdapter"):
-        band.adapters.NoSuchAdapter
+        _ = band.adapters.NoSuchAdapter

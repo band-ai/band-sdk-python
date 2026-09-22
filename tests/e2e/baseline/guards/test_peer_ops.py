@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 

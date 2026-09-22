@@ -6,13 +6,15 @@ import inspect
 import json
 import logging
 from collections import OrderedDict
-from typing import ClassVar, TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from band_sdk_core import AgentFailure
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 from typing_extensions import Unpack
 
+from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import (
@@ -23,7 +25,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.integrations.langgraph import langchain_tools
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
@@ -123,8 +124,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     def __init__(
         self,
         # Simple pattern: just provide llm and checkpointer
-        llm: "BaseChatModel | None" = None,
-        checkpointer: "BaseCheckpointSaver | None" = None,
+        llm: BaseChatModel | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
         # Advanced pattern: provide a graph factory or static graph
         graph_factory: Callable[[list[Any]], Pregel] | None = None,
         graph: Pregel | None = None,
@@ -174,7 +175,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             # `langchain` (distinct from `langgraph`) is only needed for this
             # pattern -- a caller who supplies graph_factory=/graph= directly
             # never touches create_agent and shouldn't have to install it.
-            from langchain.agents import create_agent  # noqa: PLC0415 -- only needed by the simple llm= pattern below
+            from langchain.agents import (  # noqa: PLC0415 -- only needed by the simple llm= pattern below
+                create_agent,
+            )
 
             if checkpointer is None:
                 checkpointer = InMemorySaver()
@@ -426,7 +429,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     content=json.dumps(payload, default=str),
                     message_type="tool_call",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type in {"on_tool_end", "on_tool_error"}:
@@ -448,7 +451,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                     content=json.dumps(payload, default=str),
                     message_type="tool_result",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                 logger.warning("Failed to send tool_result event: %s", e)
 
     @staticmethod

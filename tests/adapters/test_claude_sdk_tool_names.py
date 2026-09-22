@@ -9,7 +9,7 @@ bare name, so the adapter strips its own server's prefix at those boundaries.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -43,7 +43,7 @@ async def test_tool_call_event_uses_bare_name() -> None:
         sender_name="Alice",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     tools = MagicMock()
     tools.send_event = AsyncMock(return_value={"status": "sent"})

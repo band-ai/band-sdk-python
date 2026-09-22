@@ -294,7 +294,9 @@ import logging.config
 
 from band import LoggingStyle, build_logging_config
 
-config = build_logging_config(style=LoggingStyle.JSON, static_fields={"service": "agent"})
+config = build_logging_config(
+    style=LoggingStyle.JSON, static_fields={"service": "agent"}
+)
 logging.config.dictConfig(config)
 ```
 
@@ -337,9 +339,9 @@ assert adapter.instrument is True
 Set it up in this order:
 
 ```python notest
-with telemetry("my-service") as otel:      # 1. your providers + trace-context injection
-    LogSettings().for_application().configure()   # 2. Band's logging
-    otel.attach_log_handler()                     # 3. your OTEL log handler
+with telemetry("my-service") as otel:  # 1. your providers + trace-context injection
+    LogSettings().for_application().configure()  # 2. Band's logging
+    otel.attach_log_handler()  # 3. your OTEL log handler
 ```
 
 Step 3 comes last because Band applies its configuration with

@@ -8,7 +8,7 @@ module-level pure helpers.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -133,9 +133,9 @@ class TestParseInsertedAt:
         assert dt.tzinfo is not None
 
     def test_falls_back_to_now_on_invalid(self) -> None:
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         dt = _parse_inserted_at("not a date")
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= dt <= after
 
     def test_falls_back_to_now_on_none(self) -> None:
@@ -211,7 +211,7 @@ class TestStartup:
         assert invoker.agent_name == "Weather"
         assert invoker.agent_description == "forecasts"
         # Adapter primed with identity + metadata.
-        assert getattr(adapter, "platform").agent_id == "agent-1"
+        assert adapter.platform.agent_id == "agent-1"
         adapter.on_started.assert_awaited_once_with("Weather", "forecasts")
 
     async def test_prunes_files_capability_when_flag_off(self) -> None:

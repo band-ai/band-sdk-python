@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import pytest
 
-
 from band.client.rest import (
     DEFAULT_REQUEST_OPTIONS,
     AgentMemoryCreateRequest,
@@ -33,7 +32,6 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
 )
-
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -48,13 +46,13 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     supersede_memory_instruction,
     unique_marker,
 )
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.observations import MemoryTool
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     ResourceManager,
     agent_rest_client,
 )
-from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 

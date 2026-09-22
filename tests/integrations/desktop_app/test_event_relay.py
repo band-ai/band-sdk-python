@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

@@ -24,6 +24,7 @@ except ImportError as e:
         "Or: uv add google-genai"
     ) from e
 
+from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.core.exceptions import BandConfigError
 from band.core.protocols import GENERIC_PROVIDER_FAILURE_MESSAGE, AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -36,7 +37,6 @@ from band.core.types import (
     ToolEventKey,
     TurnUsage,
 )
-from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
@@ -547,7 +547,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         ),
                         message_type="tool_call",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_call event: %s", e)
 
             response_parts: list[types.FunctionResponsePart] | None = None
@@ -575,8 +575,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             except Exception as e:
                 result_str = f"Error: {e}"
                 is_error = True
-                logger.exception("Tool %s failed: %s", tool_name, e)
-
+                logger.exception("Tool %s failed", tool_name)
             if Emit.TOOL_CALLS in self.features.emit:
                 try:
                     await tools.send_event(
@@ -590,7 +589,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                         ),
                         message_type="tool_result",
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 -- tool calls may raise any exception type; must surface to the LLM as an error string, not crash the turn
                     logger.warning("Failed to send tool_result event: %s", e)
 
             response_payload = (

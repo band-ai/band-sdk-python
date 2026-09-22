@@ -47,16 +47,16 @@ from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
+from band.integrations.acp.room_emitter import RoomTurnEmitter
+from band.integrations.acp.types import ACPToolCall
 from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
-from band.integrations.acp.room_emitter import RoomTurnEmitter
-from band.integrations.acp.types import ACPToolCall
-from band.runtime.prompts import render_system_prompt
+from band.integrations.mcp.local_server import LocalMCPServer
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.formatters import messages_before
-from band.integrations.mcp.local_server import LocalMCPServer
+from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     BAND_MCP_SERVER_NAME,
     CHAT_ID_FIELD_NAME,
@@ -409,7 +409,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         except ACPTurnTimeoutError:
             raise
         except Exception as e:
-            logger.exception("ACP agent error: %s", e)
+            logger.exception("ACP agent error")
             if isinstance(e, RequestError):
                 await self.on_cleanup(room_id)
             else:

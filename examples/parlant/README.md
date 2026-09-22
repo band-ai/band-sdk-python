@@ -110,6 +110,7 @@ responses)? Pass a `configure=` callback — it runs at startup with the live
 async def configure(server: p.Server, parlant_agent: p.Agent) -> None:
     await parlant_agent.create_journey(...)
 
+
 adapter = ParlantAdapter(name="Assistant", description="...", configure=configure)
 ```
 
@@ -199,20 +200,17 @@ ParlantAdapter(
     # Parlant agent identity (defaults to the Band agent's name/description)
     name="Assistant",
     description="A helpful assistant.",
-
     # Adapter-owned server configuration
     nlp_service=p.NLPServices.openai,  # Parlant's default (Emcie) if omitted
-    server_options={...},              # extra p.Server(...) kwargs, verbatim
-
+    server_options={...},  # extra p.Server(...) kwargs, verbatim
     # Escape hatches
-    configure=my_callback,             # async (server, parlant_agent) at startup
-    server=my_server,                  # bring your own running p.Server (borrowed)
-    parlant_agent=my_agent,            # bring your own p.Agent (requires server=)
-
+    configure=my_callback,  # async (server, parlant_agent) at startup
+    server=my_server,  # bring your own running p.Server (borrowed)
+    parlant_agent=my_agent,  # bring your own p.Agent (requires server=)
     # Optional: Custom prompts (adapter-created agent only,
     # not combinable with parlant_agent=)
-    system_prompt=None,                # Full override of the created agent's description
-    custom_section="...",              # Extra instructions appended to the description
+    system_prompt=None,  # Full override of the created agent's description
+    custom_section="...",  # Extra instructions appended to the description
 )
 ```
 

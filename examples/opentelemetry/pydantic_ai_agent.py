@@ -26,10 +26,9 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-
+from otel_setup import telemetry
 from pydantic_ai import InstrumentationSettings
 
-from otel_setup import telemetry
 from band import Agent, LoggingStyle, LogSettings, chatty_logger_levels
 from band.adapters import PydanticAIAdapter
 

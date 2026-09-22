@@ -106,9 +106,11 @@ async def self_registered_sandbox(
     room_id = await resource_manager.provision_room(participants=[agent_id])
     try:
         hosts = _deployment_hosts(baseline_settings.endpoints)
-        with allow_network_for_hosts(hosts, kit=KIT_DIR):
-            with Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace):
-                yield agent_id, room_id, args
+        with (
+            allow_network_for_hosts(hosts, kit=KIT_DIR),
+            Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace),
+        ):
+            yield agent_id, room_id, args
     finally:
         # Not tracked via resource_manager.provision_agent (provision.run()
         # registered it directly with the user key), so it needs its own reap.
@@ -118,7 +120,7 @@ async def self_registered_sandbox(
         # (verified live: a removed sandbox's `sbx secret ls` still lists it),
         # so it needs its own cleanup too, or the real agent key is left
         # sitting in the host's secret store indefinitely.
-        removal = subprocess.run(
+        removal = subprocess.run(  # noqa: ASYNC221 -- fixture teardown; no concurrent tasks share this loop
             remove_custom_secret_command(sandbox=name, host=args.host),
             capture_output=True,
             text=True,

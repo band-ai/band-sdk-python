@@ -14,17 +14,16 @@ from typing import Any
 import pytest
 
 from band.core.types import MessageType
-
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
 from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.builders import copilot_acp_env, copilot_home_dir
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
     emit_event_instruction,
     unique_marker,
 )
+from tests.e2e.baseline.toolkit.builders import copilot_acp_env, copilot_home_dir
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
@@ -145,7 +144,9 @@ def hermetic_copilot_config(
     smoke's one billed turn uses a cheap, deterministic model instead of
     Copilot's ``auto`` picker.
     """
-    from band.adapters.copilot_acp import CopilotACPAdapterConfig  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+    from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+        CopilotACPAdapterConfig,
+    )
 
     home = copilot_home_dir(str(work_dir))
     hosted_env = {
@@ -182,7 +183,9 @@ async def test_copilot_hosted_auth_replies(
     cheap turn keeps it proven. Skips (not fails) without a token: hosted
     auth is optional extra coverage, the BYOK cells are the lane's bar.
     """
-    from band.adapters.copilot_acp import CopilotACPAdapter  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+    from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+        CopilotACPAdapter,
+    )
 
     if not baseline_settings.backends.github_token:
         pytest.skip("GITHUB_TOKEN unset — the Copilot-hosted auth smoke needs one")
@@ -196,18 +199,20 @@ async def test_copilot_hosted_auth_replies(
     adapter = CopilotACPAdapter(
         hermetic_copilot_config(baseline_settings, tmp_path / "hosted", hosted=True)
     )
-    async with running_agent(identity, adapter, baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                f"Reply with one short sentence that includes the marker {marker}.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([marker])
+    async with (
+        running_agent(identity, adapter, baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            f"Reply with one short sentence that includes the marker {marker}.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([marker])
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
@@ -240,7 +245,9 @@ async def test_acp_recall_via_room_replay_when_session_load_misses(
     reply lines are its only possible source (the regression case for a replay
     that drops the agent's side of the transcript).
     """
-    from band.adapters.copilot_acp import CopilotACPAdapter  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+    from band.adapters.copilot_acp import (  # noqa: PLC0415 -- copilot_acp imports the acp (agent-client-protocol) extra at its own top level; not installed in every lane's venv
+        CopilotACPAdapter,
+    )
 
     tracking_marker = unique_marker("acp-replay")
     agent_fact = "blue"
@@ -256,40 +263,44 @@ async def test_acp_recall_via_room_replay_when_session_load_misses(
     )
 
     # Phase 1: seed a user fact and make the agent produce its own fact.
-    async with running_agent(identity, make_adapter("phase1"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "Create a short project log note for later reference. The "
-                f"tracking marker is {tracking_marker}. Also answer this "
-                "calibration question inside your reply: what color is a "
-                "clear daytime sky? Reply in one short sentence that includes "
-                "the tracking marker and the color answer.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # Must be in the transcript now, or phase 2 has nothing to replay.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase1"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "Create a short project log note for later reference. The "
+            f"tracking marker is {tracking_marker}. Also answer this "
+            "calibration question inside your reply: what color is a "
+            "clear daytime sky? Reply in one short sentence that includes "
+            "the tracking marker and the color answer.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # Must be in the transcript now, or phase 2 has nothing to replay.
+        replies.assert_contains_any([agent_fact])
 
     # Phase 2: fresh process AND fresh COPILOT_HOME — session/load misses, so
     # recall can only come from the replayed Band room transcript.
-    async with running_agent(identity, make_adapter("phase2"), baseline_settings):
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id,
-                "From the earlier project log, what was the tracking marker "
-                "and what color answer did you give? Reply with both.",
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            replies = await capture.wait_for_reply(
-                mid, identity.id, deadline_s=baseline_settings.e2e_timeout
-            )
-            replies.assert_contains_any([tracking_marker])
-            # The user never uttered this answer — only the agent's own
-            # replayed phase-1 reply can supply it.
-            replies.assert_contains_any([agent_fact])
+    async with (
+        running_agent(identity, make_adapter("phase2"), baseline_settings),
+        reply_capture(room_id) as capture,
+    ):
+        mid = await user_ops.send_message(
+            room_id,
+            "From the earlier project log, what was the tracking marker "
+            "and what color answer did you give? Reply with both.",
+            mention_id=identity.id,
+            mention_name=identity.name,
+        )
+        replies = await capture.wait_for_reply(
+            mid, identity.id, deadline_s=baseline_settings.e2e_timeout
+        )
+        replies.assert_contains_any([tracking_marker])
+        # The user never uttered this answer — only the agent's own
+        # replayed phase-1 reply can supply it.
+        replies.assert_contains_any([agent_fact])

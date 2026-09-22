@@ -14,19 +14,19 @@ from band.converters.claude_sdk import ClaudeSDKSessionState
 from band.converters.copilot_sdk import CopilotSDKSessionState
 
 __all__ = [
-    "OutputAdapter",
+    "AgnoOutputAdapter",
     "BaseDictListOutputAdapter",
     "ClaudeSDKOutputAdapter",
     "CopilotSDKOutputAdapter",
     "DictListOutputAdapter",
+    "GeminiOutputAdapter",
     "GoogleADKOutputAdapter",
     "LangChainOutputAdapter",
+    "OutputAdapter",
     "PydanticAIOutputAdapter",
-    "AgnoOutputAdapter",
-    "GeminiOutputAdapter",
-    "StringOutputAdapter",
     "SenderDictListAdapter",
     "StrandsOutputAdapter",
+    "StringOutputAdapter",
 ]
 
 
@@ -130,7 +130,11 @@ class LangChainOutputAdapter:
         return result[index].content
 
     def get_role(self, result: list, index: int) -> str:
-        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+        from langchain_core.messages import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+            AIMessage,
+            HumanMessage,
+            ToolMessage,
+        )
 
         msg = result[index]
         if isinstance(msg, HumanMessage):
@@ -158,7 +162,11 @@ class LangChainOutputAdapter:
         return False
 
     def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
-        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+        from langchain_core.messages import (  # noqa: PLC0415 -- isolates the langgraph extra from the other frameworks this file configures
+            AIMessage,
+            HumanMessage,
+            ToolMessage,
+        )
 
         msg = result[index]
         type_map: dict[str, type] = {
@@ -219,7 +227,9 @@ class AgnoOutputAdapter:
         return False
 
     def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
-        from agno.models.message import Message  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+        from agno.models.message import (  # noqa: PLC0415 -- isolates the agno extra from the other frameworks this file configures
+            Message,
+        )
 
         msg = result[index]
         assert isinstance(msg, Message), (
@@ -508,9 +518,7 @@ class StringOutputAdapter:
         """Return True if *line* looks like the start of a new message."""
         if cls._SENDER_RE.match(line):
             return True
-        if line.startswith("{"):
-            return True
-        return False
+        return bool(line.startswith("{"))
 
     @classmethod
     def _split_messages(cls, result: str) -> list[str]:

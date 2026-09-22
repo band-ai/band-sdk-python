@@ -23,8 +23,8 @@ import asyncio
 import logging
 import os
 
-
 from settings import OpenCodeExampleSettings
+
 from band import Agent, configure_logging
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import Emit

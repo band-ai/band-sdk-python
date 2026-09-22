@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Self
 
 from band.core.delivery import deliver_reply
 from band.core.protocols import AgentToolsProtocol, send_event_safe
@@ -161,7 +162,7 @@ class RoomTurnEmitter:
             metadata={**metadata, "permission_outcome": outcome},
         )
 
-    async def __aenter__(self) -> RoomTurnEmitter:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:

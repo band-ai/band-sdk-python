@@ -22,7 +22,7 @@ import os
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import cache
 from itertools import count
 from pathlib import Path
@@ -34,36 +34,34 @@ from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.client.rest import AsyncRestClient
-
 from band.client.streaming import (
+    ContactAddedPayload,
+    ContactRemovedPayload,
+    ContactRequestReceivedPayload,
+    ContactRequestUpdatedPayload,
     MessageCreatedPayload,
     MessageMetadata,
+    ParticipantAddedPayload,
+    ParticipantRemovedPayload,
     RoomAddedPayload,
     RoomDeletedPayload,
     RoomRemovedPayload,
-    ParticipantAddedPayload,
-    ParticipantRemovedPayload,
-    ContactRequestReceivedPayload,
-    ContactRequestUpdatedPayload,
-    ContactAddedPayload,
-    ContactRemovedPayload,
 )
 from band.platform.event import (
+    ContactAddedEvent,
+    ContactRemovedEvent,
+    ContactRequestReceivedEvent,
+    ContactRequestUpdatedEvent,
     MessageEvent,
+    ParticipantAddedEvent,
+    ParticipantRemovedEvent,
     RoomAddedEvent,
     RoomDeletedEvent,
     RoomRemovedEvent,
-    ParticipantAddedEvent,
-    ParticipantRemovedEvent,
-    ContactRequestReceivedEvent,
-    ContactRequestUpdatedEvent,
-    ContactAddedEvent,
-    ContactRemovedEvent,
 )
 from band.platform.link import BandLink
 from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import PlatformMessage
-
 from tests.paths import ENV_TEST_FILE
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
@@ -726,7 +724,7 @@ def sample_platform_message():
         sender_name="Test User",
         message_type="text",
         metadata={"mentions": [{"id": "agent-123", "name": "TestBot"}]},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -742,5 +740,5 @@ def sample_agent_platform_message():
         sender_name="TestBot",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )

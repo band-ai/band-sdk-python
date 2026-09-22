@@ -46,7 +46,7 @@ from band import LogSettings
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from docker_demo.breaker import (  # noqa: E402  (path set up above)
+from docker_demo.breaker import (
     Action,
     BreakerConfig,
     CircuitBreaker,
@@ -54,7 +54,7 @@ from docker_demo.breaker import (  # noqa: E402  (path set up above)
     SenderClass,
 )
 
-from band.config import load_agent_config  # noqa: E402
+from band.config import load_agent_config
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class Roster:
                 )
 
     def mentions_architect(self, message: ChatMessage) -> bool:
-        mentions = (message.metadata or {}).get("mentions") or []
+        mentions = getattr(message.metadata, "mentions", None) or []
         return any(
             str(m.get("id")) == self.architect_id
             for m in mentions
@@ -177,7 +177,7 @@ def to_observed(
     ts = (
         message.inserted_at.timestamp()
         if message.inserted_at
-        else dt.datetime.now(dt.timezone.utc).timestamp()
+        else dt.datetime.now(dt.UTC).timestamp()
     )
     sender_class = roster.classify(message)
     is_presenter = sender_class is SenderClass.HUMAN and message.id not in self_posted
@@ -207,12 +207,12 @@ class Conductor:
 
     @staticmethod
     def _now() -> float:
-        return dt.datetime.now(dt.timezone.utc).timestamp()
+        return dt.datetime.now(dt.UTC).timestamp()
 
     def _room_title(self) -> str:
         """A readable, timestamped room name (topic + local date-time)."""
         topic = re.sub(r"^(?:a|an)\s+", "", self.settings.demo_topic).strip()
-        stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+        stamp = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
         return f"Design Review — {topic} — {stamp}"
 
     def _mention(self, participant_id: str) -> Mention:
@@ -296,7 +296,7 @@ class Conductor:
         # inserted_at is optional and platform stamps are tz-aware; an unstamped
         # message must sort as oldest with a tz-aware sentinel — a naive one would
         # raise TypeError against the aware stamps and crash the loop.
-        oldest = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+        oldest = dt.datetime.min.replace(tzinfo=dt.UTC)
         return sorted(fresh, key=lambda m: m.inserted_at or oldest)
 
     async def _architect_in_room(self) -> bool:

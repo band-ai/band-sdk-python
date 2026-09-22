@@ -47,7 +47,6 @@ from tests.e2e.baseline.scorecard import (
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 
-
 # --- ExcludedAdapter: a reason is mandatory -----------------------------------------
 
 

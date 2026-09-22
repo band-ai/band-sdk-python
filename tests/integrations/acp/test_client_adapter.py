@@ -299,12 +299,14 @@ class TestACPClientAdapterLocalMcpConfig:
 
         await adapter.cleanup_all()  # final=True default, matches Agent.stop()
 
-        with patch(
-            "band.integrations.acp.client_adapter.create_band_mcp_backend",
-            new=AsyncMock(),
-        ) as mock_create_backend:
-            with pytest.raises(RuntimeError, match="stopped"):
-                await adapter._ensure_band_mcp_backend()
+        with (
+            patch(
+                "band.integrations.acp.client_adapter.create_band_mcp_backend",
+                new=AsyncMock(),
+            ) as mock_create_backend,
+            pytest.raises(RuntimeError, match="stopped"),
+        ):
+            await adapter._ensure_band_mcp_backend()
 
         mock_create_backend.assert_not_awaited()
 

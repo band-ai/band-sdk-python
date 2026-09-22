@@ -22,7 +22,7 @@ import hmac
 import json
 import time
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -51,7 +51,6 @@ from band.integrations.slack.signature import SLACK_SIGNATURE_VERSION
 from band.integrations.slack.types import SlackApp, SlackRoomBinding
 from band.runtime.tools import AgentTools, ToolCallOutcome
 from band.testing.platform import platform_connection_stub
-
 
 # ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -297,12 +296,11 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
     )
     adapter, _, _, _ = _make_adapter(inner=inner)
 
-    with caplog.at_level("WARNING"):
-        with warnings.catch_warnings():
-            # A spurious UserWarning here would mean the wrapper failed to
-            # mirror the inner's support before the base check ran.
-            warnings.simplefilter("error", UserWarning)
-            await adapter.on_started("MyBot", "")
+    with caplog.at_level("WARNING"), warnings.catch_warnings():
+        # A spurious UserWarning here would mean the wrapper failed to
+        # mirror the inner's support before the base check ran.
+        warnings.simplefilter("error", UserWarning)
+        await adapter.on_started("MyBot", "")
 
     # Wrapper now reflects the inner's declared support.
     assert adapter.SUPPORTED_EMIT == frozenset({Emit.TOOL_CALLS})
@@ -474,7 +472,7 @@ async def test_same_thread_tuple_across_apps_maps_to_distinct_rooms():
     replies into the wrong app/workspace.
     """
     apps = [_slack_app("alpha"), _slack_app("beta")]
-    adapter, inner, _, rest = _make_adapter(
+    adapter, _inner, _, rest = _make_adapter(
         apps=apps, room_ids=["room-alpha", "room-beta"]
     )
     await adapter.on_started("MyBot", "")
@@ -507,7 +505,7 @@ async def test_concurrent_events_same_thread_create_one_room():
     serialisation both could miss ``_thread_to_room`` and create a room.
     A gated ``create_agent_chat`` forces the overlap deterministically.
     """
-    adapter, inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
+    adapter, _inner, _, rest = _make_adapter(room_ids=["room-1", "room-2"])
     await adapter.on_started("MyBot", "")
     app = adapter.apps[0]
 
@@ -652,7 +650,7 @@ async def test_on_message_delegates_to_inner_for_unbound_room():
         sender_name="Peer",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -698,7 +696,7 @@ async def test_on_message_wraps_tools_and_injects_note_for_bound_room():
         sender_name="Peer X",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -744,7 +742,7 @@ async def test_on_message_merges_existing_participants_msg_with_context_note():
         sender_name="Peer Y",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     await adapter.on_message(
         msg,
@@ -1381,7 +1379,7 @@ def _agent_input_with_history(
         sender_name="Peer X",
         message_type="text",
         metadata={},
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     return AgentInput(
         msg=msg,
