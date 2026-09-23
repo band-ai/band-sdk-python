@@ -15,7 +15,7 @@ class TestDeliverReply:
         result = await deliver_reply(tools, "hello", mentions=["@alice"])
 
         assert tools.messages_sent[0]["content"] == "hello"
-        assert result["content"] == "hello"
+        assert result.success is True
 
     async def test_wraps_a_send_message_failure(self) -> None:
         """A raised send_message must become DeliveryFailedError, not

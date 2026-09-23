@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
     from band.client.rest import (
+        ChatParticipant,
         GetChatTaskHistoryResponse,
         ListAgentContactRequestsResponse,
         ListAgentContactsResponse,
@@ -30,7 +31,11 @@ if TYPE_CHECKING:
     from band.core.types import AgentInput, Capability
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
-    from band.runtime.tools import ToolCallOutcome
+    from band.runtime.tools import (
+        ParticipantAddResult,
+        ParticipantRemoveResult,
+        ToolCallOutcome,
+    )
 
 T = TypeVar("T")
 
@@ -163,11 +168,13 @@ class AgentToolsProtocol(Protocol):
         """
         ...
 
-    async def add_participant(self, identifier: str, role: str = "member") -> Any:
+    async def add_participant(
+        self, identifier: str, role: str = "member"
+    ) -> ParticipantAddResult:
         """Add a participant to the current room by handle, name, or ID."""
         ...
 
-    async def remove_participant(self, identifier: str) -> Any:
+    async def remove_participant(self, identifier: str) -> ParticipantRemoveResult:
         """Remove a participant from the current room by handle, name, or ID."""
         ...
 
@@ -181,7 +188,7 @@ class AgentToolsProtocol(Protocol):
         """True if this instance is bound to the contact hub room."""
         ...
 
-    async def get_participants(self) -> Any:
+    async def get_participants(self) -> list[ChatParticipant]:
         """Get participants in the current room."""
         ...
 

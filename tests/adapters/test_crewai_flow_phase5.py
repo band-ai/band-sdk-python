@@ -32,6 +32,7 @@ from band.adapters.crewai_flow import (
 )
 from band.core.types import PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
+from tests.adapters.crewai_flow_support import participant_seed
 
 
 def _msg(
@@ -89,7 +90,7 @@ class TestTaggedPeer:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
         )
         tools = FakeAgentTools(
-            participants=[{"id": "p-a", "handle": "@example/peer-a"}]
+            participants=[participant_seed("p-a", "@example/peer-a")]
         )
         await adapter.on_started("router", "")
         await adapter.on_message(
@@ -166,14 +167,17 @@ class TestSequentialChains:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
             ],
@@ -240,14 +244,17 @@ class TestSequentialChains:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
             ],
@@ -331,14 +338,17 @@ class TestBufferedSyntheses:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a"},
-                {"id": "p-b", "handle": "@example/peer-b"},
+                participant_seed("p-a", "@example/peer-a"),
+                participant_seed("p-b", "@example/peer-b"),
             ],
             room_context=[
                 {
                     "id": "evt-prior",
                     "message_type": "task",
                     "inserted_at": datetime.now(UTC).isoformat(),
+                    "sender_id": "agent-1",
+                    "sender_type": "Agent",
+                    "content": "task event",
                     "metadata": {ns: payload},
                 }
             ],
@@ -424,6 +434,9 @@ class TestE2ETrace:
                         "id": event["id"],
                         "message_type": "task",
                         "inserted_at": datetime.now(UTC).isoformat(),
+                        "sender_id": "agent-1",
+                        "sender_type": "Agent",
+                        "content": "task event",
                         "metadata": event["metadata"],
                     }
                 )
@@ -436,8 +449,8 @@ class TestE2ETrace:
         )
         tools = FakeAgentTools(
             participants=[
-                {"id": "p-a", "handle": "@example/peer-a", "name": "Peer A"},
-                {"id": "p-b", "handle": "@example/peer-b", "name": "Peer B"},
+                participant_seed("p-a", "@example/peer-a", "Peer A"),
+                participant_seed("p-b", "@example/peer-b", "Peer B"),
             ]
         )
         await adapter.on_started("router", "")

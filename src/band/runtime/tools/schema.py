@@ -9,7 +9,8 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from functools import wraps
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError, create_model
 
@@ -95,16 +96,28 @@ ToolFunc = TypeVar("ToolFunc", bound=Callable[..., Any])
 
 
 def platform_tool(fn: ToolFunc) -> ToolFunc:
-    """Give a tool function the master description and ``Args:`` section.
+    """Give a tool function the master description/``Args:`` section, and
+    route its return value through ``serialize_tool_result()``.
 
     For frameworks that derive their schema from the function docstring. Reads
     ``fn.__name__`` rather than taking a tool name argument — the function is
     always named after the tool it registers (frameworks that key a tool by
     its function name, like pydantic-ai, require this already), so there is
     nowhere left to retype that name, let alone the description.
+
+    ``fn`` must be a coroutine function, true of every handler this decorates
+    today. Wrapping the call (rather than leaving each handler body to call
+    ``serialize_tool_result`` itself) means a handler cannot forget the
+    boundary conversion; ``functools.wraps`` keeps the wrapped signature
+    intact for the framework's own argument-schema introspection.
     """
-    fn.__doc__ = get_tool_docstring_with_args(fn.__name__)
-    return fn
+
+    @wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return serialize_tool_result(await fn(*args, **kwargs))
+
+    wrapper.__doc__ = get_tool_docstring_with_args(fn.__name__)
+    return cast(ToolFunc, wrapper)
 
 
 class _SanitizedSchema(BaseModel):
