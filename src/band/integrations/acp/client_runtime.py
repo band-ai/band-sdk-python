@@ -232,6 +232,8 @@ class ACPConnectionProtocol(Protocol):
 
     async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
 
+    async def cancel(self, session_id: str) -> None: ...
+
 
 class ACPSpawnContextProtocol(Protocol):
     """Protocol for the spawn_agent_process async context manager."""
@@ -840,6 +842,11 @@ class ACPRuntime:
             if self._client is not None:
                 self._client.set_sink(session_id, None)
         return self.get_collected_chunks(session_id)
+
+    async def cancel_turn(self, session_id: str) -> None:
+        """Tell the agent to stop a timed-out room's prompt."""
+        conn = await self.ensure_connection(can_respawn=False)
+        await conn.cancel(session_id)
 
     def reset_session(self, session_id: str) -> None:
         if self._client is not None:

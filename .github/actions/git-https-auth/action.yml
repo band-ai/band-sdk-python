@@ -1,0 +1,11 @@
+name: "Configure git for HTTPS GitHub access"
+description: >-
+  Rewrites git@github.com: URLs to https://github.com/ so a later checkout
+  or clone authenticates over HTTPS (e.g. with a token) instead of SSH.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure git to use HTTPS for GitHub
+      shell: bash
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
