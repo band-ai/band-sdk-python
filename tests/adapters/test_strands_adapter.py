@@ -180,7 +180,7 @@ class TestCustomToolWiring:
         assert adapter._custom_terminal_names == frozenset({"done"})
 
     def test_custom_tool_may_not_shadow_a_platform_tool(self):
-        """Strands' registry is last-wins, so a collision must fail at construction."""
+        """A collision fails at construction, not when Strands builds the Agent mid-turn."""
 
         @strands_tool
         def band_send_message(content: str) -> str:
