@@ -20,7 +20,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      uses: ./.github/actions/git-https-auth
 
     - name: Install uv
       uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -76,7 +76,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      uses: ./.github/actions/git-https-auth
 
     - name: Install uv
       uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -124,7 +124,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      uses: ./.github/actions/git-https-auth
 
     - name: Install uv
       uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -187,7 +187,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      uses: ./.github/actions/git-https-auth
 
     - name: Install uv
       uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -233,7 +233,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      uses: ./.github/actions/git-https-auth
 
     - name: Install uv
       uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -257,6 +257,7 @@ jobs:
         from band import Agent, BandLink, AgentRuntime
         from band.config import load_agent_config
         from band_sdk_core import (
+            AgentFailure,
             ClaimRegistry,
             ParticipantRoster,
             RetryTracker,
@@ -290,6 +291,13 @@ jobs:
             "decision": "processed",
             "room_id": "room-1",
             "message_id": "msg-1",
+        }
+        failure = AgentFailure("wheel-smoke", "failure")
+        assert failure.to_dict() == {
+            "provider": "wheel-smoke",
+            "code": None,
+            "message": "failure",
+            "detail": None,
         }
         print('Core imports successful')
         PYEOF
