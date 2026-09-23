@@ -249,7 +249,6 @@ These `CodexAdapterConfig(...)` flags add more telemetry detail:
 | `emit_turn_lifecycle_events` | `bool` | `False` | Emit enriched turn lifecycle events at turn start and completion. |
 | `emit_diff_events` | `bool` | `False` | Include file diffs in event metadata, capped at 64 KB. |
 | `emit_token_usage_events` | `bool` | `False` | Track and emit token usage per session. |
-| `structured_errors` | `bool` | `True` | Emit structured error events instead of plain text errors. |
 
 Enabling both `emit_turn_task_markers` and `emit_turn_lifecycle_events` produces two task events per completed turn. Pick one; lifecycle events contain richer metadata.
 
