@@ -17,11 +17,14 @@ from band.runtime.tools.agent import (
     PREVIEWABLE_IMAGE_CONTENT_TYPES,
     AgentTools,
     AttachmentCache,
-    _matches_identifier,
+    ParticipantAddResult,
+    ParticipantRemoveResult,
     append_available_mention_handles,
     append_mention_handles_hint,
     available_mention_handles,
     iter_chat_pages,
+    matches_identifier,
+    strip_handle_prefix,
 )
 from band.runtime.tools.human import HumanTools
 from band.runtime.tools.inputs import (
@@ -206,6 +209,8 @@ __all__ = [
     "ListTasksInput",
     "ListUserMemoriesInput",
     "LookupPeersInput",
+    "ParticipantAddResult",
+    "ParticipantRemoveResult",
     "ReadRoomFileInput",
     "RegisterMyAgentInput",
     "RejectContactRequestInput",
@@ -231,7 +236,6 @@ __all__ = [
     "ToolFunc",
     "UpdateMyProfileInput",
     "UpdateTaskInput",
-    "_matches_identifier",
     "_resolve_mcp_tool_name",
     "append_available_mention_handles",
     "append_mention_handles_hint",
@@ -253,6 +257,7 @@ __all__ = [
     "is_terminal_success",
     "iter_chat_pages",
     "iter_tool_definitions",
+    "matches_identifier",
     "mcp_tool_names",
     "missing_reply_error",
     "platform_args_schema",
@@ -261,5 +266,6 @@ __all__ = [
     "resolve_capabilities",
     "resolve_tool_model",
     "serialize_tool_result",
+    "strip_handle_prefix",
     "validate_tool_arguments",
 ]

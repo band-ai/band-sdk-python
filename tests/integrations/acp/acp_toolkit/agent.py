@@ -64,7 +64,14 @@ class FakeACPAgent:
         self._supports_session_load = supports_session_load
         self._persisted_sessions: set[str] = set()
         self._session_load_error: RequestError | None = None
-        self._conn: AgentSideConnection | None = None
+        # A room-owned ACPRuntime opens its own connection, so a genuinely
+        # concurrent multi-room turn (see test_independent_rooms_configure_
+        # without_waiting_for_each_other) can have more than one live
+        # connection at once. `_current_conn` is only the most-recently-
+        # connected one; sends for an existing session go over the
+        # connection that created it instead, via `_conns_by_session`.
+        self._current_conn: AgentSideConnection | None = None
+        self._conns_by_session: dict[str, AgentSideConnection | None] = {}
         self._script: list[PromptHandler] = []
         self._custom: PromptHandler | None = None
         self._config_options = list(config_options)
@@ -268,15 +275,18 @@ class FakeACPAgent:
     async def say(self, session_id: str, text: str) -> None:
         await self.emit(session_id, update_agent_message_text(text))
 
+    def _conn_for(self, session_id: str) -> AgentSideConnection:
+        conn = self._conns_by_session.get(session_id, self._current_conn)
+        assert conn is not None, "agent not connected yet"
+        return conn
+
     async def emit(self, session_id: str, update: Any) -> None:
-        assert self._conn is not None, "agent not connected yet"
-        await self._conn.session_update(session_id, update)
+        await self._conn_for(session_id).session_update(session_id, update)
 
     async def ask_permission(
         self, session_id: str, tool_call: Any, options: list[Any]
     ) -> Any:
-        assert self._conn is not None, "agent not connected yet"
-        resp = await self._conn.request_permission(
+        resp = await self._conn_for(session_id).request_permission(
             options=options, session_id=session_id, tool_call=tool_call
         )
         self.permission_responses.append(resp)
@@ -322,7 +332,7 @@ class FakeACPAgent:
     # -- acp.Agent protocol ------------------------------------------------------
 
     def on_connect(self, conn: AgentSideConnection) -> None:
-        self._conn = conn
+        self._current_conn = conn
 
     async def initialize(
         self, protocol_version: int, client_capabilities: Any = None, **kwargs: Any
@@ -348,6 +358,7 @@ class FakeACPAgent:
             raise self._session_load_error
         if session_id not in self._persisted_sessions:
             raise RequestError.resource_not_found()
+        self._conns_by_session[session_id] = self._current_conn
         return LoadSessionResponse(config_options=self._config_options)
 
     async def new_session(
@@ -359,6 +370,7 @@ class FakeACPAgent:
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}
         )
         self._mcp_servers_by_session[sid] = list(mcp_servers or [])
+        self._conns_by_session[sid] = self._current_conn
         return NewSessionResponse(session_id=sid, config_options=self._config_options)
 
     async def set_config_option(

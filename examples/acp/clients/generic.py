@@ -50,7 +50,7 @@ from acp.schema import SessionConfigOptionSelect
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from band import Agent, configure_logging
+from band import Agent, configure_logging, create_room_workspace_resolver
 from band.adapters import ACPClientAdapter, ACPConfigRequest
 from band.config import load_agent_config
 from band.integrations.acp.session_config import flatten_select_options
@@ -139,13 +139,10 @@ async def main() -> None:
     # Command to spawn the remote ACP agent
     acp_command = shlex.split(settings.acp_agent_command)
 
-    # Working directory for ACP sessions
-    acp_cwd = settings.acp_agent_cwd
-
-    # Create adapter pointing to remote ACP agent
+    # Create an adapter that starts the local ACP agent per Band room.
     adapter = ACPClientAdapter(
         command=acp_command,
-        cwd=acp_cwd,
+        workspace_for_room=create_room_workspace_resolver(settings.acp_agent_cwd),
         resolve_session_config=partial(
             choose_session_config,
             preferences=settings.session_config_preferences,
